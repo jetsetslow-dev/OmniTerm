@@ -704,12 +704,19 @@ void main() {
     testWidgets('without verified metrics the overview shows availability instead of readings', (
       tester,
     ) async {
-      // A command that returned no readings cannot supply a chart or an idle percentage.
+      // A command that returned no readings cannot supply a reading: Kotlin keeps the cards but says
+      // "unavailable" and offers Retry instead of an idle percentage.
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, transport: RecordingTransport());
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('monitor.overview.cpuChart')), findsNothing);
+      expect(find.text('Current load unavailable'), findsOneWidget);
+      expect(find.text('Current memory unavailable'), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('monitor.overview.cpuPercent'))).data,
+        '—',
+      );
+      expect(find.byKey(const ValueKey('monitor.overview.retry')), findsOneWidget);
       expect(
         find.text('CPU, memory or disk metrics are incomplete. Refresh to retry.'),
         findsWidgets,

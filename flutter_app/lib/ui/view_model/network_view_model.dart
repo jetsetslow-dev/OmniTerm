@@ -137,6 +137,9 @@ class NetworkViewModel extends ChangeNotifier {
 
   String? get error => _error;
 
+  /// Repaints after a typed target or URL changes, so buttons that need one enable as Kotlin's do.
+  void fieldEdited() => _safeNotify();
+
   void dismissError() {
     _error = null;
     notifyListeners();
@@ -235,6 +238,29 @@ class NetworkViewModel extends ChangeNotifier {
     }
   }
 
+  DateTime? _lastScanAt;
+
+  /// Kotlin's `isLanScanFresh`: a sweep is reused for five minutes.
+  bool get isScanFresh =>
+      _scanResults.isNotEmpty &&
+      _lastScanAt != null &&
+      DateTime.now().difference(_lastScanAt!) < const Duration(minutes: 5);
+
+  /// Kotlin's `refreshLanScan`: sweeps this device's own /24, reusing a fresh sweep unless [force]
+  /// (an explicit Scan/Rescan tap). One cache serves Host Scan and every LAN host picker.
+  Future<void> refreshLanScan({bool force = false}) async {
+    if (_scanning) return;
+    if (!force && isScanFresh) return;
+    await guessSubnet();
+    if (_subnetPrefix.isEmpty) {
+      _error = "Couldn't determine this device's local network.";
+      _safeNotify();
+      return;
+    }
+    await scanSubnet();
+    if (_error == null) _lastScanAt = DateTime.now();
+  }
+
   Future<String> _resolveLanHostname(String address) async {
     final reverse = await probe
         .reverseLookup(address)
@@ -304,7 +330,8 @@ class NetworkViewModel extends ChangeNotifier {
       WolTargetsCompanion.insert(
         id: existing == null ? const Value.absent() : Value(existing.id),
         name: name.trim(),
-        macAddress: formatMacAddress(mac),
+        // Stored as typed, as Kotlin's addWolTarget does; validity was checked above.
+        macAddress: macAddress.trim(),
         broadcastIp: Value(broadcast),
         ipAddress: Value(ipAddress.trim()),
         port: Value(port),
@@ -603,9 +630,10 @@ class NetworkViewModel extends ChangeNotifier {
         target.port,
       );
       await _app.repository.updateWolLastWoken(target.id, DateTime.now().millisecondsSinceEpoch);
-      return 'Magic packet sent to ${target.name}. It may take a moment to boot.';
-    } catch (e) {
-      return 'Could not send the packet: $e';
+      return 'Magic packet sent to ${target.name}';
+    } catch (_) {
+      // Kotlin's toast wording for both outcomes.
+      return 'Failed to send magic packet to ${target.name}';
     }
   }
 
@@ -623,7 +651,11 @@ class NetworkViewModel extends ChangeNotifier {
 
   // ── ping ────────────────────────────────────────────────────────────────────
 
-  String pingTarget = '';
+  /// Kotlin's `portScannerTarget`: Ping, Traceroute and Port Scan share one target, so a host
+  /// typed or picked in one is already there in the others.
+  String sharedTarget = '';
+  String get pingTarget => sharedTarget;
+  set pingTarget(String value) => sharedTarget = value;
   int pingCount = 4;
   List<String> _pingLines = const [];
   bool _pinging = false;
@@ -690,7 +722,8 @@ class NetworkViewModel extends ChangeNotifier {
 
   // ── traceroute ──────────────────────────────────────────────────────────────
 
-  String tracerouteTarget = '';
+  String get tracerouteTarget => sharedTarget;
+  set tracerouteTarget(String value) => sharedTarget = value;
   List<String> _tracerouteLines = const [];
   bool _tracerouteRunning = false;
   DeviceNetworkCommand? _tracerouteCommand;
@@ -817,7 +850,8 @@ class NetworkViewModel extends ChangeNotifier {
 
   // ── port scan ───────────────────────────────────────────────────────────────
 
-  String portScanTarget = '';
+  String get portScanTarget => sharedTarget;
+  set portScanTarget(String value) => sharedTarget = value;
   String portSpec = commonPorts.join(',');
   List<PortResult> _portResults = const [];
   bool _portScanning = false;

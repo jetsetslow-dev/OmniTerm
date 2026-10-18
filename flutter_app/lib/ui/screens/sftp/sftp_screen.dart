@@ -225,43 +225,18 @@ class _TabBar extends StatelessWidget {
   };
 
   @override
-  Widget build(BuildContext context) {
-    final hasHost = vm.hasBrowseTarget;
-    return SizedBox(
-      height: scaledBarHeight(context, 44),
-      child: ListView(
-        key: const ValueKey('sftp.tabs'),
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        children: [
-          for (final tab in SftpTab.values)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Center(
-                child: ChoiceChip(
-                  key: ValueKey('sftp.tab.${tab.name}'),
-                  label: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
-                      // A running transfer is easy to forget about once you navigate away, so the
-                      // count follows you across tabs.
-                      if (tab == SftpTab.transfers && vm.transfers.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        _CountBadge(count: vm.transfers.length),
-                      ],
-                    ],
-                  ),
-                  // Browsing needs a reachable host; the other three do not.
-                  onSelected: (tab == SftpTab.files && !hasHost) ? null : (_) => vm.activeTab = tab,
-                  selected: vm.activeTab == tab,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => OmniTabRow(
+    key: const ValueKey('sftp.tabs'),
+    labels: [for (final tab in SftpTab.values) _labels[tab]!],
+    selectedIndex: vm.activeTab.index,
+    onSelected: (i) => vm.activeTab = SftpTab.values[i],
+    tabKeys: [for (final tab in SftpTab.values) ValueKey('sftp.tab.${tab.name}')],
+    // Browsing needs a reachable host; the other three do not.
+    disabled: {if (!vm.hasBrowseTarget) SftpTab.files.index},
+    badges: {
+      if (vm.transfers.isNotEmpty) SftpTab.transfers.index: _CountBadge(count: vm.transfers.length),
+    },
+  );
 }
 
 class _CountBadge extends StatelessWidget {

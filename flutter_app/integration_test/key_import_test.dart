@@ -53,7 +53,7 @@ void main() {
       return key is ValueKey<String> &&
           key.value.startsWith('authKeys.key.') &&
           !key.value.endsWith('.delete') &&
-          !key.value.endsWith('.rename');
+          !key.value.endsWith('.edit');
     }),
   );
 
@@ -77,8 +77,11 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Kotlin's route: "+", then "Import SSH Key" in "Add Authentication Source".
   Future<void> openImportSheet(WidgetTester tester) async {
-    await tester.tap(find.byKey(const ValueKey('authKeys.importKey')));
+    await tester.tap(find.byKey(const ValueKey('authKeys.add')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('authKeys.source.import')));
     await tester.pumpAndSettle();
   }
 
@@ -136,7 +139,7 @@ void main() {
     expect(find.byKey(const ValueKey('authKeys.import.save')), findsOneWidget);
     expect(tester.takeException(), isNull);
 
-    await tester.tap(find.byKey(const ValueKey('authKeys.import.close')));
+    await tester.tap(find.byKey(const ValueKey('authKeys.import.cancel')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('authKeys.import.save')), findsNothing);
   });
@@ -153,6 +156,8 @@ void main() {
     await tester.enterText(find.byKey(const ValueKey('authKeys.import.public')), publicKey);
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.byKey(const ValueKey('authKeys.import.save')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
@@ -168,14 +173,14 @@ void main() {
     // fingerprint is the one `ssh-keygen -lf` prints for it, which is the only reason showing a
     // fingerprint is worth anything: it is there to be compared against what the host reports.
     expect(
-      find.descendant(of: keyCard(alias), matching: find.text('ED25519')),
+      find.descendant(
+        of: keyCard(alias),
+        matching: find.text('Crypto: ED25519 · Fingerprint: $fingerprint'),
+      ),
       findsOneWidget,
-      reason: 'the key type must come from the public line, not be guessed',
-    );
-    expect(
-      find.descendant(of: keyCard(alias), matching: find.text(fingerprint)),
-      findsOneWidget,
-      reason: 'the fingerprint shown must be the one ssh-keygen -lf prints for this key',
+      reason:
+          'the key type must come from the public line, and the fingerprint must be the one '
+          'ssh-keygen -lf prints for this key',
     );
 
     await removeKeyIfPresent(tester);
@@ -223,7 +228,7 @@ void main() {
     expect(error, isNotEmpty);
     expect(error.toLowerCase(), isNot(contains('null')));
 
-    await tester.tap(find.byKey(const ValueKey('authKeys.import.close')));
+    await tester.tap(find.byKey(const ValueKey('authKeys.import.cancel')));
     await tester.pumpAndSettle();
     expect(keyCard('not-a-key'), findsNothing, reason: 'it must not have been stored');
   });

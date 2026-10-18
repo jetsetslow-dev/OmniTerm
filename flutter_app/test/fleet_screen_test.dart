@@ -19,6 +19,7 @@ import 'package:provider/provider.dart';
 
 import 'fleet_view_model_test.dart' show BroadcastTransport;
 import 'monitor_view_model_test.dart' show RecordingTransport;
+import 'support/material_fonts.dart';
 import 'support/fake_secure_storage.dart';
 
 class _StreamingDiagnosticTransport extends BroadcastTransport {
@@ -42,6 +43,9 @@ class _StreamingDiagnosticTransport extends BroadcastTransport {
 }
 
 void main() {
+  // Device-like glyph metrics: the short-window guards depend on how text wraps.
+  setUpAll(loadMaterialRoboto);
+
   late AppDatabase db;
   late AppRepository repo;
   late AppState app;
@@ -723,5 +727,24 @@ void main() {
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
     });
+  });
+
+  testWidgets('the logs tab scrolls instead of overflowing in a 200% landscape window', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 230);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+    await repo.insertServer(server(name: 'b', host: '10.0.0.2'));
+    await pump(tester, transport: BroadcastTransport());
+    vm.activeTab = FleetTab.logs;
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 }

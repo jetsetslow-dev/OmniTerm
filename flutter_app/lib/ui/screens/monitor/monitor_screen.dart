@@ -114,39 +114,52 @@ class _SelectorBar extends StatelessWidget {
 
     // HostDisplay is an observable singleton, so it must be listened to rather than merely read —
     // otherwise "Hide sensitive info" would leave this bar showing the address.
+    // Kotlin's bar holds everything: the score ring leads, the refresh countdown and reboot trail.
+    // HostDisplay is observable, so "Hide sensitive info" repaints the address at once.
     return ListenableBuilder(
       listenable: HostDisplay.instance,
-      builder: (context, _) => Padding(
-        padding: EdgeInsets.fromLTRB(12, compact ? 2 : 8, 4, compact ? 0 : 4),
-        child: Row(
-          children: [
-            // The ring is the only place the score appears, and a number between 0 and 100 with no
-            // stated reason is not information. Tapping it says which readings cost what.
-            if (!compact)
-              InkWell(
-                key: const ValueKey('monitor.healthScore.open'),
-                onTap: () => showHealthBreakdown(
-                  context,
-                  name: HostDisplay.instance.name(server),
-                  breakdown: vm.healthBreakdown,
+      builder: (context, _) => HostSelectorBar(
+        keyPrefix: 'monitor.hostPicker',
+        hosts: online,
+        selected: server,
+        onChanged: vm.selectServer,
+        leading: compact
+            ? null
+            : Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: InkWell(
+                  key: const ValueKey('monitor.healthScore.open'),
+                  onTap: () => showHealthBreakdown(
+                    context,
+                    name: HostDisplay.instance.name(server),
+                    breakdown: vm.healthBreakdown,
+                  ),
+                  customBorder: const CircleBorder(),
+                  child: _ScoreRing(score: vm.healthBreakdown?.score ?? -1, color: accent),
                 ),
-                customBorder: const CircleBorder(),
-                child: _ScoreRing(score: vm.healthBreakdown?.score ?? -1, color: accent),
               ),
-            if (!compact) const SizedBox(width: 10),
-            Expanded(
-              child: HostSelectorBar(
-                keyPrefix: 'monitor.hostPicker',
-                hosts: online,
-                selected: server,
-                onChanged: vm.selectServer,
-              ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 8,
+          children: [
+            RefreshCountdown(
+              key: const ValueKey('monitor.refreshCountdown'),
+              nextAt: vm.nextRefreshAt,
+              interval: vm.refreshInterval,
+              size: 28,
+              color: accent,
             ),
-            IconButton(
-              key: const ValueKey('monitor.reboot'),
-              tooltip: 'Reboot host',
-              icon: const Icon(Icons.restart_alt, size: 18, color: OmniColors.red),
-              onPressed: () => _confirmReboot(context, vm, server),
+            SizedBox.square(
+              dimension: 32,
+              child: IconButton(
+                key: const ValueKey('monitor.reboot'),
+                tooltip: 'Reboot host',
+                padding: EdgeInsets.zero,
+                icon: const Icon(Icons.restart_alt, size: 18, color: OmniColors.red),
+                onPressed: server.status == 'online'
+                    ? () => _confirmReboot(context, vm, server)
+                    : null,
+              ),
             ),
           ],
         ),
@@ -254,34 +267,16 @@ class _TabBar extends StatelessWidget {
   };
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      // Deliberately *not* scaled with the text, unlike the SFTP and Infra strips. Monitor's body
-      // is `Column(selector, tabs, Expanded)`, and in landscape at 200% the chrome already exceeds
-      // the viewport — a taller bar took the overflow from 44px to 84px. The chips clip a little
-      // here; the fix is to make the chrome itself tolerate a short viewport, which is defect 48.
-      height: 40,
-      child: ListView(
-        key: const ValueKey('monitor.tabs'),
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        children: [
-          for (final tab in MonitorTab.values)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Center(
-                child: ChoiceChip(
-                  key: ValueKey('monitor.tab.${tab.name}'),
-                  label: Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
-                  selected: vm.activeTab == tab,
-                  onSelected: (_) => vm.activeTab = tab,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => OmniScrollableTabRow(
+    key: const ValueKey('monitor.tabs'),
+    labels: [for (final tab in MonitorTab.values) _labels[tab]!],
+    selectedIndex: vm.activeTab.index,
+    onSelected: (i) => vm.activeTab = MonitorTab.values[i],
+    tabKeys: [for (final tab in MonitorTab.values) ValueKey('monitor.tab.${tab.name}')],
+    edgePadding: 12,
+    contentTabs: true,
+    fontWeight: FontWeight.w600,
+  );
 }
 
 class _ErrorBanner extends StatelessWidget {

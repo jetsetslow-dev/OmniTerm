@@ -6,6 +6,16 @@ import 'package:omniterm/data/term/terminal_snapshot.dart';
 import 'package:omniterm/ui/theme/terminal_theme.dart';
 import 'package:omniterm/ui/widgets/terminal_surface.dart';
 
+class _CountingCanvas implements Canvas {
+  int paragraphs = 0;
+
+  @override
+  void drawParagraph(ui.Paragraph paragraph, Offset offset) => paragraphs++;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -108,5 +118,27 @@ void main() {
     expect(pixel(17, 5), Colors.white.toARGB32(), reason: 'outside the cursor is unchanged');
     expect(pixel(23, 5), Colors.black.toARGB32(), reason: 'original glyph overlaps the cursor');
     expect(pixel(30, 5), Colors.white.toARGB32(), reason: 'glyph must not shift into continuation');
+  });
+
+  test('a full screen of ASCII paints one paragraph per span, not one per glyph', () {
+    // Every repaint — each scroll frame, each TUI redraw — used to lay out and paint a separate
+    // paragraph for every cell: 3,200 for an 80x40 screen.
+    final row = 'x' * 80;
+    final canvas = _CountingCanvas();
+    TerminalPainter(
+      snapshot: TerminalSnapshot(
+        rows: [
+          for (var i = 0; i < 40; i++) TermRow([TermSpan(row, kDefaultFg, kDefaultBg)]),
+        ],
+        cursorRow: 0,
+        cursorCol: 0,
+        cursorVisible: false,
+        cols: 80,
+      ),
+      metrics: metrics,
+      palette: palette,
+      showCursor: false,
+    ).paint(canvas, const Size(1600, 480));
+    expect(canvas.paragraphs, lessThanOrEqualTo(40));
   });
 }

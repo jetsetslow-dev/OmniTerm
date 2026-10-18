@@ -131,15 +131,21 @@ void main() {
   });
 
   group('About', () {
-    testWidgets('states plainly where data goes', (tester) async {
-      // This is the claim the app asks to be trusted on, so it is specific and checkable rather
-      // than a vague reassurance.
+    testWidgets('states plainly where data goes, in Kotlin words', (tester) async {
       await pump(tester, const AboutScreen());
 
-      expect(find.byKey(const ValueKey('about.privacy')), findsOneWidget);
-      expect(find.textContaining('stay on this device'), findsOneWidget);
-      expect(find.textContaining('usage telemetry'), findsOneWidget);
-      expect(find.textContaining('Source builds do not include billing or ads'), findsOneWidget);
+      expect(find.text('About OmniTerm'), findsOneWidget);
+      expect(find.text('OmniTerm Terminal Console'), findsOneWidget);
+      final privacy = tester.widget<Text>(find.byKey(const ValueKey('about.privacy'))).data!;
+      expect(privacy, startsWith('Source Available build.'));
+      expect(privacy, contains('keeps SSH keys and credentials on-device'));
+      expect(privacy, contains('no OmniTerm account or usage telemetry'));
+      expect(
+        privacy,
+        endsWith(
+          'Source builds do not include Google billing, ads, consent, or in-app review services.',
+        ),
+      );
       await tester.pump();
     });
 
@@ -148,25 +154,13 @@ void main() {
 
       expect(find.textContaining('PolyForm Noncommercial'), findsOneWidget);
       expect(find.text(AboutScreen.projectUrl), findsOneWidget);
+      expect(find.text('View on GitHub'), findsOneWidget);
+      expect(find.text('Privacy Policy'), findsOneWidget);
       await tester.pump();
     });
 
-    testWidgets('the diagnostics block carries nothing identifying', (tester) async {
+    testWidgets('copied diagnostics carry nothing identifying', (tester) async {
       // A user is invited to paste this into a public issue, so it must be safe to paste there.
-      await pump(tester, const AboutScreen());
-
-      final text = tester.widget<Text>(find.byKey(const ValueKey('about.diagnostics.text'))).data!;
-      expect(text, contains('OmniTerm'));
-      expect(text, contains('Platform:'));
-      expect(text.toLowerCase(), isNot(contains('password')));
-      expect(text.toLowerCase(), isNot(contains('@')), reason: 'no user@host anywhere');
-      expect(find.textContaining('no host names, addresses or credentials'), findsOneWidget);
-      await tester.pump();
-    });
-
-    testWidgets('copying reports what was copied', (tester) async {
-      // The link cannot be opened until the platform integration lands, so copying has to be
-      // visibly successful rather than appearing to do nothing.
       final copied = <MethodCall>[];
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -181,12 +175,39 @@ void main() {
       );
 
       await pump(tester, const AboutScreen());
-      await tester.tap(find.byKey(const ValueKey('about.copyUrl')));
+      final copy = find.byKey(const ValueKey('about.copyDiagnostics'));
+      await tester.ensureVisible(copy);
+      await tester.tap(copy);
       await tester.pumpAndSettle();
 
-      expect(copied, hasLength(1));
-      expect((copied.single.arguments as Map)['text'], AboutScreen.projectUrl);
-      expect(find.byKey(const ValueKey('about.copied')), findsOneWidget);
+      final text = (copied.single.arguments as Map)['text'] as String;
+      expect(text, startsWith('App version: '));
+      expect(text, contains('\nDevice: '));
+      expect(text, contains('\nABI: '));
+      expect(text, endsWith('\nAd ID: N/A'));
+      expect(text.toLowerCase(), isNot(contains('@')), reason: 'no user@host anywhere');
+      expect(find.text('Diagnostics copied to clipboard.'), findsOneWidget);
+      await tester.pump();
+    });
+
+    testWidgets('the diagnostics rows follow Kotlin', (tester) async {
+      await pump(tester, const AboutScreen());
+      for (final label in [
+        'App version',
+        'Build',
+        'Distribution',
+        'Device',
+        'Android',
+        'ABI',
+        'Ad ID',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+      expect(find.text('Source Available'), findsOneWidget);
+      expect(
+        find.text('No crashes recorded. Reports appear here automatically if the app crashes.'),
+        findsOneWidget,
+      );
       await tester.pump();
     });
 
@@ -194,6 +215,7 @@ void main() {
       // PackageInfo needs a platform channel that a plain widget test does not provide.
       await pump(tester, const AboutScreen());
       expect(find.byKey(const ValueKey('about.version')), findsOneWidget);
+      expect(find.text('Version …'), findsOneWidget);
       await tester.pump();
     });
   });

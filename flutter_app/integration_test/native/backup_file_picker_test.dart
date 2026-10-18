@@ -49,16 +49,22 @@ void main() {
   /// Selects only Settings, the smallest export. Like Kotlin, every non-empty backup is encrypted,
   /// so export flows answer the passphrase dialog with [enterPassphrase] before the picker opens.
   Future<void> selectSettingsOnly(PatrolIntegrationTester $) async {
-    await $(const ValueKey('backup.selectNone')).tap();
-    await $(const ValueKey('backup.section.settings')).scrollTo().tap();
+    // Kotlin chooses sections inside the Backup dialog; the remembered selection is set on the
+    // app-scoped model here so each picker flow starts from the same choice.
     final context = $.tester.element($(const ValueKey('backup.list')).finder);
     final vm = context.read<BackupViewModel>();
+    vm
+      ..selectNone()
+      ..toggleSection(BackupSection.settings, enabled: true);
+    await $.pumpAndSettle();
     expect(vm.selection.sections, {BackupSection.settings});
     expect(vm.canExport, isTrue, reason: 'Settings must remain selected before export');
     expect(vm.requiresPassphrase, isTrue);
   }
 
   Future<void> enterPassphrase(PatrolIntegrationTester $) async {
+    // Backup → "Backup sections" → Continue → "Encrypt Backup".
+    await $(const ValueKey('backup.sections.continue')).tap();
     await $(const ValueKey('backup.passphrase.field')).enterText('a-long-enough-passphrase');
     await $(const ValueKey('backup.passphrase.confirm')).tap();
   }
@@ -143,11 +149,19 @@ void main() {
       try {
         await held.future.timeout(const Duration(seconds: 10));
         // Tap without waiting for animations: the pending write deliberately keeps progress active.
-        await $.tester.tap(find.byKey(const ValueKey('backup.selectAll')));
+        // Kotlin's sections dialog persists each change immediately.
+        await $.tester.tap(find.byKey(const ValueKey('backup.export')));
+        await $.tester.pump(const Duration(milliseconds: 300));
+        // The sections dialog scrolls; at CI's 420 dpi the Crash logs row starts below its fold,
+        // and a tap there misses — so nothing is written and no progress can appear.
+        final crashLogs = find.byKey(const ValueKey('backup.section.crashLogs'));
+        await $.tester.ensureVisible(crashLogs);
+        await $.tester.pump(const Duration(milliseconds: 300));
+        await $.tester.tap(crashLogs);
         await $.tester.pump();
         expect(
           find.text('Remembering backup selection…'),
-          findsOneWidget,
+          findsWidgets,
           reason: 'a held settings write must show progress before it completes',
         );
       } finally {
@@ -162,11 +176,15 @@ void main() {
         expect(finder, findsOneWidget);
       }
 
-      await waitFor(find.byKey(const ValueKey('backup.selection.error')));
+      await waitFor(find.byKey(const ValueKey('backup.sections.selection.error')));
       expect(vm.selection.contains(BackupSection.crashLogs), isTrue);
       expect((await db.appDataDao.getSetting('backup_export_selection'))?.value, previous?.value);
       await db.customStatement('DROP TRIGGER reject_backup_selection');
-      await $.tester.tap(find.byKey(const ValueKey('backup.selection.retry')));
+      // Below the dialog's fold at 420 dpi, like the row above.
+      final retry = find.byKey(const ValueKey('backup.sections.selection.retry'));
+      await $.tester.ensureVisible(retry);
+      await $.pumpAndSettle();
+      await $.tester.tap(retry);
       await $.pumpAndSettle();
       final deadline = DateTime.now().add(const Duration(seconds: 10));
       while ((await db.appDataDao.getSetting('backup_export_selection'))?.value !=
@@ -179,7 +197,7 @@ void main() {
         vm.selection.encode(),
       );
       await $.pumpAndSettle();
-      expect(find.byKey(const ValueKey('backup.selection.error')), findsNothing);
+      expect(find.byKey(const ValueKey('backup.sections.selection.error')), findsNothing);
       expect(find.text('Remembering backup selection…'), findsNothing);
     } finally {
       if (!release.isCompleted) release.complete();
@@ -208,17 +226,16 @@ void main() {
     await openBackup($);
     await selectSettingsOnly($);
 
-    expect(
-      $(const ValueKey('backup.sensitiveNote')).exists,
-      true,
-      reason: 'Kotlin encrypts every backup, settings included, so the passphrase is explained',
-    );
-
     // Scrolled to, like `backup.import` below. The Backup screen is a `ListView`, so a control past
     // the fold is not merely off-screen — it has never been built, and the finder reports zero
     // widgets rather than an invisible one. Both of these failed exactly there the first time these
     // tests were ever executed.
     await $(const ValueKey('backup.export')).scrollTo().tap();
+    expect(
+      $(const ValueKey('backup.sensitiveNote')).exists,
+      true,
+      reason: 'Kotlin encrypts every backup, settings included, and the dialog says so',
+    );
     await enterPassphrase($);
 
     // Settle permission and require the actual platform picker within one unchanged budget.
@@ -232,14 +249,7 @@ void main() {
     // silence left the user unable to tell a cancelled save from a finished one. The property this
     // test protects is unchanged and is now checked directly — and more strictly, since it would
     // also catch a message that wrongly claimed success.
-    final message = $.tester
-        .widget<Text>(
-          find.descendant(
-            of: $(const ValueKey('backup.message')).finder,
-            matching: find.byType(Text),
-          ),
-        )
-        .data;
+    final message = $.tester.widget<Text>($(const ValueKey('backup.message')).finder).data;
     expect(
       message,
       isNot(contains('Backup saved')),
@@ -311,13 +321,13 @@ void main() {
     await cancelPicker($);
 
     expect(
-      $(const ValueKey('backup.message')).exists,
-      false,
-      reason: 'a cancelled restore must not report one that did not happen',
+      $.tester.widget<Text>($(const ValueKey('backup.message')).finder).data,
+      'Restore cancelled. Nothing was changed.',
+      reason: 'a cancelled restore says so, as Kotlin does, and never claims a restore',
     );
     await $(const ValueKey('backup.import')).scrollTo();
     expect(
-      $.tester.widget<OutlinedButton>($(const ValueKey('backup.import')).finder).onPressed,
+      $.tester.widget<FilledButton>($(const ValueKey('backup.import')).finder).onPressed,
       isNotNull,
       reason: 'the screen must be usable again after a cancelled restore',
     );

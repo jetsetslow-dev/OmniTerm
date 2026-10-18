@@ -89,9 +89,25 @@ void main() {
     authStatus: 'unknown',
   );
 
-  /// Every export is encrypted, as Kotlin requires, so export flows answer the passphrase first.
-  Future<void> tapExportWithPassphrase(WidgetTester tester) async {
+  /// Kotlin's Backup button opens the "Backup sections" dialog.
+  Future<void> openSections(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey('backup.export')));
+    await tester.pumpAndSettle();
+  }
+
+  /// Selection now lives in Kotlin's dialog; tests set it on the app-scoped model directly.
+  Future<void> selectOnly(WidgetTester tester, BackupSection section) async {
+    vm
+      ..selectNone()
+      ..toggleSection(section, enabled: true);
+    await tester.pumpAndSettle();
+  }
+
+  /// Backup → Continue → "Encrypt Backup" passphrase → Choose location. Every export is encrypted,
+  /// as Kotlin requires. Leaves the final pump to the caller.
+  Future<void> tapExportWithPassphrase(WidgetTester tester) async {
+    await openSections(tester);
+    await tester.tap(find.byKey(const ValueKey('backup.sections.continue')));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('backup.passphrase.field')),
@@ -151,31 +167,39 @@ void main() {
     expect(find.byKey(const ValueKey('backup.restore.selectionDialog')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('backup.restore.continue')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('backup.restore.confirmDialog')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('backup.restore.confirm')));
+    expect(find.byKey(const ValueKey('backup.restore.confirmDialog.dialog')), findsOneWidget);
+    expect(find.text('Restore selected data?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('backup.restore.confirmDialog.confirm')));
     await tester.pumpAndSettle();
   }
 
-  testWidgets('every section is offered, with crash logs opt-in', (tester) async {
+  testWidgets('every section is offered in Kotlin\'s dialog, with crash logs opt-in', (
+    tester,
+  ) async {
     await pump(tester);
+    await openSections(tester);
 
+    expect(find.text('Backup sections'), findsOneWidget);
+    expect(find.text('Choose what to include'), findsOneWidget);
     for (final section in BackupSection.values) {
       expect(find.byKey(ValueKey('backup.section.${section.name}')), findsOneWidget);
+      expect(find.text(backupSectionLabels[section]!), findsOneWidget);
     }
     expect(vm.selection.sections, BackupSection.values.toSet()..remove(BackupSection.crashLogs));
     await finish(tester);
   });
 
-  testWidgets('a coupled section says what it drags in', (tester) async {
-    // Explained before the checkbox moves on its own, which would otherwise look like the app
-    // second-guessing the user.
+  testWidgets('the legend explains sensitive sections and coupled sections', (tester) async {
     await pump(tester);
-    expect(find.textContaining('Includes hosts'), findsWidgets);
+    await openSections(tester);
+    expect(find.text('* Sensitive — selecting forces an encrypted backup.'), findsOneWidget);
+    expect(find.textContaining('Alert rules and history include Servers.'), findsOneWidget);
     await finish(tester);
   });
 
   testWidgets('unticking hosts unticks everything that needs them', (tester) async {
     await pump(tester);
+    await openSections(tester);
 
     await tester.tap(find.byKey(const ValueKey('backup.section.servers')));
     await tester.pumpAndSettle();
@@ -195,6 +219,7 @@ void main() {
     await pump(tester);
     vm.selectNone();
     await tester.pumpAndSettle();
+    await openSections(tester);
 
     await tester.tap(find.byKey(const ValueKey('backup.section.alertRules')));
     await tester.pumpAndSettle();
@@ -203,35 +228,41 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('select all and none work', (tester) async {
+  testWidgets('Continue is disabled with nothing selected', (tester) async {
     await pump(tester);
-
-    await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+    vm.selectNone();
     await tester.pumpAndSettle();
-    expect(vm.selection.isEmpty, isTrue);
+    await openSections(tester);
 
-    await tester.tap(find.byKey(const ValueKey('backup.selectAll')));
-    await tester.pumpAndSettle();
-    expect(vm.selection.sections, BackupSection.values.toSet());
+    final button = tester.widget<TextButton>(
+      find.byKey(const ValueKey('backup.sections.continue')),
+    );
+    expect(button.onPressed, isNull);
     await finish(tester);
   });
 
-  testWidgets('a sensitive selection explains why a passphrase is needed', (tester) async {
-    // A prompt with no explanation reads as an obstacle; this one protects stored passwords.
+  testWidgets('a sensitive selection explains that the backup will be encrypted', (tester) async {
     await pump(tester);
-    expect(find.byKey(const ValueKey('backup.sensitiveNote')), findsOneWidget);
-    expect(find.textContaining('no way to recover'), findsOneWidget);
+    await openSections(tester);
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('backup.sensitiveNote'))).data,
+      'Sensitive sections selected: backup will be encrypted.',
+    );
     await finish(tester);
   });
 
   testWidgets('a settings-only backup still needs a passphrase, as in Kotlin', (tester) async {
     await pump(tester);
-    vm
-      ..selectNone()
-      ..toggleSection(BackupSection.settings, enabled: true);
-    await tester.pumpAndSettle();
+    await selectOnly(tester, BackupSection.settings);
+    await openSections(tester);
 
-    expect(find.byKey(const ValueKey('backup.sensitiveNote')), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('backup.sensitiveNote'))).data,
+      'Sensitive sections selected: backup will be encrypted.',
+    );
+    await tester.tap(find.byKey(const ValueKey('backup.sections.continue')));
+    await tester.pumpAndSettle();
+    expect(find.text('Encrypt Backup'), findsOneWidget);
     await finish(tester);
   });
 
@@ -244,10 +275,7 @@ void main() {
     final gate = Completer<void>();
     files.saveGate = gate;
     await pump(tester);
-    await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-    await tester.pumpAndSettle();
+    await selectOnly(tester, BackupSection.wolTargets);
 
     await tapExportWithPassphrase(tester);
     await tester.pump();
@@ -276,61 +304,48 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('export is disabled with nothing selected', (tester) async {
+  testWidgets('cancelling the sections dialog writes nothing and says so', (tester) async {
     await pump(tester);
-    await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+    await openSections(tester);
+    await tester.tap(find.byKey(const ValueKey('backup.sections.cancel')));
     await tester.pumpAndSettle();
 
-    final button = tester.widget<FilledButton>(find.byKey(const ValueKey('backup.export')));
-    expect(button.onPressed, isNull);
+    expect(files.saved, isEmpty);
+    expect(vm.status, 'Backup cancelled. Nothing was written.');
     await finish(tester);
   });
 
-  testWidgets('exporting asks for a passphrase and warns it cannot be reset', (tester) async {
+  testWidgets('exporting asks for a passphrase in Kotlin\'s Encrypt Backup dialog', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester);
-    vm
-      ..selectNone()
-      ..toggleSection(BackupSection.settings, enabled: true)
-      ..toggleSection(BackupSection.sshKeys, enabled: true);
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const ValueKey('backup.export')));
+    await openSections(tester);
+    await tester.tap(find.byKey(const ValueKey('backup.sections.continue')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('backup.passphrase.dialog')), findsOneWidget);
-    expect(find.textContaining('Nobody can reset it'), findsOneWidget);
+    expect(find.text('Encrypt Backup'), findsOneWidget);
+    expect(find.textContaining("Choose a passphrase you'll need for restore"), findsOneWidget);
+    expect(find.text('Choose location'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('backup.passphrase.cancel')));
     await tester.pumpAndSettle();
-    // This asserted `vm.status == null`, which was only ever a proxy for the stated reason —
-    // cancelling must not produce a file. The proxy stopped holding once a cancelled export says
-    // so, and a message is not a file. Asserting the thing itself is stronger than the proxy was.
     expect(files.saved, isEmpty, reason: 'cancelling must not produce a file');
+    expect(vm.status, 'Backup cancelled. Nothing was written.');
     expect(vm.statusIsSuccess, isFalse, reason: 'and must not read as a completed backup');
     await finish(tester);
   });
 
   testWidgets('a passphrase the export would refuse cannot leave the dialog', (tester) async {
-    // The defect this covers, reported from the field: the dialog advertised eight characters and
-    // enabled its button at eight, the picker then created the file, and only afterwards did the
-    // export refuse anything under twelve — leaving a 0-byte "backup" on disk and an error. Kotlin
-    // had the same three numbers in two values (`ui/ToolsScreen.kt:2808` said 8,
-    // `ui/AppViewModel.kt:11360` demanded 12); this port had no minimum at all.
+    // The dialog states the minimum and keeps its button disabled below it, so it never hands back
+    // a passphrase the export would refuse after a file already existed.
     await repo.insertServer(server(name: 'nas'));
     await pump(tester);
-    vm
-      ..selectNone()
-      ..toggleSection(BackupSection.settings, enabled: true)
-      ..toggleSection(BackupSection.sshKeys, enabled: true);
+    await openSections(tester);
+    await tester.tap(find.byKey(const ValueKey('backup.sections.continue')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('backup.export')));
-    await tester.pumpAndSettle();
-
-    // The number is on the field while the user types, not in an error after the file exists.
     expect(
-      find.textContaining('At least ${BackupViewModel.passphraseMinLength} characters'),
+      find.text('Passphrase (min ${BackupViewModel.passphraseMinLength} chars)'),
       findsOneWidget,
     );
 
@@ -375,11 +390,14 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('the restore section states that nothing is deleted', (tester) async {
-    // The two things a user needs before tapping: nothing is destroyed, and the passphrase is not
-    // recoverable.
+  testWidgets('the card explains Backup and Restore in Kotlin\'s words', (tester) async {
     await pump(tester);
-    expect(find.textContaining('nothing is deleted or overwritten'), findsOneWidget);
+    expect(find.text('OmniTerm app backup'), findsOneWidget);
+    expect(find.textContaining('It does NOT back up any files or data'), findsOneWidget);
+    expect(
+      find.textContaining('Restore shows available sections after the selected file is read.'),
+      findsOneWidget,
+    );
     await finish(tester);
   });
 
@@ -398,7 +416,7 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('restore previews sections and can exclude one', (tester) async {
+  testWidgets('restore previews sections with counts and can exclude one', (tester) async {
     files.openContents =
         '{"v":2,"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}],'
         '"settings":[{"key":"theme","value":"light"}]}';
@@ -407,7 +425,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('backup.import')));
     await tester.pumpAndSettle();
 
-    expect(find.text('1 item(s)'), findsNWidgets(2));
+    expect(find.text('Wake on LAN * (1)'), findsOneWidget);
+    expect(find.text('Settings & customizations * (1)'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('backup.restore.section.settings')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('backup.restore.section.settings')));
     await tester.pumpAndSettle();
     await confirmRestore(tester);
@@ -427,6 +448,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('backup.import')));
     await tester.pumpAndSettle();
     expect(find.text('Hosts to restore'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('backup.restore.host.11')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('backup.restore.host.11')));
     await tester.pumpAndSettle();
     await confirmRestore(tester);
@@ -450,10 +473,7 @@ void main() {
   group('saving to a file', () {
     testWidgets('the backup text is what gets written', (tester) async {
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
@@ -464,27 +484,24 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('a save names where the file went', (tester) async {
-      // A backup the user cannot find is one they will assume did not happen.
+    testWidgets('a save reports Kotlin\'s written summary', (tester) async {
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('/storage/Download/backup'), findsOneWidget);
+      expect(
+        vm.status,
+        'Encrypted backup written: 0 servers, 0 keys, 0 profiles, 0 scripts, 0 rules, '
+        '0 alert history, 0 WoL, 0 shares, 0 tunnels, 0 settings.',
+      );
       await finish(tester);
     });
 
     testWidgets('a wake-target-only backup is still encrypted, as in Kotlin', (tester) async {
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
@@ -508,10 +525,7 @@ void main() {
           requestNotificationPermission: surfaces.requestPermission,
         ),
       );
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       await tapExportWithPassphrase(tester);
       // Preparation remains visibly busy until the held platform callback completes.
@@ -578,21 +592,13 @@ void main() {
           requestNotificationPermission: surfaces.requestPermission,
         ),
       );
-      vm.selectNone();
-      vm.toggleSection(BackupSection.settings, enabled: true);
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.settings);
       await tapExportWithPassphrase(tester);
       await tester.pump();
       try {
-        expect(find.text('Preparing backup…'), findsOneWidget);
+        expect(find.text('Exporting…'), findsOneWidget);
         expect(
           tester.widget<FilledButton>(find.byKey(const ValueKey('backup.export'))).onPressed,
-          isNull,
-        );
-        expect(
-          tester
-              .widget<CheckboxListTile>(find.byKey(const ValueKey('backup.section.settings')))
-              .onChanged,
           isNull,
         );
         expect(files.saved, isEmpty);
@@ -618,10 +624,7 @@ void main() {
           },
         ),
       );
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
@@ -639,10 +642,7 @@ void main() {
       // save from a finished one, which is exactly what AGENTS.md's app-wide feedback rule forbids.
       files.saveResult = const BackupSaveResult(BackupSaveOutcome.cancelled);
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
@@ -654,20 +654,13 @@ void main() {
     });
 
     testWidgets('a cancelled save clears a previous success message', (tester) async {
-      // The sharper half of the same defect: `exportBackup` did not clear `_status`, so the
-      // "Backup saved to …" from the previous export stayed on screen through the next one. A user
-      // who exported, then exported again and cancelled, was looking at a success message for a
-      // file that had just not been written.
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       files.saveResult = const BackupSaveResult(BackupSaveOutcome.saved, location: 'somewhere');
       await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
-      expect(vm.status, contains('somewhere'));
+      expect(vm.status, contains('backup written'));
 
       files.saveResult = const BackupSaveResult(BackupSaveOutcome.cancelled);
       await tapExportWithPassphrase(tester);
@@ -675,19 +668,18 @@ void main() {
 
       expect(
         vm.status,
-        isNot(contains('somewhere')),
-        reason: 'the old success message must not survive a later cancelled export',
+        isNot(contains('backup written')),
+        reason: 'the old success must not survive',
       );
-      expect(vm.status, contains('cancelled'));
+      expect(vm.status, 'Backup cancelled. Nothing was written.');
       await finish(tester);
     });
 
     testWidgets('cancelling the passphrase says so instead of nothing', (tester) async {
-      // Tapping Export is user-triggered work. Ending it with a blank screen leaves the user
-      // unable to tell a cancelled export from one that silently failed.
       await repo.insertServer(server(name: 'nas'));
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await openSections(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.sections.continue')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('backup.passphrase.field')), findsOneWidget);
 
@@ -695,8 +687,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(vm.error, isNull, reason: 'the user chose this; it is not a failure');
-      expect(vm.status, contains('cancelled'));
-      expect(vm.status, contains('Nothing was written'));
+      expect(vm.status, 'Backup cancelled. Nothing was written.');
       expect(files.saved, isEmpty);
       await finish(tester);
     });
@@ -721,10 +712,7 @@ void main() {
         error: 'permission denied',
       );
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
-      await tester.pumpAndSettle();
+      await selectOnly(tester, BackupSection.wolTargets);
 
       await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
@@ -744,7 +732,7 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('cancelling the open picker does nothing', (tester) async {
+    testWidgets('cancelling the open picker changes nothing and says so', (tester) async {
       files.openContents = null;
       await pump(tester);
 
@@ -752,6 +740,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(vm.error, isNull);
+      expect(vm.status, 'Restore cancelled. Nothing was changed.');
       await finish(tester);
     });
   });
@@ -786,7 +775,7 @@ void main() {
     testWidgets('a completed save records the time under the Kotlin key', (tester) async {
       await pump(tester);
 
-      vm.reportSaved('/tmp/backup.omnibak', encrypted: true);
+      vm.reportSaved('/tmp/omniterm_backup_1.json', encrypted: true);
       await tester.pumpAndSettle();
 
       expect(lastExport(tester).data, isNot(contains('Never')));

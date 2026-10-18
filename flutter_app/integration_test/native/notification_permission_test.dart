@@ -124,7 +124,7 @@ void main() {
     // Rules are still creatable — the add button lives on the Rules tab.
     await $(const ValueKey('alerts.tab.rules')).tap();
     expect(
-      $(const ValueKey('alerts.addRule')).exists,
+      $(const ValueKey('alerts.add')).exists,
       true,
       reason: 'rules must still be creatable with notifications denied',
     );

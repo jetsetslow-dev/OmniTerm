@@ -3,15 +3,38 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/backup_selection.dart';
+import '../../../domain/host_display.dart';
 import '../../../platform/backup_file_store.dart';
 import '../../../platform/distribution.dart';
 import '../../../platform/license_controller.dart';
-import '../../view_model/servers_view_model.dart';
+import '../../navigation.dart';
 import '../../theme/colors.dart';
+import '../../theme/typography.dart';
 import '../../view_model/backup_view_model.dart';
+import '../../view_model/servers_view_model.dart';
 import '../../widgets/omni_components.dart';
+import '../../widgets/omni_confirm.dart';
+import '../../widgets/popup_scroll_behavior.dart';
 
-/// The Backup tool, ported from `BackupToolView` in `ui/ToolsScreen.kt`.
+/// Kotlin's section labels (`BackupSelectionList` in `ui/ToolsScreen.kt`). A trailing `*` marks a
+/// section that forces an encrypted backup; the legend under the list explains it once.
+const backupSectionLabels = <BackupSection, String>{
+  BackupSection.servers: 'Servers *',
+  BackupSection.sshKeys: 'SSH keys *',
+  BackupSection.credentialProfiles: 'Credential profiles *',
+  BackupSection.scripts: 'Scripts *',
+  BackupSection.alertRules: 'Alert rules *',
+  BackupSection.activeAlerts: 'Active alerts',
+  BackupSection.alertHistory: 'Alert history *',
+  BackupSection.wolTargets: 'Wake on LAN *',
+  BackupSection.networkShares: 'Network shares *',
+  BackupSection.portForwards: 'SSH tunnels *',
+  BackupSection.settings: 'Settings & customizations *',
+  BackupSection.crashLogs: 'Crash logs *',
+};
+
+/// The Backup tool, a port of `BackupToolView` in `ui/ToolsScreen.kt`: one card with Backup and
+/// Restore, and the section, passphrase and restore choices in dialogs.
 ///
 /// The view model owns the *text*; where it lands is the platform's business, handled through an
 /// injected [BackupFileStore] so the flow can be exercised without a system file dialog.
@@ -26,41 +49,12 @@ class BackupScreen extends StatefulWidget {
 
 class _BackupScreenState extends State<BackupScreen> {
   final _scrollController = ScrollController();
-  BackupViewModel? _feedbackModel;
-  String? _lastSelectionSaveError;
   bool _exportPending = false;
-  String? _exportProgress;
+  bool _importPending = false;
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final model = context.read<BackupViewModel>();
-    if (identical(model, _feedbackModel)) return;
-    _feedbackModel?.removeListener(_selectionFeedbackChanged);
-    _feedbackModel = model;
-    _lastSelectionSaveError = null;
-    model.addListener(_selectionFeedbackChanged);
-    _selectionFeedbackChanged();
-  }
-
-  void _selectionFeedbackChanged() {
-    final error = _feedbackModel?.selectionSaveError;
-    if (error != null && error != _lastSelectionSaveError) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _revealFeedback());
-    }
-    _lastSelectionSaveError = error;
-  }
-
-  @override
-  void dispose() {
-    _feedbackModel?.removeListener(_selectionFeedbackChanged);
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _revealFeedback() {
-    if (mounted && _scrollController.hasClients) _scrollController.jumpTo(0);
-  }
+  /// True from the end of the dialogs until the export itself starts (notification permission),
+  /// so the work already approved shows progress the whole way, as Kotlin's "Exporting…" does.
+  bool _preparing = false;
 
   @override
   void initState() {
@@ -75,404 +69,560 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _revealFeedback() {
+    if (mounted && _scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final vm = context.watch<BackupViewModel>();
     final scheme = Theme.of(context).colorScheme;
-    final working = vm.busy || _exportPending;
-    final showProgress = vm.busy || (_exportPending && _exportProgress != null);
-    final progressMessage = vm.busy ? vm.busyMessage : _exportProgress ?? 'Preparing backup…';
+    final muted = composed(TextStyle(fontSize: 11, color: scheme.onSurfaceVariant));
+    final message = vm.error ?? vm.status;
+    final lastBackup = vm.lastExportTimeLoading
+        ? 'Last backup: …'
+        : vm.lastExportTime == null
+        ? (vm.lastExportTimeError != null ? 'Last backup: Unknown' : 'Last backup: Never')
+        : 'Last backup: ${DateFormat.yMMMd().add_jm().format(vm.lastExportTime!)}';
+    // Reading or decrypting a file gets Kotlin's progress dialog, whoever started it; exporting
+    // and restoring show the inline row under the buttons.
+    final inspecting =
+        vm.busy && (vm.busyMessage == 'Decrypting backup…' || vm.busyMessage == 'Reading backup…');
+    final restoring = vm.busy && vm.busyMessage == 'Restoring backup…';
 
-    return Stack(
-      children: [
-        ListView(
-          controller: _scrollController,
-          key: const ValueKey('backup.list'),
-          padding: const EdgeInsets.all(12),
-          children: [
-            if (vm.status != null || vm.error != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: OmniCard(
-                  key: const ValueKey('backup.message'),
-                  // Green means "this worked". A cancelled save did not, so it gets the neutral
-                  // accent rather than borrowing the colour the user reads as success.
-                  leftAccent: vm.error != null
-                      ? OmniColors.red
-                      : vm.statusIsSuccess
-                      ? OmniColors.green
-                      : OmniColors.amber,
-                  child: Row(
+    return ToolScaffold(
+      title: 'App backup',
+      keyPrefix: 'backup',
+      onBack: () => context.read<NavigationController>().navigateTo(Screen.tools),
+      child: Stack(
+        children: [
+          ScrollConfiguration(
+            behavior: const PopupScrollBehavior(popupsOnly: false),
+            child: SingleChildScrollView(
+              key: const ValueKey('backup.list'),
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: OmniCard(
+                leftAccent: OmniColors.cyan,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(
-                          vm.error ?? vm.status!,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: vm.error != null ? OmniColors.red : null,
+                      Text(
+                        'OmniTerm app backup',
+                        style: composed(TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      Text(
+                        "Exports OmniTerm's own configuration — saved hosts, keys, scripts and "
+                        'settings. It does NOT back up any files or data on your servers.',
+                        style: muted,
+                      ),
+                      Text(lastBackup, key: const ValueKey('backup.lastExport'), style: muted),
+                      if (vm.lastExportTimeError != null)
+                        TextButton(
+                          key: const ValueKey('backup.lastExport.retry'),
+                          onPressed: vm.loadLastExportTime,
+                          child: const Text('Retry checking backup time'),
+                        ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Tap Backup to choose export sections. Restore shows available sections '
+                        'after the selected file is read.',
+                        style: muted,
+                      ),
+                      const SizedBox(height: 12),
+                      _SelectionFeedback(vm: vm),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              key: const ValueKey('backup.export'),
+                              onPressed: vm.busy || _exportPending ? null : () => _export(vm),
+                              icon: const Icon(Icons.cloud_upload, semanticLabel: 'Backup'),
+                              label: const Text('Backup', style: TextStyle(fontSize: 12)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton.icon(
+                              key: const ValueKey('backup.import'),
+                              style: FilledButton.styleFrom(backgroundColor: scheme.secondary),
+                              onPressed: vm.busy || _importPending ? null : () => _import(vm),
+                              icon: const Icon(
+                                Icons.cloud_download,
+                                semanticLabel: 'Restore Backup',
+                              ),
+                              label: const Text('Restore', style: TextStyle(fontSize: 12)),
+                            ),
+                          ),
+                        ],
+                      ),
+                      // Export and restore run for seconds on a large backup, after the picker
+                      // has closed, so the in-flight state shows here where the result lands.
+                      if ((vm.busy || _preparing) && !inspecting)
+                        Padding(
+                          key: const ValueKey('backup.progress'),
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Row(
+                            children: [
+                              const SizedBox.square(
+                                dimension: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                restoring ? 'Restoring…' : 'Exporting…',
+                                style: composed(
+                                  TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                      IconButton(
-                        tooltip: 'Dismiss',
-                        key: const ValueKey('backup.message.dismiss'),
-                        icon: const Icon(Icons.close, size: 16),
-                        onPressed: vm.dismissMessages,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            const SectionHeader(title: 'What to include'),
-            if (vm.selectionSaving) ...[
-              const LinearProgressIndicator(),
-              const Text('Remembering backup selection…', style: TextStyle(fontSize: 11)),
-            ],
-            if (vm.selectionSaveError != null) ...[
-              Text(
-                vm.selectionSaveError!,
-                key: const ValueKey('backup.selection.error'),
-                style: const TextStyle(fontSize: 11, color: OmniColors.red),
-              ),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  key: const ValueKey('backup.selection.retry'),
-                  onPressed: vm.retrySelectionSave,
-                  child: const Text('Retry remembering selection'),
-                ),
-              ),
-            ],
-            Row(
-              children: [
-                TextButton(
-                  key: const ValueKey('backup.selectAll'),
-                  onPressed: working ? null : vm.selectAll,
-                  child: const Text('All', style: TextStyle(fontSize: 12)),
-                ),
-                TextButton(
-                  key: const ValueKey('backup.selectNone'),
-                  onPressed: working ? null : vm.selectNone,
-                  child: const Text('None', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-            for (final section in BackupSection.values)
-              CheckboxListTile(
-                key: ValueKey('backup.section.${section.name}'),
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                secondary: vm.selectionSaving
-                    ? const SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          semanticsLabel: 'Remembering backup selection',
+                      if (message != null && message.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            message,
+                            key: const ValueKey('backup.message'),
+                            style: composed(
+                              TextStyle(
+                                fontSize: 12,
+                                color: vm.error != null
+                                    ? OmniColors.red
+                                    : vm.statusIsSuccess
+                                    ? OmniColors.green
+                                    : OmniColors.amber,
+                              ),
+                            ),
+                          ),
                         ),
-                      )
-                    : null,
-                title: Text(section.label, style: const TextStyle(fontSize: 13)),
-                subtitle: _dependencyNote(section, scheme),
-                value: vm.selection.contains(section),
-                onChanged: working
-                    ? null
-                    : (value) => vm.toggleSection(section, enabled: value ?? false),
-              ),
-            const SizedBox(height: 8),
-            if (vm.requiresPassphrase)
-              Text(
-                // Saying *why* rather than just demanding it: a passphrase prompt with no explanation
-                // reads as an obstacle, and this one is protecting stored passwords and private keys.
-                'This selection contains credentials and host details, so the file will be encrypted '
-                'with a passphrase. There is no way to recover the backup without it.',
-                key: const ValueKey('backup.sensitiveNote'),
-                style: const TextStyle(fontSize: 11, color: OmniColors.amber),
-              ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              key: const ValueKey('backup.export'),
-              icon: const Icon(Icons.upload_file, size: 18),
-              label: Text(working ? 'Working…' : 'Create backup'),
-              onPressed: vm.canExport && !working ? () => _export(context, vm) : null,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              // The whole value of this line is the "Never" case: a user who believes they have a
-              // backup and does not is exactly who this screen is for.
-              vm.lastExportTimeLoading
-                  ? 'Checking last backup time…'
-                  : vm.lastExportTimeError != null && vm.lastExportTime == null
-                  ? 'Last backup: Unknown'
-                  : vm.lastExportTime == null
-                  ? 'Last backup: Never'
-                  : 'Last backup: ${DateFormat.yMMMd().add_jm().format(vm.lastExportTime!)}',
-              key: const ValueKey('backup.lastExport'),
-              style: TextStyle(
-                fontSize: 11,
-                color: vm.lastExportTime == null ? OmniColors.amber : scheme.onSurfaceVariant,
-              ),
-            ),
-            if (vm.lastExportTimeError != null) ...[
-              Text(
-                vm.lastExportTimeError!,
-                style: const TextStyle(fontSize: 11, color: OmniColors.amber),
-              ),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  key: const ValueKey('backup.lastExport.retry'),
-                  onPressed: vm.loadLastExportTime,
-                  child: const Text('Retry checking backup time'),
-                ),
-              ),
-            ],
-            const SizedBox(height: 24),
-            const SectionHeader(title: 'Restore'),
-            Text(
-              // The two things a user needs to know before tapping: nothing is destroyed, and the
-              // passphrase is not recoverable.
-              'Restoring adds the backup\'s contents alongside what is already here — nothing is '
-              'deleted or overwritten. An encrypted backup needs the passphrase it was made with.',
-              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              key: const ValueKey('backup.import'),
-              icon: const Icon(Icons.restore, size: 18),
-              label: const Text('Restore from backup'),
-              onPressed: working ? null : () => _import(context, vm),
-            ),
-          ],
-        ),
-        if (showProgress) ...[
-          const Positioned.fill(child: ModalBarrier(dismissible: false, color: Colors.black38)),
-          Center(
-            child: Semantics(
-              liveRegion: true,
-              child: Card(
-                key: const ValueKey('backup.progress'),
-                margin: const EdgeInsets.all(24),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(semanticsLabel: progressMessage),
-                      const SizedBox(height: 16),
-                      Text(progressMessage),
-                      const SizedBox(height: 8),
-                      const Text('This may take a little while. Please wait.'),
                     ],
                   ),
                 ),
               ),
             ),
           ),
+          // Kotlin's `BackupReadProgressDialog`: reading or decrypting a picked file.
+          if (inspecting) ...[
+            const Positioned.fill(child: ModalBarrier(dismissible: false, color: Colors.black38)),
+            Center(
+              child: AlertDialog(
+                key: const ValueKey('backup.readProgress'),
+                scrollable: true,
+                title: Text(vm.busyMessage),
+                content: const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('This may take a little while. Please wait.'),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
-  Widget? _dependencyNote(BackupSection section, ColorScheme scheme) {
-    if (section == BackupSection.crashLogs) {
-      return Text(
-        'Optional diagnostics; may contain paths or command fragments and always forces encryption.',
-        style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
-      );
-    }
-    final dependencies = BackupSelection.dependenciesOf(section);
-    if (dependencies.isEmpty) return null;
-    // Explaining the coupling before the checkbox moves on its own, which would otherwise look
-    // like the app second-guessing the user.
-    return Text(
-      'Includes ${dependencies.map((d) => d.label.toLowerCase()).join(' and ')}',
-      style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
-    );
-  }
-
-  Future<void> _export(BuildContext context, BackupViewModel vm) async {
+  Future<void> _export(BackupViewModel vm) async {
     if (_exportPending || vm.busy) return;
-    final selection = vm.selection;
-    setState(() {
-      _exportPending = true;
-      // The passphrase dialog already exposes the pending decision; show progress for the
-      // platform/IO preparation after it closes, without animating behind the dialog.
-      _exportProgress = selection.hasSensitiveData ? null : 'Preparing backup…';
-    });
+    setState(() => _exportPending = true);
     try {
-      await _performExport(context, vm, selection);
+      await _performExport(vm);
     } finally {
       if (mounted) setState(() => _exportPending = false);
+      _revealFeedback();
     }
   }
 
-  Future<void> _performExport(
-    BuildContext context,
-    BackupViewModel vm,
-    BackupSelection selection,
-  ) async {
+  Future<void> _performExport(BackupViewModel vm) async {
+    const cancelled = 'Backup cancelled. Nothing was written.';
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (_) => ChangeNotifierProvider<BackupViewModel>.value(
+        value: vm,
+        child: const _BackupSectionsDialog(),
+      ),
+    );
+    if (proceed != true) return vm.reportCancelled(cancelled);
+    final selection = vm.selection;
     var passphrase = '';
     if (selection.hasSensitiveData) {
-      final entered = await _askPassphrase(
-        context,
-        title: 'Choose a passphrase',
-        confirmLabel: 'Create backup',
-        minLength: BackupViewModel.passphraseMinLength,
-        // Stated at the point of decision, where it can still change what the user does.
-        note: 'Without this passphrase the backup cannot be opened. Nobody can reset it.',
+      if (!mounted) return;
+      final entered = await showDialog<String>(
+        context: context,
+        builder: (_) => const _PassphraseDialog(
+          title: 'Encrypt Backup',
+          note:
+              "Sensitive backup sections require encryption. Choose a passphrase you'll need "
+              'for restore.',
+          label: 'Passphrase (min ${BackupViewModel.passphraseMinLength} chars)',
+          confirmLabel: 'Choose location',
+          minLength: BackupViewModel.passphraseMinLength,
+        ),
       );
-      if (entered == null) {
-        vm.reportCancelled('Backup cancelled — no passphrase was entered. Nothing was written.');
-        _revealFeedback();
-        return;
-      }
+      if (entered == null) return vm.reportCancelled(cancelled);
       passphrase = entered;
     }
-
-    if (!mounted) return;
-    setState(() => _exportProgress = 'Preparing backup…');
-
     // Sequenced before the export, because the export starts a foreground operation whose
     // permission request would otherwise land on top of the file picker opened moments later.
-    // Import does not need this: it opens the picker before any operation begins.
-    await vm.operationNotifications?.ensureNotificationPermission();
-    if (!context.mounted) return;
-
-    final contents = await vm.exportBackup(passphrase, selection: selection);
-    _revealFeedback();
-    if (contents == null) return;
-    if (!context.mounted) {
-      // The backup was built — and encrypted, for a sensitive selection — but the user left before
-      // the picker could open, and throwing a system file dialog at a screen they have navigated
-      // away from is worse than not saving. Say so rather than dropping it in silence, which is the
-      // same mistake the save-outcome switch below used to make.
-      vm.reportCancelled(
-        'Backup was created but not saved — the screen closed before the file dialog opened. '
-        'Nothing was written.',
-      );
-      return;
+    if (mounted) setState(() => _preparing = true);
+    final String? contents;
+    try {
+      await vm.operationNotifications?.ensureNotificationPermission();
+      contents = await vm.exportBackup(passphrase, selection: selection);
+    } finally {
+      if (mounted) setState(() => _preparing = false);
     }
-
-    setState(() => _exportProgress = 'Waiting for a save location…');
+    if (contents == null) return;
     final result = await widget.fileStore.save(vm.suggestedFileName(), contents);
-    // Deliberately NOT gated on `context.mounted`. Saving hands off to the system file picker — a
-    // separate Activity — so this screen is routinely unmounted by the time the file is actually
-    // written, and since the engine is retained the view model reliably outlives it. Returning here
-    // discarded the outcome of a save that had really happened: no confirmation, no export
-    // timestamp stamped, and a failed save equally silent, leaving the user with no evidence the
-    // backup existed. `vm` is app-scoped (see main.dart) and always safe to record on; only UI work
-    // needs the mounted check, and `_revealFeedback` makes its own.
+    // Not gated on `mounted`: saving hands off to the system picker, so this screen is routinely
+    // unmounted when the file is written, and the app-scoped view model must still record it.
     switch (result.outcome) {
       case BackupSaveOutcome.saved:
-        // Naming where it went, rather than a bare "saved" the user has to take on trust — and
-        // repeating the passphrase warning at the moment the file becomes real and portable.
         vm.reportSaved(result.location, encrypted: passphrase.isNotEmpty);
       case BackupSaveOutcome.cancelled:
-        // Said, not silent. The backup was already built — and encrypted, for a sensitive
-        // selection — behind a "Creating backup…" spinner. Ending that with no message at all left
-        // the user unable to tell a cancelled save from a finished one.
         vm.reportSaveCancelled();
       case BackupSaveOutcome.failed:
         vm.reportSaveFailed(result.error);
     }
-    _revealFeedback();
   }
 
-  Future<void> _import(BuildContext context, BackupViewModel vm) async {
+  Future<void> _import(BackupViewModel vm) async {
+    if (_importPending || vm.busy) return;
+    setState(() => _importPending = true);
+    try {
+      await _performImport(vm);
+    } finally {
+      if (mounted) setState(() => _importPending = false);
+      _revealFeedback();
+    }
+  }
+
+  Future<void> _performImport(BackupViewModel vm) async {
+    const cancelled = 'Restore cancelled. Nothing was changed.';
     String? contents;
     try {
       contents = await widget.fileStore.open();
     } on BackupReadException catch (e) {
-      if (context.mounted) vm.reportSaveFailed(e.message);
-      _revealFeedback();
-      return;
+      return vm.reportSaveFailed(e.message);
     }
-    if (contents == null || !context.mounted) return;
+    if (contents == null) return vm.reportCancelled(cancelled);
     if (contents.trim().isEmpty) {
-      // Picking a file and having nothing happen is the worst of both: the user cannot tell whether
-      // the app failed, the file was wrong, or the tap missed.
-      vm.reportSaveFailed(
+      return vm.reportSaveFailed(
         'That file is empty, so there is nothing to restore. Choose the backup file you exported — '
         'it ends in .json and is usually several kilobytes.',
       );
-      _revealFeedback();
-      return;
     }
-
+    if (!mounted) return;
     var passphrase = '';
     if (BackupViewModel.looksEncrypted(contents)) {
-      final entered = await _askPassphrase(
-        context,
-        title: 'Passphrase',
-        confirmLabel: 'Restore',
-        note: 'The passphrase this backup was created with.',
+      final entered = await showDialog<String>(
+        context: context,
+        builder: (_) => const _PassphraseDialog(
+          title: 'Encrypted Backup',
+          note: 'Enter the password to decrypt the backup.',
+          label: 'Password',
+          confirmLabel: 'Restore',
+        ),
       );
-      if (entered == null) {
-        vm.reportCancelled('Restore cancelled — no passphrase was entered. Nothing was changed.');
-        _revealFeedback();
-        return;
-      }
+      if (entered == null) return vm.reportCancelled(cancelled);
       passphrase = entered;
     }
-
     final inspection = await vm.inspectBackup(contents, passphrase);
-    _revealFeedback();
-    if (inspection == null || !context.mounted) return;
-    // Read before the dialog: `context` is not safe to use across the await inside it.
+    if (inspection == null || !mounted) return;
     final license = context.read<LicenseController?>();
     final hasHostLimit = isPlayStoreDistribution && !(license?.state.value.unlocked ?? true);
     final choice = await showDialog<_RestoreChoice>(
       context: context,
-      builder: (_) => _RestoreSelectionDialog(
-        inspection: inspection,
-        // A restore writes host rows, so it is bound by the same limit as adding one by hand.
-        hasHostLimit: hasHostLimit,
-      ),
+      builder: (_) => _RestoreSelectionDialog(inspection: inspection, hasHostLimit: hasHostLimit),
     );
-    if (choice == null) {
-      // The file has already been read and decrypted by this point, so "nothing was changed" is
-      // the reassurance worth giving.
-      vm.reportCancelled('Restore cancelled — nothing was selected. Nothing was changed.');
-      _revealFeedback();
-      return;
-    }
-    if (!context.mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('backup.restore.confirmDialog'),
-        title: const Text('Restore selected data?'),
-        content: const Text(
-          'The selected backup contents will be added alongside existing data. This cannot be '
-          'undone.',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('backup.restore.confirmCancel'),
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey('backup.restore.confirm'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Restore'),
-          ),
-        ],
-      ),
+    if (choice == null || !mounted) return vm.reportCancelled(cancelled);
+    final confirmed = await showOmniConfirm(
+      context,
+      title: 'Restore selected data?',
+      message:
+          'Restoring selected sections will add matching backup contents into OmniTerm. This '
+          'cannot be undone.',
+      confirmLabel: 'Restore',
+      keyPrefix: 'backup.restore.confirmDialog',
     );
-    if (confirmed != true) {
-      vm.reportCancelled('Restore cancelled. Nothing was changed.');
-      _revealFeedback();
-      return;
-    }
+    if (!confirmed) return vm.reportCancelled(cancelled);
     await vm.importBackup(
       inspection.plainJson,
       '',
       selection: choice.selection,
       selectedServerIds: choice.hostIds,
     );
-    _revealFeedback();
   }
+}
+
+/// Kotlin's `BackupSelectionFeedback`.
+class _SelectionFeedback extends StatelessWidget {
+  const _SelectionFeedback({required this.vm, this.keyPrefix = 'backup.selection'});
+
+  final BackupViewModel vm;
+
+  /// Kotlin shows this feedback on the card and inside the sections dialog; distinct keys keep
+  /// each copy addressable.
+  final String keyPrefix;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      if (vm.selectionSaving) ...[
+        const LinearProgressIndicator(),
+        Text('Remembering backup selection…', style: composed(TextStyle(fontSize: 11))),
+      ],
+      if (vm.selectionSaveError != null) ...[
+        Text(
+          vm.selectionSaveError!,
+          key: ValueKey('$keyPrefix.error'),
+          style: composed(TextStyle(fontSize: 11, color: OmniColors.red)),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            key: ValueKey('$keyPrefix.retry'),
+            onPressed: vm.retrySelectionSave,
+            child: const Text('Retry remembering selection'),
+          ),
+        ),
+      ],
+    ],
+  );
+}
+
+/// Kotlin's "Backup sections" dialog. Changes persist as the remembered selection immediately,
+/// as `setExportSelection` does.
+class _BackupSectionsDialog extends StatelessWidget {
+  const _BackupSectionsDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<BackupViewModel>();
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      key: const ValueKey('backup.sections.dialog'),
+      title: const Text('Backup sections'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 420),
+        child: ScrollConfiguration(
+          behavior: const PopupScrollBehavior(),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SelectionFeedback(vm: vm, keyPrefix: 'backup.sections.selection'),
+                BackupSelectionList(
+                  title: 'Choose what to include',
+                  selection: vm.selection,
+                  onChanged: (section, enabled) => vm.toggleSection(section, enabled: enabled),
+                  keyPrefix: 'backup.section',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  vm.selection.hasSensitiveData
+                      ? 'Sensitive sections selected: backup will be encrypted.'
+                      : 'No sensitive sections selected: backup will be plain JSON.',
+                  key: const ValueKey('backup.sensitiveNote'),
+                  style: composed(
+                    TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    lineHeight: 20,
+                    tracking: 0.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('backup.sections.cancel'),
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          key: const ValueKey('backup.sections.continue'),
+          onPressed: vm.selection.isEmpty ? null : () => Navigator.of(context).pop(true),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (vm.selectionSaving) ...[
+                const SizedBox.square(
+                  dimension: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const Text('Continue'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Kotlin's `BackupSelectionList`: one checkbox row per section, a count after each label when a
+/// file's contents are known, and the two legend lines.
+class BackupSelectionList extends StatelessWidget {
+  const BackupSelectionList({
+    super.key,
+    required this.title,
+    required this.selection,
+    required this.onChanged,
+    required this.keyPrefix,
+    this.counts,
+  });
+
+  final String title;
+  final BackupSelection selection;
+  final Map<BackupSection, int>? counts;
+  final void Function(BackupSection section, bool enabled) onChanged;
+  final String keyPrefix;
+
+  bool _enabled(BackupSection section) {
+    final c = counts;
+    if (c == null) return true;
+    int n(BackupSection s) => c[s] ?? 0;
+    return switch (section) {
+      BackupSection.activeAlerts =>
+        n(BackupSection.activeAlerts) > 0 &&
+            n(BackupSection.alertRules) > 0 &&
+            n(BackupSection.servers) > 0,
+      BackupSection.portForwards =>
+        n(BackupSection.portForwards) > 0 && n(BackupSection.servers) > 0,
+      _ => n(section) > 0,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final legend = composed(
+      TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+      lineHeight: 20,
+      tracking: 0.25,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: composed(
+            TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+            lineHeight: 20,
+            tracking: 0.25,
+          ),
+        ),
+        for (final section in BackupSection.values)
+          Row(
+            children: [
+              Checkbox(
+                key: ValueKey('$keyPrefix.${section.name}'),
+                value: selection.contains(section) && _enabled(section),
+                onChanged: _enabled(section) ? (value) => onChanged(section, value ?? false) : null,
+              ),
+              Flexible(
+                child: Text(
+                  counts == null
+                      ? backupSectionLabels[section]!
+                      : '${backupSectionLabels[section]} (${counts![section] ?? 0})',
+                  style: composed(
+                    TextStyle(
+                      fontSize: 12,
+                      color: _enabled(section) ? scheme.onSurface : scheme.onSurfaceVariant,
+                    ),
+                    lineHeight: 20,
+                    tracking: 0.25,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('* Sensitive — selecting forces an encrypted backup.', style: legend),
+        ),
+        Text(
+          'Alert rules and history include Servers. Active alerts also include Alert rules. SSH '
+          'tunnels include Servers.',
+          style: legend,
+        ),
+      ],
+    );
+  }
+}
+
+/// Kotlin's passphrase dialogs ("Encrypt Backup" for export, "Encrypted Backup" for restore).
+class _PassphraseDialog extends StatefulWidget {
+  const _PassphraseDialog({
+    required this.title,
+    required this.note,
+    required this.label,
+    required this.confirmLabel,
+    this.minLength = 1,
+  });
+
+  final String title;
+  final String note;
+  final String label;
+  final String confirmLabel;
+  final int minLength;
+
+  @override
+  State<_PassphraseDialog> createState() => _PassphraseDialogState();
+}
+
+class _PassphraseDialogState extends State<_PassphraseDialog> {
+  String _value = '';
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    key: const ValueKey('backup.passphrase.dialog'),
+    scrollable: true,
+    title: Text(widget.title),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(widget.note, style: composed(TextStyle(fontSize: 12), lineHeight: 20, tracking: 0.25)),
+        const SizedBox(height: 8),
+        OmniPasswordField(
+          fieldKey: const ValueKey('backup.passphrase.field'),
+          label: widget.label,
+          autofocus: true,
+          onChanged: (value) => setState(() => _value = value),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        key: const ValueKey('backup.passphrase.cancel'),
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      TextButton(
+        key: const ValueKey('backup.passphrase.confirm'),
+        onPressed: _value.length >= widget.minLength
+            ? () => Navigator.of(context).pop(_value)
+            : null,
+        child: Text(widget.confirmLabel),
+      ),
+    ],
+  );
 }
 
 @immutable
@@ -483,6 +633,25 @@ class _RestoreChoice {
   final Set<int> hostIds;
 }
 
+/// Kotlin's `backupSelectionFromContents`: everything present, firing alerts only with their hosts
+/// and rules, tunnels only with their hosts, and crash logs never by default.
+BackupSelection kotlinRestoreDefault(Map<BackupSection, int> counts) {
+  bool has(BackupSection s) => (counts[s] ?? 0) > 0;
+  final hasServers = has(BackupSection.servers);
+  final hasRules = has(BackupSection.alertRules);
+  return BackupSelection({
+    for (final section in BackupSection.values)
+      if (switch (section) {
+        BackupSection.activeAlerts => has(section) && hasServers && hasRules,
+        BackupSection.portForwards => has(section) && hasServers,
+        BackupSection.crashLogs => false,
+        _ => has(section),
+      })
+        section,
+  }).withReferentialClosure();
+}
+
+/// Kotlin's "Restore backup" dialog: available sections with counts, then the hosts to restore.
 class _RestoreSelectionDialog extends StatefulWidget {
   const _RestoreSelectionDialog({required this.inspection, required this.hasHostLimit});
 
@@ -496,110 +665,115 @@ class _RestoreSelectionDialog extends StatefulWidget {
 }
 
 class _RestoreSelectionDialogState extends State<_RestoreSelectionDialog> {
-  late BackupSelection _selection = widget.inspection.available;
+  late BackupSelection _selection = kotlinRestoreDefault(widget.inspection.counts);
   late final int? _hostCap = restoreHostCap(
     hasHostLimit: widget.hasHostLimit,
     hostLimit: ServersViewModel.freePlayStoreLimit,
   );
-  late Set<int> _hostIds = defaultRestoreHostIds(
+  late final Set<int> _hostIds = defaultRestoreHostIds(
     widget.inspection.hosts.map((host) => host.oldId),
     cap: _hostCap,
   );
 
-  /// True when no more hosts may be selected, so the remaining boxes read as unavailable rather
-  /// than silently refusing the tap.
-  bool get _atCap => _hostCap != null && _hostIds.length >= _hostCap;
-
   @override
   Widget build(BuildContext context) {
-    final available = widget.inspection.available;
-    final hostsEnabled = _selection.contains(BackupSection.servers);
+    final scheme = Theme.of(context).colorScheme;
+    final hosts = widget.inspection.hosts;
+    final showHosts = hosts.isNotEmpty && _selection.contains(BackupSection.servers);
+    final cap = _hostCap;
     return AlertDialog(
       key: const ValueKey('backup.restore.selectionDialog'),
       title: const Text('Restore backup'),
-      content: SizedBox(
-        width: 480,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Choose what to restore from this file.', style: TextStyle(fontSize: 12)),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  TextButton(
-                    key: const ValueKey('backup.restore.all'),
-                    onPressed: () => setState(() {
-                      _selection = available;
-                      _hostIds = defaultRestoreHostIds(
-                        widget.inspection.hosts.map((host) => host.oldId),
-                        cap: _hostCap,
-                      );
-                    }),
-                    child: const Text('All'),
-                  ),
-                  TextButton(
-                    key: const ValueKey('backup.restore.none'),
-                    onPressed: () => setState(() {
-                      _selection = const BackupSelection.none();
-                      _hostIds = {};
-                    }),
-                    child: const Text('None'),
-                  ),
-                ],
-              ),
-              for (final section in BackupSection.values)
-                if (available.contains(section))
-                  CheckboxListTile(
-                    key: ValueKey('backup.restore.section.${section.name}'),
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    title: Text(section.label, style: const TextStyle(fontSize: 13)),
-                    subtitle: Text(
-                      '${widget.inspection.counts[section] ?? 0} item(s)',
-                      style: const TextStyle(fontSize: 10),
-                    ),
-                    value: _selection.contains(section),
-                    onChanged: (value) => setState(() {
-                      _selection = _selection.toggled(section, enabled: value ?? false);
-                      if (!_selection.contains(BackupSection.servers)) _hostIds = {};
-                    }),
-                  ),
-              if (hostsEnabled && widget.inspection.hosts.isNotEmpty) ...[
-                const Divider(),
-                const Text(
-                  'Hosts to restore',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 420),
+        child: ScrollConfiguration(
+          behavior: const PopupScrollBehavior(),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Choose what to restore from this backup.',
+                  style: composed(TextStyle(fontSize: 12), lineHeight: 20, tracking: 0.25),
                 ),
-                if (_hostCap != null)
+                const SizedBox(height: 8),
+                BackupSelectionList(
+                  title: 'Available sections',
+                  selection: _selection,
+                  counts: widget.inspection.counts,
+                  keyPrefix: 'backup.restore.section',
+                  onChanged: (section, enabled) => setState(() {
+                    _selection = _selection.toggled(section, enabled: enabled);
+                  }),
+                ),
+                if (showHosts) ...[
+                  const Divider(),
                   Text(
-                    // Said before the boxes go grey, not after a tap does nothing.
-                    'This build saves $_hostCap host(s). Choose which to restore, or unlock '
-                    'OmniTerm to keep them all.',
-                    key: const ValueKey('backup.restore.hostCap'),
-                    style: const TextStyle(fontSize: 10, color: OmniColors.amber),
+                    'Hosts to restore',
+                    style: composed(
+                      TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                      lineHeight: 20,
+                      tracking: 0.25,
+                    ),
                   ),
-                for (final host in widget.inspection.hosts)
-                  CheckboxListTile(
-                    key: ValueKey('backup.restore.host.${host.oldId}'),
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    title: Text(host.name, style: const TextStyle(fontSize: 12)),
-                    subtitle: Text(host.host, style: const TextStyle(fontSize: 10)),
-                    value: _hostIds.contains(host.oldId),
-                    // Disabled rather than silently refusing: at the cap, the boxes that would go
-                    // over read as unavailable, and the ones already chosen can still be unchecked
-                    // so the user can swap one for another.
-                    onChanged: _atCap && !_hostIds.contains(host.oldId)
-                        ? null
-                        : (value) => setState(() {
-                            value == true ? _hostIds.add(host.oldId) : _hostIds.remove(host.oldId);
-                          }),
-                  ),
+                  if (cap != null)
+                    Text(
+                      'Free Play Store restore is limited to $cap host${cap == 1 ? '' : 's'}.',
+                      key: const ValueKey('backup.restore.hostCap'),
+                      style: composed(
+                        TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                        lineHeight: 20,
+                        tracking: 0.25,
+                      ),
+                    ),
+                  for (final host in hosts)
+                    Row(
+                      children: [
+                        Checkbox(
+                          key: ValueKey('backup.restore.host.${host.oldId}'),
+                          value: _hostIds.contains(host.oldId),
+                          onChanged:
+                              _hostIds.contains(host.oldId) || cap == null || _hostIds.length < cap
+                              ? (next) => setState(() {
+                                  next == true
+                                      ? _hostIds.add(host.oldId)
+                                      : _hostIds.remove(host.oldId);
+                                })
+                              : null,
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                host.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: composed(
+                                  TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                  lineHeight: 20,
+                                  tracking: 0.25,
+                                ),
+                              ),
+                              // The name is already above, so the address is masked outright.
+                              Text(
+                                '${HostDisplay.instance.sensitive(host.host)}:${host.port}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: composed(
+                                  TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                                  lineHeight: 20,
+                                  tracking: 0.25,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -609,116 +783,18 @@ class _RestoreSelectionDialogState extends State<_RestoreSelectionDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        FilledButton(
+        TextButton(
           key: const ValueKey('backup.restore.continue'),
-          onPressed:
-              _selection.isEmpty ||
-                  (hostsEnabled && widget.inspection.hosts.isNotEmpty && _hostIds.isEmpty)
+          onPressed: _selection.isEmpty
               ? null
-              : () => Navigator.pop(context, _RestoreChoice(_selection, _hostIds)),
-          child: const Text('Continue'),
-        ),
-      ],
-    );
-  }
-}
-
-Future<String?> _askPassphrase(
-  BuildContext context, {
-  required String title,
-  required String confirmLabel,
-  required String note,
-  int minLength = 0,
-}) => showDialog<String>(
-  context: context,
-  builder: (_) => _PromptDialog(
-    dialogKey: 'backup.passphrase',
-    title: title,
-    note: note,
-    confirmLabel: confirmLabel,
-    obscure: true,
-    minLength: minLength,
-  ),
-);
-
-/// Asks for one value. Owns its controller so it dies with the dialog.
-class _PromptDialog extends StatefulWidget {
-  const _PromptDialog({
-    required this.dialogKey,
-    required this.title,
-    required this.confirmLabel,
-    this.note,
-    this.obscure = false,
-    this.minLength = 0,
-  });
-
-  final String dialogKey;
-  final String title;
-  final String confirmLabel;
-  final String? note;
-  final bool obscure;
-
-  /// Shortest accepted value. The confirm button stays disabled below it, so the dialog cannot hand
-  /// back something the caller will refuse — which is the shape of the defect this fixes.
-  final int minLength;
-
-  @override
-  State<_PromptDialog> createState() => _PromptDialogState();
-}
-
-class _PromptDialogState extends State<_PromptDialog> {
-  final _controller = TextEditingController();
-
-  bool get _longEnough => _controller.text.length >= widget.minLength;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      key: ValueKey('${widget.dialogKey}.dialog'),
-      // Scrollable because the content is a multi-child Column with no scroll of its own: on a
-      // small phone in landscape at 200% text it does not fit, and an AlertDialog clips rather
-      // than scrolls unless it is asked to. Same shape as parity defects 112 and 113.
-      scrollable: true,
-      title: Text(widget.title),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.note != null) ...[
-            Text(widget.note!, style: const TextStyle(fontSize: 11)),
-            const SizedBox(height: 10),
-          ],
-          TextField(
-            key: ValueKey('${widget.dialogKey}.field'),
-            controller: _controller,
-            autofocus: true,
-            obscureText: widget.obscure,
-            onChanged: (_) => setState(() {}),
-            decoration: omniInputDecoration(
-              context,
-              // The requirement is on the field, not in an error after the fact. A user who is told
-              // the number while typing never meets the refusal.
-              labelText: widget.minLength > 0 ? 'At least ${widget.minLength} characters' : null,
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          key: ValueKey('${widget.dialogKey}.cancel'),
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          key: ValueKey('${widget.dialogKey}.confirm'),
-          onPressed: _longEnough ? () => Navigator.of(context).pop(_controller.text) : null,
-          child: Text(widget.confirmLabel),
+              : () => Navigator.pop(
+                  context,
+                  _RestoreChoice(
+                    _selection,
+                    _selection.contains(BackupSection.servers) ? _hostIds : const {},
+                  ),
+                ),
+          child: const Text('Restore'),
         ),
       ],
     );

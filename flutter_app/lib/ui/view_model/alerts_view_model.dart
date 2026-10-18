@@ -126,16 +126,9 @@ class AlertsViewModel extends ChangeNotifier {
   List<AlertRule> get rules => List.unmodifiable(_rules);
   List<AlertHistoryRow> get history => List.unmodifiable(_history);
 
-  /// Firing incidents, most severe first and then newest.
-  ///
-  /// Severity leads because an alerts list is read top-down under pressure: a CRITICAL buried under
-  /// six newer warnings is a warning that has been hidden.
+  /// Firing incidents, newest first — Kotlin's `ORDER BY triggeredTime DESC`.
   List<ActiveAlert> get activeAlerts {
-    final list = [..._activeAlerts]
-      ..sort((a, b) {
-        if (a.severity != b.severity) return a.severity == 'CRITICAL' ? -1 : 1;
-        return b.triggeredTime.compareTo(a.triggeredTime);
-      });
+    final list = [..._activeAlerts]..sort((a, b) => b.triggeredTime.compareTo(a.triggeredTime));
     return List.unmodifiable(list);
   }
 
@@ -174,14 +167,10 @@ class AlertsViewModel extends ChangeNotifier {
     if (!alertMetrics.contains(metricName)) return 'Pick a metric to watch.';
     if (!alertSeverities.contains(severity)) return 'Pick a severity.';
     if (!alertWindows.contains(triggerWindow)) return 'Pick a trigger window.';
-    if (thresholdValue.isNaN || thresholdValue <= 0) {
-      return 'Threshold must be greater than zero.';
-    }
-    // A percentage above 100 can never be reached, so the rule would be dead on arrival — which is
-    // worse than a rule that fires too often, because nothing signals that it is broken.
-    if (unitFor(metricName) == '%' && thresholdValue > 100) {
-      return 'A percentage threshold cannot exceed 100.';
-    }
+    // Kotlin's bounds: a percentage above 100 can never be reached, so the rule would be dead on
+    // arrival — worse than one that fires too often, because nothing signals that it is broken.
+    final thresholdError = alertCanonicalThresholdError(thresholdValue, metricName);
+    if (thresholdError != null) return thresholdError;
 
     await _app.repository.insertRule(
       AlertRulesCompanion.insert(
@@ -213,7 +202,7 @@ class AlertsViewModel extends ChangeNotifier {
       if (ruleEditInvalidatesIncident(existing, updated)) {
         // The incident was raised under terms that no longer apply, so keeping it would report a
         // breach against a threshold the rule no longer has.
-        await _clearIncidentsForRule(existing.id, reason: 'rule changed');
+        await _clearIncidentsForRule(existing.id);
       }
     }
 
@@ -227,25 +216,27 @@ class AlertsViewModel extends ChangeNotifier {
     if (!enabled) {
       // A disabled rule cannot re-evaluate, so leaving its incident would strand a banner that can
       // never resolve on its own.
-      await _clearIncidentsForRule(rule.id, reason: 'rule disabled');
+      await _clearIncidentsForRule(rule.id);
     }
   }
 
   Future<void> deleteRule(AlertRule rule) async {
-    await _clearIncidentsForRule(rule.id, reason: 'rule deleted');
+    await _clearIncidentsForRule(rule.id);
     await _app.repository.deleteRuleById(rule.id);
     _status = 'Deleted the rule.';
     _safeNotify();
   }
 
   /// Drops every incident and breach window belonging to [ruleId].
-  Future<void> _clearIncidentsForRule(int ruleId, {required String reason}) async {
+  Future<void> _clearIncidentsForRule(int ruleId) async {
     _tracker.forgetRule(ruleId);
     for (final alert in (await _app.repository.getActiveAlerts()).where(
       (a) => a.ruleId == ruleId,
     )) {
-      await _archive(alert, reason);
+      // Kotlin's `closeAlertsForRule` archives these as resolved whatever the cause.
+      await _archive(alert, 'resolved');
       await _app.repository.deleteAlert(alert.id);
+      await notifier?.clear(alertNotificationId(alert.ruleId, alert.serverId));
     }
   }
 
@@ -305,7 +296,7 @@ class AlertsViewModel extends ChangeNotifier {
   Future<void> _removePresets() async {
     final keys = kAlertPresets.map((p) => p.presetKey).toSet();
     for (final rule in _rules.where((r) => keys.contains(r.presetKey))) {
-      await _clearIncidentsForRule(rule.id, reason: 'rule deleted');
+      await _clearIncidentsForRule(rule.id);
       await _app.repository.deleteRuleById(rule.id);
     }
   }
@@ -404,16 +395,19 @@ class AlertsViewModel extends ChangeNotifier {
     return raised;
   }
 
+  /// Acknowledges [alert], recording it in history and clearing its banner as Kotlin does.
   Future<void> acknowledge(ActiveAlert alert) async {
+    await _archive(alert, 'acknowledged');
+    await notifier?.clear(alertNotificationId(alert.ruleId, alert.serverId));
     await _app.repository.acknowledgeAlert(alert.id);
   }
 
   Future<void> acknowledgeAll() async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    for (final alert in _activeAlerts.where(
+    for (final alert in (await _app.repository.getActiveAlerts()).where(
       (alert) => !alert.acknowledged && alert.mutedUntil < now,
     )) {
-      await _app.repository.acknowledgeAlert(alert.id);
+      await acknowledge(alert);
     }
   }
 
@@ -423,10 +417,26 @@ class AlertsViewModel extends ChangeNotifier {
   /// about something you already know, not to pretend it is fixed.
   Future<void> mute(ActiveAlert alert, Duration duration) async {
     final until = DateTime.now().millisecondsSinceEpoch + duration.inMilliseconds;
+    await _archive(alert, 'muted');
+    await notifier?.clear(alertNotificationId(alert.ruleId, alert.serverId));
     await _app.repository.muteAlert(alert.id, until);
   }
 
-  Future<void> unmute(ActiveAlert alert) => _app.repository.muteAlert(alert.id, 0);
+  /// Ends a mute early. Like Kotlin's `unmuteAlert`, an unacknowledged incident re-posts its banner.
+  Future<void> unmute(ActiveAlert alert) async {
+    await _app.repository.muteAlert(alert.id, 0);
+    await _archive(alert.copyWith(mutedUntil: 0), 'unmuted');
+    if (!_alertsEnabled || alert.acknowledged) return;
+    final target = notifier;
+    final server = serverFor(alert.serverId);
+    final rule = _rules.where((r) => r.id == alert.ruleId).firstOrNull;
+    if (target == null || server == null || rule == null) return;
+    try {
+      await _post(target, server, rule, alert);
+    } catch (_) {
+      // The incident stays listed either way.
+    }
+  }
 
   /// Dismisses [alert] without waiting for it to resolve.
   Future<void> dismiss(ActiveAlert alert) async {
@@ -475,7 +485,7 @@ class AlertsViewModel extends ChangeNotifier {
         serverId: alert.serverId,
         // Denormalised on purpose: an archive entry must stay readable after the host is deleted,
         // and a dangling id would render as a number nobody can identify.
-        serverName: serverFor(alert.serverId)?.name ?? 'Host #${alert.serverId}',
+        serverName: serverFor(alert.serverId)?.name ?? 'server',
         metricName: alert.metricName,
         currentValue: alert.currentValue,
         thresholdValue: alert.thresholdValue,

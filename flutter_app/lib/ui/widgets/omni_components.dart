@@ -27,10 +27,16 @@ class OmniCard extends StatelessWidget {
     this.onLongPress,
     this.semanticLabel,
     this.margin,
+    this.inset = EdgeInsets.zero,
   });
 
   final Widget child;
   final Color? leftAccent;
+
+  /// The caller's own padding inside the card, on top of the card's 12dp. Kotlin call sites
+  /// usually wrap their content in `Modifier.padding(12.dp)` (some 16dp) inside `OmniCard`, whose
+  /// `Column` already pads 12dp, so their content sits 24dp in.
+  final EdgeInsets inset;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final String? semanticLabel;
@@ -51,7 +57,7 @@ class OmniCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          Padding(padding: const EdgeInsets.all(12), child: child),
+          Padding(padding: const EdgeInsets.all(12) + inset, child: child),
           if (leftAccent != null)
             Positioned(left: 0, top: 0, bottom: 0, width: 3, child: ColoredBox(color: leftAccent!)),
         ],
@@ -103,6 +109,9 @@ class OmniStatBox extends StatelessWidget {
               fontFamily: OmniFonts.mono,
               fontWeight: FontWeight.w800,
               fontSize: 20,
+              height: 24 / 20,
+              letterSpacing: 0.5,
+              leadingDistribution: TextLeadingDistribution.even,
             ),
           ),
           Text(
@@ -112,6 +121,8 @@ class OmniStatBox extends StatelessWidget {
               fontWeight: FontWeight.bold,
               fontSize: 10,
               letterSpacing: 1.1,
+              height: 24 / 10,
+              leadingDistribution: TextLeadingDistribution.even,
             ),
           ),
         ],
@@ -122,16 +133,24 @@ class OmniStatBox extends StatelessWidget {
 
 /// Small uppercase heading above a list section.
 class SectionHeader extends StatelessWidget {
-  const SectionHeader({super.key, required this.title, this.trailing});
+  const SectionHeader({
+    super.key,
+    required this.title,
+    this.trailing,
+    this.padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+  });
 
   final String title;
   final Widget? trailing;
+
+  /// Kotlin's default; some call sites pass `Modifier.padding(0.dp)`.
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: padding,
       child: Row(
         children: [
           Text(
@@ -141,6 +160,8 @@ class SectionHeader extends StatelessWidget {
               fontWeight: FontWeight.bold,
               fontSize: 11,
               letterSpacing: 1.5,
+              height: 24 / 11,
+              leadingDistribution: TextLeadingDistribution.even,
             ),
           ),
           const Spacer(),
@@ -290,6 +311,8 @@ class OmniTag extends StatelessWidget {
           fontWeight: FontWeight.bold,
           fontSize: 10,
           letterSpacing: 0.8,
+          height: 24 / 10,
+          leadingDistribution: TextLeadingDistribution.even,
         ),
       ),
     );
@@ -297,6 +320,8 @@ class OmniTag extends StatelessWidget {
 }
 
 /// Kotlin's `OmniTextSize`.
+/// Every component text below sets `height: 24 / fontSize`: in Compose the ambient `bodyLarge`
+/// keeps its 24sp line height when a component names only a font size (see [composeBody]).
 abstract final class OmniTextSize {
   static const section = 11.0;
   static const body = 14.0;
@@ -552,6 +577,8 @@ class OmniButton extends StatelessWidget {
           fontWeight: FontWeight.bold,
           fontSize: small ? 10 : 12,
           letterSpacing: 0.6,
+          height: 24 / (small ? 10 : 12),
+          leadingDistribution: TextLeadingDistribution.even,
         ),
       ),
     );
@@ -604,6 +631,9 @@ class MiniMetric extends StatelessWidget {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontFamily: OmniFonts.mono,
                 fontSize: 10,
+                height: 24 / 10,
+                letterSpacing: 0.5,
+                leadingDistribution: TextLeadingDistribution.even,
               ),
             ),
             Text(
@@ -613,6 +643,9 @@ class MiniMetric extends StatelessWidget {
                 fontFamily: OmniFonts.mono,
                 fontWeight: FontWeight.bold,
                 fontSize: 10,
+                height: 24 / 10,
+                letterSpacing: 0.5,
+                leadingDistribution: TextLeadingDistribution.even,
               ),
             ),
           ],
@@ -634,6 +667,8 @@ class OmniTabRow extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     this.tabKeys,
+    this.badges = const {},
+    this.disabled = const {},
   });
 
   final List<String> labels;
@@ -643,12 +678,21 @@ class OmniTabRow extends StatelessWidget {
   /// One key per tab, for tests and accessibility tooling.
   final List<Key>? tabKeys;
 
+  /// Widgets shown after a tab's label (Files' transfer count), keyed by tab index.
+  final Map<int, Widget> badges;
+
+  /// Tabs that cannot be selected right now, as Kotlin's `Tab(enabled = false)`.
+  final Set<int> disabled;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    // A Tab's text keeps titleSmall's 20sp line height when Kotlin shrinks it to Dense.
     final style = (theme.textTheme.titleSmall ?? const TextStyle()).copyWith(
       fontSize: OmniTextSize.dense,
+      height: 20 / OmniTextSize.dense,
+      leadingDistribution: TextLeadingDistribution.even,
       color: scheme.primary,
     );
     return Material(
@@ -668,29 +712,47 @@ class OmniTabRow extends StatelessWidget {
                       button: true,
                       child: InkWell(
                         key: tabKeys?[i],
-                        onTap: () => onSelected(i),
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(minHeight: 48),
-                          child: Stack(
-                            alignment: Alignment.bottomCenter,
-                            children: [
-                              Center(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-                                  child: Text(labels[i], style: style, textAlign: TextAlign.center),
+                        onTap: disabled.contains(i) ? null : () => onSelected(i),
+                        // Kotlin's content-lambda Tab has no 48dp floor: its height is the label
+                        // plus the 8dp vertical padding Kotlin gives it (36dp at normal text).
+                        child: Stack(
+                          alignment: Alignment.bottomCenter,
+                          children: [
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        labels[i],
+                                        textAlign: TextAlign.center,
+                                        style: disabled.contains(i)
+                                            ? style.copyWith(
+                                                color: scheme.onSurface.withValues(alpha: 0.38),
+                                              )
+                                            : style,
+                                      ),
+                                    ),
+                                    if (badges[i] != null) ...[
+                                      const SizedBox(width: 6),
+                                      badges[i]!,
+                                    ],
+                                  ],
                                 ),
                               ),
-                              if (i == selectedIndex)
-                                Container(
-                                  width: 24,
-                                  height: 3,
-                                  decoration: BoxDecoration(
-                                    color: scheme.primary,
-                                    borderRadius: BorderRadius.circular(3),
-                                  ),
+                            ),
+                            if (i == selectedIndex)
+                              Container(
+                                width: 24,
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  color: scheme.primary,
+                                  borderRadius: BorderRadius.circular(3),
                                 ),
-                            ],
-                          ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
@@ -1117,6 +1179,175 @@ class _HostPickerRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Kotlin's `OmniPasswordField`: an outlined password field with a show/hide eye toggle.
+class OmniPasswordField extends StatefulWidget {
+  const OmniPasswordField({
+    super.key,
+    required this.label,
+    required this.onChanged,
+    this.fieldKey,
+    this.autofocus = false,
+  });
+
+  final String label;
+  final ValueChanged<String> onChanged;
+  final Key? fieldKey;
+  final bool autofocus;
+
+  @override
+  State<OmniPasswordField> createState() => _OmniPasswordFieldState();
+}
+
+class _OmniPasswordFieldState extends State<OmniPasswordField> {
+  bool _visible = false;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    key: widget.fieldKey,
+    autofocus: widget.autofocus,
+    obscureText: !_visible,
+    keyboardType: TextInputType.visiblePassword,
+    onChanged: widget.onChanged,
+    decoration: InputDecoration(
+      labelText: widget.label,
+      border: const OutlineInputBorder(),
+      suffixIcon: IconButton(
+        tooltip: _visible ? 'Hide password' : 'Show password',
+        icon: Icon(_visible ? Icons.visibility_off : Icons.visibility),
+        onPressed: () => setState(() => _visible = !_visible),
+      ),
+    ),
+  );
+}
+
+/// Kotlin's `PrimaryScrollableTabRow`: a scrolling row of text tabs with the primary indicator
+/// under the selected label and an outline-variant divider. [selectedIndex] stays owned by the
+/// view model (so swipe paging and deep links move it); this widget only follows it.
+class OmniScrollableTabRow extends StatefulWidget {
+  const OmniScrollableTabRow({
+    super.key,
+    required this.labels,
+    required this.selectedIndex,
+    required this.onSelected,
+    this.tabKeys,
+    this.edgePadding = 0,
+    this.fontWeight,
+    this.contentTabs = false,
+  });
+
+  final List<String> labels;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+  final List<Key>? tabKeys;
+
+  /// Kotlin's `edgePadding`: Monitor uses 12dp, Network and Infra 0.
+  final double edgePadding;
+  final FontWeight? fontWeight;
+
+  /// Kotlin's `Tab { Text(…, padding(vertical = 8.dp)) }` form (Monitor, Infra), which is only as
+  /// tall as its label; `Tab(text = …)` (Network) keeps Material's 48dp.
+  final bool contentTabs;
+
+  @override
+  State<OmniScrollableTabRow> createState() => _OmniScrollableTabRowState();
+}
+
+class _OmniScrollableTabRowState extends State<OmniScrollableTabRow>
+    with SingleTickerProviderStateMixin {
+  late TabController _controller = _create();
+
+  TabController _create() => TabController(
+    length: widget.labels.length,
+    initialIndex: widget.selectedIndex.clamp(0, widget.labels.length - 1),
+    vsync: this,
+  );
+
+  @override
+  void didUpdateWidget(OmniScrollableTabRow old) {
+    super.didUpdateWidget(old);
+    if (old.labels.length != widget.labels.length) {
+      _controller.dispose();
+      _controller = _create();
+    } else if (_controller.index != widget.selectedIndex) {
+      _controller.animateTo(widget.selectedIndex);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // A Tab's text keeps titleSmall's 20sp line height when Kotlin shrinks it to Dense.
+    final style = (Theme.of(context).textTheme.titleSmall ?? const TextStyle()).copyWith(
+      fontSize: OmniTextSize.dense,
+      height: 20 / OmniTextSize.dense,
+      leadingDistribution: TextLeadingDistribution.even,
+      fontWeight: widget.fontWeight,
+    );
+    return TabBar(
+      controller: _controller,
+      isScrollable: true,
+      tabAlignment: TabAlignment.start,
+      padding: EdgeInsets.symmetric(horizontal: widget.edgePadding),
+      dividerColor: scheme.outlineVariant,
+      labelColor: scheme.primary,
+      unselectedLabelColor: scheme.primary,
+      labelStyle: style,
+      unselectedLabelStyle: style,
+      indicatorSize: TabBarIndicatorSize.label,
+      onTap: widget.onSelected,
+      tabs: [
+        for (var i = 0; i < widget.labels.length; i++)
+          Tab(
+            key: widget.tabKeys?[i],
+            height: widget.contentTabs ? null : 48,
+            // Compose's ScrollableTabRow gives every tab at least 90dp, padding included
+            // (Flutter adds 16dp label padding either side).
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 90 - 32),
+              child: Center(
+                widthFactor: 1,
+                child: widget.contentTabs
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(widget.labels[i]),
+                      )
+                    : Text(widget.labels[i]),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Lets a `Column` with `Expanded` parts survive a very short window (landscape at large text):
+/// below [minHeight] × the text scale it scrolls the whole column at that height, so the fixed
+/// chrome stays reachable and the expanding list keeps usable room, instead of overflowing.
+class ShortViewportScroll extends StatelessWidget {
+  const ShortViewportScroll({super.key, required this.child, this.minHeight = 360});
+
+  final Widget child;
+  final double minHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final needed = minHeight * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    return LayoutBuilder(
+      builder: (context, constraints) => constraints.maxHeight >= needed
+          ? child
+          : SingleChildScrollView(
+              child: SizedBox(height: needed, child: child),
+            ),
     );
   }
 }

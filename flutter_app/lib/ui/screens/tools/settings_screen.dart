@@ -137,8 +137,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         key: const ValueKey('settings.list'),
                         padding: EdgeInsets.zero,
                         children: [
-                          if (vm.status != null && !_saving && _saveError == null)
-                            _StatusCard(vm: vm),
                           if (_saveError != null)
                             Text(
                               _saveError!,
@@ -836,36 +834,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } else {
       await lock.refresh();
     }
-  }
-}
-
-class _StatusCard extends StatelessWidget {
-  const _StatusCard({required this.vm});
-
-  final SettingsViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: OmniCard(
-        key: const ValueKey('settings.status'),
-        leftAccent: OmniColors.green,
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(vm.status!, style: const TextStyle(fontSize: 12, height: 24 / 12)),
-            ),
-            IconButton(
-              tooltip: 'Dismiss',
-              key: const ValueKey('settings.status.dismiss'),
-              icon: const Icon(Icons.close, size: 16),
-              onPressed: vm.dismissStatus,
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 

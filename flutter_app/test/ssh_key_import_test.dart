@@ -100,11 +100,16 @@ void main() {
       expect(key.keyType, 'YubiKey');
     });
 
-    test('with no public key it reports the container rather than guessing', () {
-      // A modern OpenSSH container does not reveal its inner algorithm without parsing.
+    test('with no public key the public line is derived from the private key', () {
+      // Kotlin derives it with JSch, so the type and the ssh-keygen fingerprint are still right.
       final key = prepareKeyImport(alias: 'laptop', privateKey: ed25519Private);
-      expect(key.keyType, 'OpenSSH');
-      expect(key.publicKey, isEmpty);
+      expect(key.keyType, 'ED25519');
+      expect(key.publicKey, ed25519Public.split(RegExp(r'\s+')).take(2).join(' '));
+      expect(key.fingerprint, sshPublicKeyFingerprint(ed25519Public));
+    });
+
+    test('without a public line the type falls back to the container name', () {
+      expect(detectKeyType(ed25519Private, ''), 'OpenSSH');
     });
 
     test('a public key in the wrong shape is ignored, not stored', () {
@@ -113,7 +118,9 @@ void main() {
         privateKey: ed25519Private,
         publicKey: 'not a public key',
       );
-      expect(key.publicKey, isEmpty);
+      // Ignored in favour of the line derived from the private key, as Kotlin does.
+      expect(key.publicKey, startsWith('ssh-ed25519 '));
+      expect(key.publicKey, isNot(contains('not a public key')));
     });
   });
 

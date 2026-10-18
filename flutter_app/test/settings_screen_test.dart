@@ -287,7 +287,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(await repo.getSetting('telemetry_interval'), '30');
-    expect(find.textContaining('saved'), findsOneWidget);
+    // Saved silently, as Kotlin does: no confirmation banner.
+    expect(vm.isDirty, isFalse);
+    expect(find.text('Settings saved.'), findsNothing);
     await finish(tester);
   });
 

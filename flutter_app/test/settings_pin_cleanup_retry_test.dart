@@ -106,7 +106,9 @@ void main() {
       }
       expect(lock.clearCalls, 2);
       expect(lock.hasStoredPin, isFalse);
-      expect(find.text('Settings saved.'), findsOneWidget);
+      // Saved, but silently: Kotlin shows no confirmation banner after a save.
+      expect(settings.status, 'Settings saved.');
+      expect(find.text('Settings saved.'), findsNothing);
       expect(key('settings.save.error'), findsNothing);
     } finally {
       navigator.currentState?.popUntil((route) => route.isFirst);

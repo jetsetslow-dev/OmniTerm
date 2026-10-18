@@ -188,18 +188,11 @@ void main() {
     repo.failSelectionWrite = true;
     tester.view.physicalSize = const Size(360, 640);
     await tester.pumpAndSettle();
+    // Kotlin chooses sections in the Backup dialog, which persists each change immediately.
+    await tester.tap(find.byKey(const ValueKey('backup.export')));
+    await tester.pumpAndSettle();
     final setting = find.byKey(const ValueKey('backup.section.settings'));
-    await tester.scrollUntilVisible(
-      setting,
-      160,
-      scrollable: find
-          .descendant(
-            of: find.byKey(const ValueKey('backup.list')),
-            matching: find.byType(Scrollable),
-          )
-          .first,
-    );
-    await Scrollable.ensureVisible(tester.element(setting), alignment: 0.5);
+    await tester.ensureVisible(setting);
     await tester.pumpAndSettle();
     await tester.tap(setting);
     await tester.pump();
@@ -219,12 +212,15 @@ void main() {
       await pumpUntil(tester, () => !model.selectionSaving);
     }
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('backup.selection.error')).hitTestable(), findsOneWidget);
+    final error = find.byKey(const ValueKey('backup.sections.selection.error'));
+    await tester.ensureVisible(error);
+    await tester.pumpAndSettle();
+    expect(error.hitTestable(), findsOneWidget);
     repo.failSelectionWrite = false;
-    await tester.tap(find.byKey(const ValueKey('backup.selection.retry')));
+    await tester.tap(find.byKey(const ValueKey('backup.sections.selection.retry')));
     await pumpUntil(tester, () => !model.selectionSaving);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('backup.selection.error')), findsNothing);
+    expect(find.byKey(const ValueKey('backup.sections.selection.error')), findsNothing);
     expect(model.selection.contains(BackupSection.settings), isFalse);
     expect(
       BackupSelection.decode(

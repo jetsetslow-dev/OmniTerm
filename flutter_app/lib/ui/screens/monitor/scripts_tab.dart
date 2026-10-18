@@ -10,7 +10,7 @@ import '../../view_model/monitor_view_model.dart';
 import '../../view_model/scripts_view_model.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/run_command_dialog.dart';
-import '../tools/scripts_screen.dart';
+import '../../widgets/script_editor_dialog.dart';
 
 /// Monitor → Quick scripts, ported from `QuickScriptsMonitorTab` in `ui/MonitorScreen.kt`.
 ///
@@ -199,8 +199,16 @@ class _ScriptsTabState extends State<ScriptsTab> {
     if (confirmed) await vm.runScript(title, command);
   }
 
+  /// Kotlin's Monitor "Save script": a Quick script defaulting to the host's reported OS.
   void _saveCustom(BuildContext context, String command) {
-    showScriptEditorSheet(context, context.read<ScriptsViewModel>(), initialCommand: command);
+    final os = widget.vm.metricsSampledAt == null ? null : widget.vm.metrics.os;
+    showScriptEditorDialog(
+      context,
+      context.read<ScriptsViewModel>(),
+      title: 'Save script',
+      initialCommand: command,
+      defaultTargetOs: (os == null || os.trim().isEmpty) ? 'Any' : os,
+    );
   }
 }
 

@@ -92,41 +92,58 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('every tab is present and reachable', (tester) async {
+  Server host({required String name}) => Server(
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'online',
+    authStatus: 'ok',
+  );
+
+  Future<void> tapVisible(WidgetTester tester, Finder finder) async {
+    await tester.ensureVisible(finder);
+    await tester.pumpAndSettle();
+    await tester.tap(finder);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Kotlin scaffold and every tab is reachable', (tester) async {
     await pump(tester, FakeProbe());
+    expect(find.text('Network tools'), findsOneWidget);
 
     for (final tab in NetworkTab.values) {
-      // Scrolled to, because a chip off the end of the strip is not built at all.
-      await tester.dragUntilVisible(
-        find.byKey(ValueKey('network.tab.${tab.name}')),
-        find.byKey(const ValueKey('network.tabs')),
-        const Offset(-120, 0),
-      );
-      await tester.tap(find.byKey(ValueKey('network.tab.${tab.name}')));
+      final chip = find.byKey(ValueKey('network.tab.${tab.name}'));
+      await tester.ensureVisible(chip);
+      await tester.pumpAndSettle();
+      await tester.tap(chip);
       await tester.pumpAndSettle();
       expect(vm.activeTab, tab);
-    }
-    for (final (tab, probeKey) in [
-      (NetworkTab.wakeOnLan, 'network.wol.empty'),
-      (NetworkTab.ping, 'network.ping.list'),
-      (NetworkTab.portScan, 'network.portScan.empty'),
-      (NetworkTab.dnsLookup, 'network.dns.empty'),
-      (NetworkTab.hostScan, 'network.scan.empty'),
-    ]) {
-      await goTo(tester, tab);
-      expect(find.byKey(ValueKey(probeKey)), findsOneWidget, reason: '${tab.name} did not render');
+      expect(find.text(NetworkScreen.tabLabels[tab]!), findsOneWidget);
     }
     await finish(tester);
   });
 
   group('host scan', () {
-    testWidgets('the subnet is prefilled from the device', (tester) async {
-      await pump(tester, FakeProbe(local: '10.0.5.77'));
-      expect(vm.subnetPrefix, '10.0.5');
-      await finish(tester);
-    });
-
-    testWidgets('found hosts are listed with their ports and name', (tester) async {
+    testWidgets('one button sweeps this device\'s own network, as Kotlin does', (tester) async {
       await pump(
         tester,
         FakeProbe(
@@ -135,141 +152,86 @@ void main() {
           local: '192.168.1.42',
         ),
       );
+      expect(find.text('No hosts yet — run a scan.'), findsOneWidget);
+      expect(find.text('Scan network'), findsOneWidget);
 
-      expect(vm.subnetPrefix, '192.168.1');
-      await tester.tap(find.byKey(const ValueKey('network.scan.run')));
+      await tester.tap(find.byKey(const ValueKey('network.scan.button')));
       await waitForScan(tester);
 
-      expect(vm.error, isNull);
-      expect(vm.scanResults.map((host) => host.address), contains('192.168.1.5'));
-      expect(find.byKey(const ValueKey('network.scan.192.168.1.5')), findsOneWidget);
+      expect(vm.subnetPrefix, '192.168.1');
+      expect(find.byKey(const ValueKey('network.scan.host.192.168.1.5')), findsOneWidget);
       expect(find.text('nas.local'), findsOneWidget);
-      expect(find.textContaining('SSH, HTTP'), findsOneWidget);
+      expect(find.text('Open ports: 22, 80'), findsOneWidget);
+      expect(find.text('MAC unavailable'), findsWidgets);
+      expect(find.text('Rescan network'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('a result offers the tools that take an address', (tester) async {
-      // A scan result is not yet bound to a tool — the user has just found a device.
+    testWidgets('a result offers Kotlin\'s actions and port scan starts with its ports', (
+      tester,
+    ) async {
       await pump(tester, FakeProbe(open: {'192.168.1.5:22'}, local: '192.168.1.42'));
-      await tester.tap(find.byKey(const ValueKey('network.scan.run')));
+      await tester.tap(find.byKey(const ValueKey('network.scan.button')));
       await waitForScan(tester);
 
-      await tester.tap(find.byKey(const ValueKey('network.scan.192.168.1.5')));
+      await tester.tap(find.byKey(const ValueKey('network.scan.host.192.168.1.5')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('network.scan.action.portScan')));
-      await tester.pumpAndSettle();
+      expect(find.text('Add as OmniTerm host'), findsOneWidget);
+      expect(find.text('SSH is open on port 22'), findsOneWidget);
+      expect(find.text('Includes the 1 port(s) the sweep found open'), findsOneWidget);
+      await tapVisible(tester, find.byKey(const ValueKey('network.scan.action.portScan')));
 
       expect(vm.activeTab, NetworkTab.portScan);
       expect(vm.portScanTarget, '192.168.1.5');
-      expect(vm.portResults, isNotEmpty, reason: 'scan-sheet actions start the chosen tool');
-      expect(find.byKey(const ValueKey('network.portScan.target')), findsOneWidget);
+      expect(vm.portResults, isNotEmpty, reason: 'actions start the chosen tool');
+      await finish(tester);
+    });
+
+    testWidgets('a fresh sweep is reused by the LAN host picker', (tester) async {
+      await pump(tester, FakeProbe(open: {'192.168.1.5:22'}, local: '192.168.1.42'));
+      await tester.tap(find.byKey(const ValueKey('network.scan.button')));
+      await waitForScan(tester);
+      expect(vm.isScanFresh, isTrue);
+
+      await goTo(tester, NetworkTab.ping);
+      await tester.tap(find.byKey(const ValueKey('network.picker')));
+      await tester.pumpAndSettle();
+      expect(vm.scanning, isFalse, reason: 'a fresh sweep must not be repeated');
+      expect(find.text('Pick a LAN host'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('network.scan.host.192.168.1.5')).last);
+      await tester.pumpAndSettle();
+
+      expect(vm.pingTarget, '192.168.1.5');
       await finish(tester);
     });
   });
 
-  group('wake on LAN', () {
-    testWidgets('the empty state names the prerequisite', (tester) async {
-      // Wake-on-LAN silently does nothing when the machine has it disabled, so saying so up front
-      // beats letting it be discovered.
+  group('shared target', () {
+    testWidgets('Ping, Traceroute and Port Scan share one target', (tester) async {
       await pump(tester, FakeProbe());
-      await goTo(tester, NetworkTab.wakeOnLan);
-      expect(find.textContaining('enabled in its BIOS'), findsOneWidget);
-      await finish(tester);
-    });
+      await goTo(tester, NetworkTab.ping);
+      await tester.enterText(find.byKey(const ValueKey('network.target')), '10.0.0.9');
+      await tester.pump();
 
-    testWidgets('a target is created and can be woken', (tester) async {
-      final probe = FakeProbe();
-      await pump(tester, probe);
-      await goTo(tester, NetworkTab.wakeOnLan);
-
-      await tester.tap(find.byKey(const ValueKey('network.wol.add')));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('network.wol.name')), 'nas');
-      await tester.enterText(find.byKey(const ValueKey('network.wol.mac')), 'aa:bb:cc:dd:ee:ff');
-      await tester.enterText(find.byKey(const ValueKey('network.wol.ip')), '192.168.4.20');
-      await tester.tap(find.byKey(const ValueKey('network.wol.save')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('nas'), findsOneWidget);
-      expect(find.textContaining('Port 9'), findsOneWidget);
-      expect(find.textContaining('192.168.4.20'), findsOneWidget);
-
-      await tester.tap(find.byKey(ValueKey('network.wol.${vm.wolTargets.single.id}.wake')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('network.wol.wake.dialog')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('network.wol.wake.confirm')));
-      await tester.pumpAndSettle();
-
-      expect(probe.sentPackets, hasLength(1));
-      expect(find.textContaining('Magic packet sent'), findsOneWidget);
-      await finish(tester);
-    });
-
-    testWidgets('a target can be edited with notes and deleted with confirmation', (tester) async {
-      await pump(tester, FakeProbe());
-      await goTo(tester, NetworkTab.wakeOnLan);
-      await vm.saveWolTarget(
-        name: 'nas',
-        macAddress: 'aa:bb:cc:dd:ee:ff',
-        ipAddress: '192.168.4.20',
-      );
-      await tester.pumpAndSettle();
-      final target = vm.wolTargets.single;
-
-      await tester.tap(find.byKey(ValueKey('network.wol.${target.id}.edit')));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('network.wol.name')), 'media nas');
-      await tester.enterText(find.byKey(const ValueKey('network.wol.notes')), 'rack shelf 2');
-      await tester.tap(find.byKey(const ValueKey('network.wol.save')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('media nas'), findsOneWidget);
-      expect(find.text('rack shelf 2'), findsOneWidget);
-      final edited = vm.wolTargets.single;
-      expect(edited.notes, 'rack shelf 2');
-
-      await tester.tap(find.byKey(ValueKey('network.wol.${edited.id}.delete')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('network.wol.delete.dialog')), findsOneWidget);
-      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
-      await tester.pumpAndSettle();
-      expect(vm.wolTargets, isEmpty);
-      await finish(tester);
-    });
-
-    testWidgets('a bad MAC is refused in the sheet', (tester) async {
-      await pump(tester, FakeProbe());
-      await goTo(tester, NetworkTab.wakeOnLan);
-
-      await tester.tap(find.byKey(const ValueKey('network.wol.add')));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('network.wol.name')), 'nas');
-      await tester.enterText(find.byKey(const ValueKey('network.wol.mac')), 'nope');
-      await tester.tap(find.byKey(const ValueKey('network.wol.save')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('network.wol.error')), findsOneWidget);
-      expect(vm.wolTargets, isEmpty);
+      await goTo(tester, NetworkTab.traceroute);
+      expect(find.widgetWithText(TextField, '10.0.0.9'), findsOneWidget);
+      await goTo(tester, NetworkTab.portScan);
+      expect(find.widgetWithText(TextField, '10.0.0.9'), findsOneWidget);
       await finish(tester);
     });
   });
 
   group('ping', () {
-    testWidgets('identifies device-side ICMP and the until-stopped count', (tester) async {
+    testWidgets('Start Ping waits for a target and streams the output', (tester) async {
       await pump(tester, FakeProbe());
       await goTo(tester, NetworkTab.ping);
-      expect(find.textContaining('ICMP pings are sent from this device'), findsOneWidget);
-      expect(find.byKey(const ValueKey('network.ping.count')), findsOneWidget);
-      await finish(tester);
-    });
+      final start = find.byKey(const ValueKey('network.ping.start'));
+      expect(tester.widget<FilledButton>(start).onPressed, isNull);
+      expect(find.text('Tries (0 = keep pinging until stopped)'), findsOneWidget);
 
-    testWidgets('streams the system ping output', (tester) async {
-      await pump(tester, FakeProbe());
-      await goTo(tester, NetworkTab.ping);
-
-      await tester.enterText(find.byKey(const ValueKey('network.ping.target')), '10.0.0.1');
-      await tester.tap(find.byKey(const ValueKey('network.ping.run')));
-      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('network.target')), '10.0.0.1');
+      await tester.pump();
+      await tapVisible(tester, start);
 
       expect(find.textContaining('icmp_seq=1'), findsOneWidget);
       expect(find.textContaining('0% packet loss'), findsOneWidget);
@@ -278,283 +240,220 @@ void main() {
   });
 
   group('port scan', () {
-    testWidgets('lists only the open ports, with their service names', (tester) async {
-      // A list of two dozen closed ports buries the answer.
+    testWidgets('lists every probed port as Open or Closed, as Kotlin does', (tester) async {
       await pump(tester, FakeProbe(open: {'10.0.0.1:22', '10.0.0.1:443'}));
       await goTo(tester, NetworkTab.portScan);
 
-      await tester.enterText(find.byKey(const ValueKey('network.portScan.target')), '10.0.0.1');
+      await tester.enterText(find.byKey(const ValueKey('network.target')), '10.0.0.1');
       await tester.enterText(find.byKey(const ValueKey('network.portScan.ports')), '22,80,443');
-      await tester.tap(find.byKey(const ValueKey('network.portScan.run')));
+      await tester.pump();
+      await tapVisible(tester, find.byKey(const ValueKey('network.portScan.start')));
+
+      expect(find.text('Port 22'), findsOneWidget);
+      expect(find.text('Port 80'), findsOneWidget);
+      expect(find.text('Open'), findsNWidgets(2));
+      expect(find.text('Closed'), findsOneWidget);
+      await finish(tester);
+    });
+  });
+
+  group('wake on LAN', () {
+    testWidgets('a target is configured and woken with Kotlin wording', (tester) async {
+      final probe = FakeProbe();
+      await pump(tester, probe);
+      await goTo(tester, NetworkTab.wakeOnLan);
+      expect(find.text('Saved targets'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('network.wol.add')));
+      await tester.pumpAndSettle();
+      expect(find.text('Configure WOL Pointer'), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('network.wol.editor.name')), 'nas');
+      await tester.enterText(
+        find.byKey(const ValueKey('network.wol.editor.mac')),
+        'aa:bb:cc:dd:ee:ff',
+      );
+      await tester.enterText(find.byKey(const ValueKey('network.wol.editor.ip')), '192.168.4.20');
+      await tester.pump();
+      await tapVisible(tester, find.byKey(const ValueKey('network.wol.editor.save')));
+
+      expect(find.text('nas'), findsOneWidget);
+      expect(find.text('MAC: aa:bb:cc:dd:ee:ff · Port 9 · 192.168.4.20'), findsOneWidget);
+
+      await tester.tap(find.byKey(ValueKey('network.wol.${vm.wolTargets.single.id}.wake')));
+      await tester.pumpAndSettle();
+      expect(find.text('Send wake packet?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('network.wol.wakeDialog.confirm')));
       await tester.pumpAndSettle();
 
-      expect(find.text('2 open of 3 probed'), findsOneWidget);
-      expect(find.text('22 · SSH'), findsOneWidget);
-      expect(find.text('443 · HTTPS'), findsOneWidget);
-      expect(find.textContaining('80 ·'), findsNothing);
+      expect(probe.sentPackets, hasLength(1));
+      expect(find.text('Magic packet sent to nas'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('an unusable port spec is reported with an example', (tester) async {
+    testWidgets('a bad MAC disables Add configuration', (tester) async {
       await pump(tester, FakeProbe());
-      await goTo(tester, NetworkTab.portScan);
-
-      await tester.enterText(find.byKey(const ValueKey('network.portScan.target')), '10.0.0.1');
-      await tester.enterText(find.byKey(const ValueKey('network.portScan.ports')), 'nonsense');
-      await tester.tap(find.byKey(const ValueKey('network.portScan.run')));
+      await goTo(tester, NetworkTab.wakeOnLan);
+      await tester.tap(find.byKey(const ValueKey('network.wol.add')));
       await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('network.wol.editor.name')), 'nas');
+      await tester.enterText(find.byKey(const ValueKey('network.wol.editor.mac')), 'nope');
+      await tester.pump();
 
-      expect(find.byKey(const ValueKey('network.error')), findsOneWidget);
-      expect(find.textContaining('22,80,443'), findsWidgets);
+      final save = find.byKey(const ValueKey('network.wol.editor.save'));
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      expect(vm.wolTargets, isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('editing and deleting ask with Kotlin wording', (tester) async {
+      await pump(tester, FakeProbe());
+      await goTo(tester, NetworkTab.wakeOnLan);
+      await vm.saveWolTarget(name: 'nas', macAddress: 'aa:bb:cc:dd:ee:ff');
+      await tester.pumpAndSettle();
+      final target = vm.wolTargets.single;
+
+      await tester.tap(find.byKey(ValueKey('network.wol.${target.id}.edit')));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit WOL Pointer'), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('network.wol.editor.notes')), 'rack 2');
+      await tester.pump();
+      await tapVisible(tester, find.byKey(const ValueKey('network.wol.editor.save')));
+      expect(find.text('rack 2'), findsOneWidget);
+
+      await tester.tap(find.byKey(ValueKey('network.wol.${target.id}.delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete "nas" from Wake-on-LAN targets?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('network.wol.deleteDialog.confirm')));
+      await tester.pumpAndSettle();
+      expect(vm.wolTargets, isEmpty);
       await finish(tester);
     });
   });
 
   group('DNS', () {
-    testWidgets('lists the records it resolved', (tester) async {
+    testWidgets('lists the records as Kotlin cards', (tester) async {
       final probe = FakeProbe()..dnsResponses = {fallbackResolvers.first: aRecordResponse()};
       await pump(tester, probe);
       await goTo(tester, NetworkTab.dnsLookup);
 
       await tester.enterText(find.byKey(const ValueKey('network.dns.target')), 'example.com');
-      await tester.tap(find.byKey(const ValueKey('network.dns.run')));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tapVisible(tester, find.byKey(const ValueKey('network.dns.run')));
 
-      expect(find.text('93.184.216.34'), findsOneWidget);
-      expect(find.text('A'), findsWidgets);
-      expect(find.textContaining('TTL 300'), findsOneWidget);
+      expect(find.text('Value: 93.184.216.34'), findsOneWidget);
+      expect(find.text('TTL: 300'), findsOneWidget);
       await finish(tester);
     });
 
     testWidgets('an unreachable resolver is reported, not silently empty', (tester) async {
       await pump(tester, FakeProbe());
       await goTo(tester, NetworkTab.dnsLookup);
-
       await tester.enterText(find.byKey(const ValueKey('network.dns.target')), 'example.com');
-      await tester.tap(find.byKey(const ValueKey('network.dns.run')));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tapVisible(tester, find.byKey(const ValueKey('network.dns.run')));
 
       expect(find.byKey(const ValueKey('network.error')), findsOneWidget);
-      expect(find.textContaining('Could not reach a DNS resolver'), findsOneWidget);
       await finish(tester);
     });
   });
 
   group('tunnels', () {
-    Server host({required String name}) => Server(
-      id: 0,
-      name: name,
-      host: '10.0.0.1',
-      port: 22,
-      username: 'root',
-      serverColor: 'Default',
-      authType: 'password',
-      authPassword: 'pw',
-      sudoPassword: '',
-      notes: '',
-      keepAlive: 30,
-      sshCompression: false,
-      persistentSession: false,
-      proxyCommand: '',
-      proxyType: 'none',
-      proxyHost: '',
-      proxyPort: 0,
-      proxyUser: '',
-      proxyPassword: '',
-      agentForwarding: false,
-      healthScore: 100,
-      lastLatency: 0,
-      status: 'online',
-      authStatus: 'ok',
-    );
-
     testWidgets('without a forwarder the tab says so rather than offering dead switches', (
       tester,
     ) async {
-      // Convention 4: an absent dependency disables the feature and explains itself.
-      await repo.insertServer(host(name: 'nas'));
       await pump(tester, FakeProbe());
       await goTo(tester, NetworkTab.tunnels);
-
-      expect(find.byKey(const ValueKey('tunnels.unavailable')), findsOneWidget);
+      expect(find.byKey(const ValueKey('network.tunnels.unavailable')), findsOneWidget);
       await finish(tester);
     });
 
     testWidgets('with no hosts there is nothing to add a tunnel over', (tester) async {
       await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
       await goTo(tester, NetworkTab.tunnels);
-
-      expect(find.byKey(const ValueKey('tunnels.noHosts')), findsOneWidget);
-      final add = tester.widget<FilledButton>(find.byKey(const ValueKey('tunnels.add')));
-      expect(add.onPressed, isNull, reason: 'a tunnel runs over a host');
+      expect(find.text('Add an SSH host first.'), findsOneWidget);
+      final add = find.byKey(const ValueKey('network.tunnels.add'));
+      expect(tester.widget<ButtonStyleButton>(add).onPressed, isNull);
       await finish(tester);
     });
 
-    testWidgets('a saved tunnel is listed with what it actually does', (tester) async {
-      await repo.insertServer(host(name: 'nas'));
+    testWidgets('a saved tunnel is listed with Kotlin\'s summary', (tester) async {
+      final serverId = await repo.insertServer(host(name: 'bastion'));
       await repo.insertPortForward(
         PortForwardsCompanion.insert(
-          serverId: 1,
-          name: 'web',
-          kind: const Value('local'),
-          bindHost: const Value('127.0.0.1'),
-          bindPort: 8080,
-          destHost: const Value('10.0.0.5'),
-          destPort: const Value(80),
+          serverId: serverId,
+          name: 'db',
+          bindPort: 5433,
+          destHost: const Value('db.internal'),
+          destPort: const Value(5432),
         ),
       );
       await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
       await goTo(tester, NetworkTab.tunnels);
-      await tester.pumpAndSettle();
 
-      expect(find.text('web'), findsOneWidget);
-      expect(find.text('-L 127.0.0.1:8080 → 10.0.0.5:80'), findsOneWidget);
-      expect(find.text('via nas'), findsOneWidget);
+      expect(find.text('db'), findsOneWidget);
+      expect(find.text('-L 127.0.0.1:5433 → db.internal:5432'), findsOneWidget);
+      expect(find.text('via bastion'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('a tunnel whose host was deleted says so instead of looking fine', (tester) async {
-      // The row would otherwise read normally and fail only when someone flipped the switch.
-      // Another host has to exist, or the tab shows "add a host first" instead of the list.
-      await repo.insertServer(host(name: 'other'));
-      await repo.insertPortForward(
-        PortForwardsCompanion.insert(serverId: 99, name: 'orphan', bindPort: 9999),
-      );
+    testWidgets('the editor keeps Save off until the ports are valid', (tester) async {
+      await repo.insertServer(host(name: 'bastion'));
       await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
       await goTo(tester, NetworkTab.tunnels);
+      await tester.tap(find.byKey(const ValueKey('network.tunnels.add')));
       await tester.pumpAndSettle();
-
-      expect(find.text('host no longer exists'), findsOneWidget);
-      await finish(tester);
-    });
-
-    testWidgets('the editor refuses a port nobody typed', (tester) async {
-      await repo.insertServer(host(name: 'nas'));
-      await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
-      await goTo(tester, NetworkTab.tunnels);
-
-      await tester.tap(find.byKey(const ValueKey('tunnels.add')));
-      await tester.pumpAndSettle();
+      expect(find.text('New tunnel'), findsOneWidget);
 
       await tester.enterText(find.byKey(const ValueKey('tunnelEditor.name')), 'web');
-      await tester.pumpAndSettle();
-
-      var save = tester.widget<FilledButton>(find.byKey(const ValueKey('tunnelEditor.save')));
-      expect(save.onPressed, isNull, reason: 'no bind port has been given');
-      expect(find.byKey(const ValueKey('tunnelEditor.error')), findsOneWidget);
+      await tester.pump();
+      final save = find.byKey(const ValueKey('tunnelEditor.save'));
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
 
       await tester.enterText(find.byKey(const ValueKey('tunnelEditor.bindPort')), '8080');
-      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.destHost')), '10.0.0.5');
+      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.destHost')), 'web.internal');
       await tester.enterText(find.byKey(const ValueKey('tunnelEditor.destPort')), '80');
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tapVisible(tester, save);
 
-      save = tester.widget<FilledButton>(find.byKey(const ValueKey('tunnelEditor.save')));
-      expect(save.onPressed, isNotNull);
-
-      await tester.ensureVisible(find.byKey(const ValueKey('tunnelEditor.save')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('tunnelEditor.save')));
-      await tester.pumpAndSettle();
-
-      final saved = await repo.getAllPortForwards();
-      expect(saved.single.name, 'web');
-      expect(saved.single.bindPort, 8080);
+      final saved = (await repo.getAllPortForwards()).single;
+      expect(saved.bindPort, 8080);
+      expect(saved.destHost, 'web.internal');
       await finish(tester);
     });
 
     testWidgets('a dynamic forward is not asked for a destination', (tester) async {
-      await repo.insertServer(host(name: 'nas'));
+      await repo.insertServer(host(name: 'bastion'));
       await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
       await goTo(tester, NetworkTab.tunnels);
-
-      await tester.tap(find.byKey(const ValueKey('tunnels.add')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('tunnelEditor.destHost')), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('tunnelEditor.kind')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('-D  SOCKS4/4a/5 proxy').last);
+      await tester.tap(find.byKey(const ValueKey('network.tunnels.add')));
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const ValueKey('tunnelEditor.destHost')),
-        findsNothing,
-        reason: 'SOCKS decides its destination per connection',
-      );
+      await tester.tap(find.byKey(const ValueKey('tunnelEditor.kind.menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dynamic SOCKS (-D)').last);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('tunnelEditor.destHost')), findsNothing);
+      expect(find.textContaining('Opens a SOCKS5 proxy'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('auto-start is offered, saved, and honest about its lifetime', (tester) async {
-      // The column existed from the first schema and nothing set it, so a tunnel could never be
-      // marked to start on its own — the field was storage with no way in.
-      await repo.insertServer(host(name: 'nas'));
-      await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
-      await goTo(tester, NetworkTab.tunnels);
-
-      await tester.tap(find.byKey(const ValueKey('tunnels.add')));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.name')), 'web');
-      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.bindPort')), '8080');
-      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.destHost')), '10.0.0.5');
-      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.destPort')), '80');
-      await tester.pumpAndSettle();
-
-      // A tunnel is not a system service, and a user who expected it to outlive the app would be
-      // wrong in a way that matters.
-      expect(find.textContaining('closing OmniTerm takes the tunnel down'), findsOneWidget);
-
-      await tester.ensureVisible(find.byKey(const ValueKey('tunnelEditor.autoStart')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('tunnelEditor.autoStart')));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byKey(const ValueKey('tunnelEditor.save')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('tunnelEditor.save')));
-      await tester.pumpAndSettle();
-
-      expect((await repo.getAllPortForwards()).single.autoStart, isTrue);
-      await finish(tester);
-    });
-
-    testWidgets('each mode explains itself, not just its flag', (tester) async {
-      await repo.insertServer(host(name: 'nas'));
-      await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
-      await goTo(tester, NetworkTab.tunnels);
-
-      await tester.tap(find.byKey(const ValueKey('tunnels.add')));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('This device listens'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('tunnelEditor.kind')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('-D  SOCKS4/4a/5 proxy').last);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('SOCKS4/4a/5 proxy on the bind address'), findsOneWidget);
-      await finish(tester);
-    });
-
-    testWidgets('deleting asks first and says a running tunnel would be stopped', (tester) async {
-      await repo.insertServer(host(name: 'nas'));
+    testWidgets('deleting asks first with Kotlin wording', (tester) async {
+      final serverId = await repo.insertServer(host(name: 'bastion'));
       await repo.insertPortForward(
-        PortForwardsCompanion.insert(serverId: 1, name: 'web', bindPort: 8080),
+        PortForwardsCompanion.insert(serverId: serverId, name: 'db', bindPort: 5433),
       );
       await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
       await goTo(tester, NetworkTab.tunnels);
-      await tester.pumpAndSettle();
+      final pf = vm.portForwards.single;
 
-      await tester.tap(find.byKey(const ValueKey('tunnels.card.1.delete')));
+      await tester.tap(find.byKey(ValueKey('network.tunnel.${pf.id}.delete')));
       await tester.pumpAndSettle();
-      expect(find.textContaining('it will be stopped'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('tunnels.delete.cancel')));
+      expect(find.text('Delete "db"?'), findsOneWidget);
+      expect(find.text("Remove this saved tunnel? If it's running it will be stopped."), findsOne);
+      await tester.tap(find.byKey(const ValueKey('network.tunnel.deleteDialog.confirm')));
       await tester.pumpAndSettle();
-      expect(await repo.getAllPortForwards(), hasLength(1));
-
-      await tester.tap(find.byKey(const ValueKey('tunnels.card.1.delete')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('tunnels.delete.confirm')));
-      await tester.pumpAndSettle();
-      expect(await repo.getAllPortForwards(), isEmpty);
+      expect(vm.portForwards, isEmpty);
       await finish(tester);
     });
   });

@@ -61,91 +61,74 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   }
 
-  testWidgets('every metric gets six fields, seeded from the saved config', (tester) async {
+  String fieldText(WidgetTester tester, String key) => tester
+      .widget<EditableText>(
+        find.descendant(of: find.byKey(ValueKey(key)), matching: find.byType(EditableText)),
+      )
+      .controller
+      .text;
+
+  testWidgets('one Kotlin card holds six fields per metric, seeded from the config', (
+    tester,
+  ) async {
     await pump(tester);
 
+    expect(find.text('Health scoring'), findsNWidgets(2), reason: 'scaffold title and card title');
+    expect(find.text('CPU · threshold (%) then penalty'), findsOneWidget);
+    expect(find.text('Latency · threshold (ms) then penalty'), findsOneWidget);
     for (final metric in HealthMetric.values) {
-      expect(find.byKey(ValueKey('healthScoring.metric.${metric.name}')), findsOneWidget);
       for (final tier in ['warn', 'high', 'critical']) {
         expect(find.byKey(ValueKey('healthScoring.${metric.name}.${tier}At')), findsOneWidget);
         expect(find.byKey(ValueKey('healthScoring.${metric.name}.${tier}Penalty')), findsOneWidget);
       }
     }
+    expect(fieldText(tester, 'healthScoring.cpu.warnAt'), '50');
+    expect(find.text('warn ≥'), findsNWidgets(4));
+    expect(find.text('-pts'), findsNWidgets(12));
     await finish(tester);
   });
 
-  testWidgets('the preview shows a score and what deducted from it', (tester) async {
-    // The numbers in this form are abstract until you see what they do.
+  testWidgets('fields accept only digits and a decimal point', (tester) async {
     await pump(tester);
-
-    expect(find.byKey(const ValueKey('healthScoring.preview.score')), findsOneWidget);
-    // The breakdown line, not the slider's own label: it names the tier and the threshold crossed.
-    expect(find.textContaining('CPU 60% — elevated'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnAt')), '4a5.5x');
+    await tester.pumpAndSettle();
+    expect(fieldText(tester, 'healthScoring.cpu.warnAt'), '45.5');
     await finish(tester);
   });
 
-  testWidgets('editing a penalty changes the preview immediately', (tester) async {
+  testWidgets('out-of-order thresholds show Kotlin\'s message and block saving', (tester) async {
     await pump(tester);
-    final before = vm
-        .previewFor(cpuPercent: 60, memoryPercent: 75, diskPercent: 85, latencyMs: 60)!
-        .score;
-
-    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnPenalty')), '40');
+    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnAt')), '95');
     await tester.pumpAndSettle();
 
-    final after = vm
-        .previewFor(cpuPercent: 60, memoryPercent: 75, diskPercent: 85, latencyMs: 60)!
-        .score;
-    expect(after, lessThan(before));
-    await finish(tester);
-  });
-
-  testWidgets('out-of-order thresholds are flagged on the metric and block saving', (tester) async {
-    // The middle tier would be unreachable, so the metric would silently stop scoring.
-    await pump(tester);
-
-    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnAt')), '99');
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('healthScoring.metric.cpu.error')), findsOneWidget);
-    expect(find.textContaining('must increase'), findsWidgets);
-
+    expect(find.text('Thresholds must increase: warn <= high <= crit'), findsOneWidget);
     final save = tester.widget<FilledButton>(find.byKey(const ValueKey('healthScoring.save')));
     expect(save.onPressed, isNull);
     await finish(tester);
   });
 
-  testWidgets('an empty field says required rather than invalid', (tester) async {
+  testWidgets('an empty field says Required, and latency wants whole milliseconds', (tester) async {
     await pump(tester);
-
-    await tester.enterText(find.byKey(const ValueKey('healthScoring.disk.highAt')), '');
+    await tester.enterText(find.byKey(const ValueKey('healthScoring.memory.highAt')), '');
+    await tester.enterText(find.byKey(const ValueKey('healthScoring.latency.warnAt')), '50.5');
     await tester.pumpAndSettle();
-
-    expect(find.textContaining('required'), findsWidgets);
+    expect(find.text('Required'), findsOneWidget);
+    expect(find.text('Must be a whole number'), findsOneWidget);
     await finish(tester);
   });
 
-  testWidgets('the preview is withheld while the draft is unusable', (tester) async {
-    await pump(tester);
-
-    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnAt')), '');
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('healthScoring.preview.score')), findsNothing);
-    expect(find.textContaining('Fix the values below'), findsOneWidget);
-    await finish(tester);
-  });
-
-  testWidgets('saving persists and confirms', (tester) async {
+  testWidgets('saving asks first, then persists', (tester) async {
     await pump(tester);
 
     await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnAt')), '40');
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('healthScoring.save')));
     await tester.pumpAndSettle();
+    expect(find.text('Save scoring config?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('healthScoring.save.confirm')));
+    await tester.pumpAndSettle();
 
     expect(vm.saved.cpu.warnAt, 40);
-    expect(find.textContaining('Saved'), findsOneWidget);
     expect(
       HealthScoringConfig.decode(
         await repo.getSetting(HealthScoringViewModel.settingKey),
@@ -155,29 +138,26 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('discard appears only when dirty and puts the fields back', (tester) async {
+  testWidgets('Save scoring is enabled with nothing changed, as in Kotlin', (tester) async {
     await pump(tester);
-    expect(find.byKey(const ValueKey('healthScoring.revert')), findsNothing);
-
-    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnAt')), '40');
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('healthScoring.revert')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('healthScoring.revert')));
-    await tester.pumpAndSettle();
-
-    expect(vm.isDirty, isFalse);
-    final field = tester.widget<EditableText>(
-      find.descendant(
-        of: find.byKey(const ValueKey('healthScoring.cpu.warnAt')),
-        matching: find.byType(EditableText),
-      ),
-    );
-    expect(field.controller.text, '50', reason: 'the field must follow the discarded draft');
+    final save = tester.widget<FilledButton>(find.byKey(const ValueKey('healthScoring.save')));
+    expect(save.onPressed, isNotNull);
     await finish(tester);
   });
 
-  testWidgets('resetting asks first and says what is lost', (tester) async {
+  testWidgets('a decimal penalty keeps the default penalty, as Kotlin does', (tester) async {
+    await pump(tester);
+    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnPenalty')), '7.5');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('healthScoring.save')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('healthScoring.save.confirm')));
+    await tester.pumpAndSettle();
+    expect(vm.saved.cpu.warnPenalty, HealthScoringConfig.defaults.cpu.warnPenalty);
+    await finish(tester);
+  });
+
+  testWidgets('resetting asks with Kotlin wording first', (tester) async {
     await repo.insertSetting(
       HealthScoringViewModel.settingKey,
       const HealthScoringConfig(cpu: MetricTiers(10, 20, 30, 1, 2, 3)).encode(),
@@ -186,7 +166,8 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('healthScoring.reset')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('your tuning is lost'), findsOneWidget);
+    expect(find.text('Reset to defaults?'), findsOneWidget);
+    expect(find.textContaining('This cannot be undone.'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('healthScoring.reset.cancel')));
     await tester.pumpAndSettle();
@@ -198,6 +179,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(vm.saved, HealthScoringConfig.defaults);
+    expect(fieldText(tester, 'healthScoring.cpu.warnAt'), '50');
     await finish(tester);
   });
 }

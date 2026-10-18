@@ -344,9 +344,9 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      expect(vm.status, contains('Backup saved'), reason: 'the file really was saved');
+      expect(vm.status, contains('backup written'), reason: 'the file really was saved');
       expect(vm.status, contains('could not be recorded'));
-      expect(vm.status, contains('The file itself is saved'));
+      expect(vm.status, contains('The backup file is saved'));
       expect(vm.error, isNull, reason: 'a saved file is not an error');
       vm.dispose();
       failingApp.dispose();
@@ -908,7 +908,7 @@ void main() {
 
       expect(counts!['alertRulesSkipped'], 1);
       expect(await repo.getAllRules(), isEmpty);
-      expect(vm.status, contains('skipped'));
+      expect(vm.status, contains('Skipped 1 alert rule(s)'));
       vm.dispose();
     });
 
@@ -1106,7 +1106,7 @@ void main() {
 
       expect(counts!['portForwardsSkipped'], 1);
       expect(await repo.getAllPortForwards(), isEmpty);
-      expect(vm.status, contains('tunnel(s) were skipped'));
+      expect(vm.status, contains('Skipped 1 tunnel(s)'));
       vm.dispose();
     });
   });

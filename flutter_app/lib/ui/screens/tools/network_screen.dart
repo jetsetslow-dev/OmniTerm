@@ -3,28 +3,39 @@ import 'dart:async';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
 import '../../../data/network/network_probe.dart';
-import '../../../domain/host_display.dart';
 import '../../../domain/external_ui_requests.dart';
-import '../../../domain/network_tools.dart';
-import '../../../domain/tunnel_form.dart';
-import '../../view_model/app_state.dart';
+import '../../../domain/host_display.dart';
+import '../../../domain/input_validation.dart';
+import '../../navigation.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
-import '../../../domain/whois.dart';
+import '../../view_model/app_state.dart';
 import '../../view_model/network_view_model.dart';
 import '../../widgets/omni_components.dart';
-import '../../navigation.dart';
+import '../../widgets/omni_confirm.dart';
+import '../../widgets/popup_scroll_behavior.dart';
 
-/// The Network tool, ported from `NetworkToolView` in `ui/ToolsScreen.kt`.
-///
-/// Everything here runs from the **device**, not over SSH: these are the tools you reach for when a
-/// host is not answering and you cannot get a shell on it.
+/// The Network tools, ported from `NetworkToolView` in `ui/ToolsScreen.kt`: nine device-side tools
+/// under one scrollable tab row. Ping, Traceroute and Port Scan share one target.
 class NetworkScreen extends StatefulWidget {
   const NetworkScreen({super.key});
+
+  static const tabLabels = {
+    NetworkTab.hostScan: 'Host Scan',
+    NetworkTab.wakeOnLan: 'Wake-on-LAN',
+    NetworkTab.ping: 'Ping',
+    NetworkTab.traceroute: 'Traceroute',
+    NetworkTab.portScan: 'Port Scan',
+    NetworkTab.dnsLookup: 'DNS Lookup',
+    NetworkTab.whois: 'WHOIS',
+    NetworkTab.speedTest: 'Speed Test',
+    NetworkTab.tunnels: 'Tunnels',
+  };
 
   @override
   State<NetworkScreen> createState() => _NetworkScreenState();
@@ -39,74 +50,25 @@ class _NetworkScreenState extends State<NetworkScreen> {
     });
   }
 
-  static const _labels = {
-    NetworkTab.hostScan: 'Host scan',
-    NetworkTab.wakeOnLan: 'Wake-on-LAN',
-    NetworkTab.ping: 'Ping',
-    NetworkTab.traceroute: 'Traceroute',
-    NetworkTab.portScan: 'Port scan',
-    NetworkTab.dnsLookup: 'DNS',
-    NetworkTab.whois: 'WHOIS',
-    NetworkTab.speedTest: 'Speed test',
-    NetworkTab.tunnels: 'Tunnels',
-  };
-
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<NetworkViewModel>();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          height: 44,
-          child: ListView(
+    return ToolScaffold(
+      title: 'Network tools',
+      keyPrefix: 'network',
+      onBack: () => context.read<NavigationController>().navigateTo(Screen.tools),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Kotlin's PrimaryScrollableTabRow: edge padding 0, 12sp labels.
+          OmniScrollableTabRow(
             key: const ValueKey('network.tabs'),
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            children: [
-              for (final tab in NetworkTab.values)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Center(
-                    child: ChoiceChip(
-                      key: ValueKey('network.tab.${tab.name}'),
-                      label: Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
-                      selected: vm.activeTab == tab,
-                      onSelected: (_) => vm.activeTab = tab,
-                    ),
-                  ),
-                ),
-            ],
+            labels: [for (final tab in NetworkTab.values) NetworkScreen.tabLabels[tab]!],
+            selectedIndex: vm.activeTab.index,
+            onSelected: (i) => vm.activeTab = NetworkTab.values[i],
+            tabKeys: [for (final tab in NetworkTab.values) ValueKey('network.tab.${tab.name}')],
           ),
-        ),
-        if (vm.error != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-            child: OmniCard(
-              key: const ValueKey('network.error'),
-              leftAccent: OmniColors.red,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      vm.error!,
-                      style: const TextStyle(fontSize: 12, color: OmniColors.red),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Dismiss',
-                    key: const ValueKey('network.error.dismiss'),
-                    icon: const Icon(Icons.close, size: 16),
-                    onPressed: vm.dismissError,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
+          Expanded(
             child: switch (vm.activeTab) {
               NetworkTab.hostScan => _HostScanTab(vm: vm),
               NetworkTab.wakeOnLan => _WolTab(vm: vm),
@@ -119,175 +81,64 @@ class _NetworkScreenState extends State<NetworkScreen> {
               NetworkTab.tunnels => _TunnelsTab(vm: vm),
             },
           ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SpeedTestTab extends StatelessWidget {
-  const _SpeedTestTab({required this.vm});
-
-  final NetworkViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final selected = NetworkViewModel.speedTestServers
-        .where((server) => server.$2 == vm.speedTestUrl)
-        .firstOrNull;
-    return ListView(
-      key: const ValueKey('network.speedTest'),
-      children: [
-        Text(
-          "Measures this device's download throughput. The test stops after 15 seconds.",
-          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          key: const ValueKey('network.speedTest.server'),
-          isExpanded: true,
-          initialValue: selected?.$2,
-          decoration: omniInputDecoration(context, labelText: 'Test server'),
-          hint: const Text('Custom URL'),
-          items: [
-            for (final server in NetworkViewModel.speedTestServers)
-              DropdownMenuItem(
-                value: server.$2,
-                child: Text(server.$1, maxLines: 1, overflow: TextOverflow.ellipsis),
-              ),
-          ],
-          onChanged: vm.speedTestRunning
-              ? null
-              : (value) => vm.speedTestUrl = value ?? vm.speedTestUrl,
-        ),
-        const SizedBox(height: 10),
-        _ToolField(
-          fieldKey: 'network.speedTest.url',
-          label: 'Download URL',
-          initial: vm.speedTestUrl,
-          mono: true,
-          onChanged: (value) => vm.speedTestUrl = value,
-        ),
-        const SizedBox(height: 12),
-        OmniCard(
-          leftAccent: OmniColors.cyan,
-          child: Column(
-            children: [
-              Text(
-                vm.speedTestMbps?.toStringAsFixed(1) ?? '—',
-                key: const ValueKey('network.speedTest.mbps'),
-                style: TextStyle(
-                  fontSize: 44,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: OmniFonts.mono,
-                  color: vm.speedTestRunning ? OmniColors.cyan : OmniColors.green,
-                ),
-              ),
-              Text('Mbps', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _SpeedMetric(value: _formatBytes(vm.speedTestBytes), label: 'Downloaded'),
-                  if (vm.speedTestLatency != null) ...[
-                    const SizedBox(width: 28),
-                    _SpeedMetric(
-                      value: '${vm.speedTestLatency!.inMilliseconds} ms',
-                      label: 'Time to first byte',
-                    ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        FilledButton(
-          key: const ValueKey('network.speedTest.run'),
-          style: vm.speedTestRunning
-              ? FilledButton.styleFrom(backgroundColor: OmniColors.amber)
-              : null,
-          onPressed: vm.speedTestUrl.trim().isEmpty
-              ? null
-              : vm.speedTestRunning
-              ? vm.cancelSpeedTest
-              : vm.runSpeedTest,
-          child: Text(vm.speedTestRunning ? 'Stop' : 'Start speed test'),
-        ),
-        if (vm.speedTestError != null) ...[
-          const SizedBox(height: 10),
-          Text(
-            vm.speedTestError!,
-            key: const ValueKey('network.speedTest.error'),
-            style: const TextStyle(color: OmniColors.red, fontFamily: OmniFonts.mono, fontSize: 13),
-          ),
         ],
-      ],
+      ),
     );
   }
 }
 
-class _SpeedMetric extends StatelessWidget {
-  const _SpeedMetric({required this.value, required this.label});
+// ── shared pieces ────────────────────────────────────────────────────────────────
 
-  final String value;
-  final String label;
+Color _muted(BuildContext context) => Theme.of(context).colorScheme.onSurfaceVariant;
 
-  @override
-  Widget build(BuildContext context) => Column(
+/// A scrolling column of a tab's controls with Kotlin's 12dp padding and spacing.
+Widget _tabColumn(List<Widget> children, {Key? key}) => ScrollConfiguration(
+  behavior: const PopupScrollBehavior(popupsOnly: false),
+  child: ListView(
+    key: key,
+    padding: const EdgeInsets.all(12),
     children: [
-      Text(
-        value,
-        style: const TextStyle(
-          fontSize: 14,
-          fontFamily: OmniFonts.mono,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      Text(
-        label,
-        style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
-      ),
+      for (var i = 0; i < children.length; i++) ...[
+        if (i > 0) const SizedBox(height: 12),
+        children[i],
+      ],
     ],
-  );
-}
+  ),
+);
 
-String _formatBytes(int bytes) {
-  if (bytes >= 1024 * 1024 * 1024) {
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-  }
-  if (bytes >= 1024 * 1024) {
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-  if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-  return '$bytes B';
-}
-
-/// A labelled text field that keeps its own controller.
-class _ToolField extends StatefulWidget {
-  const _ToolField({
+/// A text field bound to a view-model string. Owns its controller, and follows the value when
+/// another tab fills it (a scanned host sent to Ping).
+class _BoundField extends StatefulWidget {
+  const _BoundField({
     required this.fieldKey,
     required this.label,
-    required this.initial,
+    required this.value,
     required this.onChanged,
-    this.hint,
-    this.mono = false,
+    this.keyboardType,
+    this.inputFormatters,
+    this.errorText,
   });
 
   final String fieldKey;
   final String label;
-  final String initial;
+  final String value;
   final ValueChanged<String> onChanged;
-  final String? hint;
-  final bool mono;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final String? errorText;
 
   @override
-  State<_ToolField> createState() => _ToolFieldState();
+  State<_BoundField> createState() => _BoundFieldState();
 }
 
-class _ToolFieldState extends State<_ToolField> {
-  late final _controller = TextEditingController(text: widget.initial);
+class _BoundFieldState extends State<_BoundField> {
+  late final _controller = TextEditingController(text: widget.value);
+
+  @override
+  void didUpdateWidget(_BoundField old) {
+    super.didUpdateWidget(old);
+    if (widget.value != _controller.text) _controller.text = widget.value;
+  }
 
   @override
   void dispose() {
@@ -296,26 +147,289 @@ class _ToolFieldState extends State<_ToolField> {
   }
 
   @override
-  void didUpdateWidget(_ToolField old) {
+  Widget build(BuildContext context) => TextField(
+    key: ValueKey(widget.fieldKey),
+    controller: _controller,
+    keyboardType: widget.keyboardType,
+    inputFormatters: widget.inputFormatters,
+    onChanged: widget.onChanged,
+    decoration: omniInputDecoration(context, labelText: widget.label, errorText: widget.errorText),
+  );
+}
+
+/// Kotlin's full-width action Button with an in-button spinner while [busy].
+Widget _actionButton({
+  required Key key,
+  required String label,
+  required VoidCallback? onPressed,
+  bool busy = false,
+  String? busyLabel,
+  Color? color,
+  Widget? icon,
+}) => SizedBox(
+  width: double.infinity,
+  child: FilledButton(
+    key: key,
+    style: color == null ? null : FilledButton.styleFrom(backgroundColor: color),
+    onPressed: onPressed,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (busy) ...[
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+          ),
+          if (busyLabel != null) const SizedBox(width: 8),
+        ] else if (icon != null) ...[
+          icon,
+          const SizedBox(width: 8),
+        ],
+        if (!busy || busyLabel != null) Text(busy ? busyLabel! : label),
+      ],
+    ),
+  ),
+);
+
+/// Monospace output lines in a card, following the newest line as Kotlin's list does.
+class _OutputCard extends StatefulWidget {
+  const _OutputCard({required this.cardKey, required this.lines, required this.isFailure});
+
+  final String cardKey;
+  final List<String> lines;
+  final bool Function(String line) isFailure;
+
+  @override
+  State<_OutputCard> createState() => _OutputCardState();
+}
+
+class _OutputCardState extends State<_OutputCard> {
+  final _scroll = ScrollController();
+
+  @override
+  void didUpdateWidget(_OutputCard old) {
     super.didUpdateWidget(old);
-    // Another tab can fill this field (a scanned host sent to Ping), and the controller would
-    // otherwise keep showing the old text.
-    if (widget.initial != _controller.text && widget.initial != old.initial) {
-      _controller.text = widget.initial;
+    if (widget.lines.length != old.lines.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients) {
+          _scroll.animateTo(
+            _scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
+      });
     }
   }
 
   @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return TextField(
-      key: ValueKey(widget.fieldKey),
-      controller: _controller,
-      onChanged: widget.onChanged,
-      style: widget.mono ? const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13) : null,
-      decoration: omniInputDecoration(context, labelText: widget.label, hintText: widget.hint),
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    return OmniCard(
+      key: ValueKey(widget.cardKey),
+      child: SizedBox(
+        height: 320,
+        child: SelectionArea(
+          child: ListView.separated(
+            controller: _scroll,
+            padding: const EdgeInsets.all(10),
+            itemCount: widget.lines.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 2),
+            itemBuilder: (_, i) {
+              final line = widget.lines[i];
+              return Text(
+                line,
+                style: composeBody(
+                  fontSize: 11,
+                  fontFamily: OmniFonts.mono,
+                  color: widget.isFailure(line) ? OmniColors.red : onSurface,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
     );
   }
 }
+
+extension on ScannedHost {
+  /// Kotlin's `isOnline`: answered the sweep, as opposed to being known only from the ARP cache.
+  bool get isOnline => latency != null || openPorts.isNotEmpty;
+
+  String get displayName => (hostname ?? '').isEmpty ? address : hostname!;
+}
+
+/// Kotlin's `ScannedHostCard`: status dot, IP, hostname, MAC + vendor and open ports.
+class _ScannedHostCard extends StatelessWidget {
+  const _ScannedHostCard({
+    required this.host,
+    required this.accent,
+    required this.onTap,
+    this.trailing,
+  });
+
+  final ScannedHost host;
+  final Color accent;
+  final VoidCallback onTap;
+  final IconData? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = _muted(context);
+    final mac = host.macAddress.isEmpty ? 'MAC unavailable' : host.macAddress;
+    return OmniCard(
+      key: ValueKey('network.scan.host.${host.address}'),
+      leftAccent: accent,
+      inset: const EdgeInsets.all(12),
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 4,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: host.isOnline ? const Color(0xFF10B981) : const Color(0xFFFF0000),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  host.address,
+                  style: composeBody(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: OmniFonts.mono,
+                  ),
+                ),
+              ),
+              if (trailing != null)
+                Icon(trailing, size: 18, color: OmniColors.cyan, semanticLabel: 'Actions'),
+            ],
+          ),
+          if ((host.hostname ?? '').isNotEmpty)
+            Text(
+              host.hostname!,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: composeBody(fontSize: 12, color: Theme.of(context).colorScheme.onSurface),
+            ),
+          Text(
+            host.vendor.isEmpty ? mac : '$mac · ${host.vendor}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: composeBody(fontSize: 11, color: muted),
+          ),
+          if (host.openPorts.isNotEmpty)
+            Text(
+              'Open ports: ${host.openPorts.join(', ')}',
+              style: composeBody(fontSize: 11, fontFamily: OmniFonts.mono, color: OmniColors.green),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Kotlin's `LanHostPickerDialog`: the shared sweep, with a Scan/Rescan button, picking an address.
+Future<String?> _pickLanHost(BuildContext context, NetworkViewModel vm) {
+  // Reuse a fresh sweep; otherwise start one the dialog shows progress for.
+  unawaited(vm.refreshLanScan());
+  return showDialog<String>(
+    context: context,
+    builder: (dialogContext) => ListenableBuilder(
+      listenable: vm,
+      builder: (dialogContext, _) {
+        final hosts = vm.scanResults;
+        return AlertDialog(
+          key: const ValueKey('network.picker.dialog'),
+          title: const Text('Pick a LAN host'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              spacing: 8,
+              children: [
+                _actionButton(
+                  key: const ValueKey('network.picker.scan'),
+                  label: hosts.isEmpty ? 'Scan LAN' : 'Rescan LAN',
+                  busy: vm.scanning,
+                  busyLabel: 'Scanning network…',
+                  onPressed: vm.scanning ? null : () => vm.refreshLanScan(force: true),
+                ),
+                if (!vm.scanning && hosts.isEmpty)
+                  Text(
+                    'No hosts yet — run a scan.',
+                    style: composeDialogBody(fontSize: 12, color: _muted(dialogContext)),
+                  ),
+                Flexible(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 360),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: hosts.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) {
+                        final host = hosts[i];
+                        return _ScannedHostCard(
+                          host: host,
+                          accent: vm.sharedTarget == host.address
+                              ? OmniColors.cyan
+                              : host.isOnline
+                              ? OmniColors.green
+                              : _muted(dialogContext),
+                          onTap: () => Navigator.of(dialogContext).pop(host.address),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey('network.picker.close'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+/// Kotlin's `LanHostPicker`: one outlined button that opens the picker and fills the shared target.
+Widget _lanHostPicker(BuildContext context, NetworkViewModel vm) => SizedBox(
+  width: double.infinity,
+  child: OutlinedButton.icon(
+    key: const ValueKey('network.picker'),
+    icon: const Icon(Icons.lan, size: 18),
+    label: const Text('Pick LAN host', style: TextStyle(fontSize: 12)),
+    onPressed: () async {
+      final address = await _pickLanHost(context, vm);
+      if (address == null) return;
+      vm.sharedTarget = address;
+      vm.fieldEdited();
+    },
+  ),
+);
+
+// ── Host Scan ────────────────────────────────────────────────────────────────────
 
 class _HostScanTab extends StatelessWidget {
   const _HostScanTab({required this.vm});
@@ -324,176 +438,152 @@ class _HostScanTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _ToolField(
-                fieldKey: 'network.scan.subnet',
-                label: 'Subnet',
-                hint: '192.168.1',
-                initial: vm.subnetPrefix,
-                mono: true,
-                onChanged: (v) => vm.subnetPrefix = v,
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              key: const ValueKey('network.scan.run'),
-              onPressed: vm.scanning ? null : vm.scanSubnet,
-              child: Text(vm.scanning ? 'Scanning…' : 'Scan'),
-            ),
-          ],
+    final hosts = vm.scanResults;
+    final muted = _muted(context);
+    return _tabColumn(key: const ValueKey('network.scan.list'), [
+      Text(
+        'Sweep your local network and gather as much detail as possible per host: hostname, '
+        'MAC + vendor, and which common ports answer. Tap a host for actions — save it, ping, '
+        'port scan, and more.',
+        style: composeBody(fontSize: 11, color: muted),
+      ),
+      _actionButton(
+        key: const ValueKey('network.scan.button'),
+        label: hosts.isEmpty ? 'Scan network' : 'Rescan network',
+        icon: const Icon(Icons.lan, size: 18),
+        busy: vm.scanning,
+        busyLabel: 'Scanning network…',
+        onPressed: vm.scanning ? null : () => vm.refreshLanScan(force: true),
+      ),
+      if (vm.error != null && !vm.scanning)
+        Text(
+          vm.error!,
+          key: const ValueKey('network.error'),
+          style: composeBody(fontSize: 12, color: OmniColors.red),
         ),
-        if (vm.scanning) ...[
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: vm.scanProgress, minHeight: 3),
-        ],
-        const SizedBox(height: 8),
-        Expanded(
-          child: vm.scanResults.isEmpty
-              ? Center(
-                  key: const ValueKey('network.scan.empty'),
-                  child: Text(
-                    vm.scanning
-                        ? 'Sweeping ${vm.subnetPrefix}.1–254…'
-                        // Naming the ports makes the result interpretable: a host with none of them
-                        // open is not necessarily down.
-                        : 'Sweeps the subnet for hosts answering on 22, 80, 443, 445, 3389, 5900 '
-                              'or 8080.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : ListView.separated(
-                  key: const ValueKey('network.scan.list'),
-                  itemCount: vm.scanResults.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 6),
-                  itemBuilder: (context, index) {
-                    final host = vm.scanResults[index];
-                    return OmniCard(
-                      key: ValueKey('network.scan.${host.address}'),
-                      leftAccent: OmniColors.green,
-                      onTap: () => _openHostActions(context, vm, host),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  host.hostname ?? host.address,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                    fontFamily: OmniFonts.mono,
-                                  ),
-                                ),
-                                Text(
-                                  [
-                                    if (host.hostname != null) host.address,
-                                    if (host.macAddress.isNotEmpty)
-                                      host.vendor.isEmpty
-                                          ? host.macAddress
-                                          : '${host.macAddress} · ${host.vendor}',
-                                    host.openPorts.map((p) => portLabel(p) ?? '$p').join(', '),
-                                  ].join(' · '),
-                                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (host.latency != null)
-                            Text(
-                              '${host.latency!.inMilliseconds} ms',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontFamily: OmniFonts.mono,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
+      if (!vm.scanning && hosts.isEmpty)
+        Text('No hosts yet — run a scan.', style: composeBody(fontSize: 12, color: muted)),
+      for (final host in hosts)
+        _ScannedHostCard(
+          host: host,
+          accent: host.isOnline ? OmniColors.green : muted,
+          trailing: Icons.more_vert,
+          onTap: () => _openHostActions(context, vm, host),
         ),
-      ],
-    );
+    ]);
   }
 }
 
+/// Kotlin's `ScannedHostActionsSheet`: every tool that takes an address, plus saving the host.
 Future<void> _openHostActions(BuildContext context, NetworkViewModel vm, ScannedHost host) async {
-  // A scan result is not yet bound to any tool — the user has just found a device. So the sheet
-  // offers the tools that take an address rather than guessing which one was meant.
-  final app = context.read<AppState>();
-  final saved = app.servers.where((server) => server.host == host.address).firstOrNull;
-  final action = await showModalBottomSheet<String>(
+  final saved = context
+      .read<AppState>()
+      .servers
+      .where((server) => server.host == host.address)
+      .firstOrNull;
+  final action = await showDialog<String>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (sheetContext) => SafeArea(
-      child: ListView(
-        shrinkWrap: true,
-        padding: EdgeInsets.only(bottom: MediaQuery.viewPaddingOf(sheetContext).bottom),
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              host.hostname ?? host.address,
-              style: const TextStyle(fontFamily: OmniFonts.mono),
+    builder: (dialogContext) {
+      final muted = _muted(dialogContext);
+      Widget row(String value, IconData icon, String label, String detail, {Color? tint}) =>
+          InkWell(
+            key: ValueKey('network.scan.action.$value'),
+            onTap: () => Navigator.of(dialogContext).pop(value),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                children: [
+                  Icon(icon, size: 20, color: tint ?? muted),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(label, style: composeDialogBody(fontSize: 14)),
+                        Text(
+                          detail,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: composeDialogBody(fontSize: 11, color: muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          if (saved != null)
-            ListTile(
-              title: Text('Already saved as “${saved.name}”'),
-              subtitle: Text(host.address),
-              enabled: false,
-            )
-          else
-            ListTile(
-              key: const ValueKey('network.scan.action.addServer'),
-              leading: const Icon(Icons.add_circle_outline),
-              title: const Text('Add as OmniTerm host'),
-              subtitle: Text(
+          );
+      return AlertDialog(
+        key: const ValueKey('network.scan.actions'),
+        scrollable: true,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              host.displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            if ((host.hostname ?? '').isNotEmpty)
+              Text(
+                host.address,
+                style: composeDialogBody(fontSize: 12, fontFamily: OmniFonts.mono, color: muted),
+              ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (saved != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Already saved as "${saved.name}".',
+                  style: composeDialogBody(fontSize: 12, color: OmniColors.cyan),
+                ),
+              )
+            else
+              row(
+                'addServer',
+                Icons.add_circle,
+                'Add as OmniTerm host',
                 host.openPorts.contains(22)
                     ? 'SSH is open on port 22'
-                    : 'Open the add-host form for ${host.address}',
+                    : 'Opens the add-host form for ${host.address}',
+                tint: OmniColors.cyan,
               ),
-              onTap: () => Navigator.of(sheetContext).pop('addServer'),
+            row('ping', Icons.network_ping, 'Ping', '4 echo requests from this device'),
+            row('traceroute', Icons.route, 'Traceroute', 'Trace the path to this host'),
+            row(
+              'portScan',
+              Icons.network_check,
+              'Port scan',
+              host.openPorts.isEmpty
+                  ? 'Scan the common port list'
+                  : 'Includes the ${host.openPorts.length} port(s) the sweep found open',
             ),
-          for (final (value, label) in const [
-            ('ping', 'Ping this host'),
-            ('traceroute', 'Trace the path to this host'),
-            ('portScan', 'Scan its ports'),
-            ('dnsLookup', 'Look it up in DNS'),
-            ('whois', 'Look up its registration'),
-          ])
-            ListTile(
-              key: ValueKey('network.scan.action.$value'),
-              title: Text(label),
-              onTap: () => Navigator.of(sheetContext).pop(value),
-            ),
-          if (host.macAddress.isNotEmpty)
-            ListTile(
-              key: const ValueKey('network.scan.action.wol'),
-              title: const Text('Add as Wake-on-LAN target'),
-              subtitle: Text(host.macAddress),
-              onTap: () => Navigator.of(sheetContext).pop('wol'),
-            ),
-          ListTile(
-            key: const ValueKey('network.scan.action.copy'),
-            title: const Text('Copy IP address'),
-            subtitle: Text(host.address),
-            onTap: () => Navigator.of(sheetContext).pop('copy'),
+            row('dnsLookup', Icons.dns, 'DNS lookup', 'Resolve ${host.displayName}'),
+            if (host.macAddress.isNotEmpty)
+              row(
+                'wol',
+                Icons.power_settings_new,
+                'Add as Wake-on-LAN target',
+                'MAC ${host.macAddress} is known, so this host can be woken',
+              ),
+            row('copy', Icons.content_copy, 'Copy IP address', host.address),
+          ],
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('network.scan.actions.close'),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
           ),
         ],
-      ),
-    ),
+      );
+    },
   );
   if (!context.mounted || action == null) return;
   switch (action) {
@@ -504,22 +594,211 @@ Future<void> _openHostActions(BuildContext context, NetworkViewModel vm, Scanned
         suggestedName: host.hostname ?? host.address,
       );
     case 'ping':
+      vm.pingCount = 4;
       unawaited(vm.runForHost(host.address, NetworkTab.ping));
     case 'traceroute':
       unawaited(vm.runForHost(host.address, NetworkTab.traceroute));
     case 'portScan':
       unawaited(vm.runForHost(host.address, NetworkTab.portScan, knownOpenPorts: host.openPorts));
     case 'dnsLookup':
-      unawaited(vm.runForHost(host.hostname ?? host.address, NetworkTab.dnsLookup));
-    case 'whois':
-      unawaited(vm.runForHost(host.address, NetworkTab.whois));
+      unawaited(vm.runForHost(host.displayName, NetworkTab.dnsLookup));
     case 'wol':
       vm.activeTab = NetworkTab.wakeOnLan;
-      await _openWolEditor(context, vm, scannedHost: host);
+      await _openWolEditor(context, vm, scanned: host);
     case 'copy':
       await Clipboard.setData(ClipboardData(text: host.address));
   }
 }
+
+// ── Ping / Traceroute / Port Scan ────────────────────────────────────────────────
+
+class _PingTab extends StatefulWidget {
+  const _PingTab({required this.vm});
+
+  final NetworkViewModel vm;
+
+  @override
+  State<_PingTab> createState() => _PingTabState();
+}
+
+class _PingTabState extends State<_PingTab> {
+  late String _tries = '${widget.vm.pingCount}';
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = widget.vm;
+    // 0 is meaningful (ping until stopped), so the floor is 0.
+    final triesError = countError(_tries, min: 0, max: 9999);
+    return _tabColumn([
+      _lanHostPicker(context, vm),
+      _BoundField(
+        fieldKey: 'network.target',
+        label: 'Hostname or IP address',
+        value: vm.pingTarget,
+        keyboardType: TextInputType.url,
+        onChanged: (v) {
+          vm.pingTarget = v;
+          vm.fieldEdited();
+        },
+      ),
+      _BoundField(
+        fieldKey: 'network.ping.tries',
+        label: 'Tries (0 = keep pinging until stopped)',
+        value: _tries,
+        keyboardType: TextInputType.number,
+        inputFormatters: [
+          FilteringTextInputFormatter.digitsOnly,
+          LengthLimitingTextInputFormatter(4),
+        ],
+        errorText: triesError,
+        onChanged: (v) => setState(() => _tries = v),
+      ),
+      _actionButton(
+        key: const ValueKey('network.ping.start'),
+        label: 'Start Ping',
+        busy: vm.pinging,
+        busyLabel: 'Stop',
+        onPressed: vm.pinging
+            ? vm.stopPing
+            : vm.pingTarget.trim().isNotEmpty && triesError == null
+            ? () {
+                vm.pingCount = int.parse(_tries.trim());
+                vm.runPing();
+              }
+            : null,
+      ),
+      Text(
+        'Pings are sent from this device, so they tell you whether the HOST is reachable on your '
+        'current network — independent of SSH.',
+        style: composeBody(fontSize: 11, color: _muted(context)),
+      ),
+      if (vm.error != null) _errorText(vm.error!),
+      if (vm.pingLines.isNotEmpty)
+        _OutputCard(
+          cardKey: 'network.ping.output',
+          lines: vm.pingLines,
+          isFailure: (line) =>
+              line.toLowerCase().contains('failed') ||
+              line.toLowerCase().contains('unreachable') ||
+              line.contains('100% packet loss'),
+        ),
+    ]);
+  }
+}
+
+Widget _errorText(String message) => Text(
+  message,
+  key: const ValueKey('network.error'),
+  style: composeBody(fontSize: 13, fontFamily: OmniFonts.mono, color: OmniColors.red),
+);
+
+class _TracerouteTab extends StatelessWidget {
+  const _TracerouteTab({required this.vm});
+
+  final NetworkViewModel vm;
+
+  @override
+  Widget build(BuildContext context) => _tabColumn([
+    _lanHostPicker(context, vm),
+    _BoundField(
+      fieldKey: 'network.target',
+      label: 'Hostname or IP address',
+      value: vm.tracerouteTarget,
+      keyboardType: TextInputType.url,
+      onChanged: (v) {
+        vm.tracerouteTarget = v;
+        vm.fieldEdited();
+      },
+    ),
+    _actionButton(
+      key: const ValueKey('network.traceroute.start'),
+      label: 'Start Traceroute',
+      busy: vm.tracerouteRunning,
+      busyLabel: 'Stop',
+      onPressed: vm.tracerouteRunning
+          ? vm.stopTraceroute
+          : vm.tracerouteTarget.trim().isNotEmpty
+          ? vm.runTraceroute
+          : null,
+    ),
+    Text(
+      "Traces each network hop from this device to the host. Uses the platform traceroute; if it "
+      "isn't available, a clear message is shown.",
+      style: composeBody(fontSize: 11, color: _muted(context)),
+    ),
+    if (vm.error != null) _errorText(vm.error!),
+    if (vm.tracerouteLines.isNotEmpty)
+      _OutputCard(
+        cardKey: 'network.traceroute.output',
+        lines: vm.tracerouteLines,
+        isFailure: (line) =>
+            line.toLowerCase().contains('not available') || line.toLowerCase().contains('failed'),
+      ),
+  ]);
+}
+
+class _PortScanTab extends StatelessWidget {
+  const _PortScanTab({required this.vm});
+
+  final NetworkViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = _muted(context);
+    return _tabColumn([
+      _lanHostPicker(context, vm),
+      _BoundField(
+        fieldKey: 'network.target',
+        label: 'Target Host IP (Scan pointer)',
+        value: vm.portScanTarget,
+        keyboardType: TextInputType.phone,
+        onChanged: (v) {
+          vm.portScanTarget = v;
+          vm.fieldEdited();
+        },
+      ),
+      _BoundField(
+        fieldKey: 'network.portScan.ports',
+        label: 'Ports list range (comma-split)',
+        value: vm.portSpec,
+        keyboardType: TextInputType.phone,
+        onChanged: (v) => vm.portSpec = v,
+      ),
+      _actionButton(
+        key: const ValueKey('network.portScan.start'),
+        label: 'Initiate Range Scan',
+        busy: vm.portScanning,
+        onPressed: vm.portScanTarget.trim().isNotEmpty && !vm.portScanning ? vm.runPortScan : null,
+      ),
+      if (vm.error != null) _errorText(vm.error!),
+      for (final result in vm.portResults)
+        OmniCard(
+          key: ValueKey('network.portScan.result.${result.port}'),
+          leftAccent: result.open ? OmniColors.green : muted,
+          inset: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Port ${result.port}',
+                  style: composeBody(fontWeight: FontWeight.bold, fontFamily: OmniFonts.mono),
+                ),
+              ),
+              Text(
+                result.open ? 'Open' : 'Closed',
+                style: composeBody(
+                  fontWeight: FontWeight.bold,
+                  color: result.open ? const Color(0xFF10B981) : Colors.grey,
+                ),
+              ),
+            ],
+          ),
+        ),
+    ]);
+  }
+}
+
+// ── Wake-on-LAN ──────────────────────────────────────────────────────────────────
 
 class _WolTab extends StatelessWidget {
   const _WolTab({required this.vm});
@@ -528,233 +807,167 @@ class _WolTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        OutlinedButton.icon(
-          key: const ValueKey('network.wol.add'),
-          icon: const Icon(Icons.add, size: 18),
-          label: const Text('New target'),
-          onPressed: () => _openWolEditor(context, vm),
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          key: const ValueKey('network.wol.scanLan'),
-          icon: const Icon(Icons.lan_outlined, size: 18),
-          label: const Text('Add from LAN scan'),
-          onPressed: () => _pickWolFromScan(context, vm),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: vm.wolTargets.isEmpty
-              ? Center(
-                  key: const ValueKey('network.wol.empty'),
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      // The prerequisite is not obvious and the feature silently does nothing
-                      // without it, so it is said up front rather than left to be discovered.
-                      'No targets yet. Wake-on-LAN needs the machine to have it enabled in its '
-                      'BIOS and network card.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                    ),
+    final muted = _muted(context);
+    return ScrollConfiguration(
+      behavior: const PopupScrollBehavior(popupsOnly: false),
+      child: ListView(
+        key: const ValueKey('network.wol.list'),
+        padding: const EdgeInsets.only(bottom: 12),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const ValueKey('network.wol.scan'),
+                icon: const Icon(Icons.lan, size: 18),
+                label: const Text('Scan LAN to add a target', style: TextStyle(fontSize: 12)),
+                onPressed: () async {
+                  final address = await _pickLanHost(context, vm);
+                  if (address == null || !context.mounted) return;
+                  final host = vm.scanResults.where((h) => h.address == address).firstOrNull;
+                  await _openWolEditor(context, vm, scanned: host ?? ScannedHost(address: address));
+                },
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Saved targets',
+                    style: composeBody(fontSize: 13, fontWeight: FontWeight.bold, color: muted),
                   ),
-                )
-              : ListView.separated(
-                  key: const ValueKey('network.wol.list'),
-                  itemCount: vm.wolTargets.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 6),
-                  itemBuilder: (context, index) {
-                    final target = vm.wolTargets[index];
-                    return OmniCard(
-                      key: ValueKey('network.wol.${target.id}'),
-                      leftAccent: OmniColors.green,
-                      child: ListenableBuilder(
-                        listenable: HostDisplay.instance,
-                        builder: (context, _) => Row(
-                          children: [
-                            _WolStatusDot(vm: vm, target: target),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    target.name,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  Text(
-                                    [
-                                      'MAC: ${HostDisplay.instance.sensitive(target.macAddress)}',
-                                      'Port ${target.port}',
-                                      if (target.ipAddress.isNotEmpty &&
-                                          !HostDisplay.instance.hideSensitiveInfo)
-                                        target.ipAddress,
-                                    ].join(' · '),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontFamily: OmniFonts.mono,
-                                      color: scheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                  if (target.notes.isNotEmpty)
-                                    Text(
-                                      target.notes,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontStyle: FontStyle.italic,
-                                        color: scheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            TextButton(
-                              key: ValueKey('network.wol.${target.id}.wake'),
-                              onPressed: () => _confirmWake(context, vm, target),
-                              child: const Text('Wake', style: TextStyle(fontSize: 12)),
-                            ),
-                            IconButton(
-                              key: ValueKey('network.wol.${target.id}.edit'),
-                              tooltip: 'Edit target',
-                              icon: const Icon(Icons.edit_outlined, size: 18),
-                              onPressed: () => _openWolEditor(context, vm, existing: target),
-                            ),
-                            IconButton(
-                              key: ValueKey('network.wol.${target.id}.delete'),
-                              tooltip: 'Delete target',
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                size: 18,
-                                color: OmniColors.red,
-                              ),
-                              onPressed: () => _confirmDeleteWol(context, vm, target),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
                 ),
-        ),
-      ],
+                SizedBox(
+                  height: 36,
+                  child: FilledButton.icon(
+                    key: const ValueKey('network.wol.add'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Add target', style: TextStyle(fontSize: 12)),
+                    onPressed: () => _openWolEditor(context, vm),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (final target in vm.wolTargets)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: _WolCard(vm: vm, target: target),
+            ),
+        ],
+      ),
     );
   }
 }
 
-Future<void> _confirmWake(BuildContext context, NetworkViewModel vm, WolTarget target) async {
-  final accepted = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('network.wol.wake.dialog'),
-      title: const Text('Send wake packet?'),
-      content: Text(
-        'Send a Wake-on-LAN magic packet to “${target.name}” '
-        '(${target.macAddress})?',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          key: const ValueKey('network.wol.wake.confirm'),
-          onPressed: () => Navigator.pop(dialogContext, true),
-          child: const Text('Wake'),
-        ),
-      ],
-    ),
-  );
-  if (accepted != true) return;
-  final message = await vm.wake(target);
-  if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
-}
+class _WolCard extends StatelessWidget {
+  const _WolCard({required this.vm, required this.target});
 
-Future<void> _pickWolFromScan(BuildContext context, NetworkViewModel vm) async {
-  if (vm.scanResults.isEmpty && !vm.scanning) await vm.scanSubnet();
-  if (!context.mounted) return;
-  final host = await showDialog<ScannedHost>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('network.wol.scan.dialog'),
-      title: const Text('Choose a LAN host'),
-      content: SizedBox(
-        width: 420,
-        child: vm.scanning
-            ? const Center(child: CircularProgressIndicator())
-            : vm.scanResults.where((host) => host.macAddress.isNotEmpty).isEmpty
-            ? const Text(
-                'No scanned host exposed a MAC address. Android and iOS may restrict access to '
-                'the neighbour table; enter the target manually instead.',
-              )
-            : ListView(
-                shrinkWrap: true,
-                children: [
-                  for (final host in vm.scanResults.where((host) => host.macAddress.isNotEmpty))
-                    ListTile(
-                      key: ValueKey('network.wol.scan.${host.address}'),
-                      title: Text(host.hostname ?? host.address),
-                      subtitle: Text('${host.address} · ${host.macAddress}'),
-                      onTap: () => Navigator.pop(dialogContext, host),
-                    ),
-                ],
+  final NetworkViewModel vm;
+  final WolTarget target;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = _muted(context);
+    final display = HostDisplay.instance;
+    final detail = StringBuffer(
+      'MAC: ${display.sensitive(target.macAddress)} · Port ${target.port}',
+    );
+    if (target.ipAddress.isNotEmpty && !display.hideSensitiveInfo) {
+      detail.write(' · ${target.ipAddress}');
+    }
+    return OmniCard(
+      key: ValueKey('network.wol.${target.id}'),
+      leftAccent: OmniColors.green,
+      inset: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          _WolStatusDot(vm: vm, target: target),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(target.name, style: composeBody(fontWeight: FontWeight.bold)),
+                Text(detail.toString(), style: composeBody(fontSize: 12, color: muted)),
+                if (target.notes.trim().isNotEmpty)
+                  Text(
+                    target.notes,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: composeBody(fontSize: 11, color: muted, fontStyle: FontStyle.italic),
+                  ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 36,
+            child: FilledButton.icon(
+              key: ValueKey('network.wol.${target.id}.wake'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
               ),
+              icon: const Icon(Icons.power, size: 15),
+              label: const Text(
+                'Wake',
+                maxLines: 1,
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+              onPressed: () => _confirmWake(context),
+            ),
+          ),
+          IconButton(
+            key: ValueKey('network.wol.${target.id}.edit'),
+            tooltip: 'Edit WOL target',
+            icon: const Icon(Icons.edit, color: OmniColors.cyan),
+            onPressed: () => _openWolEditor(context, vm, existing: target),
+          ),
+          IconButton(
+            key: ValueKey('network.wol.${target.id}.delete'),
+            tooltip: 'Delete WOL target',
+            icon: const Icon(Icons.delete, color: Color(0xFFFF0000)),
+            onPressed: () async {
+              final confirmed = await showOmniConfirm(
+                context,
+                title: 'Delete WOL target?',
+                message: 'Delete "${target.name}" from Wake-on-LAN targets?',
+                confirmLabel: 'Delete',
+                destructive: true,
+                keyPrefix: 'network.wol.deleteDialog',
+              );
+              if (confirmed) await vm.deleteWolTarget(target);
+            },
+          ),
+        ],
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
-      ],
-    ),
-  );
-  if (host != null && context.mounted) {
-    await _openWolEditor(context, vm, scannedHost: host);
+    );
+  }
+
+  Future<void> _confirmWake(BuildContext context) async {
+    final confirmed = await showOmniConfirm(
+      context,
+      title: 'Send wake packet?',
+      message: 'Send a Wake-on-LAN magic packet to "${target.name}" (${target.macAddress})?',
+      confirmLabel: 'Wake',
+      destructive: true,
+      keyPrefix: 'network.wol.wakeDialog',
+    );
+    if (!confirmed || !context.mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final message = await vm.wake(target);
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
-Future<void> _confirmDeleteWol(BuildContext context, NetworkViewModel vm, WolTarget target) async {
-  final accepted = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('network.wol.delete.dialog'),
-      title: Text('Delete ${target.name}?'),
-      content: const Text('Remove this saved Wake-on-LAN target?'),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(dialogContext, true),
-          child: const Text('Delete'),
-        ),
-      ],
-    ),
-  );
-  if (accepted == true) await vm.deleteWolTarget(target);
-}
-
-Future<void> _openWolEditor(
-  BuildContext context,
-  NetworkViewModel vm, {
-  WolTarget? existing,
-  ScannedHost? scannedHost,
-}) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => _WolSheet(vm: vm, existing: existing, scannedHost: scannedHost),
-  );
-}
-
+/// Kotlin's `WolStatusDot`: polls every 10s while visible. Grey = no IP / checking, green = up,
+/// red = no response.
 class _WolStatusDot extends StatefulWidget {
   const _WolStatusDot({required this.vm, required this.target});
 
@@ -772,13 +985,13 @@ class _WolStatusDotState extends State<_WolStatusDot> {
   @override
   void initState() {
     super.initState();
-    unawaited(_refresh());
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
+    _poll();
+    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _poll());
   }
 
-  Future<void> _refresh() async {
-    final value = await widget.vm.wolOnlineStatus(widget.target);
-    if (mounted) setState(() => _online = value);
+  Future<void> _poll() async {
+    final online = await widget.vm.wolOnlineStatus(widget.target);
+    if (mounted) setState(() => _online = online);
   }
 
   @override
@@ -788,68 +1001,93 @@ class _WolStatusDotState extends State<_WolStatusDot> {
   }
 
   @override
-  Widget build(BuildContext context) => Container(
-    key: ValueKey('network.wol.${widget.target.id}.status'),
-    width: 9,
-    height: 9,
-    margin: const EdgeInsets.only(right: 9),
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      color: switch (_online) {
-        true => OmniColors.green,
-        false => OmniColors.red,
-        null => OmniColors.textMuted,
-      },
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: 10),
+    child: Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: switch (_online) {
+          true => const Color(0xFF10B981),
+          false => const Color(0xFFFF0000),
+          null => Colors.grey,
+        },
+      ),
     ),
   );
 }
 
-class _WolSheet extends StatefulWidget {
-  const _WolSheet({required this.vm, required this.existing, required this.scannedHost});
+Future<void> _openWolEditor(
+  BuildContext context,
+  NetworkViewModel vm, {
+  WolTarget? existing,
+  ScannedHost? scanned,
+}) => showDialog<void>(
+  context: context,
+  builder: (_) => _WolDialog(vm: vm, existing: existing, scanned: scanned),
+);
+
+/// Kotlin's "Configure WOL Pointer" / "Edit WOL Pointer" dialog.
+class _WolDialog extends StatefulWidget {
+  const _WolDialog({required this.vm, this.existing, this.scanned});
 
   final NetworkViewModel vm;
   final WolTarget? existing;
-  final ScannedHost? scannedHost;
+  final ScannedHost? scanned;
 
   @override
-  State<_WolSheet> createState() => _WolSheetState();
+  State<_WolDialog> createState() => _WolDialogState();
 }
 
-class _WolSheetState extends State<_WolSheet> {
+class _WolDialogState extends State<_WolDialog> {
+  late final WolTarget? _t = widget.existing;
+  late final ScannedHost? _s = widget.scanned;
   late final _name = TextEditingController(
     text:
-        widget.existing?.name ?? widget.scannedHost?.hostname ?? widget.scannedHost?.address ?? '',
+        _t?.name ?? (_s == null ? '' : ((_s.hostname ?? '').isEmpty ? 'LAN Device' : _s.hostname!)),
   );
-  late final _mac = TextEditingController(
-    text: widget.existing?.macAddress ?? widget.scannedHost?.macAddress ?? '',
+  late final _mac = TextEditingController(text: _t?.macAddress ?? _s?.macAddress ?? '');
+  late final _broadcast = TextEditingController(
+    text:
+        _t?.broadcastIp ??
+        (_s == null
+            ? '192.168.1.255'
+            : '${_s.address.substring(0, _s.address.lastIndexOf('.'))}.255'),
   );
-  late final _broadcast = TextEditingController(text: widget.existing?.broadcastIp ?? '');
-  late final _ip = TextEditingController(
-    text: widget.existing?.ipAddress ?? widget.scannedHost?.address ?? '',
-  );
-  late final _port = TextEditingController(text: '${widget.existing?.port ?? 9}');
-  late final _notes = TextEditingController(text: widget.existing?.notes ?? '');
+  late final _ip = TextEditingController(text: _t?.ipAddress ?? _s?.address ?? '');
+  late final _port = TextEditingController(text: '${_t?.port ?? 9}');
+  late final _notes = TextEditingController(text: _t?.notes ?? '');
   String? _failure;
+
+  List<TextEditingController> get _all => [_name, _mac, _broadcast, _ip, _port, _notes];
+
+  @override
+  void initState() {
+    super.initState();
+    for (final c in _all) {
+      c.addListener(_rebuild);
+    }
+  }
+
+  void _rebuild() => setState(() {});
 
   @override
   void dispose() {
-    _name.dispose();
-    _mac.dispose();
-    _broadcast.dispose();
-    _ip.dispose();
-    _port.dispose();
-    _notes.dispose();
+    for (final c in _all) {
+      c.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _save() async {
     final failure = await widget.vm.saveWolTarget(
+      existing: _t,
       name: _name.text,
       macAddress: _mac.text,
-      existing: widget.existing,
       broadcastIp: _broadcast.text,
       ipAddress: _ip.text,
-      port: int.tryParse(_port.text) ?? 0,
+      port: int.parse(_port.text.trim()),
       notes: _notes.text,
     );
     if (!mounted) return;
@@ -862,514 +1100,342 @@ class _WolSheetState extends State<_WolSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                widget.existing == null ? 'New Wake-on-LAN target' : 'Edit Wake-on-LAN target',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                key: const ValueKey('network.wol.name'),
-                controller: _name,
-                decoration: omniInputDecoration(context, labelText: 'Name'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('network.wol.mac'),
-                controller: _mac,
-                style: const TextStyle(fontFamily: OmniFonts.mono),
-                decoration: omniInputDecoration(
-                  context,
-                  labelText: 'MAC address',
-                  hintText: 'aa:bb:cc:dd:ee:ff',
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('network.wol.broadcast'),
-                controller: _broadcast,
-                style: const TextStyle(fontFamily: OmniFonts.mono),
-                decoration: omniInputDecoration(
-                  context,
-                  labelText: 'Broadcast address (optional)',
-                  helperText: 'Derived from the host address when left empty.',
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('network.wol.ip'),
-                controller: _ip,
-                style: const TextStyle(fontFamily: OmniFonts.mono),
-                decoration: omniInputDecoration(
-                  context,
-                  labelText: 'Host address (optional)',
-                  // Explaining what it buys: a directed broadcast actually reaches a sleeping
-                  // machine, where 255.255.255.255 is dropped by many routers.
-                  helperText: 'Used to aim the packet at the right subnet broadcast.',
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('network.wol.port'),
-                controller: _port,
-                keyboardType: TextInputType.number,
-                decoration: omniInputDecoration(context, labelText: 'UDP port'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('network.wol.notes'),
-                controller: _notes,
-                minLines: 2,
-                maxLines: 3,
-                decoration: omniInputDecoration(context, labelText: 'Notes'),
-              ),
-              if (_failure != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    _failure!,
-                    key: const ValueKey('network.wol.error'),
-                    style: const TextStyle(color: OmniColors.red, fontSize: 12),
-                  ),
-                ),
-              const SizedBox(height: 14),
-              FilledButton(
-                key: const ValueKey('network.wol.save'),
-                onPressed: _save,
-                child: const Text('Save'),
-              ),
-            ],
+    final macError = macAddressError(_mac.text);
+    final portErr = portError(_port.text);
+    final canSave =
+        _name.text.trim().isNotEmpty &&
+        _broadcast.text.trim().isNotEmpty &&
+        macError == null &&
+        portErr == null;
+    Widget field(
+      String key,
+      TextEditingController c,
+      String label, {
+      String? error,
+      TextInputType? keyboard,
+      List<TextInputFormatter>? formatters,
+      int? minLines,
+    }) => TextField(
+      key: ValueKey('network.wol.editor.$key'),
+      controller: c,
+      keyboardType: keyboard,
+      inputFormatters: formatters,
+      minLines: minLines,
+      maxLines: minLines == null ? 1 : null,
+      decoration: omniInputDecoration(context, labelText: label, errorText: error),
+    );
+    return AlertDialog(
+      key: const ValueKey('network.wol.editor'),
+      scrollable: true,
+      title: Text(_t == null ? 'Configure WOL Pointer' : 'Edit WOL Pointer'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: 10,
+        children: [
+          field('name', _name, 'Machine Name'),
+          field('mac', _mac, 'MAC Address target', error: _mac.text.isNotEmpty ? macError : null),
+          field(
+            'broadcast',
+            _broadcast,
+            'Broadcast IP network segment',
+            keyboard: TextInputType.phone,
           ),
-        ),
+          field('ip', _ip, 'Host IP address (for online status)', keyboard: TextInputType.phone),
+          field(
+            'port',
+            _port,
+            'UDP port',
+            error: portErr,
+            keyboard: TextInputType.number,
+            formatters: [FilteringTextInputFormatter.digitsOnly],
+          ),
+          field('notes', _notes, 'Notes', minLines: 2),
+          if (_failure != null)
+            Text(_failure!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ],
       ),
-    );
-  }
-}
-
-class _PingTab extends StatelessWidget {
-  const _PingTab({required this.vm});
-
-  final NetworkViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _ToolField(
-                fieldKey: 'network.ping.target',
-                label: 'Host',
-                initial: vm.pingTarget,
-                mono: true,
-                onChanged: (v) => vm.pingTarget = v,
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 82,
-              child: _ToolField(
-                fieldKey: 'network.ping.count',
-                label: 'Tries',
-                initial: vm.pingCount.toString(),
-                mono: true,
-                onChanged: (value) {
-                  final parsed = int.tryParse(value.trim());
-                  if (parsed != null) vm.pingCount = parsed;
-                },
-              ),
-            ),
-          ],
+      actions: [
+        TextButton(
+          key: const ValueKey('network.wol.editor.cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
         ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: vm.pinging
-              ? FilledButton.tonal(
-                  key: const ValueKey('network.ping.stop'),
-                  onPressed: vm.stopPing,
-                  child: const Text('Stop'),
-                )
-              : FilledButton(
-                  key: const ValueKey('network.ping.run'),
-                  onPressed: vm.runPing,
-                  child: const Text('Start ping'),
-                ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'ICMP pings are sent from this device. Set tries to 0 to keep pinging until stopped.',
-          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: SelectionArea(
-            child: ListView(
-              key: const ValueKey('network.ping.list'),
-              children: [
-                for (final line in vm.pingLines)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Text(
-                      line,
-                      style: TextStyle(
-                        fontFamily: OmniFonts.mono,
-                        fontSize: 11,
-                        color:
-                            line.toLowerCase().contains('failed') ||
-                                line.toLowerCase().contains('unreachable') ||
-                                line.contains('100% packet loss')
-                            ? OmniColors.red
-                            : null,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+        FilledButton(
+          key: const ValueKey('network.wol.editor.save'),
+          onPressed: canSave ? _save : null,
+          child: Text(_t == null ? 'Add configuration' : 'Save changes'),
         ),
       ],
     );
   }
 }
 
-class _TracerouteTab extends StatelessWidget {
-  const _TracerouteTab({required this.vm});
+// ── DNS / WHOIS / Speed Test ─────────────────────────────────────────────────────
 
-  final NetworkViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _ToolField(
-                fieldKey: 'network.traceroute.target',
-                label: 'Host',
-                initial: vm.tracerouteTarget,
-                mono: true,
-                onChanged: (v) => vm.tracerouteTarget = v,
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (vm.tracerouteRunning)
-              FilledButton.tonal(
-                key: const ValueKey('network.traceroute.stop'),
-                onPressed: vm.stopTraceroute,
-                child: const Text('Stop'),
-              )
-            else
-              FilledButton(
-                key: const ValueKey('network.traceroute.run'),
-                onPressed: vm.runTraceroute,
-                child: const Text('Trace'),
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: ListView(
-            key: const ValueKey('network.traceroute.list'),
-            children: [
-              for (final line in vm.tracerouteLines)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    line,
-                    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PortScanTab extends StatelessWidget {
-  const _PortScanTab({required this.vm});
-
-  final NetworkViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _ToolField(
-          fieldKey: 'network.portScan.target',
-          label: 'Host',
-          initial: vm.portScanTarget,
-          mono: true,
-          onChanged: (v) => vm.portScanTarget = v,
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _ToolField(
-                fieldKey: 'network.portScan.ports',
-                label: 'Ports',
-                hint: '22,80,443 or 8000-8100',
-                initial: vm.portSpec,
-                mono: true,
-                onChanged: (v) => vm.portSpec = v,
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              key: const ValueKey('network.portScan.run'),
-              onPressed: vm.portScanning ? null : vm.runPortScan,
-              child: Text(vm.portScanning ? 'Scanning…' : 'Scan'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        if (vm.portResults.isNotEmpty)
-          Text(
-            '${vm.openPorts.length} open of ${vm.portResults.length} probed',
-            key: const ValueKey('network.portScan.summary'),
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-          ),
-        const SizedBox(height: 6),
-        Expanded(
-          child: vm.openPorts.isEmpty && !vm.portScanning
-              ? Center(
-                  key: const ValueKey('network.portScan.empty'),
-                  child: Text(
-                    vm.portResults.isEmpty
-                        ? 'Probes each port with a TCP connect.'
-                        : 'No open ports found.',
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : ListView.separated(
-                  key: const ValueKey('network.portScan.list'),
-                  // Only the open ones: a list of 24 closed ports buries the answer.
-                  itemCount: vm.openPorts.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 4),
-                  itemBuilder: (context, index) {
-                    final result = vm.openPorts[index];
-                    return OmniCard(
-                      key: ValueKey('network.portScan.${result.port}'),
-                      leftAccent: OmniColors.green,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              result.label == null
-                                  ? '${result.port}'
-                                  : '${result.port} · ${result.label}',
-                              style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
-                            ),
-                          ),
-                          const OmniTag(label: 'OPEN', color: OmniColors.green),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Who a domain or address is registered to.
-class _WhoisTab extends StatelessWidget {
-  const _WhoisTab({required this.vm});
-
-  final NetworkViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _ToolField(
-          fieldKey: 'network.whois.target',
-          label: 'Domain or IP address',
-          hint: 'example.com',
-          initial: vm.whoisTarget,
-          mono: true,
-          onChanged: (v) => vm.whoisTarget = v,
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                // Said before the lookup runs, because a WHOIS query sends the typed name to a
-                // third party in the clear — a fact worth knowing on a shared or monitored link.
-                'Queries port 43 directly, starting at '
-                '${initialWhoisServer(vm.whoisTarget.trim().isEmpty ? 'example.com' : vm.whoisTarget)}.',
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              key: const ValueKey('network.whois.run'),
-              onPressed: vm.whoisRunning ? null : vm.runWhois,
-              child: Text(vm.whoisRunning ? 'Looking up…' : 'Look up'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        if (vm.whoisServers.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              // Which server said this. A registrar's answer and a registry's answer are different
-              // claims about the same domain, and the text alone does not say which you have.
-              'Answered by ${vm.whoisServers.join(' → ')}',
-              key: const ValueKey('network.whois.servers'),
-              style: const TextStyle(
-                fontSize: 11,
-                fontFamily: OmniFonts.mono,
-                color: OmniColors.cyan,
-              ),
-            ),
-          ),
-        Expanded(
-          child: vm.whoisResult.isEmpty
-              ? Center(
-                  key: const ValueKey('network.whois.empty'),
-                  child: Text(
-                    'Registration records for a domain or an IP address.',
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : SingleChildScrollView(
-                  key: const ValueKey('network.whois.result'),
-                  child: OmniCard(
-                    leftAccent: OmniColors.cyan,
-                    child: SelectionArea(
-                      child: Text(
-                        vm.whoisResult,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontFamily: OmniFonts.mono,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-        ),
-      ],
-    );
-  }
-}
+/// A read-only field with a dropdown arrow, as Kotlin's type and server pickers are.
+Widget _menuField<T>(
+  BuildContext context, {
+  required String fieldKey,
+  required String label,
+  required String shown,
+  required List<(T, String)> options,
+  required ValueChanged<T> onSelected,
+}) => TextField(
+  key: ValueKey(fieldKey),
+  readOnly: true,
+  controller: TextEditingController(text: shown),
+  decoration: omniInputDecoration(
+    context,
+    labelText: label,
+    suffixIcon: PopupMenuButton<T>(
+      key: ValueKey('$fieldKey.menu'),
+      tooltip: 'Pick $label',
+      icon: const Icon(Icons.arrow_drop_down),
+      onSelected: onSelected,
+      itemBuilder: (_) => [for (final (v, l) in options) PopupMenuItem(value: v, child: Text(l))],
+    ),
+  ),
+);
 
 class _DnsTab extends StatelessWidget {
   const _DnsTab({required this.vm});
 
   final NetworkViewModel vm;
 
+  static const _types = ['A', 'AAAA', 'MX', 'CNAME', 'TXT', 'NS'];
+
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _ToolField(
-          fieldKey: 'network.dns.target',
-          label: 'Name',
-          hint: 'example.com',
-          initial: vm.dnsTarget,
-          mono: true,
-          onChanged: (v) => vm.dnsTarget = v,
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                key: const ValueKey('network.dns.type'),
-                initialValue: vm.dnsType,
-                decoration: omniInputDecoration(context, labelText: 'Record type'),
-                items: [
-                  for (final type in dnsRecordTypes)
-                    DropdownMenuItem(value: type, child: Text(type)),
-                ],
-                onChanged: (v) => vm.dnsType = v ?? 'A',
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              key: const ValueKey('network.dns.run'),
-              onPressed: vm.resolving ? null : vm.runDnsLookup,
-              child: Text(vm.resolving ? 'Looking up…' : 'Look up'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Expanded(
-          child: vm.dnsResults.isEmpty
-              ? Center(
-                  key: const ValueKey('network.dns.empty'),
-                  child: Text(
-                    'Queries ${fallbackResolvers.join(' then ')} directly.',
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : ListView.separated(
-                  key: const ValueKey('network.dns.list'),
-                  itemCount: vm.dnsResults.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 6),
-                  itemBuilder: (context, index) {
-                    final record = vm.dnsResults[index];
-                    return OmniCard(
-                      key: ValueKey('network.dns.$index'),
-                      leftAccent: OmniColors.cyan,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: SelectionArea(
-                              child: Text(
-                                record.value,
-                                style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
-                              ),
-                            ),
-                          ),
-                          Text(
-                            'TTL ${record.ttl}',
-                            style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
-                          ),
-                          const SizedBox(width: 8),
-                          OmniTag(label: record.type, color: OmniColors.cyan),
-                        ],
+    final muted = _muted(context);
+    return _tabColumn([
+      _BoundField(
+        fieldKey: 'network.dns.target',
+        label: 'Domain Name / Hostname',
+        value: vm.dnsTarget,
+        keyboardType: TextInputType.url,
+        onChanged: (v) {
+          vm.dnsTarget = v;
+          vm.fieldEdited();
+        },
+      ),
+      _menuField<String>(
+        context,
+        fieldKey: 'network.dns.type',
+        label: 'Query Type',
+        shown: vm.dnsType,
+        options: [for (final t in _types) (t, t)],
+        onSelected: (t) {
+          vm.dnsType = t;
+          vm.fieldEdited();
+        },
+      ),
+      _actionButton(
+        key: const ValueKey('network.dns.run'),
+        label: 'Run DNS Query',
+        busy: vm.resolving,
+        busyLabel: 'Querying...',
+        onPressed: vm.dnsTarget.trim().isNotEmpty && !vm.resolving ? vm.runDnsLookup : null,
+      ),
+      if (vm.error != null) _errorText(vm.error!),
+      for (final record in vm.dnsResults)
+        OmniCard(
+          leftAccent: OmniColors.cyan,
+          inset: const EdgeInsets.all(12),
+          child: SelectionArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        record.name,
+                        style: composeBody(fontSize: 14, fontWeight: FontWeight.bold),
                       ),
-                    );
-                  },
+                    ),
+                    Text(
+                      record.type,
+                      style: composeBody(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: OmniColors.cyan,
+                      ),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  'Value: ${record.value}',
+                  style: composeBody(fontSize: 13, fontFamily: OmniFonts.mono),
+                ),
+                Text('TTL: ${record.ttl}', style: composeBody(fontSize: 11, color: muted)),
+              ],
+            ),
+          ),
         ),
-      ],
-    );
+    ]);
   }
 }
 
-/// Saved SSH port forwards — the Kotlin's ninth Network tab.
-///
-/// The transport for this has been ported and tested since session 33 (`ssh_tunnel_manager.dart`);
-/// nothing drove it until now, which made it a claim of coverage the app could not honour.
+class _WhoisTab extends StatelessWidget {
+  const _WhoisTab({required this.vm});
+
+  final NetworkViewModel vm;
+
+  @override
+  Widget build(BuildContext context) => _tabColumn([
+    _BoundField(
+      fieldKey: 'network.whois.target',
+      label: 'Domain Name or IP Address',
+      value: vm.whoisTarget,
+      keyboardType: TextInputType.url,
+      onChanged: (v) {
+        vm.whoisTarget = v;
+        vm.fieldEdited();
+      },
+    ),
+    _actionButton(
+      key: const ValueKey('network.whois.run'),
+      label: 'Run WHOIS Query',
+      busy: vm.whoisRunning,
+      busyLabel: 'Querying...',
+      onPressed: vm.whoisTarget.trim().isNotEmpty && !vm.whoisRunning ? vm.runWhois : null,
+    ),
+    if (vm.error != null) _errorText(vm.error!),
+    if (vm.whoisResult.trim().isNotEmpty)
+      OmniCard(
+        key: const ValueKey('network.whois.result'),
+        child: SizedBox(
+          height: 360,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(10),
+            child: SelectableText(
+              vm.whoisResult,
+              style: composeBody(
+                fontSize: 11,
+                fontFamily: OmniFonts.mono,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ),
+      ),
+  ]);
+}
+
+class _SpeedTestTab extends StatelessWidget {
+  const _SpeedTestTab({required this.vm});
+
+  final NetworkViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = _muted(context);
+    final selected = NetworkViewModel.speedTestServers
+        .where((s) => s.$2 == vm.speedTestUrl)
+        .firstOrNull;
+    final mbps = vm.speedTestMbps;
+    final latency = vm.speedTestLatency;
+    Widget metric(String value, String label) => Column(
+      children: [
+        Text(
+          value,
+          style: composeBody(fontSize: 14, fontFamily: OmniFonts.mono, fontWeight: FontWeight.bold),
+        ),
+        Text(label, style: composeBody(fontSize: 10, color: muted)),
+      ],
+    );
+    return _tabColumn([
+      Text(
+        "Measures this device's download throughput from a URL. Pick a test server near you (or "
+        'one deliberately far away), or point the URL at your own server to test a specific link.',
+        style: composeBody(fontSize: 12, color: muted),
+      ),
+      _menuField<String>(
+        context,
+        fieldKey: 'network.speedTest.server',
+        label: 'Test Server',
+        shown: selected?.$1 ?? 'Custom URL',
+        options: [for (final (label, url) in NetworkViewModel.speedTestServers) (url, label)],
+        onSelected: (url) {
+          vm.speedTestUrl = url;
+          vm.fieldEdited();
+        },
+      ),
+      _BoundField(
+        fieldKey: 'network.speedTest.url',
+        label: 'Download URL',
+        value: vm.speedTestUrl,
+        keyboardType: TextInputType.url,
+        onChanged: (v) {
+          vm.speedTestUrl = v;
+          vm.fieldEdited();
+        },
+      ),
+      OmniCard(
+        key: const ValueKey('network.speedTest.gauge'),
+        leftAccent: OmniColors.cyan,
+        inset: const EdgeInsets.all(16),
+        child: SizedBox(
+          width: double.infinity,
+          child: Column(
+            children: [
+              Text(
+                mbps == null ? '—' : NumberFormat('0.0').format(mbps),
+                style: composeBody(
+                  fontSize: 44,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: OmniFonts.mono,
+                  color: vm.speedTestRunning ? OmniColors.cyan : OmniColors.green,
+                ),
+              ),
+              Text('Mbps', style: composeBody(fontSize: 13, color: muted)),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: 20,
+                children: [
+                  metric(formatBytes(vm.speedTestBytes), 'downloaded'),
+                  if (latency != null) metric('${latency.inMilliseconds} ms', 'time to first byte'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      _actionButton(
+        key: const ValueKey('network.speedTest.run'),
+        label: 'Start Speed Test',
+        busy: vm.speedTestRunning,
+        busyLabel: 'Stop',
+        color: vm.speedTestRunning ? OmniColors.amber : null,
+        onPressed: vm.speedTestUrl.trim().isEmpty
+            ? null
+            : vm.speedTestRunning
+            ? vm.cancelSpeedTest
+            : vm.runSpeedTest,
+      ),
+      if (vm.speedTestError != null)
+        Text(
+          vm.speedTestError!,
+          style: composeBody(fontSize: 13, fontFamily: OmniFonts.mono, color: OmniColors.red),
+        ),
+    ]);
+  }
+}
+
+// ── Tunnels ──────────────────────────────────────────────────────────────────────
+
+String _tunnelSummary(PortForward pf) {
+  final dest = '${HostDisplay.instance.sensitive(pf.destHost)}:${pf.destPort}';
+  return switch (pf.kind) {
+    'remote' => '-R ${pf.bindHost}:${pf.bindPort} → $dest',
+    'dynamic' => '-D ${pf.bindHost}:${pf.bindPort} (SOCKS5)',
+    _ => '-L ${pf.bindHost}:${pf.bindPort} → $dest',
+  };
+}
+
 class _TunnelsTab extends StatelessWidget {
   const _TunnelsTab({required this.vm});
 
@@ -1377,66 +1443,69 @@ class _TunnelsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final servers = context.watch<AppState>().servers;
-
-    if (!vm.canTunnel) {
-      return Center(
-        child: Text(
-          'Port forwarding is unavailable in this build.',
-          key: const ValueKey('tunnels.unavailable'),
-          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                // Named in ssh's own flags: anyone who has typed `ssh -L` knows what these rows do.
-                'Local (-L), remote (-R) and dynamic (-D) forwards.',
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-              ),
-            ),
-            FilledButton.icon(
-              key: const ValueKey('tunnels.add'),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add'),
-              // A tunnel runs *over* a host, so there is nothing to add before there is one.
-              onPressed: servers.isEmpty ? null : () => _openTunnelEditor(context, vm, servers),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Expanded(
-          child: servers.isEmpty
-              ? Center(
-                  child: Text(
-                    'Add an SSH host first — a tunnel runs over one.',
-                    key: const ValueKey('tunnels.noHosts'),
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : vm.portForwards.isEmpty
-              ? Center(
-                  child: Text(
-                    'No tunnels yet. Add one to forward a port over SSH.',
-                    key: const ValueKey('tunnels.empty'),
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : ListView(
-                  key: const ValueKey('tunnels.list'),
-                  children: [
-                    for (final pf in vm.portForwards) _TunnelCard(vm: vm, pf: pf, servers: servers),
-                  ],
+    final muted = _muted(context);
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: 10,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'SSH Tunnels',
+                  style: composeBody(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-        ),
-      ],
+              ),
+              FilledButton.icon(
+                key: const ValueKey('network.tunnels.add'),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add'),
+                onPressed: servers.isEmpty || !vm.canTunnel
+                    ? null
+                    : () => _openTunnelEditor(context, vm, servers),
+              ),
+            ],
+          ),
+          Text(
+            'Local (-L), remote (-R) and dynamic SOCKS (-D) forwards over a saved SSH host. '
+            'Tunnels stay up until you stop them or leave the app.',
+            style: composeBody(fontSize: 12, color: muted),
+          ),
+          Expanded(
+            // Not a Kotlin state: a build without the SSH forwarder says so rather than offering
+            // switches that cannot work.
+            child: !vm.canTunnel
+                ? Center(
+                    key: const ValueKey('network.tunnels.unavailable'),
+                    child: Text(
+                      'SSH tunnels are not available in this build.',
+                      style: TextStyle(color: muted),
+                    ),
+                  )
+                : servers.isEmpty
+                ? Center(
+                    child: Text('Add an SSH host first.', style: TextStyle(color: muted)),
+                  )
+                : vm.portForwards.isEmpty
+                ? Center(
+                    child: Text(
+                      'No tunnels yet. Tap Add to create one.',
+                      style: TextStyle(color: muted),
+                    ),
+                  )
+                : ListView.separated(
+                    key: const ValueKey('network.tunnels.list'),
+                    itemCount: vm.portForwards.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) =>
+                        _TunnelCard(vm: vm, pf: vm.portForwards[i], servers: servers),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1450,366 +1519,311 @@ class _TunnelCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Listened to, not merely read: the destination is masked by "Hide addresses", and a widget
-    // that reads HostDisplay without subscribing never rebuilds when it changes (convention 2).
-    return ListenableBuilder(
-      listenable: HostDisplay.instance,
-      builder: (context, _) => _buildCard(context),
-    );
-  }
-
-  Widget _buildCard(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final muted = _muted(context);
     final active = vm.isTunnelActive(pf.id);
     final busy = vm.isTunnelBusy(pf.id);
+    final serverName =
+        servers.where((s) => s.id == pf.serverId).firstOrNull?.name ?? '(missing host)';
     final error = vm.tunnelError(pf.id);
-    final host = servers.where((s) => s.id == pf.serverId).firstOrNull;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: OmniCard(
-        key: ValueKey('tunnels.card.${pf.id}'),
-        leftAccent: active ? OmniColors.green : scheme.onSurfaceVariant,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(pf.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      Text(
-                        tunnelSummary(
-                          kind: pf.kind,
-                          bindHost: pf.bindHost,
-                          bindPort: pf.bindPort,
-                          destHost: pf.destHost,
-                          destPort: pf.destPort,
-                          maskHost: HostDisplay.instance.sensitive,
-                        ),
-                        key: ValueKey('tunnels.card.${pf.id}.summary'),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontFamily: OmniFonts.mono,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                      Text(
-                        // Naming the missing host rather than letting the row look fine and fail
-                        // on toggle.
-                        host == null ? 'host no longer exists' : 'via ${host.name}',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: host == null ? OmniColors.amber : scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (busy)
-                  const SizedBox(
-                    key: ValueKey('tunnels.busy'),
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else
-                  Switch(
-                    key: ValueKey('tunnels.card.${pf.id}.toggle'),
-                    value: active,
-                    onChanged: (_) => vm.toggleTunnel(pf),
-                  ),
-              ],
-            ),
-            if (error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  error,
-                  key: ValueKey('tunnels.card.${pf.id}.error'),
-                  style: const TextStyle(fontSize: 11, color: OmniColors.red),
+    return OmniCard(
+      key: ValueKey('network.tunnel.${pf.id}'),
+      leftAccent: active ? OmniColors.green : muted,
+      inset: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(pf.name, style: composeBody(fontSize: 14, fontWeight: FontWeight.bold)),
+                    Text(
+                      _tunnelSummary(pf),
+                      style: composeBody(fontSize: 12, fontFamily: OmniFonts.mono, color: muted),
+                    ),
+                    Text('via $serverName', style: composeBody(fontSize: 11, color: muted)),
+                  ],
                 ),
               ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  key: ValueKey('tunnels.card.${pf.id}.edit'),
-                  // Editing a running tunnel would change the row under a live forward, so the
-                  // switch has to come down first.
-                  onPressed: active ? null : () => _openTunnelEditor(context, vm, servers, pf),
-                  child: const Text('Edit', style: TextStyle(fontSize: 12)),
+              if (busy)
+                const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Switch(
+                  key: ValueKey('network.tunnel.${pf.id}.toggle'),
+                  value: active,
+                  onChanged: (_) => vm.toggleTunnel(pf),
                 ),
-                TextButton(
-                  key: ValueKey('tunnels.card.${pf.id}.delete'),
-                  onPressed: () => _confirmDeleteTunnel(context, vm, pf),
-                  child: const Text(
-                    'Delete',
-                    style: TextStyle(fontSize: 12, color: OmniColors.red),
-                  ),
-                ),
-              ],
+            ],
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                error,
+                style: composeBody(fontSize: 11, fontFamily: OmniFonts.mono, color: OmniColors.red),
+              ),
             ),
-          ],
-        ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            spacing: 8,
+            children: [
+              TextButton(
+                key: ValueKey('network.tunnel.${pf.id}.edit'),
+                onPressed: active ? null : () => _openTunnelEditor(context, vm, servers, pf),
+                child: const Text('Edit'),
+              ),
+              TextButton(
+                key: ValueKey('network.tunnel.${pf.id}.delete'),
+                onPressed: () async {
+                  final confirmed = await showOmniConfirm(
+                    context,
+                    title: 'Delete "${pf.name}"?',
+                    message: "Remove this saved tunnel? If it's running it will be stopped.",
+                    confirmLabel: 'Delete',
+                    destructive: true,
+                    keyPrefix: 'network.tunnel.deleteDialog',
+                  );
+                  if (confirmed) await vm.deleteTunnel(pf);
+                },
+                child: const Text('Delete', style: TextStyle(color: OmniColors.red)),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 }
 
-Future<void> _confirmDeleteTunnel(BuildContext context, NetworkViewModel vm, PortForward pf) async {
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('tunnels.delete.dialog'),
-      title: Text('Delete "${pf.name}"?'),
-      content: const Text('If it is running it will be stopped first.'),
-      actions: [
-        TextButton(
-          key: const ValueKey('tunnels.delete.cancel'),
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          key: const ValueKey('tunnels.delete.confirm'),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Delete', style: TextStyle(color: OmniColors.red)),
-        ),
-      ],
-    ),
-  );
-  if (confirmed ?? false) await vm.deleteTunnel(pf);
-}
-
-/// Add or edit a saved tunnel.
 Future<void> _openTunnelEditor(
   BuildContext context,
   NetworkViewModel vm,
   List<Server> servers, [
   PortForward? existing,
-]) => showModalBottomSheet<void>(
+]) => showDialog<void>(
   context: context,
-  isScrollControlled: true,
-  useSafeArea: true,
-  builder: (_) => _TunnelEditorSheet(vm: vm, servers: servers, existing: existing),
+  builder: (_) => _TunnelDialog(vm: vm, servers: servers, existing: existing),
 );
 
-class _TunnelEditorSheet extends StatefulWidget {
-  const _TunnelEditorSheet({required this.vm, required this.servers, this.existing});
+/// Kotlin's `TunnelEditorDialog`.
+class _TunnelDialog extends StatefulWidget {
+  const _TunnelDialog({required this.vm, required this.servers, this.existing});
 
   final NetworkViewModel vm;
   final List<Server> servers;
   final PortForward? existing;
 
   @override
-  State<_TunnelEditorSheet> createState() => _TunnelEditorSheetState();
+  State<_TunnelDialog> createState() => _TunnelDialogState();
 }
 
-class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
+class _TunnelDialogState extends State<_TunnelDialog> {
   late final _name = TextEditingController(text: widget.existing?.name ?? '');
   late final _bindHost = TextEditingController(text: widget.existing?.bindHost ?? '127.0.0.1');
-  late final _bindPort = TextEditingController(text: '${widget.existing?.bindPort ?? ''}');
+  late final _bindPort = TextEditingController(
+    text: widget.existing == null ? '' : '${widget.existing!.bindPort}',
+  );
   late final _destHost = TextEditingController(text: widget.existing?.destHost ?? '');
-  late final _destPort = TextEditingController(text: '${widget.existing?.destPort ?? ''}');
+  late final _destPort = TextEditingController(
+    text: widget.existing == null ? '' : '${widget.existing!.destPort}',
+  );
   late String _kind = widget.existing?.kind ?? 'local';
-  late int? _serverId = widget.existing?.serverId ?? widget.servers.firstOrNull?.id;
-  bool _autoStart = false;
+  late int _serverId = widget.existing?.serverId ?? widget.servers.firstOrNull?.id ?? 0;
+  late bool _autoStart = widget.existing?.autoStart ?? false;
+  String? _error;
+
+  static const _kinds = [
+    ('local', 'Local (-L)'),
+    ('remote', 'Remote (-R)'),
+    ('dynamic', 'Dynamic SOCKS (-D)'),
+  ];
+
+  List<TextEditingController> get _all => [_name, _bindHost, _bindPort, _destHost, _destPort];
 
   @override
   void initState() {
     super.initState();
-    _autoStart = widget.existing?.autoStart ?? false;
+    for (final c in _all) {
+      c.addListener(_rebuild);
+    }
   }
+
+  void _rebuild() => setState(() {});
 
   @override
   void dispose() {
-    for (final c in [_name, _bindHost, _bindPort, _destHost, _destPort]) {
+    for (final c in _all) {
       c.dispose();
     }
     super.dispose();
   }
 
-  String? get _failure => tunnelFormError(
-    name: _name.text,
-    kind: _kind,
-    serverId: _serverId,
-    bindHost: _bindHost.text,
-    bindPort: _bindPort.text,
-    destHost: _destHost.text,
-    destPort: _destPort.text,
-  );
-
   Future<void> _save() async {
     final existing = widget.existing;
-    await widget.vm.saveTunnel(
-      PortForwardsCompanion.insert(
-        id: existing == null ? const Value.absent() : Value(existing.id),
-        serverId: _serverId!,
-        name: _name.text.trim(),
-        kind: Value(_kind),
-        bindHost: Value(_bindHost.text.trim()),
-        bindPort: int.parse(_bindPort.text.trim()),
-        // A dynamic forward has no destination; storing whatever was typed before the mode changed
-        // would put a dead address on the card.
-        destHost: Value(tunnelHasDestination(_kind) ? _destHost.text.trim() : ''),
-        destPort: Value(tunnelHasDestination(_kind) ? int.parse(_destPort.text.trim()) : 0),
-        autoStart: Value(_autoStart),
-      ),
-    );
+    final isDynamic = _kind == 'dynamic';
+    try {
+      await widget.vm.saveTunnel(
+        PortForwardsCompanion.insert(
+          id: existing == null ? const Value.absent() : Value(existing.id),
+          serverId: _serverId,
+          name: _name.text.trim(),
+          kind: Value(_kind),
+          bindHost: Value(_bindHost.text.trim().isEmpty ? '127.0.0.1' : _bindHost.text.trim()),
+          bindPort: int.parse(_bindPort.text.trim()),
+          destHost: Value(isDynamic ? '' : _destHost.text.trim()),
+          destPort: Value(isDynamic ? 0 : int.parse(_destPort.text.trim())),
+          autoStart: Value(_autoStart),
+        ),
+      );
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+      return;
+    }
     if (mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final failure = _failure;
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              widget.existing == null ? 'New tunnel' : 'Edit tunnel',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('tunnelEditor.name'),
-              controller: _name,
-              decoration: omniInputDecoration(context, labelText: 'Name'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<int>(
-              key: const ValueKey('tunnelEditor.host'),
-              initialValue: _serverId,
-              decoration: omniInputDecoration(context, labelText: 'Over host'),
-              items: [
-                for (final s in widget.servers) DropdownMenuItem(value: s.id, child: Text(s.name)),
-              ],
-              onChanged: (v) => setState(() => _serverId = v),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              key: const ValueKey('tunnelEditor.kind'),
-              initialValue: _kind,
-              decoration: omniInputDecoration(context, labelText: 'Mode'),
-              items: [
-                for (final entry in tunnelKinds.entries)
-                  DropdownMenuItem(value: entry.key, child: Text(entry.value)),
-              ],
-              onChanged: (v) => setState(() => _kind = v ?? _kind),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              key: const ValueKey('tunnelEditor.bindHost'),
-              controller: _bindHost,
-              decoration: omniInputDecoration(
-                context,
-                labelText: 'Bind address',
-                helperText: '127.0.0.1 keeps it on this device; 0.0.0.0 exposes it to the network',
+    final isDynamic = _kind == 'dynamic';
+    final bindPortError = portError(_bindPort.text);
+    final destPortError = isDynamic ? null : portError(_destPort.text);
+    final destHostError = isDynamic || _destHost.text.trim().isNotEmpty ? null : 'Required';
+    final valid =
+        _name.text.trim().isNotEmpty &&
+        bindPortError == null &&
+        destPortError == null &&
+        destHostError == null;
+    final muted = _muted(context);
+    Widget text(
+      String key,
+      TextEditingController c,
+      String label, {
+      String? error,
+      bool port = false,
+    }) => TextField(
+      key: ValueKey('tunnelEditor.$key'),
+      controller: c,
+      keyboardType: port ? TextInputType.number : null,
+      inputFormatters: port
+          ? [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(5)]
+          : null,
+      decoration: omniInputDecoration(context, labelText: label, errorText: error),
+    );
+    return AlertDialog(
+      key: const ValueKey('tunnelEditor.dialog'),
+      scrollable: true,
+      title: Text(widget.existing == null ? 'New tunnel' : 'Edit tunnel'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: 10,
+        children: [
+          text('name', _name, 'Name'),
+          _menuField<String>(
+            context,
+            fieldKey: 'tunnelEditor.kind',
+            label: 'Type',
+            shown: _kinds.firstWhere((k) => k.$1 == _kind).$2,
+            options: _kinds,
+            onSelected: (k) => setState(() => _kind = k),
+          ),
+          _menuField<int>(
+            context,
+            fieldKey: 'tunnelEditor.server',
+            label: 'SSH host',
+            shown:
+                widget.servers.where((s) => s.id == _serverId).firstOrNull?.name ?? 'Select host',
+            options: [for (final s in widget.servers) (s.id, s.name)],
+            onSelected: (id) => setState(() => _serverId = id),
+          ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            spacing: 8,
+            children: [
+              Expanded(
+                flex: 14,
+                child: text(
+                  'bindHost',
+                  _bindHost,
+                  _kind == 'remote' ? 'Remote bind host' : 'Bind host',
+                ),
               ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              key: const ValueKey('tunnelEditor.bindPort'),
-              controller: _bindPort,
-              keyboardType: TextInputType.number,
-              decoration: omniInputDecoration(context, labelText: 'Bind port'),
-              onChanged: (_) => setState(() {}),
-            ),
-            if (tunnelHasDestination(_kind)) ...[
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('tunnelEditor.destHost'),
-                controller: _destHost,
-                decoration: omniInputDecoration(context, labelText: 'Destination host'),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('tunnelEditor.destPort'),
-                controller: _destPort,
-                keyboardType: TextInputType.number,
-                decoration: omniInputDecoration(context, labelText: 'Destination port'),
-                onChanged: (_) => setState(() {}),
+              Expanded(
+                flex: 10,
+                child: text('bindPort', _bindPort, 'Port', error: bindPortError, port: true),
               ),
             ],
-            const SizedBox(height: 10),
-            // What this mode actually does, in a sentence. The flags are the precise name and the
-            // sentence is the explanation; showing only one of the two leaves somebody guessing.
-            Text(
-              switch (_kind) {
-                'remote' =>
-                  'The SSH host listens on the bind port and forwards back to a '
-                      'destination reachable from this device.',
-                'dynamic' =>
-                  'Opens a SOCKS4/4a/5 proxy on the bind address; point apps at it to route '
-                      'through the SSH host.',
-                _ =>
-                  'This device listens on the bind address and forwards to a destination '
-                      'reachable from the SSH host.',
-              },
-              key: const ValueKey('tunnelEditor.explain'),
-              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
-            ),
-            SwitchListTile(
-              key: const ValueKey('tunnelEditor.autoStart'),
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Start when OmniTerm opens', style: TextStyle(fontSize: 13)),
-              subtitle: Text(
-                // Saying the lifetime plainly: a tunnel is not a system service, and a user who
-                // expects it to survive the app being closed would be wrong in a way that matters.
-                'Only while the app is running — closing OmniTerm takes the tunnel down.',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              value: _autoStart,
-              onChanged: (v) => setState(() => _autoStart = v),
-            ),
-            if (failure != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  failure,
-                  key: const ValueKey('tunnelEditor.error'),
-                  style: const TextStyle(fontSize: 12, color: OmniColors.red),
-                ),
-              ),
-            const SizedBox(height: 14),
+          ),
+          if (!isDynamic)
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              spacing: 8,
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    key: const ValueKey('tunnelEditor.cancel'),
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
+                  flex: 14,
+                  child: text('destHost', _destHost, 'Dest host', error: destHostError),
                 ),
-                const SizedBox(width: 8),
                 Expanded(
-                  child: FilledButton(
-                    key: const ValueKey('tunnelEditor.save'),
-                    // Disabled while invalid, with the reason on screen — a port nobody chose is
-                    // exactly what the Kotlin's PR #67 was about.
-                    onPressed: failure == null ? _save : null,
-                    child: const Text('Save'),
-                  ),
+                  flex: 10,
+                  child: text('destPort', _destPort, 'Port', error: destPortError, port: true),
                 ),
               ],
             ),
-          ],
-        ),
+          Text(switch (_kind) {
+            'remote' =>
+              'The remote host listens on its bind port and forwards connections back to dest '
+                  'host:port reachable from this device.',
+            'dynamic' =>
+              'Opens a SOCKS5 proxy on the bind host:port; point apps at it to route through '
+                  'the SSH host.',
+            _ =>
+              'This device listens on bind host:port and forwards to dest host:port reachable '
+                  'from the SSH host.',
+          }, style: composeDialogBody(fontSize: 11, color: muted)),
+          Row(
+            children: [
+              Switch(
+                key: const ValueKey('tunnelEditor.autoStart'),
+                value: _autoStart,
+                onChanged: (v) => setState(() => _autoStart = v),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Start when OmniTerm opens', style: composeDialogBody(fontSize: 13)),
+                    Text(
+                      'The tunnel remains scoped to the app and stops when OmniTerm closes.',
+                      style: composeDialogBody(fontSize: 11, color: muted),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (_error != null)
+            Text(_error!, style: composeDialogBody(fontSize: 12, color: OmniColors.red)),
+        ],
       ),
+      actions: [
+        TextButton(
+          key: const ValueKey('tunnelEditor.cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('tunnelEditor.save'),
+          onPressed: valid ? _save : null,
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

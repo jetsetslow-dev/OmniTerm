@@ -129,13 +129,13 @@ void main() {
         contains('metric'),
       );
       expect(
-        await vm.saveRule(metricName: 'CPU Usage', thresholdValue: 0, severity: 'WARNING'),
-        contains('greater than zero'),
+        await vm.saveRule(metricName: 'CPU Usage', thresholdValue: -1, severity: 'WARNING'),
+        'Must be 0 or more',
       );
       // A rule that can never be reached is worse than a noisy one: nothing signals it is broken.
       expect(
         await vm.saveRule(metricName: 'CPU Usage', thresholdValue: 150, severity: 'WARNING'),
-        contains('cannot exceed 100'),
+        'Must be 100 or less',
       );
       expect(
         await vm.saveRule(
@@ -475,30 +475,36 @@ void main() {
       vm.dispose();
     });
 
-    test('critical incidents sort above warnings', () async {
-      // An alerts list is read top-down under pressure; a CRITICAL under six newer warnings is a
-      // warning that has been hidden.
+    test('incidents list newest first, as Kotlin orders them', () async {
+      // Kotlin's DAO is `ORDER BY triggeredTime DESC`; severity does not reorder the list.
       final id = await repo.insertServer(server(name: 'nas'));
       final vm = await boot();
-      await vm.saveRule(
-        metricName: 'CPU Usage',
-        thresholdValue: 80,
-        severity: 'WARNING',
-        triggerWindow: '2m',
-      );
       await vm.saveRule(
         metricName: 'Memory Usage',
         thresholdValue: 80,
         severity: 'CRITICAL',
         triggerWindow: '2m',
       );
+      await vm.saveRule(
+        metricName: 'CPU Usage',
+        thresholdValue: 80,
+        severity: 'WARNING',
+        triggerWindow: '2m',
+      );
       await settle();
 
       final host = (await repo.getServerById(id))!;
-      await sustain(vm, host, const AlertSample(cpuPercent: 95, memoryPercent: 95), to: 130000);
+      await sustain(vm, host, const AlertSample(memoryPercent: 95), to: 130000);
+      await sustain(
+        vm,
+        host,
+        const AlertSample(cpuPercent: 95, memoryPercent: 95),
+        from: 160000,
+        to: 300000,
+      );
       await settle();
 
-      expect(vm.activeAlerts.first.severity, 'CRITICAL');
+      expect(vm.activeAlerts.map((a) => a.severity), ['WARNING', 'CRITICAL']);
       vm.dispose();
     });
   });
@@ -530,7 +536,8 @@ void main() {
       await settle();
 
       expect(vm.activeAlerts, isEmpty);
-      expect(vm.history.single.status, 'rule changed');
+      // Kotlin's closeAlertsForRule archives a closed incident as resolved, whatever closed it.
+      expect(vm.history.single.status, 'resolved');
       vm.dispose();
     });
 

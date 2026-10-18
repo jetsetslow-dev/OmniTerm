@@ -54,3 +54,57 @@ TextTheme omniTextTheme(TextTheme base) => base.copyWith(
     letterSpacing: 0.5,
   ),
 );
+
+/// Compose's screen text: Material 3 provides `bodyLarge` as the ambient style, and a `Text` that
+/// names only a size keeps that style's 24sp line height and 0.5sp tracking. So Kotlin's 11sp
+/// captions sit on 24sp lines, which Flutter's multiplier-based `height` cannot express without
+/// computing it per size. Lines are centred in that height, as Compose's `LineHeightStyle` does.
+TextStyle composeBody({
+  double fontSize = 16,
+  FontWeight? fontWeight,
+  Color? color,
+  FontStyle? fontStyle,
+  String? fontFamily,
+}) => _composeText(24, 0.5, fontSize, fontWeight, color, fontStyle, fontFamily);
+
+/// The same rule inside an `AlertDialog`'s text slot, whose ambient style is `bodyMedium` (20sp
+/// lines, 0.25sp tracking).
+TextStyle composeDialogBody({
+  double fontSize = 14,
+  FontWeight? fontWeight,
+  Color? color,
+  FontStyle? fontStyle,
+  String? fontFamily,
+}) => _composeText(20, 0.25, fontSize, fontWeight, color, fontStyle, fontFamily);
+
+TextStyle _composeText(
+  double lineHeight,
+  double letterSpacing,
+  double fontSize,
+  FontWeight? fontWeight,
+  Color? color,
+  FontStyle? fontStyle,
+  String? fontFamily,
+) => TextStyle(
+  fontSize: fontSize,
+  height: lineHeight / fontSize,
+  letterSpacing: letterSpacing,
+  leadingDistribution: TextLeadingDistribution.even,
+  fontWeight: fontWeight,
+  color: color,
+  fontStyle: fontStyle,
+  fontFamily: fontFamily,
+);
+
+/// Applies Compose's ambient line height and tracking to [style] (see [composeBody]): the height
+/// becomes [lineHeight] whatever the size, and tracking defaults to [tracking] unless [style]
+/// names its own. Defaults are `bodyLarge`'s; pass 20 and 0.25 for an `AlertDialog`'s text slot.
+TextStyle composed(TextStyle style, {double lineHeight = 24, double tracking = 0.5}) {
+  final size = style.fontSize ?? 16;
+  return style.copyWith(
+    fontSize: size,
+    height: lineHeight / size,
+    letterSpacing: style.letterSpacing ?? tracking,
+    leadingDistribution: TextLeadingDistribution.even,
+  );
+}

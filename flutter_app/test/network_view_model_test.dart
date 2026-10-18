@@ -404,11 +404,11 @@ void main() {
   });
 
   group('wake on LAN', () {
-    test('a target is saved with a normalised MAC', () async {
+    test('a target keeps the MAC as typed, as Kotlin stores it', () async {
       final vm = await boot(FakeProbe());
-      expect(await vm.saveWolTarget(name: 'nas', macAddress: 'AA-BB-CC-DD-EE-FF'), isNull);
+      expect(await vm.saveWolTarget(name: 'nas', macAddress: ' AA-BB-CC-DD-EE-FF '), isNull);
       await settle();
-      expect(vm.wolTargets.single.macAddress, 'aa:bb:cc:dd:ee:ff');
+      expect(vm.wolTargets.single.macAddress, 'AA-BB-CC-DD-EE-FF');
       vm.dispose();
     });
 

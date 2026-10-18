@@ -118,14 +118,14 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('about.crashHistory.0.copy')));
       await pumpUntil(
         tester,
-        () => find.byKey(const ValueKey('about.copied')).evaluate().isNotEmpty,
+        () => find.byKey(const ValueKey('about.crashHistory.feedback')).evaluate().isNotEmpty,
       );
     } finally {
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
     }
 
     expect(
-      find.byKey(const ValueKey('about.copied')),
+      find.byKey(const ValueKey('about.crashHistory.feedback')),
       findsOneWidget,
       reason: 'Copy must finish its platform call before the copied text is checked',
     );

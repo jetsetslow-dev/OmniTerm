@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/app_database.dart';
 import '../../../data/remote_models.dart';
+import '../../../data/remote_parsers.dart';
 import '../../../domain/measurement_units.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
@@ -17,75 +18,6 @@ import '../../widgets/omni_components.dart';
 
 /// The Monitor sub-tabs, ported from `OverviewTab` / `ProcessesTab` / `ServicesTab` / `LogsTab` in
 /// `ui/MonitorScreen.kt`.
-
-/// Says when these numbers were taken and when they will be taken again.
-///
-/// Ported from the Kotlin's refresh ring. It exists because a screen of live-looking figures gives
-/// no way to tell a host that is idle from one that stopped answering four minutes ago — the numbers
-/// look identical. The countdown is derived from the poller's own cycle rather than from a timer of
-/// its own, so it cannot drift away from the thing it is describing.
-class _RefreshCountdown extends StatefulWidget {
-  const _RefreshCountdown({required this.vm});
-
-  final MonitorViewModel vm;
-
-  @override
-  State<_RefreshCountdown> createState() => _RefreshCountdownState();
-}
-
-class _RefreshCountdownState extends State<_RefreshCountdown> {
-  Timer? _tick;
-
-  @override
-  void initState() {
-    super.initState();
-    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _tick?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final next = widget.vm.nextRefreshAt;
-    final taken = widget.vm.metricsSampledAt;
-    // No poller in this build: no countdown to show, and inventing one would be a promise the app
-    // cannot keep.
-    if (next == null) return const SizedBox.shrink();
-
-    final now = DateTime.now();
-    final remaining = next.difference(now);
-    final age = taken == null ? null : now.difference(taken);
-
-    return Padding(
-      key: const ValueKey('monitor.overview.countdown'),
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Text(
-        [
-          if (age == null) 'Waiting for the first sample' else 'Sampled ${_ago(age)}',
-          if (!remaining.isNegative) 'next in ${remaining.inSeconds + 1}s' else 'refreshing…',
-        ].join(' · '),
-        style: TextStyle(
-          fontSize: 10,
-          fontFamily: OmniFonts.mono,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-
-  static String _ago(Duration age) {
-    if (age.inSeconds < 5) return 'just now';
-    if (age.inMinutes < 1) return '${age.inSeconds}s ago';
-    if (age.inHours < 1) return '${age.inMinutes}m ago';
-    return '${age.inHours}h ago';
-  }
-}
 
 /// CPU, memory, disks and uptime for the monitored host.
 class OverviewTab extends StatefulWidget {
@@ -111,160 +43,261 @@ class _OverviewTabState extends State<OverviewTab> {
   Widget build(BuildContext context) {
     final vm = widget.vm;
     final m = vm.metrics;
-    final scheme = Theme.of(context).colorScheme;
-    final accent = OmniColors.serverAccent(widget.server.serverColor, widget.server.name);
+    final server = widget.server;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final accent = OmniColors.serverAccent(server.serverColor, server.name);
+    final available = vm.hasCurrentMetrics;
+    final online = server.status == 'online';
 
-    return ListView(
-      key: const ValueKey('monitor.overview'),
-      children: [
-        if (vm.metricsLoading) const LinearProgressIndicator(minHeight: 2),
-        _RefreshCountdown(vm: vm),
-        if (!vm.hasCurrentMetrics)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(vm.error ?? 'Waiting for verified CPU, memory and disk metrics.'),
-          ),
-        if (vm.hasCurrentMetrics) ...[
-          OmniCard(
-            key: const ValueKey('monitor.overview.cpu'),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _CardLabel(text: 'CPU UTILISATION'),
-                        Text(
-                          'Load: ${m.load1} · ${m.load5} · ${m.load15}',
-                          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                        ),
-                        if (m.cpuTempC != null)
-                          Text(
-                            // Obeys the Measurement system setting, as Kotlin does — a user who chose
-                            // imperial was previously still shown Celsius here.
-                            'Temp: ${formatTemperature(m.cpuTempC!, vm.measurementSystem)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              // A hot CPU is the one number here worth colouring — it predicts
-                              // throttling and hardware failure, not just load.
-                              color: m.cpuTempC! >= 80 ? OmniColors.red : scheme.onSurfaceVariant,
-                            ),
-                          ),
-                      ],
-                    ),
-                    Text(
-                      '${m.cpuPercent.round()}%',
-                      key: const ValueKey('monitor.overview.cpuPercent'),
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: OmniFonts.mono,
-                        color: accent,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                GaugeBar(value: m.cpuPercent, color: accent, height: 6),
-                const SizedBox(height: 12),
-                MetricLineChart(
-                  key: const ValueKey('monitor.overview.cpuChart'),
-                  points: vm.cpuHistory,
-                  timestamps: vm.historyTimestamps,
-                  color: accent,
-                  label: 'CPU utilisation',
-                ),
-                if (m.perCoreCpu.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  _CardLabel(text: 'PER-CORE (${m.perCoreCpu.length})'),
-                  const SizedBox(height: 4),
-                  for (final (i, v) in m.perCoreCpu.indexed)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 1),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 26,
-                            child: Text(
-                              'c$i',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontFamily: OmniFonts.mono,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: GaugeBar(value: v, color: accent, height: 5),
-                          ),
-                          SizedBox(
-                            width: 36,
-                            child: Text(
-                              '${v.round()}%',
-                              textAlign: TextAlign.end,
-                              style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          OmniCard(
-            key: const ValueKey('monitor.overview.memory'),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _CardLabel(text: 'MEMORY OCCUPANCY'),
-                const SizedBox(height: 6),
-                Text(
-                  '${formatBytes(m.memUsedBytes)} of ${formatBytes(m.memTotalBytes)} '
-                  'occupied (${m.memPercent.round()}%)',
-                  style: const TextStyle(fontSize: 14),
-                ),
-                const SizedBox(height: 10),
-                GaugeBar(value: m.memPercent, color: OmniColors.amber, height: 7),
-                const SizedBox(height: 12),
-                MetricLineChart(
-                  key: const ValueKey('monitor.overview.ramChart'),
-                  points: vm.ramHistory,
-                  timestamps: vm.historyTimestamps,
-                  color: OmniColors.amber,
-                  label: 'RAM utilisation',
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          _DiskCard(metrics: m),
-          const SizedBox(height: 12),
-        ],
-        _RetainedHistoryCard(vm: vm, accent: accent),
+    // Kotlin's OverflowLazyColumn(spacedBy 12): CPU and memory always render, with "unavailable"
+    // in place of figures, under a waiting card that offers Retry.
+    final cards = <Widget>[
+      if (!available)
         OmniCard(
-          key: const ValueKey('monitor.overview.stats'),
-          child: Row(
+          key: const ValueKey('monitor.overview.waiting'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: OmniStatBox(value: formatUptime(m.uptimeSeconds), label: 'Uptime'),
+              if (vm.metricsLoading) const LinearProgressIndicator(),
+              Text(
+                vm.error ?? 'Waiting for verified CPU, memory and disk metrics.',
+                style: composeBody(),
               ),
-              Expanded(
-                child: OmniStatBox(value: '${m.procCount}', label: 'Procs'),
-              ),
-              Expanded(
-                child: OmniStatBox(value: '${m.tcpConnections}', label: 'TCP'),
+              TextButton(
+                key: const ValueKey('monitor.overview.retry'),
+                onPressed: vm.metricsLoading ? null : vm.loadHostMetrics,
+                child: const Text('Retry metrics'),
               ),
             ],
           ),
         ),
+      OmniCard(
+        key: const ValueKey('monitor.overview.cpu'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _CardLabel(text: 'CPU UTILISATION'),
+                    Text(
+                      available
+                          ? 'Load: ${m.load1} · ${m.load5} · ${m.load15}'
+                          : 'Current load unavailable',
+                      style: composeBody(fontSize: 12, color: muted),
+                    ),
+                    if (m.cpuTempC != null)
+                      Text(
+                        'Temp: ${formatTemperature(m.cpuTempC!, vm.measurementSystem)}',
+                        style: composeBody(
+                          fontSize: 12,
+                          color: m.cpuTempC! >= 80 ? OmniColors.red : muted,
+                        ),
+                      ),
+                  ],
+                ),
+                Text(
+                  available ? '${m.cpuPercent.round()}%' : '—',
+                  key: const ValueKey('monitor.overview.cpuPercent'),
+                  style: composeBody(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: OmniFonts.mono,
+                    color: accent,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            MetricLineChart(
+              key: const ValueKey('monitor.overview.cpuChart'),
+              points: vm.cpuHistory,
+              timestamps: vm.historyTimestamps,
+              color: accent,
+              label: 'CPU utilisation',
+            ),
+            if (m.perCoreCpu.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _CardLabel(text: 'PER-CORE (${m.perCoreCpu.length})', fontSize: 10),
+              const SizedBox(height: 4),
+              for (final (i, v) in m.perCoreCpu.indexed)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 1),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 26,
+                        child: Text(
+                          'c$i',
+                          style: composeBody(
+                            fontSize: 10,
+                            fontFamily: OmniFonts.mono,
+                            color: muted,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: GaugeBar(value: v, color: accent, height: 5),
+                      ),
+                      SizedBox(
+                        width: 36,
+                        child: Text(
+                          '${v.round()}%',
+                          textAlign: TextAlign.end,
+                          style: composeBody(fontSize: 10, fontFamily: OmniFonts.mono),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+      OmniCard(
+        key: const ValueKey('monitor.overview.memory'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _CardLabel(text: 'MEMORY OCCUPANCY'),
+            const SizedBox(height: 6),
+            Text(
+              available
+                  ? '${humanBytes(m.memUsedBytes)} of ${humanBytes(m.memTotalBytes)} '
+                        'occupied (${m.memPercent.round()}%)'
+                  : 'Current memory unavailable',
+              style: composeBody(fontSize: 14),
+            ),
+            const SizedBox(height: 10),
+            GaugeBar(value: m.memPercent, color: OmniColors.amber, height: 7),
+            const SizedBox(height: 12),
+            MetricLineChart(
+              key: const ValueKey('monitor.overview.ramChart'),
+              points: vm.ramHistory,
+              timestamps: vm.historyTimestamps,
+              color: OmniColors.amber,
+              label: 'RAM utilisation',
+            ),
+          ],
+        ),
+      ),
+      if (available) ...[
+        _DiskCard(metrics: m),
+        OmniCard(
+          key: const ValueKey('monitor.overview.network'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const _CardLabel(text: 'Network'),
+                  Text(
+                    'TCP: ${m.tcpConnections}',
+                    style: composeBody(fontSize: 11, fontFamily: OmniFonts.mono, color: muted),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '↓ ${humanBytes(m.netRxPerSec)}/s   ↑ ${humanBytes(m.netTxPerSec)}/s',
+                style: composeBody(fontSize: 14, fontFamily: OmniFonts.mono, color: accent),
+              ),
+              if (m.netInterfaces.isEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Per-interface rates appear after the next refresh.',
+                  style: composeBody(fontSize: 10, color: muted),
+                ),
+              ] else
+                for (final iface in m.netInterfaces) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        iface.name,
+                        style: composeBody(
+                          fontSize: 12,
+                          fontFamily: OmniFonts.mono,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '↓${humanBytes(iface.rxPerSec)}/s ↑${humanBytes(iface.txPerSec)}/s',
+                        style: composeBody(fontSize: 11, fontFamily: OmniFonts.mono, color: muted),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    'total ↓${humanBytes(iface.rxBytes)} ↑${humanBytes(iface.txBytes)}',
+                    style: composeBody(fontSize: 10, color: muted),
+                  ),
+                ],
+            ],
+          ),
+        ),
+        OmniCard(
+          key: const ValueKey('monitor.overview.system'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SectionHeader(title: 'System', padding: EdgeInsets.zero),
+              if (m.os.trim().isNotEmpty) _StatRow(label: 'OS', value: m.os),
+              _StatRow(label: 'Uptime', value: formatUptime(m.uptimeSeconds)),
+              _StatRow(label: 'Processes', value: m.procCount > 0 ? '${m.procCount}' : '—'),
+              _StatRow(label: 'Latency', value: online ? '${server.lastLatency} ms' : '—'),
+              _StatRow(label: 'Status', value: online ? 'Online' : 'Offline'),
+            ],
+          ),
+        ),
       ],
+      _RetainedHistoryCard(vm: vm, accent: accent),
+    ];
+
+    return ListView.separated(
+      key: const ValueKey('monitor.overview'),
+      itemCount: cards.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 12),
+      itemBuilder: (_, i) => cards[i],
     );
   }
+}
+
+/// Kotlin's `StatRow`: a 14sp label and a bold monospace value on one line.
+class _StatRow extends StatelessWidget {
+  const _StatRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: composeBody(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: composeBody(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              fontFamily: OmniFonts.mono,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 /// The retained telemetry card, ported from the `7-DAY HISTORY` block in `ui/MonitorScreen.kt:768`.
@@ -471,15 +504,16 @@ Future<void> _runServiceAction(
 }
 
 class _CardLabel extends StatelessWidget {
-  const _CardLabel({required this.text});
+  const _CardLabel({required this.text, this.fontSize = 11});
 
   final String text;
+  final double fontSize;
 
   @override
   Widget build(BuildContext context) => Text(
     text,
-    style: TextStyle(
-      fontSize: 11,
+    style: composeBody(
+      fontSize: fontSize,
       fontWeight: FontWeight.bold,
       color: Theme.of(context).colorScheme.onSurfaceVariant,
     ),

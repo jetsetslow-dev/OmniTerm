@@ -975,8 +975,9 @@ void main() {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, withTransport: false);
 
-      final button = tester.widget<FilledButton>(find.byKey(const ValueKey('shell.connect')));
-      expect(button.onPressed, isNull);
+      // Kotlin's tonal Connect box; disabled means it takes no taps.
+      final button = tester.widget<InkWell>(find.byKey(const ValueKey('shell.connect')));
+      expect(button.onTap, isNull);
       expect(find.byKey(const ValueKey('shell.unavailable')), findsOneWidget);
       await finish(tester);
     });

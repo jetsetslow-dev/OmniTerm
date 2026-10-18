@@ -173,7 +173,11 @@ void main() {
 
       final version = currentVersion();
       expect(version, isNot(contains('…')), reason: 'PackageInfo did not resolve within 10s');
-      expect(version, contains('build'));
+      expect(version, startsWith('Version '));
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('about.build'))).data,
+        isNot(contains('…')),
+      );
     });
 
     testWidgets('the diagnostics block carries nothing identifying', (tester) async {
@@ -186,7 +190,7 @@ void main() {
 
       // The list builds this card only when it reaches the viewport on smaller displays.
       // Scroll the actual About list before reading the platform diagnostics.
-      final diagnostics = find.byKey(const ValueKey('about.diagnostics.text'));
+      final diagnostics = find.byKey(const ValueKey('about.diagnostics'));
       await tester.scrollUntilVisible(
         diagnostics,
         200,
@@ -198,8 +202,13 @@ void main() {
             .first,
       );
       await tester.pumpAndSettle();
-      final text = tester.widget<Text>(diagnostics).data!;
-      expect(text, contains('Platform:'));
+      final text = [
+        for (final widget in tester.widgetList<Text>(
+          find.descendant(of: diagnostics, matching: find.byType(Text)),
+        ))
+          widget.data ?? '',
+      ].join('\n');
+      expect(text, contains('Android'));
       expect(text, isNot(contains('@')), reason: 'no user@host may appear');
     });
   });

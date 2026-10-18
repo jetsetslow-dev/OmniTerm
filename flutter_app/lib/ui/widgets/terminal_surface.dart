@@ -92,23 +92,58 @@ class TerminalPainter extends CustomPainter {
   final TerminalSnapshot snapshot;
   final TerminalMetrics metrics;
   final TerminalPalette palette;
-  final Map<(String, TextStyle), TextPainter> _textPainters = {};
+
+  /// Laid-out text reused across frames. A repaint (every scroll frame, every TUI redraw) used to
+  /// lay out and discard one paragraph per glyph — thousands per frame on a full screen. Bounded so
+  /// a long session of varied output cannot grow it without limit; evicted layouts are disposed.
+  static final Map<(String, TextStyle), TextPainter> _layoutCache = {};
+  static const _layoutCacheLimit = 2048;
+
+  /// The font's own advance for one cell-width glyph, per face and size.
+  static final Map<(String, double, double?), double> _advanceCache = {};
+
+  /// Ligatures would merge glyphs that must each stay in their own cell (`->`, `!=` in JetBrains
+  /// Mono), so runs are shaped with them off — matching Kotlin's one-glyph-per-drawText output.
+  static const _noLigatures = [FontFeature.disable('liga'), FontFeature.disable('calt')];
+
+  static TextPainter _layout(String text, TextStyle style) {
+    final key = (text, style);
+    final cached = _layoutCache.remove(key);
+    if (cached != null) return _layoutCache[key] = cached;
+    if (_layoutCache.length >= _layoutCacheLimit) {
+      final oldest = _layoutCache.keys.first;
+      _layoutCache.remove(oldest)!.dispose();
+    }
+    return _layoutCache[key] = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  }
+
+  double get _glyphAdvance =>
+      _advanceCache.putIfAbsent((metrics.fontFamily, metrics.fontSize, metrics.lineHeight), () {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: 'M',
+            style: TextStyle(
+              fontFamily: metrics.fontFamily,
+              fontSize: metrics.fontSize,
+              height: metrics.lineHeight,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final width = painter.width;
+        painter.dispose();
+        return width;
+      });
 
   /// The block cursor is drawn only for the focused, live pane — an unfocused split pane showing a
   /// cursor invites typing into the wrong host.
   final bool showCursor;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    try {
-      _paint(canvas, size);
-    } finally {
-      for (final painter in _textPainters.values) {
-        painter.dispose();
-      }
-      _textPainters.clear();
-    }
-  }
+  void paint(Canvas canvas, Size size) => _paint(canvas, size);
 
   void _paint(Canvas canvas, Size size) {
     canvas.drawRect(Offset.zero & size, Paint()..color = palette.background);
@@ -217,6 +252,24 @@ class TerminalPainter extends CustomPainter {
       decorationColor: fg,
     );
 
+    // Printable ASCII is always one cell and always in the terminal face, so a whole span can be
+    // shaped once: letter spacing makes every advance exactly one cell, and starting half the
+    // difference in places each glyph at its cell centre — the same position the per-glyph path
+    // below computes. Anything else (wide, combining, fallback-font glyphs) keeps that path.
+    if (glyphs.length > 1 && glyphs.every((g) => g.$2 == 1 && _isPrintableAscii(g.$1))) {
+      final advance = _glyphAdvance;
+      final run = _layout(
+        span.text,
+        style.copyWith(letterSpacing: cw - advance, fontFeatures: _noLigatures),
+      );
+      final baseline = metrics.baselineOffset;
+      final top = baseline == null
+          ? y
+          : y + baseline - run.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+      run.paint(canvas, Offset(col * cw + (cw - advance) / 2, top));
+      return col + cells;
+    }
+
     var cursor = col;
     for (final (glyph, width) in glyphs) {
       // Pin every glyph to its cell center so intrinsic font advances never accumulate across
@@ -227,17 +280,15 @@ class TerminalPainter extends CustomPainter {
     return cursor;
   }
 
+  static bool _isPrintableAscii(String glyph) {
+    if (glyph.length != 1) return false;
+    final unit = glyph.codeUnitAt(0);
+    return unit >= 0x20 && unit <= 0x7E;
+  }
+
   void _paintText(Canvas canvas, String text, TextStyle style, double centerX, double y) {
     if (text.trim().isEmpty) return;
-    // Repeated glyphs of the same style share one layout for this frame; centering every cell
-    // should not require thousands of paragraph layouts while a remote TUI redraws.
-    final painter = _textPainters.putIfAbsent(
-      (text, style),
-      () => TextPainter(
-        text: TextSpan(text: text, style: style),
-        textDirection: TextDirection.ltr,
-      )..layout(),
-    );
+    final painter = _layout(text, style);
     final baseline = metrics.baselineOffset;
     final top = baseline == null
         ? y

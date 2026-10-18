@@ -22,11 +22,17 @@ Future<String> _encryptInBackground((String, String) input) => encryptBackup(inp
 
 @immutable
 class BackupHostOption {
-  const BackupHostOption({required this.oldId, required this.name, required this.host});
+  const BackupHostOption({
+    required this.oldId,
+    required this.name,
+    required this.host,
+    this.port = 22,
+  });
 
   final int oldId;
   final String name;
   final String host;
+  final int port;
 }
 
 @immutable
@@ -343,6 +349,14 @@ class BackupViewModel extends ChangeNotifier {
             : const {},
       );
 
+      final document = jsonDecode(json) as Map<String, dynamic>;
+      _lastExportCounts = {
+        for (final entry in document.entries)
+          if (entry.value is List)
+            entry.key: (entry.value as List).length
+          else if (entry.value is Map && entry.key == 'settings')
+            entry.key: (entry.value as Map).length,
+      };
       // An unencrypted export is only reachable for a selection with nothing sensitive in it.
       // No status here on purpose. The export is only half the job now that the file dialog
       // follows it, and "Backup ready." left standing after a cancelled save would claim a file
@@ -454,46 +468,39 @@ class BackupViewModel extends ChangeNotifier {
     }
   }
 
-  /// Report a completed save.
-  ///
-  /// The location is named rather than a bare "done": a backup the user cannot find is one they
-  /// will assume did not happen. The passphrase reminder is repeated here, at the moment the file
-  /// becomes a real, portable thing that can be lost — which is when it matters, not when the
-  /// passphrase was chosen.
+  /// Section counts of the last built document, for Kotlin's "… backup written: …" summary.
+  Map<String, int> _lastExportCounts = const {};
+
+  /// Report a completed save in Kotlin's words (`exportBackup` in `ui/AppViewModel.kt`): the mode,
+  /// then what the file holds, section by section.
   void reportSaved(String? location, {required bool encrypted}) {
     // Recorded here rather than when the JSON was built: the file dialog can still be cancelled, and
     // a "last backup" that counts an export the user abandoned is worse than none at all. Kotlin
-    // records it on write success too (`AppViewModel.kt:11415`).
+    // records it on write success too.
     final now = DateTime.now();
     _lastExportTimeRevision++;
     _lastExportTimeError = null;
     _lastExportTime = now;
-    // Fire-and-forget, but not fire-and-ignore. When this write failed the file was still saved and
-    // the screen still said "last backup: just now" — and then the next launch read the old value
-    // back and said something else. The file existing is true and is not walked back; what may not
-    // survive is the record of *when*, and the user is told that rather than left to conclude the
-    // backup never happened.
     unawaited(
       _app.repository
           .insertSetting('backup_last_export_time', '${now.millisecondsSinceEpoch}')
           .catchError((Object _) {
             if (_disposed) return;
             _status =
-                '${_status ?? 'Backup saved.'} The time of this backup could not be recorded, so '
-                'this screen may not show it next time. The file itself is saved.';
+                '${_status ?? ''} The backup file is saved, but its time could not be recorded. '
+                'This screen may show the previous export time next time.';
             _safeNotify();
           }),
     );
+    final c = _lastExportCounts;
+    int n(String key) => c[key] ?? 0;
     _error = null;
     _statusIsSuccess = true;
     _status = [
-      location == null ? 'Backup saved.' : 'Backup saved to $location',
-      if (encrypted)
-        'It is encrypted with the passphrase you chose. Without that passphrase it cannot be '
-            'opened, and nobody can reset it.'
-      else
-        'It is not encrypted, because nothing sensitive was selected. Anyone who opens the file can '
-            'read it.',
+      '${encrypted ? 'Encrypted' : 'Plain'} backup written: ${n('servers')} servers, '
+          '${n('sshKeys')} keys, ${n('credentialProfiles')} profiles, ${n('quickScripts')} scripts, '
+          '${n('alertRules')} rules, ${n('alertHistory')} alert history, ${n('wolTargets')} WoL, '
+          '${n('networkShares')} shares, ${n('portForwards')} tunnels, ${n('settings')} settings.',
       // A partial backup the user knows about is recoverable; one they do not is not.
       if (_hostKeysOmitted)
         'The pinned host keys could NOT be read, so they are not in this file. Restoring it will '
@@ -503,13 +510,8 @@ class BackupViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  /// Report that the user backed out of the file dialog.
-  ///
-  /// Not an error, and not silence either. By this point the backup has been built and possibly
-  /// encrypted, and the screen has been showing "Creating backup…" while that happened. Ending
-  /// that with nothing at all leaves the user unsure whether a file exists somewhere.
-  void reportSaveCancelled() =>
-      reportCancelled('Backup not saved — the file dialog was cancelled. Nothing was written.');
+  /// Report that the user backed out of the file dialog, as Kotlin does.
+  void reportSaveCancelled() => reportCancelled('Backup cancelled. Nothing was written.');
 
   /// Report that the user backed out, whichever step they backed out of.
   ///
@@ -602,6 +604,7 @@ class BackupViewModel extends ChangeNotifier {
               oldId: oldId,
               name: value['name'] as String? ?? 'Restored host',
               host: value['host'] as String? ?? '',
+              port: (value['port'] as num?)?.toInt() ?? 22,
             ),
           );
         }
@@ -775,9 +778,6 @@ class BackupViewModel extends ChangeNotifier {
         await _app.repository.pruneAlertHistoryPerServer(_app.alertHistoryLimit);
       }
 
-      final restored = counts.entries
-          .where((e) => !e.key.endsWith('Skipped'))
-          .fold<int>(0, (sum, e) => sum + e.value);
       // Naming every skip rather than hiding it: a rule silently missing after a restore is a rule
       // no longer watching anything, and a missing tunnel is a port that never opens.
       final skips = <String>[
@@ -789,10 +789,16 @@ class BackupViewModel extends ChangeNotifier {
           '${counts['alertHistorySkipped']} alert history row(s)',
       ];
 
-      _status = skips.isEmpty
-          ? 'Restored $restored items.'
-          : 'Restored $restored items. ${skips.join(' and ')} were skipped because the hosts they '
-                'belong to were not in this backup.';
+      int n(String key) => counts[key] ?? 0;
+      // Kotlin's restore summary (`restoreEncryptedBackup`), then anything skipped and why.
+      _status =
+          'Restored ${n('servers')} server(s), ${n('sshKeys')} key(s), '
+          '${n('credentialProfiles')} profile(s), ${n('scripts')} script(s), '
+          '${n('alertRules')} rule(s), ${n('activeAlerts')} active alert(s), '
+          '${n('alertHistory')} alert history, ${n('wolTargets')} WoL, '
+          '${n('networkShares')} share(s), ${n('portForwards')} tunnel(s), '
+          '${n('settings')} setting(s), ${n('crashLogs')} crash log(s).'
+          '${skips.isEmpty ? '' : ' Skipped ${skips.join(', ')} because the hosts they belong to were not in this backup.'}';
       if (skippedServerMessages.isNotEmpty) {
         _status = '$_status\n${skippedServerMessages.join('\n')}';
       }

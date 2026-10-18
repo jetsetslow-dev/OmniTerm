@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -6,29 +8,42 @@ import '../../../data/app_database.dart';
 import '../../../data/remote_models.dart';
 import '../../../domain/host_display.dart';
 import '../../../domain/ssh_keygen.dart';
+import '../../../platform/device_file_store.dart';
 import '../../../platform/distribution.dart';
 import '../../../platform/license_controller.dart';
+import '../../../platform/sensitive_clipboard.dart';
+import '../../navigation.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
-import '../../../platform/sensitive_clipboard.dart';
 import '../../view_model/auth_keys_view_model.dart';
 import '../../widgets/omni_components.dart';
-import '../../widgets/license_gate.dart';
+import '../../widgets/omni_confirm.dart';
+import '../../widgets/popup_scroll_behavior.dart';
 
-/// The Auth Keys tool, ported from `AuthKeysToolView` in `ui/ToolsScreen.kt`.
-///
-/// Three sections: credential profiles, SSH keys, and the pinned host keys. They belong together
-/// because between them they answer "who am I, and who am I talking to".
+/// Kotlin's `credentialProfileLimitMessage()` for the single free Play Store credential.
+const _credentialLimitMessage =
+    'The free Play Store build supports 1 authentication method. Unlock OmniTerm to save '
+    'unlimited credentials.';
+
+/// The Auth Keys tool, ported from `AuthKeysToolView` in `ui/ToolsScreen.kt`: credential profiles,
+/// SSH keys and the pinned host keys, with "+" offering the three ways to add a credential.
 class AuthKeysScreen extends StatefulWidget {
-  const AuthKeysScreen({super.key, this.licenseController});
+  const AuthKeysScreen({super.key, this.licenseController, this.fileStore});
 
   final LicenseController? licenseController;
+
+  /// Where "Load … from file" reads from; replaceable so tests need no system picker.
+  final DeviceFileStore? fileStore;
 
   @override
   State<AuthKeysScreen> createState() => _AuthKeysScreenState();
 }
 
 class _AuthKeysScreenState extends State<AuthKeysScreen> {
+  /// Kotlin's `authFeedback`: the outcome of the last add, import, generate or edit.
+  String? _feedback;
+  bool _feedbackOk = true;
+
   @override
   void initState() {
     super.initState();
@@ -37,975 +52,420 @@ class _AuthKeysScreenState extends State<AuthKeysScreen> {
     });
   }
 
+  void _report(String? failure, AuthKeysViewModel vm) {
+    if (!mounted) return;
+    setState(() {
+      _feedbackOk = failure == null;
+      _feedback = failure ?? vm.status;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<AuthKeysViewModel>();
     final license = widget.licenseController;
-    if (license == null) return _buildBody(context, vm, null, false);
-
+    if (license == null) return _buildBody(context, vm, false);
     return ValueListenableBuilder<LicenseState>(
       valueListenable: license.state,
-      builder: (context, state, _) {
-        final atLimit =
-            isPlayStoreDistribution && !state.unlocked && vm.profiles.length + vm.keys.length >= 1;
-        return _buildBody(context, vm, license, atLimit);
-      },
+      builder: (context, state, _) => _buildBody(
+        context,
+        vm,
+        isPlayStoreDistribution && !state.unlocked && vm.profiles.length + vm.keys.length >= 1,
+      ),
     );
   }
 
-  Widget _buildBody(
-    BuildContext context,
-    AuthKeysViewModel vm,
-    LicenseController? license,
-    bool atLimit,
-  ) {
-    void gate() => showPremiumGate(
-      context,
-      controller: license!,
-      title: 'Authentication method limit reached',
-      message:
-          'The free Play Store build supports one saved authentication method across '
-          'credential profiles and SSH keys. Unlock OmniTerm to save more.',
+  Widget _buildBody(BuildContext context, AuthKeysViewModel vm, bool atLimit) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    Widget sectionTitle(String text, double top) => Padding(
+      padding: EdgeInsets.only(top: top),
+      child: Text(text, style: composeBody(fontWeight: FontWeight.bold)),
     );
-    return Stack(
-      children: [
-        ListView(
-          key: const ValueKey('authKeys.list'),
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
+
+    final children = <Widget>[
+      if (atLimit)
+        Padding(
+          key: const ValueKey('authKeys.limit'),
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            _credentialLimitMessage,
+            style: composeBody(fontSize: 12, color: OmniColors.amber),
+          ),
+        ),
+      if (_feedback != null)
+        Padding(
+          key: const ValueKey('authKeys.message'),
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            _feedback!,
+            style: composeBody(
+              fontSize: 12,
+              color: _feedbackOk ? OmniColors.green : const Color(0xFFFF0000),
+            ),
+          ),
+        ),
+      sectionTitle('Credential Profiles (Username/Password)', 8),
+      for (final profile in vm.profiles)
+        _CredentialCard(
+          cardKey: 'authKeys.profile.${profile.id}',
+          accent: OmniColors.cyan,
+          title: profile.profileName,
+          detail: 'User: ${profile.username} · Auth: ${profile.authType}',
+          onEdit: () => _editProfile(context, vm, profile),
+          onDelete: () => _deleteProfile(context, vm, profile),
+        ),
+      sectionTitle('SSH Keys', 16),
+      for (final key in vm.keys)
+        _CredentialCard(
+          cardKey: 'authKeys.key.${key.id}',
+          accent: OmniColors.purple,
+          title: key.alias,
+          detail: 'Crypto: ${key.keyType} · Fingerprint: ${key.fingerprint}',
+          onEdit: () => _editKey(context, vm, key),
+          onDelete: () => _deleteKey(context, vm, key),
+        ),
+      // Listened to, so "Hide sensitive info" repaints the addresses the moment it changes.
+      ListenableBuilder(
+        listenable: HostDisplay.instance,
+        builder: (context, _) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (vm.status != null || vm.error != null) _MessageCard(vm: vm),
-            if (atLimit)
+            const Padding(
+              padding: EdgeInsets.only(top: 16, bottom: 4),
+              child: SectionHeader(title: 'Trusted host keys'),
+            ),
+            if (!vm.canManageTrust || vm.knownHosts.isEmpty)
               Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: OmniCard(
-                  key: const ValueKey('authKeys.limit'),
-                  leftAccent: OmniColors.amber,
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Free plan credential limit reached',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                      ),
-                      TextButton(onPressed: gate, child: const Text('Unlock')),
-                    ],
-                  ),
-                ),
-              ),
-            const SectionHeader(title: 'Credential profiles'),
-            if (vm.profiles.isEmpty)
-              const _EmptyNote(
-                keyName: 'authKeys.profiles.empty',
-                text:
-                    'No profiles yet. A profile is a reusable username and credential, so several '
-                    'hosts can share one login.',
-              )
-            else
-              for (final profile in vm.profiles) _ProfileCard(vm: vm, profile: profile),
-            const SizedBox(height: 16),
-            const SectionHeader(title: 'SSH keys'),
-            if (vm.keys.isEmpty)
-              const _EmptyNote(
-                keyName: 'authKeys.keys.empty',
-                text: 'No keys yet. Import one to authenticate without a password.',
-              )
-            else
-              for (final key in vm.keys) _KeyCard(vm: vm, sshKey: key),
-            const SizedBox(height: 16),
-            const SectionHeader(title: 'Trusted host keys'),
-            _KnownHostsSection(vm: vm),
-          ],
-        ),
-        Positioned(
-          right: 16,
-          bottom: 16,
-          child: Row(
-            children: [
-              FloatingActionButton.small(
-                key: const ValueKey('authKeys.addProfile'),
-                heroTag: 'authKeys.addProfile',
-                tooltip: 'New credential profile',
-                onPressed: atLimit ? gate : () => _openProfileEditor(context, vm),
-                child: const Icon(Icons.badge_outlined),
-              ),
-              const SizedBox(width: 10),
-              FloatingActionButton.small(
-                key: const ValueKey('authKeys.generateKey'),
-                heroTag: 'authKeys.generateKey',
-                tooltip: 'Generate SSH key',
-                onPressed: atLimit ? gate : () => _openKeyGenerator(context, vm),
-                child: const Icon(Icons.auto_awesome),
-              ),
-              const SizedBox(width: 10),
-              FloatingActionButton(
-                key: const ValueKey('authKeys.importKey'),
-                heroTag: 'authKeys.importKey',
-                tooltip: 'Import SSH key',
-                onPressed: atLimit ? gate : () => _openKeyImport(context, vm),
-                child: const Icon(Icons.key),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _MessageCard extends StatelessWidget {
-  const _MessageCard({required this.vm});
-
-  final AuthKeysViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    final isError = vm.error != null;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: OmniCard(
-        key: const ValueKey('authKeys.message'),
-        leftAccent: isError ? OmniColors.red : OmniColors.green,
-        child: Row(
-          children: [
-            Expanded(
-              child: SelectionArea(
+                key: const ValueKey('authKeys.trust.empty'),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Text(
-                  vm.error ?? vm.status!,
-                  style: TextStyle(fontSize: 12, color: isError ? OmniColors.red : null),
+                  'No trusted host keys yet.',
+                  style: composeBody(fontSize: 12, color: muted),
                 ),
-              ),
-            ),
-            IconButton(
-              tooltip: 'Dismiss',
-              key: const ValueKey('authKeys.message.dismiss'),
-              icon: const Icon(Icons.close, size: 16),
-              onPressed: vm.dismissMessages,
-            ),
+              )
+            else
+              for (final host in vm.knownHosts) _knownHostCard(context, vm, host, muted),
           ],
+        ),
+      ),
+    ];
+
+    return ToolScaffold(
+      title: 'Auth Keys & Profiles',
+      keyPrefix: 'authKeys',
+      onBack: () => context.read<NavigationController>().navigateTo(Screen.tools),
+      onAdd: () => _chooseSource(context, vm),
+      addEnabled: !atLimit,
+      child: ScrollConfiguration(
+        behavior: const PopupScrollBehavior(popupsOnly: false),
+        child: ListView.separated(
+          key: const ValueKey('authKeys.list'),
+          padding: const EdgeInsets.all(12),
+          itemCount: children.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 8),
+          itemBuilder: (_, i) => children[i],
         ),
       ),
     );
   }
-}
 
-class _EmptyNote extends StatelessWidget {
-  const _EmptyNote({required this.keyName, required this.text});
-
-  final String keyName;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      key: ValueKey(keyName),
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(
-        text,
-        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-      ),
-    );
-  }
-}
-
-class _ProfileCard extends StatelessWidget {
-  const _ProfileCard({required this.vm, required this.profile});
-
-  final AuthKeysViewModel vm;
-  final CredentialProfile profile;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+  Widget _knownHostCard(BuildContext context, AuthKeysViewModel vm, KnownHost host, Color muted) {
+    final shown = HostDisplay.instance.sensitive(host.host);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: OmniCard(
-        key: ValueKey('authKeys.profile.${profile.id}'),
-        leftAccent: OmniColors.cyan,
+        key: ValueKey('authKeys.trust.${host.host}'),
+        leftAccent: OmniColors.amber,
         child: Row(
           children: [
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Text(shown, style: composeBody(fontSize: 13, fontWeight: FontWeight.bold)),
                   Text(
-                    profile.profileName,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    'User: ${profile.username} · Auth: ${profile.authType}',
-                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    '${host.keyType} · ${host.fingerprint}',
+                    maxLines: 2,
+                    style: composeBody(fontSize: 10, color: muted),
                   ),
                 ],
               ),
             ),
             IconButton(
-              key: ValueKey('authKeys.profile.${profile.id}.edit'),
-              tooltip: 'Edit profile',
-              icon: const Icon(Icons.edit, size: 18, color: OmniColors.cyan),
-              onPressed: () => _openProfileEditor(context, vm, existing: profile),
-            ),
-            IconButton(
-              key: ValueKey('authKeys.profile.${profile.id}.delete'),
-              tooltip: 'Delete profile',
-              icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
-              onPressed: () => _confirmDeleteProfile(context, vm, profile),
+              key: ValueKey('authKeys.trust.${host.host}.revoke'),
+              tooltip: 'Remove trusted key',
+              icon: const Icon(Icons.delete, color: Color(0xFFFF0000)),
+              onPressed: () async {
+                final confirmed = await showOmniConfirm(
+                  context,
+                  title: 'Remove trusted key?',
+                  message:
+                      'Remove the trusted SSH host key for $shown? The next connection will prompt '
+                      'you to verify and pin the key again.',
+                  confirmLabel: 'Remove',
+                  destructive: true,
+                  keyPrefix: 'authKeys.revoke',
+                );
+                if (confirmed) await vm.revokeKnownHost(host);
+              },
             ),
           ],
         ),
       ),
     );
   }
-}
 
-class _KeyCard extends StatelessWidget {
-  const _KeyCard({required this.vm, required this.sshKey});
+  // ── flows ──────────────────────────────────────────────────────────────────────
 
-  final AuthKeysViewModel vm;
-  final SshKey sshKey;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: OmniCard(
-        key: ValueKey('authKeys.key.${sshKey.id}'),
-        leftAccent: OmniColors.purple,
-        child: Row(
+  Future<void> _chooseSource(BuildContext context, AuthKeysViewModel vm) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('authKeys.source.dialog'),
+        scrollable: true,
+        title: const Text('Add Authentication Source'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    sshKey.alias,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    sshKey.keyType,
-                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                  ),
-                  // Selectable because its whole purpose is comparison against what the host
-                  // reports — and that means copying it.
-                  SelectionArea(
-                    child: Text(
-                      sshKey.fingerprint,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontFamily: OmniFonts.mono,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
+            for (final (value, label) in const [
+              ('profile', 'Profile (User/Pass)'),
+              ('generate', 'Generate SSH Key'),
+              ('import', 'Import SSH Key'),
+            ])
+              ListTile(
+                key: ValueKey('authKeys.source.$value'),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                title: Text(label),
+                onTap: () => Navigator.of(dialogContext).pop(value),
               ),
-            ),
-            IconButton(
-              key: ValueKey('authKeys.key.${sshKey.id}.rename'),
-              tooltip: 'Rename key',
-              icon: const Icon(Icons.edit, size: 18, color: OmniColors.purple),
-              onPressed: () => _openKeyRename(context, vm, sshKey),
-            ),
-            IconButton(
-              key: ValueKey('authKeys.key.${sshKey.id}.delete'),
-              tooltip: 'Delete key',
-              icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
-              onPressed: () => _confirmDeleteKey(context, vm, sshKey),
-            ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _KnownHostsSection extends StatelessWidget {
-  const _KnownHostsSection({required this.vm});
-
-  final AuthKeysViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    // Listened to, not merely read: "Hide addresses" must repaint this list the moment it changes,
-    // and a widget that reads a ChangeNotifier without subscribing never rebuilds.
-    return ListenableBuilder(
-      listenable: HostDisplay.instance,
-      builder: (context, _) => _buildList(context),
-    );
-  }
-
-  Widget _buildList(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    if (!vm.canManageTrust) {
-      return const _EmptyNote(
-        keyName: 'authKeys.trust.unavailable',
-        text: 'Trusted host keys are not available in this build.',
-      );
-    }
-    if (vm.knownHosts.isEmpty) {
-      return const _EmptyNote(
-        keyName: 'authKeys.trust.empty',
-        text:
-            'No hosts pinned yet. The first time you connect to a host, its key is shown for '
-            'approval and remembered here.',
-      );
-    }
-
-    return Column(
-      key: const ValueKey('authKeys.trust.list'),
-      children: [
-        for (final host in vm.knownHosts)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: OmniCard(
-              key: ValueKey('authKeys.trust.${host.host}'),
-              leftAccent: OmniColors.green,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          // Masked with everything else the toggle covers. The fingerprint below
-                          // is deliberately *not* masked: it identifies the key, not the machine,
-                          // and it is here to be compared against what the server reports.
-                          HostDisplay.instance.sensitive(host.host),
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontFamily: OmniFonts.mono,
-                            fontSize: 13,
-                          ),
-                        ),
-                        SelectionArea(
-                          child: Text(
-                            '${host.keyType} · ${host.fingerprint}',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontFamily: OmniFonts.mono,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    key: ValueKey('authKeys.trust.${host.host}.revoke'),
-                    tooltip: 'Forget this host key',
-                    icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
-                    onPressed: () => _confirmRevoke(context, vm, host),
-                  ),
-                ],
-              ),
-            ),
+        actions: [
+          TextButton(
+            key: const ValueKey('authKeys.source.cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
           ),
-      ],
-    );
-  }
-}
-
-// ── dialogs ───────────────────────────────────────────────────────────────────
-
-Future<void> _openKeyGenerator(BuildContext context, AuthKeysViewModel vm) async {
-  final generated = await showDialog<GeneratedSshKey>(
-    context: context,
-    // Generation runs for seconds; dismissing mid-flight would strand the isolate's result with
-    // nowhere to show the private key, which is only displayable once.
-    barrierDismissible: false,
-    builder: (_) => _KeyGenerateDialog(vm: vm),
-  );
-  if (generated == null || !context.mounted) return;
-  await showDialog<void>(
-    context: context,
-    builder: (_) => _GeneratedKeyDialog(generated: generated),
-  );
-}
-
-class _KeyGenerateDialog extends StatefulWidget {
-  const _KeyGenerateDialog({required this.vm});
-
-  final AuthKeysViewModel vm;
-
-  @override
-  State<_KeyGenerateDialog> createState() => _KeyGenerateDialogState();
-}
-
-class _KeyGenerateDialogState extends State<_KeyGenerateDialog> {
-  final _alias = TextEditingController();
-  String? _failure;
-  bool _running = false;
-
-  @override
-  void dispose() {
-    _alias.dispose();
-    super.dispose();
-  }
-
-  Future<void> _generate() async {
-    setState(() {
-      _running = true;
-      _failure = null;
-    });
-    final generated = await widget.vm.generateKey(alias: _alias.text);
-    if (!mounted) return;
-    if (generated == null) {
-      setState(() {
-        _running = false;
-        _failure = widget.vm.error ?? 'Key generation failed.';
-      });
-      return;
-    }
-    Navigator.of(context).pop(generated);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      key: const ValueKey('authKeys.generate.dialog'),
-      // Scrollable because the content is a multi-child Column with no scroll of its own: on a
-      // small phone in landscape at 200% text it does not fit, and an AlertDialog clips rather
-      // than scrolls unless it is asked to. Same shape as parity defects 112 and 113.
-      scrollable: true,
-      title: const Text('Generate cryptographic keypair'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            key: const ValueKey('authKeys.generate.alias'),
-            controller: _alias,
-            autofocus: true,
-            enabled: !_running,
-            decoration: omniInputDecoration(context, labelText: 'Key alias name'),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'OmniTerm generates a real $rsaKeyBits-bit RSA keypair on this device. The private key '
-            'never leaves it — add the public key to the server to log in without a password.',
-            style: const TextStyle(fontSize: 12, color: OmniColors.textMuted),
-          ),
-          if (_failure != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                _failure!,
-                key: const ValueKey('authKeys.generate.error'),
-                style: const TextStyle(color: OmniColors.red, fontSize: 12),
-              ),
-            ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: _running ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          key: const ValueKey('authKeys.generate.submit'),
-          onPressed: _alias.text.trim().isEmpty || _running ? null : _generate,
-          // Keeps the dialog open with a spinner rather than dismissing, which looked like nothing
-          // had happened during the seconds RSA generation takes.
-          child: _running
-              ? const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 8),
-                    Text('Generating…'),
-                  ],
-                )
-              : const Text('Generate keys'),
-        ),
-      ],
     );
+    if (!context.mounted) return;
+    switch (choice) {
+      case 'profile':
+        await _editProfile(context, vm, null);
+      case 'generate':
+        await _generateKey(context, vm);
+      case 'import':
+        await showDialog<void>(
+          context: context,
+          builder: (_) => _KeyMaterialDialog(
+            vm: vm,
+            fileStore: widget.fileStore ?? const DeviceFileStore(),
+            onResult: (failure) => _report(failure, vm),
+          ),
+        );
+    }
+  }
+
+  Future<void> _editProfile(
+    BuildContext context,
+    AuthKeysViewModel vm,
+    CredentialProfile? profile,
+  ) => showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) =>
+        _ProfileDialog(vm: vm, existing: profile, onResult: (failure) => _report(failure, vm)),
+  );
+
+  Future<void> _editKey(BuildContext context, AuthKeysViewModel vm, SshKey key) => showDialog<void>(
+    context: context,
+    builder: (_) => _KeyMaterialDialog(
+      vm: vm,
+      existing: key,
+      fileStore: widget.fileStore ?? const DeviceFileStore(),
+      onResult: (failure) => _report(failure, vm),
+    ),
+  );
+
+  Future<void> _generateKey(BuildContext context, AuthKeysViewModel vm) async {
+    final result = await showDialog<(String, GeneratedSshKey?)>(
+      context: context,
+      // Generation runs for seconds; dismissing mid-flight would strand the only copy of the
+      // private key the user will ever be shown.
+      barrierDismissible: false,
+      builder: (_) => _KeyGenerateDialog(vm: vm),
+    );
+    if (result == null || !context.mounted) return;
+    final (alias, generated) = result;
+    _report(generated == null ? (vm.error ?? 'Key generation failed.') : null, vm);
+    if (generated == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _GeneratedKeyDialog(alias: alias, generated: generated),
+    );
+  }
+
+  Future<void> _deleteProfile(
+    BuildContext context,
+    AuthKeysViewModel vm,
+    CredentialProfile profile,
+  ) async {
+    final confirmed = await showOmniConfirm(
+      context,
+      title: 'Delete profile?',
+      message:
+          'Delete credential profile "${profile.profileName}"? Hosts using it will lose these '
+          'credentials.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      keyPrefix: 'authKeys.deleteProfile',
+    );
+    if (confirmed) await vm.deleteProfile(profile);
+  }
+
+  Future<void> _deleteKey(BuildContext context, AuthKeysViewModel vm, SshKey key) async {
+    final confirmed = await showOmniConfirm(
+      context,
+      title: 'Delete key?',
+      message:
+          'Delete SSH key "${key.alias}" from OmniTerm? Hosts relying on it will no longer '
+          'authenticate.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      keyPrefix: 'authKeys.deleteKey',
+    );
+    if (confirmed) await vm.deleteKey(key);
   }
 }
 
-/// Shows the generated material once, with the command that installs it on a server.
-///
-/// This is the only screen that ever displays the private key: it is stored encrypted and never read
-/// back to the UI, so a user who does not copy it here cannot retrieve it later.
-class _GeneratedKeyDialog extends StatelessWidget {
-  const _GeneratedKeyDialog({required this.generated});
+/// A profile or key row: bold name over an 11sp detail line, with edit and delete icons.
+class _CredentialCard extends StatelessWidget {
+  const _CredentialCard({
+    required this.cardKey,
+    required this.accent,
+    required this.title,
+    required this.detail,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
-  final GeneratedSshKey generated;
+  final String cardKey;
+  final Color accent;
+  final String title;
+  final String detail;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   @override
-  Widget build(BuildContext context) {
-    final installCommand = authorizedKeysInstallCommand(generated.publicKey);
-    return AlertDialog(
-      key: const ValueKey('authKeys.generated.dialog'),
-      title: const Text('Generated key'),
-      content: SizedBox(
-        width: double.maxFinite,
-        // A scrolling Column rather than a ListView: every block must exist as soon as the dialog
-        // does, so the install command is reachable (and copyable) without scrolling it into being.
-        child: SingleChildScrollView(
+  Widget build(BuildContext context) => OmniCard(
+    key: ValueKey(cardKey),
+    leftAccent: accent,
+    inset: const EdgeInsets.all(16),
+    child: Row(
+      children: [
+        Expanded(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Warning: the private key is shown only now. Copy it if you need a backup.',
-                style: TextStyle(color: OmniColors.red, fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 10),
-              _CopyBlock(
-                label: 'Private key',
-                value: generated.privateKey,
-                copyLabel: 'Copy private key',
-                valueKey: 'authKeys.generated.private',
-                // The only secret this app offers to copy, and the only block Kotlin marks
-                // sensitive (`ui/ToolsScreen.kt:2563`). The public key and the install command are
-                // meant to be pasted around; this one is not.
-                sensitive: true,
-              ),
-              const SizedBox(height: 10),
-              _CopyBlock(
-                label: 'Public key',
-                value: generated.publicKey,
-                copyLabel: 'Copy public key',
-                valueKey: 'authKeys.generated.public',
-              ),
-              const SizedBox(height: 10),
-              const Text('Install on your server', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              const Text(
-                'The server only accepts this key after the PUBLIC key is added to '
-                '~/.ssh/authorized_keys for the user you log in as. While password login still '
-                'works, the easiest way is to run this in any terminal on this host:',
-                style: TextStyle(fontSize: 12, color: OmniColors.textMuted),
-              ),
-              const SizedBox(height: 6),
-              _CopyBlock(
-                label: '',
-                value: installCommand,
-                copyLabel: 'Copy install command',
-                valueKey: 'authKeys.generated.install',
+              Text(title, style: composeBody(fontWeight: FontWeight.bold)),
+              Text(
+                detail,
+                style: composeBody(
+                  fontSize: 11,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
         ),
-      ),
-      actions: [
-        FilledButton(
-          key: const ValueKey('authKeys.generated.done'),
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Done'),
+        IconButton(
+          key: ValueKey('$cardKey.edit'),
+          tooltip: 'Edit',
+          icon: Icon(Icons.edit, color: accent),
+          onPressed: onEdit,
         ),
-      ],
-    );
-  }
-}
-
-class _CopyBlock extends StatefulWidget {
-  const _CopyBlock({
-    required this.label,
-    required this.value,
-    required this.copyLabel,
-    required this.valueKey,
-    this.sensitive = false,
-  });
-
-  final String label;
-  final String value;
-  final String copyLabel;
-  final String valueKey;
-
-  /// Copy through [SensitiveClipboard] instead of the plain one: marked so the system's clipboard
-  /// preview does not display it, and taken back after a minute.
-  final bool sensitive;
-
-  @override
-  State<_CopyBlock> createState() => _CopyBlockState();
-}
-
-class _CopyBlockState extends State<_CopyBlock> {
-  final SensitiveClipboard _clipboard = SensitiveClipboard();
-
-  @override
-  void dispose() {
-    // Cancels the pending timer only. The clipboard keeps what it has: a user who copied a key and
-    // closed the sheet still needs to paste it.
-    _clipboard.dispose();
-    super.dispose();
-  }
-
-  Future<void> _copy() async {
-    if (widget.sensitive) {
-      await _clipboard.copy(label: 'OmniTerm ${widget.label.toLowerCase()}', text: widget.value);
-    } else {
-      await Clipboard.setData(ClipboardData(text: widget.value));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (widget.label.isNotEmpty)
-          Text(widget.label, style: const TextStyle(fontWeight: FontWeight.bold)),
-        Container(
-          width: double.infinity,
-          constraints: const BoxConstraints(maxHeight: 130),
-          margin: const EdgeInsets.only(top: 4),
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            border: Border.all(color: Theme.of(context).dividerColor),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: SingleChildScrollView(
-            child: SelectableText(
-              widget.value,
-              key: ValueKey(widget.valueKey),
-              style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 10),
-            ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            key: ValueKey('${widget.valueKey}.copy'),
-            icon: const Icon(Icons.copy, size: 16),
-            label: Text(widget.copyLabel),
-            onPressed: () async {
-              await _copy();
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text('${widget.copyLabel} — copied.')));
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-Future<void> _openKeyImport(BuildContext context, AuthKeysViewModel vm) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => _KeyImportSheet(vm: vm),
-  );
-}
-
-class _KeyImportSheet extends StatefulWidget {
-  const _KeyImportSheet({required this.vm});
-
-  final AuthKeysViewModel vm;
-
-  @override
-  State<_KeyImportSheet> createState() => _KeyImportSheetState();
-}
-
-class _KeyImportSheetState extends State<_KeyImportSheet> {
-  final _alias = TextEditingController();
-  final _private = TextEditingController();
-  final _public = TextEditingController();
-  String? _failure;
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _alias.dispose();
-    _private.dispose();
-    _public.dispose();
-    super.dispose();
-  }
-
-  Future<void> _import() async {
-    setState(() {
-      _saving = true;
-      _failure = null;
-    });
-    final failure = await widget.vm.importKey(
-      alias: _alias.text,
-      privateKey: _private.text,
-      publicKey: _public.text,
-    );
-    if (!mounted) return;
-    setState(() {
-      _saving = false;
-      _failure = failure;
-    });
-    if (failure == null) Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.8,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text('Import SSH key', style: Theme.of(context).textTheme.titleLarge),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    key: const ValueKey('authKeys.import.close'),
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  TextField(
-                    key: const ValueKey('authKeys.import.alias'),
-                    controller: _alias,
-                    decoration: omniInputDecoration(context, labelText: 'Alias'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const ValueKey('authKeys.import.private'),
-                    controller: _private,
-                    maxLines: 8,
-                    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 11),
-                    decoration: omniInputDecoration(
-                      context,
-                      labelText: 'Private key',
-                      hintText: '-----BEGIN OPENSSH PRIVATE KEY-----',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const ValueKey('authKeys.import.public'),
-                    controller: _public,
-                    maxLines: 3,
-                    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 11),
-                    decoration: omniInputDecoration(
-                      context,
-                      labelText: 'Public key (optional)',
-                      // Saying why it is worth pasting beats leaving "optional" to be guessed at.
-                      hintText: 'Lets the fingerprint match what the server reports',
-                    ),
-                  ),
-                  if (_failure != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Text(
-                        _failure!,
-                        key: const ValueKey('authKeys.import.error'),
-                        style: const TextStyle(color: OmniColors.red, fontSize: 12),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  key: const ValueKey('authKeys.import.save'),
-                  onPressed: _saving ? null : _import,
-                  child: Text(_saving ? 'Importing…' : 'Import'),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-Future<void> _openKeyRename(BuildContext context, AuthKeysViewModel vm, SshKey key) async {
-  final name = await showDialog<String>(
-    context: context,
-    builder: (_) => _TextPromptDialog(
-      dialogKey: 'authKeys.rename',
-      title: 'Rename ${key.alias}',
-      label: 'Alias',
-      initial: key.alias,
-      confirmLabel: 'Rename',
-    ),
-  );
-  if (name == null) return;
-  final failure = await vm.renameKey(key, name);
-  if (failure != null && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(failure)));
-  }
-}
-
-Future<void> _confirmDeleteKey(BuildContext context, AuthKeysViewModel vm, SshKey key) async {
-  final dependents = vm.hostsUsingKey(key);
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('authKeys.deleteKey.dialog'),
-      title: Text('Delete key "${key.alias}"?'),
-      content: Text(
-        // Naming the hosts is the point: "delete this key" gives no sense of the blast radius, and
-        // the private material cannot be recovered.
-        dependents.isEmpty
-            ? 'The private key is deleted and cannot be recovered.'
-            : 'These hosts authenticate with it and will stop connecting:\n\n'
-                  '${dependents.map((s) => '• ${s.name}').join('\n')}\n\n'
-                  'The private key is deleted and cannot be recovered.',
-      ),
-      actions: [
-        TextButton(
-          key: const ValueKey('authKeys.deleteKey.cancel'),
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          key: const ValueKey('authKeys.deleteKey.confirm'),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Delete', style: TextStyle(color: OmniColors.red)),
+        IconButton(
+          key: ValueKey('$cardKey.delete'),
+          tooltip: 'Delete',
+          icon: const Icon(Icons.delete, color: Color(0xFFFF0000)),
+          onPressed: onDelete,
         ),
       ],
     ),
   );
-  if (confirmed ?? false) await vm.deleteKey(key);
 }
 
-Future<void> _confirmDeleteProfile(
-  BuildContext context,
-  AuthKeysViewModel vm,
-  CredentialProfile profile,
-) async {
-  final dependents = vm.hostsUsingProfile(profile);
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('authKeys.deleteProfile.dialog'),
-      title: Text('Delete profile "${profile.profileName}"?'),
-      content: Text(
-        dependents.isEmpty
-            ? 'The stored credentials are deleted.'
-            : 'These hosts use it and will lose their credentials:\n\n'
-                  '${dependents.map((s) => '• ${s.name}').join('\n')}',
-      ),
-      actions: [
-        TextButton(
-          key: const ValueKey('authKeys.deleteProfile.cancel'),
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          key: const ValueKey('authKeys.deleteProfile.confirm'),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Delete', style: TextStyle(color: OmniColors.red)),
-        ),
-      ],
-    ),
-  );
-  if (confirmed ?? false) await vm.deleteProfile(profile);
-}
+Widget _busyLabel(bool busy, String idle, String working) => busy
+    ? Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(width: 8),
+          Text(working),
+        ],
+      )
+    : Text(idle);
 
-Future<void> _confirmRevoke(BuildContext context, AuthKeysViewModel vm, KnownHost host) async {
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('authKeys.revoke.dialog'),
-      title: Text('Forget the key for ${HostDisplay.instance.sensitive(host.host)}?'),
-      content: const Text(
-        // Being explicit matters: forgetting a pin removes the protection that would otherwise
-        // catch an interception, so the user should know the next connection asks again.
-        'The next connection to this host will present its key for approval again.\n\n'
-        'Do this when a host was legitimately rebuilt, or after you have verified a changed key '
-        'through another channel.',
-      ),
-      actions: [
-        TextButton(
-          key: const ValueKey('authKeys.revoke.cancel'),
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          key: const ValueKey('authKeys.revoke.confirm'),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Forget', style: TextStyle(color: OmniColors.red)),
-        ),
-      ],
-    ),
-  );
-  if (confirmed ?? false) await vm.revokeKnownHost(host);
-}
-
-Future<void> _openProfileEditor(
-  BuildContext context,
-  AuthKeysViewModel vm, {
-  CredentialProfile? existing,
-}) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    isDismissible: false,
-    enableDrag: false,
-    builder: (_) => _ProfileSheet(vm: vm, existing: existing),
-  );
-}
-
-class _ProfileSheet extends StatefulWidget {
-  const _ProfileSheet({required this.vm, this.existing});
+/// Kotlin's "Create Credential Profile" and "Edit Credential Profile" dialogs. New profiles are
+/// username/password; editing a key profile keeps its key and says which one.
+class _ProfileDialog extends StatefulWidget {
+  const _ProfileDialog({required this.vm, required this.onResult, this.existing});
 
   final AuthKeysViewModel vm;
   final CredentialProfile? existing;
+  final ValueChanged<String?> onResult;
 
   @override
-  State<_ProfileSheet> createState() => _ProfileSheetState();
+  State<_ProfileDialog> createState() => _ProfileDialogState();
 }
 
-class _ProfileSheetState extends State<_ProfileSheet> {
+class _ProfileDialogState extends State<_ProfileDialog> {
   late final _name = TextEditingController(text: widget.existing?.profileName ?? '');
   late final _username = TextEditingController(text: widget.existing?.username ?? '');
-  final _password = TextEditingController();
-  late String _authType = widget.existing?.authType ?? 'password';
-  late String _keyAlias = widget.existing?.keyAlias ?? '';
-  String? _failure;
+  String _password = '';
   bool _saving = false;
+  String? _failure;
 
-  bool get _hasStoredPassword => (widget.existing?.password ?? '').isNotEmpty;
+  bool get _isKeyProfile => widget.existing != null && widget.existing!.authType != 'password';
+
+  @override
+  void initState() {
+    super.initState();
+    _name.addListener(_rebuild);
+    _username.addListener(_rebuild);
+  }
+
+  void _rebuild() => setState(() {});
 
   @override
   void dispose() {
     _name.dispose();
     _username.dispose();
-    _password.dispose();
     super.dispose();
   }
 
+  bool get _canSave =>
+      !_saving &&
+      _name.text.trim().isNotEmpty &&
+      _username.text.trim().isNotEmpty &&
+      (widget.existing != null || _password.isNotEmpty);
+
   Future<void> _save() async {
-    if (_saving) return;
     setState(() {
       _saving = true;
       _failure = null;
     });
+    final existing = widget.existing;
     final failure = await widget.vm.saveProfile(
-      existing: widget.existing,
+      existing: existing,
       profileName: _name.text,
       username: _username.text,
-      authType: _authType,
-      password: _password.text,
-      keyAlias: _keyAlias,
+      authType: existing?.authType ?? 'password',
+      password: _password,
+      keyAlias: existing?.keyAlias ?? '',
     );
+    widget.onResult(failure);
     if (!mounted) return;
     if (failure == null) {
       Navigator.of(context).pop();
@@ -1019,173 +479,436 @@ class _ProfileSheetState extends State<_ProfileSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final aliases = widget.vm.keys.map((k) => k.alias).toList();
+    final editing = widget.existing != null;
     return PopScope(
       canPop: !_saving,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          widget.existing == null ? 'New credential profile' : 'Edit profile',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                      ),
-                      IconButton(
-                        key: const ValueKey('authKeys.profile.close'),
-                        tooltip: 'Close',
-                        onPressed: _saving ? null : () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const ValueKey('authKeys.profile.name'),
-                    enabled: !_saving,
-                    controller: _name,
-                    decoration: omniInputDecoration(context, labelText: 'Profile name'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    key: const ValueKey('authKeys.profile.username'),
-                    enabled: !_saving,
-                    controller: _username,
-                    decoration: omniInputDecoration(context, labelText: 'Username'),
-                  ),
-                  const SizedBox(height: 10),
-                  SegmentedButton<String>(
-                    key: const ValueKey('authKeys.profile.authType'),
-                    segments: const [
-                      ButtonSegment(value: 'password', label: Text('Password')),
-                      ButtonSegment(value: 'key', label: Text('Key')),
-                    ],
-                    selected: {_authType},
-                    onSelectionChanged: _saving ? null : (s) => setState(() => _authType = s.first),
-                  ),
-                  const SizedBox(height: 10),
-                  if (_authType == 'password')
-                    TextField(
-                      key: const ValueKey('authKeys.profile.password'),
-                      enabled: !_saving,
-                      controller: _password,
-                      obscureText: true,
-                      decoration: omniInputDecoration(
-                        context,
-                        labelText: 'Password',
-                        // Same rule as the host form: a stored secret is never rendered into a field,
-                        // and an empty one means "unchanged".
-                        hintText: _hasStoredPassword ? 'Saved — leave blank to keep' : null,
-                      ),
-                    )
-                  else
-                    DropdownButtonFormField<String>(
-                      key: const ValueKey('authKeys.profile.key'),
-                      initialValue: aliases.contains(_keyAlias) ? _keyAlias : null,
-                      decoration: omniInputDecoration(context, labelText: 'Key'),
-                      items: [
-                        for (final alias in aliases)
-                          DropdownMenuItem(value: alias, child: Text(alias)),
-                      ],
-                      onChanged: _saving ? null : (v) => setState(() => _keyAlias = v ?? ''),
-                    ),
-                  if (_failure != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: Text(
-                        _failure!,
-                        key: const ValueKey('authKeys.profile.error'),
-                        style: const TextStyle(color: OmniColors.red, fontSize: 12),
-                      ),
-                    ),
-                  const SizedBox(height: 14),
-                  FilledButton(
-                    key: const ValueKey('authKeys.profile.save'),
-                    onPressed: _saving ? null : _save,
-                    child: _saving
-                        ? const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              SizedBox(width: 8),
-                              Text('Saving…'),
-                            ],
-                          )
-                        : const Text('Save'),
-                  ),
-                ],
-              ),
+      child: AlertDialog(
+        key: const ValueKey('authKeys.profile.dialog'),
+        scrollable: true,
+        title: Text(editing ? 'Edit Credential Profile' : 'Create Credential Profile'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          spacing: 10,
+          children: [
+            TextField(
+              key: const ValueKey('authKeys.profile.name'),
+              controller: _name,
+              enabled: !_saving,
+              decoration: omniInputDecoration(context, labelText: 'Profile Name'),
             ),
-          ),
+            TextField(
+              key: const ValueKey('authKeys.profile.username'),
+              controller: _username,
+              enabled: !_saving,
+              decoration: omniInputDecoration(context, labelText: 'Username'),
+            ),
+            if (_isKeyProfile)
+              Text(
+                "Key profile — bound to key '${widget.existing!.keyAlias ?? '?'}'.",
+                style: composeDialogBody(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              )
+            else
+              OmniPasswordField(
+                fieldKey: const ValueKey('authKeys.profile.password'),
+                label: editing ? 'Password (leave blank to keep current)' : 'Password',
+                onChanged: (value) {
+                  if (!_saving) setState(() => _password = value);
+                },
+              ),
+            if (_failure != null)
+              Text(
+                _failure!,
+                key: const ValueKey('authKeys.profile.error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+          ],
         ),
+        actions: [
+          TextButton(
+            key: const ValueKey('authKeys.profile.cancel'),
+            onPressed: _saving ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('authKeys.profile.save'),
+            onPressed: _canSave ? _save : null,
+            child: _busyLabel(_saving, editing ? 'Save Changes' : 'Save Profile', 'Saving…'),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// Asks for one value. Owns its controller so it dies with the dialog.
-class _TextPromptDialog extends StatefulWidget {
-  const _TextPromptDialog({
-    required this.dialogKey,
-    required this.title,
-    required this.label,
-    required this.confirmLabel,
-    this.initial = '',
-  });
+/// Kotlin's "Generate Cryptographic Keypair" dialog. Pops `(alias, key)` once generation ends,
+/// success or not, as Kotlin closes it either way and reports through the screen's feedback line.
+class _KeyGenerateDialog extends StatefulWidget {
+  const _KeyGenerateDialog({required this.vm});
 
-  final String dialogKey;
-  final String title;
-  final String label;
-  final String confirmLabel;
-  final String initial;
+  final AuthKeysViewModel vm;
 
   @override
-  State<_TextPromptDialog> createState() => _TextPromptDialogState();
+  State<_KeyGenerateDialog> createState() => _KeyGenerateDialogState();
 }
 
-class _TextPromptDialogState extends State<_TextPromptDialog> {
-  late final _controller = TextEditingController(text: widget.initial);
+class _KeyGenerateDialogState extends State<_KeyGenerateDialog> {
+  final _alias = TextEditingController();
+  bool _running = false;
 
   @override
   void dispose() {
-    _controller.dispose();
+    _alias.dispose();
     super.dispose();
+  }
+
+  Future<void> _generate() async {
+    setState(() => _running = true);
+    final alias = _alias.text;
+    final generated = await widget.vm.generateKey(alias: alias);
+    if (mounted) Navigator.of(context).pop((alias.trim(), generated));
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_running,
+    child: AlertDialog(
+      key: const ValueKey('authKeys.generate.dialog'),
+      scrollable: true,
+      title: const Text('Generate Cryptographic Keypair'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: 10,
+        children: [
+          TextField(
+            key: const ValueKey('authKeys.generate.alias'),
+            controller: _alias,
+            enabled: !_running,
+            decoration: omniInputDecoration(context, labelText: 'Key Alias Name'),
+            onChanged: (_) => setState(() {}),
+          ),
+          Text(
+            'OmniTerm will generate a real RSA $rsaKeyBits-bit SSH keypair and store the private '
+            'key in the local key vault.',
+            style: composeDialogBody(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _running ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('authKeys.generate.submit'),
+          onPressed: _alias.text.trim().isEmpty || _running ? null : _generate,
+          child: _busyLabel(_running, 'Generate Keys', 'Generating…'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Kotlin's generated-key dialog: the only time the private key is ever shown.
+class _GeneratedKeyDialog extends StatefulWidget {
+  const _GeneratedKeyDialog({required this.alias, required this.generated});
+
+  final String alias;
+  final GeneratedSshKey generated;
+
+  @override
+  State<_GeneratedKeyDialog> createState() => _GeneratedKeyDialogState();
+}
+
+class _GeneratedKeyDialogState extends State<_GeneratedKeyDialog> {
+  final SensitiveClipboard _clipboard = SensitiveClipboard();
+
+  @override
+  void dispose() {
+    // Cancels the pending clear only; a key copied before closing must still paste.
+    _clipboard.dispose();
+    super.dispose();
+  }
+
+  Widget _readOnly(String key, String value, double height) => SizedBox(
+    height: height,
+    child: TextField(
+      key: ValueKey(key),
+      controller: TextEditingController(text: value),
+      readOnly: true,
+      expands: true,
+      maxLines: null,
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 10),
+      decoration: omniInputDecoration(context),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final generated = widget.generated;
+    final install = authorizedKeysInstallCommand(generated.publicKey);
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final bold = composeDialogBody(fontWeight: FontWeight.bold);
+    return AlertDialog(
+      key: const ValueKey('authKeys.generated.dialog'),
+      scrollable: true,
+      title: Text('Generated Key: ${widget.alias}'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 8,
+        children: [
+          Text(
+            'Warning: Private key is shown only once. Please copy it now if you need it.',
+            style: composeDialogBody(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: const Color(0xFFFF0000),
+            ),
+          ),
+          Text('Private Key', style: bold),
+          _readOnly('authKeys.generated.private', generated.privateKey, 150),
+          FilledButton(
+            key: const ValueKey('authKeys.generated.private.copy'),
+            onPressed: () =>
+                _clipboard.copy(label: 'OmniTerm private key', text: generated.privateKey),
+            child: const Text('Copy Private Key'),
+          ),
+          Text('Public Key', style: bold),
+          _readOnly('authKeys.generated.public', generated.publicKey, 100),
+          FilledButton(
+            key: const ValueKey('authKeys.generated.public.copy'),
+            onPressed: () => Clipboard.setData(ClipboardData(text: generated.publicKey)),
+            child: const Text('Copy Public Key'),
+          ),
+          Text('Install on your server', style: bold),
+          Text(
+            'The server only accepts this key after the PUBLIC key is added to '
+            '~/.ssh/authorized_keys for the user you log in as. While password login still works, '
+            'the easiest way is to run this in any terminal on this host:',
+            style: composeDialogBody(fontSize: 12, color: muted),
+          ),
+          _readOnly('authKeys.generated.install', install, 100),
+          FilledButton(
+            key: const ValueKey('authKeys.generated.install.copy'),
+            onPressed: () => Clipboard.setData(ClipboardData(text: install)),
+            child: const Text('Copy Install Command'),
+          ),
+          Text(
+            'From a computer with ssh installed you can instead run: ssh-copy-id user@host',
+            style: composeDialogBody(fontSize: 11, color: muted),
+          ),
+        ],
+      ),
+      actions: [
+        FilledButton(
+          key: const ValueKey('authKeys.generated.done'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Done'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Kotlin's "Import existing SSH Key" dialog, and with [existing] its "Edit SSH Key" dialog
+/// (rename, optionally replacing the key material).
+class _KeyMaterialDialog extends StatefulWidget {
+  const _KeyMaterialDialog({
+    required this.vm,
+    required this.fileStore,
+    required this.onResult,
+    this.existing,
+  });
+
+  final AuthKeysViewModel vm;
+  final DeviceFileStore fileStore;
+  final ValueChanged<String?> onResult;
+  final SshKey? existing;
+
+  @override
+  State<_KeyMaterialDialog> createState() => _KeyMaterialDialogState();
+}
+
+class _KeyMaterialDialogState extends State<_KeyMaterialDialog> {
+  late final _alias = TextEditingController(text: widget.existing?.alias ?? '');
+  final _private = TextEditingController();
+  final _public = TextEditingController();
+  bool _saving = false;
+
+  /// Shown inside the dialog as well as on the screen: Kotlin keeps the dialog open on a failure
+  /// but reports it only behind it, where it cannot be read until the dialog is dismissed.
+  String? _failure;
+
+  bool get _editing => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    _alias.addListener(_rebuild);
+    _private.addListener(_rebuild);
+  }
+
+  void _rebuild() => setState(() {});
+
+  @override
+  void dispose() {
+    _alias.dispose();
+    _private.dispose();
+    _public.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load(TextEditingController target) async {
+    final path = await widget.fileStore.pick();
+    if (path == null) return;
+    try {
+      target.text = await File(path).readAsString();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text('Could not read file: $e')));
+    }
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _failure = null;
+    });
+    final existing = widget.existing;
+    final failure = existing == null
+        ? await widget.vm.importKey(
+            alias: _alias.text,
+            privateKey: _private.text,
+            publicKey: _public.text,
+          )
+        : await widget.vm.updateKey(
+            existing,
+            alias: _alias.text,
+            newPrivate: _private.text,
+            newPublic: _public.text,
+          );
+    widget.onResult(failure);
+    if (!mounted) return;
+    if (failure == null) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() {
+        _saving = false;
+        _failure = failure;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final bold = composeDialogBody(fontWeight: FontWeight.bold);
+    Widget keyField(String key, TextEditingController c, String label, double height) => SizedBox(
+      height: height,
+      child: TextField(
+        key: ValueKey(key),
+        controller: c,
+        expands: true,
+        maxLines: null,
+        textAlignVertical: TextAlignVertical.top,
+        decoration: omniInputDecoration(context, labelText: label),
+      ),
+    );
+    Widget loadButton(String key, String label, TextEditingController target) => SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        key: ValueKey(key),
+        icon: const Icon(Icons.folder),
+        label: Text(label),
+        onPressed: () => _load(target),
+      ),
+    );
+    final canSave =
+        !_saving && _alias.text.trim().isNotEmpty && (_editing || _private.text.trim().isNotEmpty);
+
     return AlertDialog(
-      key: ValueKey('${widget.dialogKey}.dialog'),
-      title: Text(widget.title),
-      content: TextField(
-        key: ValueKey('${widget.dialogKey}.field'),
-        controller: _controller,
-        autofocus: true,
-        decoration: omniInputDecoration(context, labelText: widget.label),
+      key: ValueKey(_editing ? 'authKeys.editKey.dialog' : 'authKeys.import.dialog'),
+      scrollable: true,
+      title: Text(_editing ? 'Edit SSH Key' : 'Import existing SSH Key'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: 8,
+        children: [
+          if (!_editing)
+            Text(
+              'Only the private key is required — the type (RSA, OpenSSH, ed25519, ECDSA…) is '
+              'detected automatically and the public key is derived from it. Add the public key '
+              'only if you want to store it too.',
+              style: composeDialogBody(fontSize: 12, color: muted),
+            ),
+          TextField(
+            key: const ValueKey('authKeys.import.alias'),
+            controller: _alias,
+            decoration: omniInputDecoration(
+              context,
+              labelText: _editing ? 'Key Alias Name' : 'Key Custom Name',
+            ),
+          ),
+          if (_editing)
+            Text(
+              'Renaming updates every host and profile that uses this key. Leave the key fields '
+              'blank to keep the current key pair; paste a new private key to replace it.',
+              style: composeDialogBody(fontSize: 12, color: muted),
+            ),
+          Text(
+            _editing ? 'Replacement private key (optional)' : 'Private key (required)',
+            style: bold,
+          ),
+          keyField(
+            'authKeys.import.private',
+            _private,
+            '-----BEGIN ... PRIVATE KEY-----',
+            _editing ? 120 : 130,
+          ),
+          loadButton('authKeys.import.loadPrivate', 'Load private key from file', _private),
+          Text(
+            _editing ? 'Replacement public key (optional)' : 'Public key (optional)',
+            style: bold,
+          ),
+          keyField(
+            'authKeys.import.public',
+            _public,
+            _editing
+                ? 'ssh-… (leave blank to auto-derive)'
+                : 'ssh-rsa AAAA… (leave blank to auto-derive)',
+            _editing ? 80 : 90,
+          ),
+          if (!_editing)
+            loadButton('authKeys.import.loadPublic', 'Load public key (.pub) from file', _public),
+          if (_failure != null)
+            Text(
+              _failure!,
+              key: const ValueKey('authKeys.import.error'),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+        ],
       ),
       actions: [
         TextButton(
-          key: ValueKey('${widget.dialogKey}.cancel'),
-          onPressed: () => Navigator.of(context).pop(),
+          key: const ValueKey('authKeys.import.cancel'),
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        TextButton(
-          key: ValueKey('${widget.dialogKey}.confirm'),
-          onPressed: () => Navigator.of(context).pop(_controller.text),
-          child: Text(widget.confirmLabel),
+        FilledButton(
+          key: const ValueKey('authKeys.import.save'),
+          onPressed: canSave ? _save : null,
+          child: Text(_editing ? 'Save Changes' : 'Save Key'),
         ),
       ],
     );

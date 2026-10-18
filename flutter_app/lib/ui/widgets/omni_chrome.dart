@@ -145,11 +145,16 @@ class OmniBottomNav<K> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Kotlin draws the divider and the active bar as raw pixels (`1f`, `2f`) behind the content,
+    // so neither takes layout space.
+    final px = 1 / MediaQuery.devicePixelRatioOf(context);
     return Container(
       width: double.infinity,
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: const Border(top: BorderSide(color: OmniColors.border, width: 1)),
+      color: scheme.surface,
+      foregroundDecoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: OmniColors.border, width: px),
+        ),
       ),
       child: SafeArea(
         top: false,
@@ -168,11 +173,11 @@ class OmniBottomNav<K> extends StatelessWidget {
                     // a11y touch-target floor
                     constraints: const BoxConstraints(minHeight: 48),
                     padding: const EdgeInsets.only(top: 8, bottom: 6),
-                    decoration: BoxDecoration(
+                    foregroundDecoration: BoxDecoration(
                       border: Border(
                         top: BorderSide(
                           color: isActive(item.key) ? item.color : Colors.transparent,
-                          width: 2,
+                          width: 2 * px,
                         ),
                       ),
                     ),
@@ -188,13 +193,17 @@ class OmniBottomNav<K> extends StatelessWidget {
                         Text(
                           item.label,
                           maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: isActive(item.key) ? item.color : scheme.onSurfaceVariant,
-                            fontFamily: OmniFonts.mono,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 10,
-                            letterSpacing: 0.6,
+                          // Kotlin's maxLines = 1 breaks an over-long word at a character and
+                          // shows the first line ("Containe"); it neither ellipsizes nor cuts a glyph.
+                          overflow: TextOverflow.clip,
+                          style: composed(
+                            TextStyle(
+                              color: isActive(item.key) ? item.color : scheme.onSurfaceVariant,
+                              fontFamily: OmniFonts.mono,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 10,
+                              letterSpacing: 0.6,
+                            ),
                           ),
                         ),
                       ],

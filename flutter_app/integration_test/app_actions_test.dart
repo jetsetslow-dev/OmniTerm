@@ -88,7 +88,7 @@ void main() {
       await tapKey(tester, 'tools.quickScripts');
 
       await tapKey(tester, 'scripts.add');
-      expect(find.byKey(const ValueKey('scripts.editor.form')), findsOneWidget);
+      expect(find.byKey(const ValueKey('scripts.editor')), findsOneWidget);
 
       final name = 'device-check-${DateTime.now().millisecondsSinceEpoch}';
       await tester.enterText(find.byKey(const ValueKey('scripts.editor.name')), name);
@@ -100,7 +100,8 @@ void main() {
       await tapKey(tester, 'scripts.editor.save');
 
       expect(
-        find.text(name),
+        // Kotlin's card title is the shortcut label, which a new script pre-fills as CMD.
+        find.text('CMD $name'),
         findsWidgets,
         reason: 'the saved script is not in the list the user is looking at',
       );
@@ -111,7 +112,7 @@ void main() {
       await goTo(tester, Screen.tools);
       await tapKey(tester, 'tools.quickScripts');
       expect(
-        find.text(name),
+        find.text('CMD $name'),
         findsWidgets,
         reason: 'the script did not survive leaving the screen',
       );
@@ -175,7 +176,12 @@ void main() {
       await tapKey(tester, 'settings.save');
       expect(find.byKey(const ValueKey('settings.save.progress')), findsNothing);
       expect(find.byKey(const ValueKey('settings.save.error')), findsNothing);
-      expect(find.text('Settings saved.'), findsOneWidget);
+      // Kotlin confirms a save by having nothing left to save: no banner, Save disabled again.
+      expect(
+        tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save'))).onPressed,
+        isNull,
+      );
+      expect(find.text('Settings saved.'), findsNothing);
     });
   });
 
@@ -189,8 +195,7 @@ void main() {
       await tapKey(tester, 'tools.alerts');
       await tapKey(tester, 'alerts.tab.rules');
 
-      final before = find.byKey(const ValueKey('alerts.rules.empty')).evaluate().isNotEmpty;
-      await tapKey(tester, 'alerts.addRule');
+      await tapKey(tester, 'alerts.add');
       await tester.enterText(find.byKey(const ValueKey('alerts.editor.threshold')), '93');
       await tester.pumpAndSettle();
 
@@ -205,8 +210,8 @@ void main() {
       await tester.ensureVisible(save);
       await tester.tap(save);
       // A pump can settle before SQLite and its rule stream publish the save. The list exists
-      // behind the sheet and the unsaved threshold is still visible in its text field, so neither
-      // is proof that the write finished. Wait for both the sheet to close and its row to render.
+      // behind the dialog and the unsaved threshold is still visible in its text field, so neither
+      // is proof that the write finished. Wait for both the dialog to close and its row to render.
       for (var attempt = 0; attempt < 100; attempt++) {
         await tester.pump(const Duration(milliseconds: 100));
         if (save.evaluate().isEmpty && row.evaluate().isNotEmpty) break;
@@ -233,6 +238,7 @@ void main() {
           .map((element) => element.widget.key)
           .singleWhere((key) => !previousRuleKeys.contains(key));
       final createdRow = find.byKey(createdKey!);
+      await tester.ensureVisible(createdRow);
       await tester.tap(createdRow);
       await tester.pumpAndSettle();
       await tapKey(tester, 'alerts.deleteRule.confirm');
@@ -243,14 +249,11 @@ void main() {
         await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
       }
       expect(createdRow, findsNothing, reason: 'the created rule was not removed');
-
-      if (before) {
-        expect(
-          find.byKey(const ValueKey('alerts.rules.empty')),
-          findsOneWidget,
-          reason: 'the rule was not removed',
-        );
-      }
+      expect(
+        row.evaluate().map((element) => element.widget.key).toSet(),
+        previousRuleKeys,
+        reason: 'deleting the new rule must leave the earlier rules untouched',
+      );
     });
   });
 

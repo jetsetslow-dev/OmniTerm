@@ -13,7 +13,7 @@ import '../../widgets/omni_components.dart';
 import '../../widgets/omni_confirm.dart';
 import '../../widgets/popup_scroll_behavior.dart';
 import '../../widgets/streaming_command_dialog.dart';
-import '../tools/scripts_screen.dart' show showScriptEditorSheet;
+import '../../widgets/script_editor_dialog.dart';
 
 /// The Fleet screen, a faithful port of `FleetScreen` in `ui/FleetScreen.kt`: the summary bar,
 /// a Dashboard / Broadcast / Logs tab row, and the selected tab inside 12dp of padding.
@@ -102,29 +102,31 @@ class _FleetSummaryBar extends StatelessWidget {
                 runSpacing: 4,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  const Text(
+                  Text(
                     'FLEET',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontFamily: OmniFonts.mono,
-                      fontSize: 16,
-                      letterSpacing: 1,
+                    style: composed(
+                      TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontFamily: OmniFonts.mono,
+                        fontSize: 16,
+                        letterSpacing: 1,
+                      ),
                     ),
                   ),
                   Text(
                     'Avg Score: ${avg < 0 ? '—' : avg}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: OmniColors.cyan,
-                      fontWeight: FontWeight.bold,
+                    style: composed(
+                      TextStyle(fontSize: 12, color: OmniColors.cyan, fontWeight: FontWeight.bold),
                     ),
                   ),
                   Text(
                     '${vm.onlineCount} / ${vm.totalCount} Online',
                     key: const ValueKey('fleet.summary.online'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: critical > 0 ? OmniColors.red : OmniColors.green,
+                    style: composed(
+                      TextStyle(
+                        fontSize: 12,
+                        color: critical > 0 ? OmniColors.red : OmniColors.green,
+                      ),
                     ),
                   ),
                 ],
@@ -194,7 +196,7 @@ class _FleetDashboardView extends StatelessWidget {
                   child: Text(
                     'No online hosts available. Fleet details appear when hosts come back online.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: scheme.onSurfaceVariant),
+                    style: composed(TextStyle(color: scheme.onSurfaceVariant)),
                   ),
                 ),
               ),
@@ -243,10 +245,12 @@ class _FleetHostCard extends StatelessWidget {
                           child: Text(
                             display.name(server),
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              fontFamily: OmniFonts.mono,
+                            style: composed(
+                              TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                fontFamily: OmniFonts.mono,
+                              ),
                             ),
                           ),
                         ),
@@ -255,7 +259,7 @@ class _FleetHostCard extends StatelessWidget {
                     Text(
                       '${display.userAtHost(server)}:${server.port}',
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                      style: composed(TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
                     ),
                   ],
                 ),
@@ -327,7 +331,7 @@ class _FleetHostCard extends StatelessWidget {
                 ? (upHours >= 24 ? '24H UPTIME · up >24h' : '24H UPTIME · booted ${upHours}h ago')
                 : '24H UPTIME · no data',
             key: ValueKey('fleet.host.${server.id}.uptime24'),
-            style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+            style: composed(TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
           ),
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -474,7 +478,7 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
     _syncFromModel();
     final scheme = Theme.of(context).colorScheme;
     final count = vm.resolvedTargets.length;
-    final meta = TextStyle(fontSize: 11, color: scheme.onSurfaceVariant);
+    final meta = composed(TextStyle(fontSize: 11, color: scheme.onSurfaceVariant));
     final controls = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -501,7 +505,7 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
                 ),
           ),
           const SizedBox(height: 8),
-          const Text('Command presets', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text('Command presets', style: composed(TextStyle(fontWeight: FontWeight.bold))),
           Row(
             children: [
               Expanded(
@@ -518,11 +522,14 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
                   key: const ValueKey('fleet.saveCommand'),
                   onPressed: vm.commandText.trim().isEmpty
                       ? null
-                      : () => showScriptEditorSheet(
+                      : () => showScriptEditorDialog(
                           context,
                           context.read<ScriptsViewModel>(),
-                          forFleet: true,
+                          title: 'Save script',
                           initialCommand: vm.commandText,
+                          initialCategory: 'Fleet',
+                          defaultAvailableForQuick: false,
+                          defaultAvailableForFleet: true,
                         ),
                   icon: const Icon(Icons.save, size: 16),
                   label: const Text('Save command'),
@@ -553,7 +560,7 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
             child: Text(
               vm.startWarning!,
               key: const ValueKey('fleet.broadcast.startWarning'),
-              style: const TextStyle(color: OmniColors.amber, fontSize: 12),
+              style: composed(TextStyle(color: OmniColors.amber, fontSize: 12)),
             ),
           ),
       ],
@@ -568,7 +575,10 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
             InkWell(
               key: const ValueKey('fleet.clearResults'),
               onTap: _confirmClearOutputs,
-              child: const Text('Clear Outputs', style: TextStyle(fontSize: 11, color: Colors.red)),
+              child: Text(
+                'Clear Outputs',
+                style: composed(TextStyle(fontSize: 11, color: Colors.red)),
+              ),
             ),
         ],
       ),
@@ -641,8 +651,15 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             header,
+            // The headers grow with the text scale (Compose line heights), so the room kept for
+            // them and the outputs scales too; a fixed "height - 140" overflowed at 2×.
             ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: constraints.maxHeight - 140),
+              constraints: BoxConstraints(
+                maxHeight:
+                    (constraints.maxHeight -
+                            140 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0))
+                        .clamp(0.0, double.infinity),
+              ),
               child: SingleChildScrollView(child: controls),
             ),
             outputsHeader,
@@ -700,10 +717,12 @@ class _BroadcastTargetPicker extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Broadcast Targets',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: scheme.onSurfaceVariant,
+                  style: composed(
+                    TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ),
@@ -732,10 +751,8 @@ class _BroadcastTargetPicker extends StatelessWidget {
                   onTap: vm.selectAllTargets,
                   child: Text(
                     serversMode ? 'All Online' : 'All Groups',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: scheme.primary,
+                    style: composed(
+                      TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: scheme.primary),
                     ),
                   ),
                 ),
@@ -743,9 +760,11 @@ class _BroadcastTargetPicker extends StatelessWidget {
                 InkWell(
                   key: const ValueKey('fleet.targets.clear'),
                   onTap: vm.clearTargets,
-                  child: const Text(
+                  child: Text(
                     'Clear',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red),
+                    style: composed(
+                      TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red),
+                    ),
                   ),
                 ),
               ],
@@ -858,11 +877,13 @@ class _BroadcastOutputCardState extends State<_BroadcastOutputCard> {
                     child: Text(
                       result.serverName,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        fontFamily: OmniFonts.mono,
-                        color: scheme.primary,
+                      style: composed(
+                        TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          fontFamily: OmniFonts.mono,
+                          color: scheme.primary,
+                        ),
                       ),
                     ),
                   ),
@@ -875,7 +896,9 @@ class _BroadcastOutputCardState extends State<_BroadcastOutputCard> {
                   ],
                   Text(
                     status,
-                    style: TextStyle(fontSize: 10, color: accent, fontWeight: FontWeight.bold),
+                    style: composed(
+                      TextStyle(fontSize: 10, color: accent, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ],
               ),
@@ -893,10 +916,8 @@ class _BroadcastOutputCardState extends State<_BroadcastOutputCard> {
                   child: SelectionArea(
                     child: Text(
                       text,
-                      style: const TextStyle(
-                        fontFamily: OmniFonts.mono,
-                        fontSize: 12,
-                        color: Colors.white,
+                      style: composed(
+                        TextStyle(fontFamily: OmniFonts.mono, fontSize: 12, color: Colors.white),
                       ),
                     ),
                   ),
@@ -1010,106 +1031,114 @@ class _FleetLogsView extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final servers = vm.onlineServers;
     final logs = vm.logs;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Select hosts then tap Fetch Logs:',
-          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        HostPickerField(
-          fieldKey: const ValueKey('fleet.logs.hosts'),
-          label: 'Log hosts',
-          servers: servers,
-          selectedIds: vm.logServerIds,
-          onToggle: vm.toggleLogServer,
-          onSelectAll: vm.selectAllLogServers,
-          onClear: vm.clearLogServers,
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            OmniButton(
-              key: const ValueKey('fleet.logs.reload'),
-              label: vm.logsLoading ? 'Loading…' : 'Fetch Logs',
-              onPressed: vm.logsLoading ? null : vm.loadLogs,
-            ),
-            if (logs.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              Text(
-                '${logs.length} entries',
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+    return ShortViewportScroll(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Select hosts then tap Fetch Logs:',
+            style: composed(TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+          ),
+          const SizedBox(height: 8),
+          HostPickerField(
+            fieldKey: const ValueKey('fleet.logs.hosts'),
+            label: 'Log hosts',
+            servers: servers,
+            selectedIds: vm.logServerIds,
+            onToggle: vm.toggleLogServer,
+            onSelectAll: vm.selectAllLogServers,
+            onClear: vm.clearLogServers,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              OmniButton(
+                key: const ValueKey('fleet.logs.reload'),
+                label: vm.logsLoading ? 'Loading…' : 'Fetch Logs',
+                onPressed: vm.logsLoading ? null : vm.loadLogs,
               ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: logs.isEmpty && !vm.logsLoading
-              ? Center(
-                  key: const ValueKey('fleet.logs.empty'),
-                  child: Text(
-                    'No logs. Select hosts and tap Fetch Logs.',
-                    style: TextStyle(color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : ScrollConfiguration(
-                  behavior: const PopupScrollBehavior(popupsOnly: false),
-                  child: ListView.separated(
-                    key: const ValueKey('fleet.logs.list'),
-                    itemCount: logs.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 4),
-                    itemBuilder: (context, index) {
-                      final entry = logs[index];
-                      final levelColor = switch (entry.level) {
-                        'ERROR' => OmniColors.red,
-                        'WARN' => OmniColors.amber,
-                        _ => scheme.onSurface,
-                      };
-                      return OmniCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  entry.serverName,
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: OmniColors.cyan,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  entry.timestamp,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontFamily: OmniFonts.mono,
-                                    color: scheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              entry.message,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontFamily: OmniFonts.mono,
-                                color: levelColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+              if (logs.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '${logs.length} entries',
+                  style: composed(TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
                 ),
-        ),
-      ],
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: logs.isEmpty && !vm.logsLoading
+                ? Center(
+                    key: const ValueKey('fleet.logs.empty'),
+                    child: Text(
+                      'No logs. Select hosts and tap Fetch Logs.',
+                      style: composed(TextStyle(color: scheme.onSurfaceVariant)),
+                    ),
+                  )
+                : ScrollConfiguration(
+                    behavior: const PopupScrollBehavior(popupsOnly: false),
+                    child: ListView.separated(
+                      key: const ValueKey('fleet.logs.list'),
+                      itemCount: logs.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 4),
+                      itemBuilder: (context, index) {
+                        final entry = logs[index];
+                        final levelColor = switch (entry.level) {
+                          'ERROR' => OmniColors.red,
+                          'WARN' => OmniColors.amber,
+                          _ => scheme.onSurface,
+                        };
+                        return OmniCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    entry.serverName,
+                                    style: composed(
+                                      TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: OmniColors.cyan,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    entry.timestamp,
+                                    style: composed(
+                                      TextStyle(
+                                        fontSize: 10,
+                                        fontFamily: OmniFonts.mono,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Text(
+                                entry.message,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: composed(
+                                  TextStyle(
+                                    fontSize: 11,
+                                    fontFamily: OmniFonts.mono,
+                                    color: levelColor,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

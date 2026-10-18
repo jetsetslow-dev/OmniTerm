@@ -142,8 +142,9 @@ void main() {
     await repo.insertServer(server(name: 'nas', status: 'offline'));
     await pump(tester, client: homeTree());
 
-    final chip = tester.widget<ChoiceChip>(find.byKey(const ValueKey('sftp.tab.files')));
-    expect(chip.onSelected, isNull);
+    // Kotlin's Tab(enabled = false): tapping it leaves the current tab in place.
+    final tab = tester.widget<InkWell>(find.byKey(const ValueKey('sftp.tab.files')));
+    expect(tab.onTap, isNull);
 
     await tester.tap(find.byKey(const ValueKey('sftp.tab.transfers')));
     await tester.pumpAndSettle();

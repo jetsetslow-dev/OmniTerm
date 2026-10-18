@@ -60,7 +60,8 @@ class HealthScoringViewModel extends ChangeNotifier {
   /// The first problem with the draft, or null when it can be saved.
   String? get validationError => validateAll(_draft);
 
-  bool get canSave => validationError == null && isDirty;
+  /// Kotlin enables "Save scoring" whenever the fields are valid, changed or not.
+  bool get canSave => validationError == null;
 
   /// True when the draft differs from what is saved.
   bool get isDirty {

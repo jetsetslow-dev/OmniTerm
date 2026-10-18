@@ -100,13 +100,41 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('empty sections explain what they are for', (tester) async {
+  Future<void> choose(WidgetTester tester, String source) async {
+    await tester.tap(find.byKey(const ValueKey('authKeys.add')));
+    await tester.pumpAndSettle();
+    expect(find.text('Add Authentication Source'), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('authKeys.source.$source')));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> tapVisible(WidgetTester tester, Finder finder) async {
+    await tester.ensureVisible(finder);
+    await tester.pumpAndSettle();
+    await tester.tap(finder);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('sections carry Kotlin\'s titles and empty trust note', (tester) async {
     await pump(tester);
 
-    expect(find.byKey(const ValueKey('authKeys.profiles.empty')), findsOneWidget);
-    expect(find.byKey(const ValueKey('authKeys.keys.empty')), findsOneWidget);
-    // With no trust store wired, the section says that rather than showing an empty list.
-    expect(find.byKey(const ValueKey('authKeys.trust.unavailable')), findsOneWidget);
+    expect(find.text('Auth Keys & Profiles'), findsOneWidget);
+    expect(find.text('Credential Profiles (Username/Password)'), findsOneWidget);
+    expect(find.text('SSH Keys'), findsOneWidget);
+    expect(find.text('No trusted host keys yet.'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('+ offers the three Kotlin sources', (tester) async {
+    await pump(tester);
+    await tester.tap(find.byKey(const ValueKey('authKeys.add')));
+    await tester.pumpAndSettle();
+    expect(find.text('Profile (User/Pass)'), findsOneWidget);
+    expect(find.text('Generate SSH Key'), findsOneWidget);
+    expect(find.text('Import SSH Key'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('authKeys.source.cancel')));
+    await tester.pumpAndSettle();
+    expect(find.text('Add Authentication Source'), findsNothing);
     await finish(tester);
   });
 
@@ -121,10 +149,11 @@ void main() {
     addTearDown(() {
       if (!delayed.release.isCompleted) delayed.release.complete();
     });
-    await tester.tap(find.byKey(const ValueKey('authKeys.addProfile')));
-    await tester.pumpAndSettle();
+    await choose(tester, 'profile');
     await tester.enterText(find.byKey(const ValueKey('authKeys.profile.name')), 'Fixture profile');
     await tester.enterText(find.byKey(const ValueKey('authKeys.profile.username')), 'deploy');
+    await tester.enterText(find.byKey(const ValueKey('authKeys.profile.password')), 'hunter2');
+    await tester.pump();
     final save = find.byKey(const ValueKey('authKeys.profile.save'));
     await tester.ensureVisible(save);
     await tester.tap(save);
@@ -132,7 +161,7 @@ void main() {
     expect(find.text('Saving…'), findsOneWidget);
     expect(tester.widget<FilledButton>(save).onPressed, isNull);
     expect(
-      tester.widget<IconButton>(find.byKey(const ValueKey('authKeys.profile.close'))).onPressed,
+      tester.widget<TextButton>(find.byKey(const ValueKey('authKeys.profile.cancel'))).onPressed,
       isNull,
     );
     expect(delayed.calls, 1);
@@ -140,6 +169,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('authKeys.profile.save')), findsNothing);
     expect((await repo.getAllProfiles()).single.profileName, 'Fixture profile');
+    expect(find.text("Saved profile 'Fixture profile'."), findsOneWidget);
     await finish(tester);
   });
 
@@ -167,11 +197,10 @@ void main() {
     await pump(tester);
     await tester.tap(find.byKey(ValueKey('authKeys.profile.$id.edit')));
     await tester.pumpAndSettle();
+    expect(find.text('Edit Credential Profile'), findsOneWidget);
     await tester.enterText(find.byKey(const ValueKey('authKeys.profile.username')), 'root');
     final save = find.byKey(const ValueKey('authKeys.profile.save'));
-    await tester.ensureVisible(save);
-    await tester.tap(save);
-    await tester.pumpAndSettle();
+    await tapVisible(tester, save);
     final error = find.byKey(const ValueKey('authKeys.profile.error'));
     await tester.ensureVisible(error);
     expect(tester.widget<Text>(error).data, contains('Existing root'));
@@ -182,101 +211,165 @@ void main() {
   });
 
   group('importing a key', () {
-    testWidgets('a valid key is imported and listed', (tester) async {
+    testWidgets('a valid key is imported and listed in Kotlin form', (tester) async {
       await pump(tester);
 
-      await tester.tap(find.byKey(const ValueKey('authKeys.importKey')));
-      await tester.pumpAndSettle();
+      await choose(tester, 'import');
+      expect(find.text('Import existing SSH Key'), findsOneWidget);
       await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'laptop');
       await tester.enterText(
         find.byKey(const ValueKey('authKeys.import.private')),
         keys.privateKey,
       );
       await tester.enterText(find.byKey(const ValueKey('authKeys.import.public')), keys.publicKey);
-      await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, find.byKey(const ValueKey('authKeys.import.save')));
 
       expect(find.text('laptop'), findsOneWidget);
-      expect(find.text('ED25519'), findsOneWidget);
-      expect(find.textContaining('SHA256:'), findsWidgets);
+      expect(find.textContaining('Crypto: ED25519 · Fingerprint: SHA256:'), findsOneWidget);
+      expect(find.text("Imported ED25519 key 'laptop'."), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('a bad key keeps the sheet open and says why', (tester) async {
+    testWidgets('Save Key waits for an alias and a private key', (tester) async {
+      await pump(tester);
+      await choose(tester, 'import');
+      final save = find.byKey(const ValueKey('authKeys.import.save'));
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'laptop');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      await finish(tester);
+    });
+
+    testWidgets('a bad key keeps the dialog open and says why', (tester) async {
       await pump(tester);
 
-      await tester.tap(find.byKey(const ValueKey('authKeys.importKey')));
-      await tester.pumpAndSettle();
+      await choose(tester, 'import');
       await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'oops');
       // Pasting the public key into the private field is the most likely mistake.
       await tester.enterText(find.byKey(const ValueKey('authKeys.import.private')), keys.publicKey);
-      await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, find.byKey(const ValueKey('authKeys.import.save')));
 
       expect(find.byKey(const ValueKey('authKeys.import.error')), findsOneWidget);
       expect(find.textContaining('public key'), findsWidgets);
       expect(
         find.byKey(const ValueKey('authKeys.import.save')),
         findsOneWidget,
-        reason: 'the sheet stays open so the paste can be corrected',
+        reason: 'the dialog stays open so the paste can be corrected',
       );
       await finish(tester);
     });
   });
 
-  group('deleting a key', () {
-    testWidgets('the dependent hosts are named in the confirmation', (tester) async {
-      // "Delete this key" gives no sense of the blast radius.
+  group('editing a key', () {
+    testWidgets('renaming cascades to hosts and key profiles', (tester) async {
       await pump(tester);
       await vm.importKey(alias: 'laptop', privateKey: keys.privateKey);
       await repo.insertServer(server(name: 'web-prod', keyAlias: 'laptop'));
+      await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'keyed',
+          username: 'deploy',
+          authType: 'key',
+          keyAlias: 'laptop',
+          groupName: 'General',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(ValueKey('authKeys.key.${vm.keys.single.id}.edit')));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit SSH Key'), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'desk');
+      await tapVisible(tester, find.byKey(const ValueKey('authKeys.import.save')));
+
+      expect(vm.keys.single.alias, 'desk');
+      expect((await repo.getAllServers()).single.authKeyAlias, 'desk');
+      expect((await repo.getAllProfiles()).single.keyAlias, 'desk');
+      expect(find.text("Updated key 'desk'."), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('a pasted private key replaces the key material', (tester) async {
+      await pump(tester);
+      await repo.insertKey(
+        const SshKey(
+          id: 0,
+          alias: 'old',
+          keyType: 'RSA',
+          privateKey: 'placeholder',
+          publicKey: '',
+          fingerprint: 'SHA256:old',
+        ),
+      );
+      await app.start();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(ValueKey('authKeys.key.${vm.keys.single.id}.edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('authKeys.import.private')),
+        keys.privateKey,
+      );
+      await tapVisible(tester, find.byKey(const ValueKey('authKeys.import.save')));
+
+      final stored = (await repo.getAllKeys()).single;
+      expect(stored.alias, 'old');
+      expect(stored.keyType, 'ED25519');
+      expect(stored.fingerprint, isNot('SHA256:old'));
+      await finish(tester);
+    });
+  });
+
+  group('deleting a key', () {
+    testWidgets('asks with Kotlin wording first', (tester) async {
+      await pump(tester);
+      await vm.importKey(alias: 'laptop', privateKey: keys.privateKey);
       await tester.pumpAndSettle();
 
       final key = vm.keys.single;
       await tester.tap(find.byKey(ValueKey('authKeys.key.${key.id}.delete')));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('web-prod'), findsOneWidget);
-      expect(find.textContaining('cannot be recovered'), findsOneWidget);
+      expect(find.text('Delete key?'), findsOneWidget);
+      expect(
+        find.text(
+          'Delete SSH key "laptop" from OmniTerm? Hosts relying on it will no longer authenticate.',
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byKey(const ValueKey('authKeys.deleteKey.cancel')));
       await tester.pumpAndSettle();
       expect(vm.keys, hasLength(1));
+
+      await tester.tap(find.byKey(ValueKey('authKeys.key.${key.id}.delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('authKeys.deleteKey.confirm')));
+      await tester.pumpAndSettle();
+      expect(vm.keys, isEmpty);
       await finish(tester);
     });
 
-    /// Why `removeKeyIfPresent` in the key integration suites has to loop.
-    ///
-    /// The screen keys each card by the key's database id, so two rows that happen to share an
-    /// alias are two separate cards. A cleanup that taps `.first` once therefore leaves one
-    /// behind, and the `findsNothing` that follows reports an anonymous finder dump rather than
-    /// naming the cause. `importKey` refuses a duplicate alias, but the guard is the view model's
-    /// cached list — the row itself carries no uniqueness, so a restore or a device that was not
-    /// left clean can produce this.
+    /// Why `removeKeyIfPresent` in the key integration suites has to loop: each card is keyed by
+    /// the row id, so two rows sharing an alias are two cards and one delete leaves one.
     testWidgets('two keys sharing an alias are two cards, and one delete leaves one', (
       tester,
     ) async {
       await pump(tester);
-      await repo.insertKey(
-        SshKey(
-          id: 0,
-          alias: 'laptop',
-          keyType: 'ED25519',
-          privateKey: keys.privateKey,
-          publicKey: keys.publicKey,
-          fingerprint: 'SHA256:first',
-        ),
-      );
-      await repo.insertKey(
-        SshKey(
-          id: 0,
-          alias: 'laptop',
-          keyType: 'ED25519',
-          privateKey: keys.privateKey,
-          publicKey: keys.publicKey,
-          fingerprint: 'SHA256:second',
-        ),
-      );
+      for (final fingerprint in ['SHA256:first', 'SHA256:second']) {
+        await repo.insertKey(
+          SshKey(
+            id: 0,
+            alias: 'laptop',
+            keyType: 'ED25519',
+            privateKey: keys.privateKey,
+            publicKey: keys.publicKey,
+            fingerprint: fingerprint,
+          ),
+        );
+      }
       await app.start();
       await tester.pumpAndSettle();
 
@@ -285,38 +378,18 @@ void main() {
         matching: find.byWidgetPredicate(
           (w) =>
               w.key is ValueKey<String> &&
-              (w.key as ValueKey<String>).value.startsWith('authKeys.key.'),
+              RegExp(r'^authKeys\.key\.\d+$').hasMatch((w.key as ValueKey<String>).value),
         ),
       );
 
       expect(cardsFor('laptop'), findsNWidgets(2), reason: 'one card per row, not per alias');
 
-      final first = vm.keys.first;
-      await tester.tap(find.byKey(ValueKey('authKeys.key.${first.id}.delete')));
+      await tester.tap(find.byKey(ValueKey('authKeys.key.${vm.keys.first.id}.delete')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('authKeys.deleteKey.confirm')));
       await tester.pumpAndSettle();
 
-      expect(
-        cardsFor('laptop'),
-        findsOneWidget,
-        reason: 'a single delete cannot clear an alias that has more than one row',
-      );
-      await finish(tester);
-    });
-
-    testWidgets('confirming removes it', (tester) async {
-      await pump(tester);
-      await vm.importKey(alias: 'laptop', privateKey: keys.privateKey);
-      await tester.pumpAndSettle();
-
-      final key = vm.keys.single;
-      await tester.tap(find.byKey(ValueKey('authKeys.key.${key.id}.delete')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('authKeys.deleteKey.confirm')));
-      await tester.pumpAndSettle();
-
-      expect(vm.keys, isEmpty);
+      expect(cardsFor('laptop'), findsOneWidget);
       await finish(tester);
     });
   });
@@ -325,28 +398,27 @@ void main() {
     testWidgets('a password profile is created', (tester) async {
       await pump(tester);
 
-      await tester.tap(find.byKey(const ValueKey('authKeys.addProfile')));
-      await tester.pumpAndSettle();
+      await choose(tester, 'profile');
+      expect(find.text('Create Credential Profile'), findsOneWidget);
       await tester.enterText(find.byKey(const ValueKey('authKeys.profile.name')), 'shared');
       await tester.enterText(find.byKey(const ValueKey('authKeys.profile.username')), 'deploy');
       await tester.enterText(find.byKey(const ValueKey('authKeys.profile.password')), 'hunter2');
-      await tester.tap(find.byKey(const ValueKey('authKeys.profile.save')));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, find.byKey(const ValueKey('authKeys.profile.save')));
 
       expect(find.text('shared'), findsOneWidget);
-      expect(find.textContaining('User: deploy'), findsOneWidget);
+      expect(find.text('User: deploy · Auth: password'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('an incomplete profile is refused inside the sheet', (tester) async {
+    testWidgets('Save Profile waits for name, username and password', (tester) async {
       await pump(tester);
-
-      await tester.tap(find.byKey(const ValueKey('authKeys.addProfile')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('authKeys.profile.save')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('authKeys.profile.error')), findsOneWidget);
+      await choose(tester, 'profile');
+      final save = find.byKey(const ValueKey('authKeys.profile.save'));
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      await tester.enterText(find.byKey(const ValueKey('authKeys.profile.name')), 'shared');
+      await tester.enterText(find.byKey(const ValueKey('authKeys.profile.username')), 'deploy');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
       expect(vm.profiles, isEmpty);
       await finish(tester);
     });
@@ -373,21 +445,51 @@ void main() {
       );
       expect(field.controller.text, isEmpty);
       expect(field.obscureText, isTrue);
-      expect(find.text('Saved — leave blank to keep'), findsOneWidget);
+      expect(find.text('Password (leave blank to keep current)'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('deleting names the hosts that lose their credentials', (tester) async {
+    testWidgets('a key profile says which key it is bound to', (tester) async {
       await pump(tester);
-      await vm.saveProfile(profileName: 'shared', username: 'deploy', authType: 'password');
+      await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'keyed',
+          username: 'deploy',
+          authType: 'key',
+          keyAlias: 'laptop',
+          groupName: 'General',
+        ),
+      );
+      await app.start();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('authKeys.profile.${vm.profiles.single.id}.edit')));
+      await tester.pumpAndSettle();
+      expect(find.text("Key profile — bound to key 'laptop'."), findsOneWidget);
+      expect(find.byKey(const ValueKey('authKeys.profile.password')), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('deleting asks with Kotlin wording first', (tester) async {
+      await pump(tester);
+      await vm.saveProfile(
+        profileName: 'shared',
+        username: 'deploy',
+        authType: 'password',
+        password: 'x',
+      );
       await tester.pumpAndSettle();
       final profile = vm.profiles.single;
-      await repo.insertServer(server(name: 'web-prod').copyWith(authProfileId: Value(profile.id)));
-      await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(ValueKey('authKeys.profile.${profile.id}.delete')));
       await tester.pumpAndSettle();
-      expect(find.textContaining('web-prod'), findsOneWidget);
+      expect(find.text('Delete profile?'), findsOneWidget);
+      expect(
+        find.text(
+          'Delete credential profile "shared"? Hosts using it will lose these credentials.',
+        ),
+        findsOneWidget,
+      );
 
       await tester.tap(find.byKey(const ValueKey('authKeys.deleteProfile.cancel')));
       await tester.pumpAndSettle();
@@ -397,33 +499,32 @@ void main() {
   });
 
   group('trusted host keys', () {
-    testWidgets('pinned hosts are listed with their fingerprint', (tester) async {
+    Future<InMemoryHostKeyStore> pinned() async {
       final store = InMemoryHostKeyStore();
       await store.write(
         '${SshHostKeyTrust.canonicalAlias('10.0.0.9', 2222)}|ssh-ed25519',
         'SHA256:abc',
       );
-      await pump(tester, trust: SshHostKeyTrust(store));
+      return store;
+    }
 
-      expect(find.byKey(const ValueKey('authKeys.trust.list')), findsOneWidget);
+    testWidgets('pinned hosts are listed with their fingerprint', (tester) async {
+      await pump(tester, trust: SshHostKeyTrust(await pinned()));
+      expect(find.byKey(ValueKey('authKeys.trust.${vm.knownHosts.single.host}')), findsOneWidget);
       expect(find.textContaining('SHA256:abc'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('revoking explains what it costs before doing it', (tester) async {
-      // Forgetting a pin removes the protection that would catch an interception.
-      final store = InMemoryHostKeyStore();
-      await store.write(
-        '${SshHostKeyTrust.canonicalAlias('10.0.0.9', 2222)}|ssh-ed25519',
-        'SHA256:abc',
-      );
+    testWidgets('removing asks with Kotlin wording first', (tester) async {
+      final store = await pinned();
       await pump(tester, trust: SshHostKeyTrust(store));
 
       final host = vm.knownHosts.single;
       await tester.tap(find.byKey(ValueKey('authKeys.trust.${host.host}.revoke')));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('present its key for approval again'), findsOneWidget);
+      expect(find.text('Remove trusted key?'), findsOneWidget);
+      expect(find.textContaining('prompt you to verify and pin the key again'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('authKeys.revoke.cancel')));
       await tester.pumpAndSettle();
       expect(await store.readAll(), isNotEmpty, reason: 'cancelling must keep the pin');
@@ -438,46 +539,26 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('the address obeys Hide addresses, and the fingerprint does not', (tester) async {
-      // The Android app masks both the row and its remove-confirm dialog here. The port rendered
-      // them raw, so the toggle silently did not cover the one screen that lists every machine the
-      // user has ever connected to. The fingerprint stays visible on purpose: it identifies the
-      // key rather than the machine, and it is shown to be compared with what the server reports.
-      final store = InMemoryHostKeyStore();
-      await store.write(
-        '${SshHostKeyTrust.canonicalAlias('10.0.0.9', 2222)}|ssh-ed25519',
-        'SHA256:abc',
-      );
+    testWidgets('the address obeys Hide sensitive info, and the fingerprint does not', (
+      tester,
+    ) async {
       HostDisplay.instance.hideSensitiveInfo = true;
       addTearDown(() => HostDisplay.instance.hideSensitiveInfo = false);
-      await pump(tester, trust: SshHostKeyTrust(store));
+      await pump(tester, trust: SshHostKeyTrust(await pinned()));
 
       expect(find.textContaining('10.0.0.9'), findsNothing, reason: 'the address must be masked');
       expect(find.textContaining('SHA256:abc'), findsOneWidget);
 
-      final host = vm.knownHosts.single;
-      await tester.tap(find.byKey(ValueKey('authKeys.trust.${host.host}.revoke')));
+      await tester.tap(find.byKey(ValueKey('authKeys.trust.${vm.knownHosts.single.host}.revoke')));
       await tester.pumpAndSettle();
-      expect(
-        find.textContaining('10.0.0.9'),
-        findsNothing,
-        reason: 'the confirm dialog leaked the address in the Kotlin too, and was fixed there',
-      );
-
+      expect(find.textContaining('10.0.0.9'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('authKeys.revoke.cancel')));
       await tester.pumpAndSettle();
       await finish(tester);
     });
 
     testWidgets('the mask follows the toggle without waiting for a repaint', (tester) async {
-      // A widget that reads HostDisplay without subscribing never rebuilds, so the toggle appears
-      // to do nothing until something unrelated happens to repaint the row.
-      final store = InMemoryHostKeyStore();
-      await store.write(
-        '${SshHostKeyTrust.canonicalAlias('10.0.0.9', 2222)}|ssh-ed25519',
-        'SHA256:abc',
-      );
-      await pump(tester, trust: SshHostKeyTrust(store));
+      await pump(tester, trust: SshHostKeyTrust(await pinned()));
       expect(find.textContaining('10.0.0.9'), findsOneWidget);
 
       HostDisplay.instance.hideSensitiveInfo = true;
@@ -487,20 +568,11 @@ void main() {
       expect(find.textContaining('10.0.0.9'), findsNothing);
       await finish(tester);
     });
-
-    testWidgets('without a trust store the section says so', (tester) async {
-      await pump(tester);
-      expect(find.byKey(const ValueKey('authKeys.trust.unavailable')), findsOneWidget);
-      await finish(tester);
-    });
   });
 
   group('generating a key', () {
-    /// Real generation over a throwaway modulus.
-    ///
-    /// Not a stub returning canned text: the encoding is the part that can be wrong, so the test
-    /// runs the production code path and only shrinks the key size, which the algorithm treats as a
-    /// parameter and the encoder does not care about at all.
+    /// Real generation over a throwaway modulus: the encoding is the part that can be wrong, so
+    /// only the key size shrinks.
     Future<GeneratedSshKey> fastGenerator({
       required String alias,
       required String keyType,
@@ -512,88 +584,75 @@ void main() {
       bits: 512,
     );
 
+    String fieldText(WidgetTester tester, String key) => tester
+        .widget<EditableText>(
+          find.descendant(of: find.byKey(ValueKey(key)), matching: find.byType(EditableText)),
+        )
+        .controller
+        .text;
+
     testWidgets('a generated key is stored, listed, and shown once', (tester) async {
       await pump(tester, keyGenerator: fastGenerator);
 
-      await tester.tap(find.byKey(const ValueKey('authKeys.generateKey')));
-      await tester.pumpAndSettle();
+      await choose(tester, 'generate');
+      expect(find.text('Generate Cryptographic Keypair'), findsOneWidget);
       await tester.enterText(find.byKey(const ValueKey('authKeys.generate.alias')), 'laptop');
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('authKeys.generate.submit')));
       await tester.pumpAndSettle();
 
       // The result dialog is the only place the private key is ever displayed.
-      expect(find.byKey(const ValueKey('authKeys.generated.dialog')), findsOneWidget);
-      final private = tester.widget<SelectableText>(
-        find.byKey(const ValueKey('authKeys.generated.private')),
-      );
-      expect(private.data, startsWith('-----BEGIN RSA PRIVATE KEY-----'));
-      final public = tester.widget<SelectableText>(
-        find.byKey(const ValueKey('authKeys.generated.public')),
-      );
-      expect(public.data, startsWith('ssh-rsa '));
-      expect(public.data, endsWith(' laptop'));
+      expect(find.text('Generated Key: laptop'), findsOneWidget);
+      final private = fieldText(tester, 'authKeys.generated.private');
+      expect(private, startsWith('-----BEGIN RSA PRIVATE KEY-----'));
+      final public = fieldText(tester, 'authKeys.generated.public');
+      expect(public, startsWith('ssh-rsa '));
+      expect(public, endsWith(' laptop'));
 
-      // The install command must carry that exact public line, or pasting it would authorise
-      // nothing.
-      final install = tester.widget<SelectableText>(
-        find.byKey(const ValueKey('authKeys.generated.install')),
-      );
-      expect(install.data, contains(public.data!));
-      expect(install.data, contains('>> ~/.ssh/authorized_keys'));
+      // The install command must carry that exact public line.
+      final install = fieldText(tester, 'authKeys.generated.install');
+      expect(install, contains(public));
+      expect(install, contains('>> ~/.ssh/authorized_keys'));
 
-      await tester.tap(find.byKey(const ValueKey('authKeys.generated.done')));
-      await tester.pumpAndSettle();
+      await tapVisible(tester, find.byKey(const ValueKey('authKeys.generated.done')));
 
-      // And it survives as a stored key, not just a dialog.
       expect(find.text('laptop'), findsOneWidget);
-      expect(find.text('RSA'), findsOneWidget);
+      expect(find.textContaining('Crypto: RSA'), findsOneWidget);
       final stored = await repo.getAllKeys();
       expect(stored.single.alias, 'laptop');
-      expect(stored.single.privateKey, private.data);
+      expect(stored.single.privateKey, private);
       await finish(tester);
     });
 
-    testWidgets('a duplicate alias is refused and the dialog stays open', (tester) async {
+    testWidgets('a duplicate alias closes the dialog and reports in red, as Kotlin does', (
+      tester,
+    ) async {
       await pump(tester, keyGenerator: fastGenerator);
-
-      await tester.tap(find.byKey(const ValueKey('authKeys.importKey')));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'laptop');
-      await tester.enterText(
-        find.byKey(const ValueKey('authKeys.import.private')),
-        keys.privateKey,
-      );
-      await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
+      await vm.importKey(alias: 'laptop', privateKey: keys.privateKey);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('authKeys.generateKey')));
-      await tester.pumpAndSettle();
+      await choose(tester, 'generate');
       await tester.enterText(find.byKey(const ValueKey('authKeys.generate.alias')), 'laptop');
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('authKeys.generate.submit')));
       await tester.pumpAndSettle();
 
-      // Scoped to the dialog: the same reason also lands in the screen's message card, so a bare
-      // text match would find two and prove neither.
-      final error = tester.widget<Text>(find.byKey(const ValueKey('authKeys.generate.error')));
-      expect(error.data, 'Key alias already exists.');
-      expect(
-        find.byKey(const ValueKey('authKeys.generate.dialog')),
-        findsOneWidget,
-        reason: 'the dialog stays open so the alias can be corrected',
+      expect(find.byKey(const ValueKey('authKeys.generate.dialog')), findsNothing);
+      final message = tester.widget<Text>(
+        find.descendant(
+          of: find.byKey(const ValueKey('authKeys.message')),
+          matching: find.byType(Text),
+        ),
       );
-      // Nothing was stored under the clashing alias.
+      expect(message.data, 'Key alias already exists.');
+      expect(message.style?.color, const Color(0xFFFF0000));
       expect((await repo.getAllKeys()).length, 1);
       await finish(tester);
     });
 
     testWidgets('generate is disabled until an alias is entered', (tester) async {
       await pump(tester, keyGenerator: fastGenerator);
-
-      await tester.tap(find.byKey(const ValueKey('authKeys.generateKey')));
-      await tester.pumpAndSettle();
-
+      await choose(tester, 'generate');
       final submit = tester.widget<FilledButton>(
         find.byKey(const ValueKey('authKeys.generate.submit')),
       );

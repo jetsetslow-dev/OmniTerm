@@ -41,6 +41,9 @@ class MonitorViewModel extends ChangeNotifier {
   /// When the next telemetry cycle is due, for the countdown. Null without a poller.
   DateTime? get nextRefreshAt => poller?.nextCycleAt;
 
+  /// The poll interval the header countdown counts down from.
+  Duration get refreshInterval => poller?.effectiveInterval ?? const Duration(seconds: 15);
+
   /// When the sample **on screen** was taken, whichever loop fetched it.
   ///
   /// Not simply the poller's timestamp: Monitor fetches once itself when Overview opens, and for

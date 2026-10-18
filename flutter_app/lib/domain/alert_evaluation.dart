@@ -9,6 +9,7 @@ library;
 
 import '../data/app_database.dart';
 import '../data/remote_models.dart';
+import 'measurement_units.dart';
 
 /// The metric names a rule can watch. Stored as text, so the strings are the contract.
 const alertMetrics = ['CPU Usage', 'Memory Usage', 'Disk Usage', 'Latency', 'Temperature'];
@@ -104,6 +105,56 @@ String unitFor(String metricName) => switch (metricName) {
   'Temperature' => '°',
   _ => '%',
 };
+
+/// The unit an alert threshold is typed and shown in, ported from Kotlin's `alertMetricUnit`.
+String alertMetricUnit(String metricName, MeasurementSystem system) => switch (metricName) {
+  'Latency' => 'ms',
+  'Temperature' => temperatureUnit(system),
+  _ => '%',
+};
+
+/// Validates a typed threshold in the unit shown to the user, ported from Kotlin's
+/// `alertThresholdError`. Returns null when [input] is usable.
+String? alertThresholdError(String input, String metricName, MeasurementSystem system) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return 'Enter a threshold value';
+  final value = double.tryParse(trimmed);
+  if (value == null || !value.isFinite) return 'Enter a number';
+  return alertCanonicalThresholdError(
+    metricName == 'Temperature' ? displayTemperatureToCelsius(value, system) : value,
+    metricName,
+  );
+}
+
+/// The same bounds on a stored (Celsius for temperature) threshold.
+String? alertCanonicalThresholdError(double value, String metricName) {
+  if (!value.isFinite) return 'Enter a number';
+  return switch (metricName) {
+    'Latency' => value <= 0 ? 'Must be greater than 0 ms' : null,
+    // Compared in Celsius so the bound holds in either unit system.
+    'Temperature' => value <= -273.15 ? 'Below absolute zero' : null,
+    _ =>
+      value < 0
+          ? 'Must be 0 or more'
+          : value > 100
+          ? 'Must be 100 or less'
+          : null,
+  };
+}
+
+/// An alert value as Kotlin's `alertMetricDisplay` prints it: temperatures to one decimal in the
+/// user's unit, everything else as the raw number and its unit.
+String alertMetricDisplay(String metricName, double value, MeasurementSystem system) =>
+    metricName == 'Temperature'
+    ? formatTemperature(value, system, decimals: 1)
+    : '${kotlinFloatText(value)}${alertMetricUnit(metricName, system)}';
+
+/// Kotlin's `Float.toString()` for the values a threshold or metric takes: always one decimal
+/// place at least, so 90 prints as "90.0".
+String kotlinFloatText(double value) {
+  final text = value.toString();
+  return text.contains('.') || text.contains('e') || !value.isFinite ? text : '$text.0';
+}
 
 /// A one-line description of what [rule] watches.
 String describeRule(AlertRule rule) {

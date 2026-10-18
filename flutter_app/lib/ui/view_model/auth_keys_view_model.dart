@@ -248,9 +248,77 @@ class AuthKeysViewModel extends ChangeNotifier {
     for (final server in _app.servers.where((s) => s.proxyKeyAlias == key.alias)) {
       await _app.repository.updateServer(server.copyWith(proxyKeyAlias: Value(trimmed)));
     }
+    await _cascadeProfileKeyAlias(key.alias, trimmed);
     _status = "Renamed key to '$trimmed'.";
     _safeNotify();
     return null;
+  }
+
+  /// Kotlin's `cascadeKeyAliasRename` also repoints key profiles, which name their key by alias.
+  Future<void> _cascadeProfileKeyAlias(String oldAlias, String newAlias) async {
+    for (final profile in _profiles.where((p) => p.keyAlias == oldAlias)) {
+      await _app.repository.insertProfile(profile.copyWith(keyAlias: Value(newAlias)));
+    }
+  }
+
+  /// Kotlin's `updateSshKey`: renames [key] and, when [newPrivate] is not blank, replaces its
+  /// material (re-validated and re-derived exactly as an import is). Returns null on success.
+  Future<String?> updateKey(
+    SshKey key, {
+    required String alias,
+    String newPrivate = '',
+    String newPublic = '',
+  }) async {
+    final trimmed = alias.trim();
+    if (trimmed.isEmpty) return _fail('Key alias is required.');
+    if (_keys.any((k) => k.alias == trimmed && k.id != key.id)) {
+      return _fail('Key alias already exists.');
+    }
+    try {
+      var updated = key.copyWith(alias: trimmed);
+      if (newPrivate.trim().isNotEmpty) {
+        final prepared = prepareKeyImport(
+          alias: trimmed,
+          privateKey: newPrivate,
+          publicKey: newPublic,
+          existingAliases: {
+            for (final k in _keys)
+              if (k.id != key.id) k.alias,
+          },
+        );
+        updated = updated.copyWith(
+          keyType: prepared.keyType,
+          privateKey: prepared.privateKey,
+          publicKey: prepared.publicKey,
+          fingerprint: prepared.fingerprint,
+        );
+      }
+      await _app.repository.insertKey(updated);
+      if (trimmed != key.alias) {
+        for (final server in _app.servers.where((s) => s.authKeyAlias == key.alias)) {
+          await _app.repository.updateServer(server.copyWith(authKeyAlias: Value(trimmed)));
+        }
+        for (final server in _app.servers.where((s) => s.proxyKeyAlias == key.alias)) {
+          await _app.repository.updateServer(server.copyWith(proxyKeyAlias: Value(trimmed)));
+        }
+        await _cascadeProfileKeyAlias(key.alias, trimmed);
+      }
+    } on KeyImportException catch (e) {
+      return _fail(e.message);
+    } catch (e) {
+      return _fail('Update failed: $e');
+    }
+    _status = "Updated key '$trimmed'.";
+    _error = null;
+    _safeNotify();
+    return null;
+  }
+
+  String _fail(String message) {
+    _error = message;
+    _status = null;
+    _safeNotify();
+    return message;
   }
 
   /// The hosts that would stop authenticating if [key] were deleted.
@@ -283,7 +351,7 @@ class AuthKeysViewModel extends ChangeNotifier {
     if (name.isEmpty) return 'Profile name is required.';
     if (username.trim().isEmpty) return 'Username is required.';
     if (_profiles.any((p) => p.profileName == name && p.id != existing?.id)) {
-      return 'A profile named "$name" already exists.';
+      return 'Profile name already exists.';
     }
     if (authType == 'key' && keyAlias.trim().isEmpty) {
       return 'Pick a key for a key-authenticated profile.';
@@ -308,7 +376,9 @@ class AuthKeysViewModel extends ChangeNotifier {
     } catch (_) {
       return 'Could not save the credential profile. No changes were saved. Please try again.';
     }
-    _status = "Saved profile '$name'.";
+    // Kotlin's wording: "Saved" for a new profile, "Updated" for an edit.
+    _status = existing == null ? "Saved profile '$name'." : "Updated profile '$name'.";
+    _error = null;
     _safeNotify();
     return null;
   }

@@ -142,31 +142,40 @@ class _HeaderBar extends StatelessWidget {
   Widget build(BuildContext context) {
     // HostDisplay is observable, so it must be listened to — otherwise "Hide sensitive info" would
     // leave this bar showing the host.
+    // Kotlin: the plain host bar, then a "Containers · name" heading with a Reload button.
     return ListenableBuilder(
       listenable: HostDisplay.instance,
-      builder: (context, _) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 4, 4),
-        child: Row(
-          children: [
-            const Icon(Icons.widgets, size: 18, color: OmniColors.cyan),
-            const SizedBox(width: 8),
-            Expanded(
-              child: HostSelectorBar(
-                keyPrefix: 'infra.hostPicker',
-                hosts: vm.selectableServers,
-                selected: server,
-                onChanged: vm.selectServer,
-                labelPrefix: 'Containers · ',
-              ),
+      builder: (context, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          HostSelectorBar(
+            keyPrefix: 'infra.hostPicker',
+            hosts: vm.selectableServers,
+            selected: server,
+            onChanged: vm.selectServer,
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Containers · ${HostDisplay.instance.name(server)}',
+                    key: const ValueKey('infra.heading'),
+                    overflow: TextOverflow.ellipsis,
+                    style: composeBody(fontWeight: FontWeight.bold, fontFamily: OmniFonts.mono),
+                  ),
+                ),
+                IconButton(
+                  key: const ValueKey('infra.reload'),
+                  tooltip: 'Reload',
+                  icon: const Icon(Icons.refresh),
+                  onPressed: vm.loading ? null : vm.load,
+                ),
+              ],
             ),
-            IconButton(
-              key: const ValueKey('infra.reload'),
-              tooltip: 'Reload',
-              icon: const Icon(Icons.refresh, size: 18),
-              onPressed: vm.loading ? null : vm.load,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -186,30 +195,14 @@ class _TabBar extends StatelessWidget {
   };
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: scaledBarHeight(context, 40),
-      child: ListView(
-        key: const ValueKey('infra.tabs'),
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        children: [
-          for (final tab in InfraTab.values)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Center(
-                child: ChoiceChip(
-                  key: ValueKey('infra.tab.${tab.name}'),
-                  label: Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
-                  selected: vm.activeTab == tab,
-                  onSelected: (_) => vm.activeTab = tab,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => OmniScrollableTabRow(
+    key: const ValueKey('infra.tabs'),
+    labels: [for (final tab in InfraTab.values) _labels[tab]!],
+    selectedIndex: vm.activeTab.index,
+    onSelected: (i) => vm.activeTab = InfraTab.values[i],
+    tabKeys: [for (final tab in InfraTab.values) ValueKey('infra.tab.${tab.name}')],
+    contentTabs: true,
+  );
 }
 
 /// The verbatim output of the last action.

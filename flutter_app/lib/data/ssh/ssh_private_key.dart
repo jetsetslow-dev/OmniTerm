@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dartssh2/dartssh2.dart';
 
 /// Private-key validation and parsing, ported from `addPrivateKeyIdentity` in
@@ -101,5 +103,26 @@ String? privateKeyParseError(String privateKey, {String? passphrase}) {
     return e.message;
   } catch (e) {
     return 'Invalid private key.';
+  }
+}
+
+/// The OpenSSH public key line (`ssh-ed25519 AAAA…`) for an unencrypted [privateKey], or null when
+/// it cannot be read without a passphrase.
+///
+/// Kotlin derives this with JSch (`publicKeyFromPrivate`), so an import of only the private key
+/// still shows the real algorithm and the fingerprint `ssh-keygen -lf` prints.
+String? publicKeyLineFromPrivate(String privateKey) {
+  try {
+    final pairs = parsePrivateKey(privateKey);
+    if (pairs.isEmpty) return null;
+    final blob = pairs.first.toPublicKey().encode();
+    // The SSH wire format leads with the algorithm name as a length-prefixed string.
+    if (blob.length < 4) return null;
+    final nameLength = (blob[0] << 24) | (blob[1] << 16) | (blob[2] << 8) | blob[3];
+    if (nameLength <= 0 || 4 + nameLength > blob.length) return null;
+    final type = utf8.decode(blob.sublist(4, 4 + nameLength));
+    return '$type ${base64.encode(blob)}';
+  } catch (_) {
+    return null;
   }
 }

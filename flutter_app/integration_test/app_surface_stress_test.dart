@@ -138,13 +138,13 @@ void main() {
       inspection = backup.inspectBackup(encrypted, 'surface-fixture-passphrase');
     });
     await tester.pump();
-    expect(find.byKey(const ValueKey('backup.progress')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup.readProgress')), findsOneWidget);
     expect(find.text('Decrypting backup…'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byType(CircularProgressIndicator), findsWidgets);
     expect(await tester.runAsync(() => inspection!), isNotNull);
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('backup.progress')), findsNothing);
+    expect(find.byKey(const ValueKey('backup.readProgress')), findsNothing);
     navigation.navigateTo(Screen.servers);
     await tester.pumpAndSettle();
 
@@ -493,7 +493,7 @@ Future<void> _exerciseProfileCollision(
     );
     expect(saved!.username, 'deploy');
     expect(saved.password, original.password);
-    final close = find.byKey(const ValueKey('authKeys.profile.close'));
+    final close = find.byKey(const ValueKey('authKeys.profile.cancel'));
     await tester.ensureVisible(close);
     await tester.tap(close);
     await tester.pumpAndSettle();

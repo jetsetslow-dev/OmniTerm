@@ -75,7 +75,8 @@ ImportedKey prepareKeyImport({
   if (parseError != null) throw KeyImportException(parseError);
 
   final public = publicKey.trim();
-  final usablePublic = isPublicKeyLine(public) ? public : '';
+  // As Kotlin: a pasted public line wins, otherwise it is derived from the private key.
+  final usablePublic = isPublicKeyLine(public) ? public : (publicKeyLineFromPrivate(private) ?? '');
   final resolvedType = keyType.trim().isNotEmpty
       ? keyType.trim()
       : detectKeyType(private, usablePublic);

@@ -201,15 +201,18 @@ class HostSelectorBar extends StatelessWidget {
           trailing!
         else
           Text(
-            'HOST',
+            'Host',
             style: _labelStyle(
               context,
               10,
               letterSpacing: 1,
             ).copyWith(fontWeight: FontWeight.bold, color: accent),
           ),
-        if (trailing == null) const SizedBox(width: 8),
-        Icon(Icons.arrow_drop_down, color: accent, semanticLabel: 'Switch host'),
+        // Kotlin's trailing content replaces both the HOST tag and the arrow.
+        if (trailing == null) ...[
+          const SizedBox(width: 8),
+          Icon(Icons.arrow_drop_down, color: accent, semanticLabel: 'Switch host'),
+        ],
       ],
     );
   }

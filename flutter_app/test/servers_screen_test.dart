@@ -248,11 +248,10 @@ void main() {
     expect(find.text('nas'), findsOneWidget);
   });
 
-  testWidgets('group chips appear only when groups exist and filter on tap', (tester) async {
+  testWidgets('group chips always lead with All, as Kotlin, and filter on tap', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester);
-    // One chip ("All") is not a filter bar worth showing.
-    expect(find.byKey(const ValueKey('servers.groupChips')), findsNothing);
+    expect(find.byKey(const ValueKey('servers.groupChip.All')), findsOneWidget);
 
     await repo.insertServer(server(name: 'web', group: 'prod'));
     await tester.pumpAndSettle();

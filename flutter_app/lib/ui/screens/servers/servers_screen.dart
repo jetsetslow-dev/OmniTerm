@@ -83,18 +83,24 @@ class ServersScreen extends StatelessWidget {
       Column(
         children: [
           _SummaryBanner(servers: vm.servers),
+          _SearchRow(
+            vm: vm,
+            telemetry: telemetry,
+            // Kotlin disables "+" at the free limit; unlocking lives in the app-wide plan banner.
+            onAdd: atLimit ? null : () => openServerForm(context, vm, mode: ServerFormMode.add),
+          ),
           if (atLimit)
-            _LimitNotice(
-              onUnlock: () => showPremiumGate(
-                context,
-                controller: license!,
-                title: 'Saved host limit reached',
-                message:
-                    'The free Play Store build supports one saved host. Unlock OmniTerm '
-                    'to add unlimited hosts.',
+            Padding(
+              key: const ValueKey('servers.limit'),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Text(
+                'Free Play Store build is limited to 1 saved host. Unlock OmniTerm to add more.',
+                style: composeBody(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
-          _SearchRow(vm: vm),
           _GroupChips(vm: vm),
           if (vm.isMultiSelectMode) _BulkActions(vm: vm),
           Expanded(
@@ -102,7 +108,7 @@ class ServersScreen extends StatelessWidget {
                 ? _EmptyState(hasServers: vm.servers.isNotEmpty)
                 : ListView.builder(
                     key: const ValueKey('servers.list'),
-                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 88),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     itemCount: filtered.length,
                     itemBuilder: (context, index) => _ServerCard(
                       server: filtered[index],
@@ -118,25 +124,6 @@ class ServersScreen extends StatelessWidget {
                   ),
           ),
         ],
-      ),
-      Positioned(
-        right: 16,
-        bottom: 16,
-        child: FloatingActionButton(
-          key: const ValueKey('servers.add'),
-          tooltip: 'Add host',
-          onPressed: atLimit
-              ? () => showPremiumGate(
-                  context,
-                  controller: license!,
-                  title: 'Saved host limit reached',
-                  message:
-                      'The free Play Store build supports one saved host. Unlock OmniTerm '
-                      'to add unlimited hosts.',
-                )
-              : () => openServerForm(context, vm, mode: ServerFormMode.add),
-          child: const Icon(Icons.add),
-        ),
       ),
       if (externalUiRequests != null)
         _ExternalAddServerRequest(
@@ -205,26 +192,6 @@ class _ExternalAddServerRequestState extends State<_ExternalAddServerRequest> {
     }
     return const SizedBox.shrink();
   }
-}
-
-class _LimitNotice extends StatelessWidget {
-  const _LimitNotice({required this.onUnlock});
-
-  final VoidCallback onUnlock;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    key: const ValueKey('servers.limit'),
-    width: double.infinity,
-    color: OmniColors.amber.withValues(alpha: 0.12),
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-    child: Row(
-      children: [
-        const Expanded(child: Text('Free plan host limit reached', style: TextStyle(fontSize: 11))),
-        TextButton(onPressed: onUnlock, child: const Text('Unlock')),
-      ],
-    ),
-  );
 }
 
 /// Opens the add/edit/duplicate sheet.
@@ -308,9 +275,13 @@ class _SummaryBanner extends StatelessWidget {
 }
 
 class _SearchRow extends StatefulWidget {
-  const _SearchRow({required this.vm});
+  const _SearchRow({required this.vm, required this.onAdd, this.telemetry});
 
   final ServersViewModel vm;
+  final TelemetryPoller? telemetry;
+
+  /// Null at the free host limit, which disables "+" as Kotlin does.
+  final VoidCallback? onAdd;
 
   @override
   State<_SearchRow> createState() => _SearchRowState();
@@ -341,7 +312,7 @@ class _SearchRowState extends State<_SearchRow> {
               onChanged: (value) => vm.serverSearchText = value,
               decoration: omniInputDecoration(
                 context,
-                hintText: 'Search hosts',
+                hintText: 'Hostname or IP',
                 prefixIcon: const Icon(Icons.search, size: 20),
                 suffixIcon: vm.serverSearchText.isEmpty
                     ? null
@@ -358,14 +329,33 @@ class _SearchRowState extends State<_SearchRow> {
             ),
           ),
           const SizedBox(width: 8),
+          // Kotlin keeps the auto-refresh countdown inline in this toolbar.
+          RefreshCountdown(
+            key: const ValueKey('servers.refreshCountdown'),
+            nextAt: widget.telemetry?.nextCycleAt,
+            interval: widget.telemetry?.effectiveInterval ?? const Duration(seconds: 15),
+            size: 26,
+          ),
+          const SizedBox(width: 4),
           IconButton(
             key: const ValueKey('servers.multiSelect.toggle'),
-            tooltip: vm.isMultiSelectMode ? 'Exit multi-select' : 'Select multiple hosts',
+            tooltip: 'Multi-select',
             onPressed: () => vm.isMultiSelectMode = !vm.isMultiSelectMode,
             icon: Icon(
-              vm.isMultiSelectMode ? Icons.close : Icons.checklist,
-              color: vm.isMultiSelectMode ? OmniColors.cyan : null,
+              vm.isMultiSelectMode ? Icons.checklist : Icons.checklist_outlined,
+              color: vm.isMultiSelectMode
+                  ? Theme.of(context).colorScheme.primary
+                  // Compose's Color.Gray.
+                  : const Color(0xFF888888),
             ),
+          ),
+          const SizedBox(width: 4),
+          // Add lives at the top so it never overlaps cards in a long host list.
+          IconButton.filled(
+            key: const ValueKey('servers.add'),
+            tooltip: 'Add server',
+            onPressed: widget.onAdd,
+            icon: const Icon(Icons.add),
           ),
         ],
       ),
@@ -380,9 +370,8 @@ class _GroupChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Kotlin always shows the row, "All" first.
     final chips = vm.groupChips;
-    // A fleet with no groups needs no filter bar at all.
-    if (chips.length <= 1) return const SizedBox.shrink();
 
     return SizedBox(
       height: 40,
@@ -611,8 +600,9 @@ class _ServerCard extends StatelessWidget {
                     name: server.name,
                     breakdown: vm.healthBreakdown(server, metrics),
                   ),
-                  child: _HealthRing(
+                  child: ScoreRing(
                     score: server.status == 'online' && metrics != null ? server.healthScore : -1,
+                    size: 38,
                   ),
                 ),
                 IconButton(
@@ -1073,51 +1063,6 @@ class _AuthFailure extends StatelessWidget {
       _CardAction(label: 'Retry', color: OmniColors.red, onPressed: onRetry),
     ],
   );
-}
-
-class _HealthRing extends StatelessWidget {
-  const _HealthRing({required this.score});
-
-  final int score;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = switch (score) {
-      < 0 => OmniColors.textMuted,
-      >= 90 => OmniColors.green,
-      >= 70 => OmniColors.cyan,
-      >= 50 => OmniColors.amber,
-      _ => OmniColors.red,
-    };
-    return Semantics(
-      label: score < 0
-          ? 'Health unavailable. Waiting for verified metrics.'
-          : 'Health score: $score out of 100',
-      child: SizedBox.square(
-        dimension: 38,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            CircularProgressIndicator(
-              value: score.clamp(0, 100) / 100,
-              strokeWidth: 3,
-              color: color,
-              backgroundColor: Theme.of(context).colorScheme.outline,
-            ),
-            Text(
-              score < 0 ? '—' : '$score',
-              style: TextStyle(
-                color: color,
-                fontFamily: OmniFonts.display,
-                fontWeight: OmniFonts.displayWeight,
-                fontSize: 11,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _StatusDot extends StatelessWidget {

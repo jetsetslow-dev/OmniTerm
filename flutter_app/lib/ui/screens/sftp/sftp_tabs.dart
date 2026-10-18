@@ -92,49 +92,52 @@ class _SftpBookmarksTabState extends State<SftpBookmarksTab> {
     final vm = widget.vm;
     final bookmarks = vm.allBookmarks;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final header = Row(
       children: [
-        Row(
-          children: [
-            Expanded(
+        Expanded(
+          child: Text(
+            'Quick-access bookmarks — every host and share. Offline endpoints are greyed out.',
+            style: composeBody(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          key: const ValueKey('sftp.bookmarks.add'),
+          onPressed: () => _edit(),
+          icon: const Icon(Icons.bookmark_add, size: 16),
+          label: const Text('Add'),
+        ),
+      ],
+    );
+
+    // One scroll for the header and the list, so a short landscape body at large text scrolls
+    // instead of overflowing; the empty message still centres when there is room for it.
+    return CustomScrollView(
+      key: const ValueKey('sftp.bookmarks.list'),
+      slivers: [
+        SliverToBoxAdapter(child: header),
+        const SliverToBoxAdapter(child: SizedBox(height: 10)),
+        if (bookmarks.isEmpty)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              key: const ValueKey('sftp.bookmarks.empty'),
               child: Text(
-                'Quick access bookmarks — every host and share.',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: scheme.onSurfaceVariant,
-                ),
+                'No bookmarks yet. Star a folder in the SFTP or Shares browser to pin it here.',
+                style: composeBody(color: scheme.onSurfaceVariant),
               ),
             ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              key: const ValueKey('sftp.bookmarks.add'),
-              onPressed: () => _edit(),
-              icon: const Icon(Icons.bookmark_add, size: 16),
-              label: const Text('Add'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Expanded(
-          child: bookmarks.isEmpty
-              ? Center(
-                  key: const ValueKey('sftp.bookmarks.empty'),
-                  child: Text(
-                    'No bookmarks yet — star a folder while browsing, or add one here.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-                  ),
-                )
-              : ListView.separated(
-                  key: const ValueKey('sftp.bookmarks.list'),
-                  itemCount: bookmarks.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 6),
-                  itemBuilder: (context, index) =>
-                      _BookmarkRow(bookmark: bookmarks[index], tab: this),
-                ),
-        ),
+          )
+        else
+          SliverList.separated(
+            itemCount: bookmarks.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 6),
+            itemBuilder: (context, index) => _BookmarkRow(bookmark: bookmarks[index], tab: this),
+          ),
       ],
     );
   }

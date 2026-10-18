@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../navigation.dart';
 import '../../theme/colors.dart';
+import '../../theme/typography.dart';
 import '../../widgets/omni_components.dart';
 
 /// The Tools hub, ported from `ToolsScreen` in `ui/ToolsScreen.kt`.
@@ -23,7 +24,8 @@ class ToolsHubScreen extends StatelessWidget {
     (Screen.about, 'About OmniTerm', Icons.info),
   ];
 
-  static const _labelStyle = TextStyle(fontWeight: FontWeight.w600, fontSize: 14);
+  // Kotlin's label keeps bodyLarge's 24sp line height (see composed()).
+  static final _labelStyle = composed(const TextStyle(fontWeight: FontWeight.w600, fontSize: 14));
 
   /// Kotlin's tiles are a fixed 110dp. Compose clips a label that outgrows one (a two-line label
   /// at large text); Flutter would report the overflow instead, so a tile grows exactly as much

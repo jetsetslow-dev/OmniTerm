@@ -96,7 +96,9 @@ void main() {
           expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
           expect(find.text('Settings saved.'), findsNothing);
         } else {
-          expect(find.text('Settings saved.'), findsOneWidget);
+          // Saved, but silently: Kotlin shows no confirmation banner after a save.
+          expect(vm.status, 'Settings saved.');
+          expect(find.text('Settings saved.'), findsNothing);
         }
       } finally {
         if (!lock.release.isCompleted) lock.release.complete();

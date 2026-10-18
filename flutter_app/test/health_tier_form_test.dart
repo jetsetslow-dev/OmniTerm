@@ -38,19 +38,16 @@ void main() {
 
     test('an empty field says it is required, not that it is wrong', () {
       // "Must be a number" reads as though what was typed was invalid, when nothing was typed.
-      expect(validateTier(fields(warn: ''), HealthMetric.cpu), contains('required'));
-      expect(validateTier(fields(warnPenalty: '  '), HealthMetric.cpu), contains('required'));
+      expect(validateTier(fields(warn: ''), HealthMetric.cpu), 'Required');
+      expect(validateTier(fields(warnPenalty: '  '), HealthMetric.cpu), 'Required');
     });
 
     test('non-numeric text is reported', () {
-      expect(validateTier(fields(high: 'lots'), HealthMetric.cpu), contains('must be a number'));
+      expect(validateTier(fields(high: 'lots'), HealthMetric.cpu), 'Must be a number');
     });
 
     test('a percentage cannot exceed 100', () {
-      expect(
-        validateTier(fields(critical: '150'), HealthMetric.cpu),
-        contains('between 0 and 100'),
-      );
+      expect(validateTier(fields(critical: '150'), HealthMetric.cpu), 'Must be 100 or less');
     });
 
     test('latency may exceed 100, since milliseconds have no ceiling at 100', () {
@@ -63,7 +60,7 @@ void main() {
     test('latency still has an upper bound', () {
       expect(
         validateTier(fields(warn: '50', high: '100', critical: '9999999'), HealthMetric.latency),
-        contains('between'),
+        'Must be 1-600000',
       );
     });
 
@@ -71,11 +68,11 @@ void main() {
       // The middle tier would be unreachable and the metric would quietly stop scoring.
       expect(
         validateTier(fields(warn: '90', high: '75', critical: '95'), HealthMetric.cpu),
-        contains('must increase'),
+        'Thresholds must increase: warn <= high <= crit',
       );
       expect(
         validateTier(fields(warn: '50', high: '95', critical: '75'), HealthMetric.cpu),
-        contains('must increase'),
+        'Thresholds must increase: warn <= high <= crit',
       );
     });
 
@@ -99,16 +96,14 @@ void main() {
 
     test('a penalty above 100 is refused', () {
       // The score starts at 100, so a larger penalty is meaningless.
-      expect(
-        validateTier(fields(criticalPenalty: '400'), HealthMetric.cpu),
-        contains('between 0 and 100'),
-      );
+      expect(validateTier(fields(criticalPenalty: '400'), HealthMetric.cpu), 'Must be 100 or less');
     });
 
     test('the first problem is reported, in reading order', () {
       // Six errors at once under a form is noise rather than guidance.
       final error = validateTier(fields(warn: '', high: 'x', critical: '200'), HealthMetric.cpu);
-      expect(error, contains('Warn threshold'));
+      // Kotlin's TierErrors.firstError: the warn field's own message, unprefixed.
+      expect(error, 'Required');
     });
 
     test('validateAll names the metric that failed', () {
@@ -219,7 +214,7 @@ void main() {
       final vm = await boot();
       vm.edit(HealthMetric.cpu, (f) => f.warnAt = '99');
 
-      expect(vm.validationError, contains('must increase'));
+      expect(vm.validationError, 'CPU — Thresholds must increase: warn <= high <= crit');
       expect(vm.canSave, isFalse);
       expect(await vm.save(), isNotNull);
       expect(await repo.getSetting(HealthScoringViewModel.settingKey), isNull);

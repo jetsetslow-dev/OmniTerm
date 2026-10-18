@@ -604,113 +604,175 @@ class _ConnectPrompt extends StatelessWidget {
   final LicenseController? licenseController;
 
   @override
-  Widget build(BuildContext context) => Center(
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            '>_',
-            style: TextStyle(
-              color: OmniColors.cyan,
-              fontSize: 34,
-              fontFamily: OmniFonts.mono,
-              fontWeight: FontWeight.bold,
-            ),
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // Kotlin's ConnectPrompt: a bordered surfaceContainer card in the shell chrome colours, so it
+    // reads correctly in the light theme as well as the dark one.
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          key: const ValueKey('shell.connect.card'),
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: scheme.outline),
           ),
-          const SizedBox(height: 12),
-          Text(
-            server.name,
-            style: const TextStyle(
-              fontFamily: OmniFonts.mono,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFFC8D4E8),
-            ),
-          ),
-          // Routed through HostDisplay so "hide addresses" covers the terminal too. A screen the
-          // user is most likely to be sharing is the last place to leak a host name.
-          ListenableBuilder(
-            listenable: HostDisplay.instance,
-            builder: (context, _) => Text(
-              '${HostDisplay.instance.userAtHost(server)}:${server.port}',
-              key: const ValueKey('shell.connect.target'),
-              style: const TextStyle(
-                fontFamily: OmniFonts.mono,
-                fontSize: 11,
-                color: Color(0xFF7C8AA5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                '>_',
+                style: TextStyle(
+                  color: OmniColors.cyan,
+                  fontSize: 34,
+                  fontFamily: OmniFonts.mono,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            key: const ValueKey('shell.connect'),
-            icon: const Icon(Icons.play_arrow, size: 18),
-            label: Text(vm.error == null ? 'Connect' : 'Retry'),
-            onPressed: vm.canConnect
-                ? () => vm.connect(server, controlMode: vm.useControlMode)
-                : null,
-          ),
-          // Offered only where it means something: control mode is a property of a tmux attach, and
-          // a host that never enters tmux has no protocol to speak.
-          if (server.persistentSession)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Checkbox(
-                    key: const ValueKey('shell.controlMode'),
-                    value: vm.useControlMode,
-                    onChanged: vm.canConnect ? (v) => vm.useControlMode = v ?? false : null,
-                  ),
-                  const Text('Attach in control mode', style: TextStyle(fontSize: 11)),
-                  const SizedBox(width: 4),
-                  Tooltip(
-                    message:
-                        'tmux sends every byte as an event instead of redrawing, so fast output '
-                        'cannot be lost. This app draws one pane: splits made inside tmux will '
-                        'not all be visible.',
-                    child: const Icon(Icons.info_outline, size: 14, color: OmniColors.textMuted),
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 8),
-          TextButton.icon(
-            key: const ValueKey('shell.quickConnect'),
-            icon: const Icon(Icons.bolt, size: 16),
-            label: const Text('Quick connect', style: TextStyle(fontSize: 12)),
-            onPressed: vm.canConnect
-                ? () => _quickConnect(context, vm, licenseController: licenseController)
-                : null,
-          ),
-          if (!vm.canConnect)
-            const Padding(
-              padding: EdgeInsets.only(top: 10),
-              child: Text(
-                // Convention 4: say the feature is off rather than opening a terminal that will
-                // never receive a byte.
-                'The terminal is unavailable in this build: no SSH transport is wired.',
-                key: ValueKey('shell.unavailable'),
+              const SizedBox(height: 14),
+              Text(
+                server.name,
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11, color: OmniColors.amber),
+                style: composeBody(
+                  fontFamily: OmniFonts.mono,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: scheme.onSurface,
+                ),
               ),
-            ),
-          if (vm.error != null) ...[
-            const SizedBox(height: 16),
-            Text(
-              vm.error!,
-              key: const ValueKey('shell.error'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: OmniColors.red),
-            ),
-          ],
-        ],
+              // Routed through HostDisplay so "hide addresses" covers the terminal too.
+              ListenableBuilder(
+                listenable: HostDisplay.instance,
+                builder: (context, _) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    '${HostDisplay.instance.userAtHost(server)}:${server.port}',
+                    key: const ValueKey('shell.connect.target'),
+                    style: composeBody(fontSize: 14, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+              if (vm.error != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  key: const ValueKey('shell.error.box'),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: OmniColors.red.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: OmniColors.red.withValues(alpha: 0.5)),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'CONNECTION FAILED',
+                        style: composeBody(
+                          fontSize: 11,
+                          fontFamily: OmniFonts.mono,
+                          fontWeight: FontWeight.bold,
+                          color: OmniColors.red,
+                        ).copyWith(letterSpacing: 1),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        vm.error!,
+                        key: const ValueKey('shell.error'),
+                        textAlign: TextAlign.center,
+                        style: composeBody(
+                          fontSize: 12,
+                          fontFamily: OmniFonts.mono,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              Material(
+                color: scheme.primaryContainer,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(color: scheme.primary),
+                ),
+                child: InkWell(
+                  key: const ValueKey('shell.connect'),
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: vm.canConnect
+                      ? () => vm.connect(server, controlMode: vm.useControlMode)
+                      : null,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                    child: Text(
+                      vm.error == null ? 'Connect' : 'Retry',
+                      style: composeBody(
+                        fontWeight: FontWeight.bold,
+                        color: scheme.onPrimaryContainer,
+                      ).copyWith(letterSpacing: 1),
+                    ),
+                  ),
+                ),
+              ),
+              // Offered only where it means something: control mode is a property of a tmux attach, and
+              // a host that never enters tmux has no protocol to speak.
+              if (server.persistentSession)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        key: const ValueKey('shell.controlMode'),
+                        value: vm.useControlMode,
+                        onChanged: vm.canConnect ? (v) => vm.useControlMode = v ?? false : null,
+                      ),
+                      const Text('Attach in control mode', style: TextStyle(fontSize: 11)),
+                      const SizedBox(width: 4),
+                      Tooltip(
+                        message:
+                            'tmux sends every byte as an event instead of redrawing, so fast output '
+                            'cannot be lost. This app draws one pane: splits made inside tmux will '
+                            'not all be visible.',
+                        child: const Icon(
+                          Icons.info_outline,
+                          size: 14,
+                          color: OmniColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 10),
+              TextButton(
+                key: const ValueKey('shell.quickConnect'),
+                onPressed: vm.canConnect
+                    ? () => _quickConnect(context, vm, licenseController: licenseController)
+                    : null,
+                child: const Text(
+                  'Quick connect to another host…',
+                  style: TextStyle(fontSize: 12, color: OmniColors.cyan),
+                ),
+              ),
+              if (!vm.canConnect)
+                const Padding(
+                  padding: EdgeInsets.only(top: 10),
+                  child: Text(
+                    // Convention 4: say the feature is off rather than opening a terminal that will
+                    // never receive a byte.
+                    'The terminal is unavailable in this build: no SSH transport is wired.',
+                    key: ValueKey('shell.unavailable'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, color: OmniColors.amber),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _ConnectingView extends StatelessWidget {
@@ -983,10 +1045,12 @@ class _TerminalHeaderAction extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
               child: Center(
+                // Kotlin's maxLines = 1 keeps the first wrapped line and clips the rest, so a
+                // narrow "🔓 INPUT" chip shows just the lock — no ellipsis.
                 child: Text(
                   label,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  overflow: TextOverflow.clip,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge!.copyWith(
                     fontSize: 10,
