@@ -31,6 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -2387,6 +2388,7 @@ fun AddServerSheet(
     var testingConnection by remember { mutableStateOf(false) }
     var testResultText by remember { mutableStateOf<String?>(null) }
     var confirmDuplicateHost by remember { mutableStateOf<ServerEntity?>(null) }
+    var confirmUnverifiedSave by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     DisposableEffect(Unit) {
@@ -2506,6 +2508,14 @@ fun AddServerSheet(
                 }
             }
         }
+    }
+
+    // After the connection check (passed, or deliberately skipped): warn about a reused address, then save.
+    fun saveAfterVerification() {
+        val duplicate = allServers.firstOrNull {
+            it.id != (serverToEdit?.id ?: 0) && it.host.equals(host.trim(), ignoreCase = true)
+        }
+        if (serverToEdit == null && duplicate != null) confirmDuplicateHost = duplicate else saveServerDraft()
     }
 
     AlertDialog(
@@ -2875,16 +2885,15 @@ fun AddServerSheet(
                             errorText = "The same host, port, SSH user and authentication method already exist as \"${sameLogin.name}\". Existing server unchanged."
                             return@Button
                         }
+                        errorText = null
+                        // An untested configuration can still be saved, but only deliberately: a host
+                        // may be reachable through a route this phone's check cannot reproduce. The
+                        // real SSH handshake still asks to trust the host key on first connect.
                         if (connectionSignature() != testedOkSignature) {
-                            errorText = "Run Test Connection first — it verifies the login and lets you trust the server's host key, so the host can't end up saved but unable to connect."
-                            activeTab = 1
+                            confirmUnverifiedSave = true
                             return@Button
                         }
-                        errorText = null
-                        val duplicate = allServers.firstOrNull {
-                            it.id != (serverToEdit?.id ?: 0) && it.host.equals(host.trim(), ignoreCase = true)
-                        }
-                        if (serverToEdit == null && duplicate != null) confirmDuplicateHost = duplicate else saveServerDraft()
+                        saveAfterVerification()
                     }
                 ) {
                     if (savingServer) {
@@ -2901,6 +2910,36 @@ fun AddServerSheet(
             }
         }
     )
+
+    if (confirmUnverifiedSave) {
+        val failedCheck = testResultText != null && testResultText != "Connection OK"
+        AlertDialog(
+            onDismissRequest = { confirmUnverifiedSave = false },
+            modifier = Modifier.testTag("serverForm.unverified.dialog"),
+            title = { Text(if (failedCheck) "Save after failed check?" else "Save without testing?") },
+            text = {
+                Text(
+                    if (failedCheck) {
+                        "The automatic connection check did not succeed: $testResultText\n\n" +
+                            "You can still save this host and use SSH ANYWAY. OmniTerm will ask you to " +
+                            "approve its host key when an SSH server answers."
+                    } else {
+                        "This connection has not been tested. You can still save it and try SSH directly. " +
+                            "OmniTerm will ask you to approve the host key when an SSH server answers."
+                    },
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmUnverifiedSave = false
+                    saveAfterVerification()
+                }) { Text(stringResource(R.string.save_anyway)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUnverifiedSave = false }) { Text(stringResource(R.string.review)) }
+            },
+        )
+    }
 
     confirmDuplicateHost?.let { duplicate ->
         AlertDialog(

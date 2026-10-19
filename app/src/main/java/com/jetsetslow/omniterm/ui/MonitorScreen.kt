@@ -21,6 +21,8 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -941,8 +943,10 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (viewModel.processesLoading && simProcesses.isEmpty()) {
-            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.height(10.dp))
+                Text("Reading the process list…", fontSize = 12.sp)
             }
         } else if (viewModel.processesLoading) {
             LinearProgressIndicator(
@@ -967,6 +971,20 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                 )
             }
             Text("${simProcesses.size} Procs", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        if (!viewModel.processesLoading && simProcesses.isEmpty()) {
+            // Every host runs *something*, so an empty list after a read is the parse failing, not
+            // an idle machine; "no processes" would be a confident false statement about the host.
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    "The process list came back empty — this host may not support the command, or its output was not understood.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("monitor.processes.empty"),
+                )
+            }
         }
 
         OverflowLazyColumn(
@@ -1066,6 +1084,18 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
     ConfirmHost(confirm)
 
     Column(modifier = Modifier.fillMaxSize()) {
+        if (viewModel.servicesUnsupported && simServices.isEmpty() && !viewModel.servicesLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "This host runs neither systemd nor OpenRC, so its services cannot be listed.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("monitor.services.unsupported"),
+                )
+            }
+            return@Column
+        }
         if (viewModel.servicesLoading && simServices.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)

@@ -1418,6 +1418,8 @@ class AppViewModel @JvmOverloads constructor(
 
     var services by mutableStateOf<List<SimService>>(emptyList()); private set
     var servicesLoading by mutableStateOf(false); private set
+    /** True when the host runs neither systemd nor OpenRC, so the tab can say why it is empty. */
+    var servicesUnsupported by mutableStateOf(false); private set
     var serviceActionFeedback by mutableStateOf<String?>(null)
 
     // A privileged action (reboot / service control) waiting on biometric/PIN confirmation before
@@ -7509,14 +7511,17 @@ class AppViewModel @JvmOverloads constructor(
         servicesJob = viewModelScope.launch {
             servicesLoading = true
             try {
-                val parsed = RemoteParsers.parseServices(executeSshCommand(srv, RemoteCommands.SERVICES))
+                val output = executeSshCommand(srv, RemoteCommands.SERVICES)
+                val parsed = RemoteParsers.parseServices(output)
                 if (srv.id != selectedServerId) return@launch
                 services = parsed
+                servicesUnsupported = output.contains("---NOSYSTEMD---")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (srv.id == selectedServerId) {
                     services = emptyList()
+                    servicesUnsupported = false
                 }
             } finally {
                 if (servicesJob == coroutineContext[Job]) servicesLoading = false
