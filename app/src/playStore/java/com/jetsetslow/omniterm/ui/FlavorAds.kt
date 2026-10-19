@@ -4,7 +4,15 @@ import android.app.Activity
 import android.util.DisplayMetrics
 import android.util.Log
 import android.widget.FrameLayout
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdsClick
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -20,9 +28,46 @@ import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import com.google.android.gms.ads.LoadAdError
+import com.google.android.ump.UserMessagingPlatform
 import com.jetsetslow.omniterm.billing.AdsConsentManager
 
 private const val ADS_TAG = "OmniTermAds"
+
+/**
+ * Play Store flavor: About → "Ad privacy choices". A build that shows ads must let the user revisit
+ * the consent they gave on first launch; UMP's privacy options form is that entry point. The
+ * source-available flavor has no ads, so its version of this renders nothing.
+ */
+@Composable
+fun FlavorAdPrivacyButton(modifier: Modifier = Modifier) {
+    val activity = androidx.activity.compose.LocalActivity.current ?: return
+    OutlinedButton(
+        onClick = {
+            // The form needs fresh consent info. The banner requests it, but a user who bought ad
+            // removal never mounts the banner, so ask here first rather than relying on it.
+            val consentInfo = UserMessagingPlatform.getConsentInformation(activity)
+            consentInfo.requestConsentInfoUpdate(
+                activity,
+                com.google.android.ump.ConsentRequestParameters.Builder().build(),
+                {
+                    UserMessagingPlatform.showPrivacyOptionsForm(activity) { formError ->
+                        if (formError != null) {
+                            Log.w(ADS_TAG, "Privacy options form failed: ${formError.errorCode} ${formError.message}")
+                        }
+                    }
+                },
+                { requestError ->
+                    Log.w(ADS_TAG, "Consent info update failed: ${requestError.errorCode} ${requestError.message}")
+                },
+            )
+        },
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Filled.AdsClick, contentDescription = null)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Ad privacy choices")
+    }
+}
 
 /**
  * Play Store flavor: resolve the device advertising ID for support diagnostics. This is a blocking
