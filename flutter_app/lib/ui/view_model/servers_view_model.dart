@@ -218,8 +218,35 @@ class ServersViewModel extends ChangeNotifier {
 
   // ── actions ────────────────────────────────────────────────────────────────
 
-  Future<int> saveServer(Server server) async {
+  /// Kotlin's free-tier message when a credential cannot be added (`credentialProfileLimitMessage`).
+  static const credentialLimitMessage =
+      'The free Play Store build supports 1 authentication method. Unlock OmniTerm to save '
+      'unlimited credentials.';
+
+  /// Saves a new host. [createProfile] is Kotlin's "Save securely to Credential Store": with a
+  /// password typed, it also stores that password as a reusable credential profile named
+  /// `<host name> profile` (the host keeps its own copy, exactly as `addServer` does).
+  Future<int> saveServer(
+    Server server, {
+    bool createProfile = false,
+    bool credentialLimitReached = false,
+  }) async {
+    final password = server.authPassword ?? '';
+    final makeProfile = createProfile && server.authType == 'password' && password.isNotEmpty;
+    if (makeProfile && credentialLimitReached) throw Exception(credentialLimitMessage);
     final id = await _app.repository.saveUniqueServer(server);
+    if (makeProfile) {
+      await _app.repository.insertProfile(
+        CredentialProfile(
+          id: 0,
+          profileName: '${server.name} profile',
+          username: server.username,
+          authType: 'password',
+          password: password,
+          groupName: 'General',
+        ),
+      );
+    }
     final probe = probeHost;
     if (probe != null) {
       final saved = await _app.repository.getServerById(id);

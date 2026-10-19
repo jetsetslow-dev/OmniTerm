@@ -1,3 +1,4 @@
+import 'l10n/app_localizations.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -462,6 +463,9 @@ class OmniTermApp extends StatelessWidget {
             amoled: prefs.amoled,
           );
           return MaterialApp(
+            // Text comes from the Kotlin app's string resources (lib/l10n, generated) so both apps match.
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
             scrollBehavior: const PopupScrollBehavior(),
             title: 'OmniTerm',
             debugShowCheckedModeBanner: false,

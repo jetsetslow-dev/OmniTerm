@@ -63,6 +63,8 @@ python3 ./scripts/check-actions-allowlist.py
 # label, option, settings-key or text-style difference that is not already in the baseline.
 if [[ -d "$ROOT/flutter_app" ]]; then
   python3 ./scripts/parity-audit.py
+  # Flutter's text is generated from the Kotlin string resources; stale means the apps can differ.
+  python3 ./scripts/generate-flutter-strings.py --check
 fi
 ./scripts/test-release-version.sh
 ./scripts/test-release-engine.sh

@@ -1,21 +1,29 @@
 import 'package:flutter/material.dart';
-import '../../../domain/server_identity.dart';
 
 import '../../../data/app_database.dart';
 import '../../../domain/host_display.dart';
+import '../../../domain/input_validation.dart';
+import '../../../domain/server_identity.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../theme/colors.dart';
+import '../../theme/typography.dart';
 import '../../widgets/omni_components.dart';
 import 'server_form_state.dart';
 
 /// Result of a connection test: null means success, otherwise a human-readable failure.
 typedef ConnectionTester = Future<String?> Function(Server candidate);
 
-/// The add / edit / duplicate sheet, ported from `AddServerSheet` in `ui/AppUi.kt`.
+/// Persists the host; [createProfile] is Kotlin's "Save securely to Credential Store".
+typedef ServerSaver = Future<void> Function(Server server, {bool createProfile});
+
+/// Kotlin's green for "Connection OK" and the Credential Store note (`Color(0xFF10B981)`).
+const _kotlinGreen = Color(0xFF10B981);
+
+/// The add / edit / duplicate dialog, ported from `AddServerSheet` in `ui/AppUi.kt`.
 ///
-/// All of its rules live in [ServerFormState] — this is presentation only. The three tabs
-/// (Connect / Auth / Advanced) match the Kotlin so a user's muscle memory survives the migration.
-///
-/// Every control carries a `ValueKey('serverForm.…')` for the Patrol suite.
+/// Kotlin presents it as an AlertDialog wizard — Connection → Credentials → Advanced, advanced with
+/// Next and left with Back — and this matches it control for control. The rules (secrets never
+/// shown, the connection signature, step validation) live in [ServerFormState]; this is layout.
 class ServerFormSheet extends StatefulWidget {
   const ServerFormSheet({
     super.key,
@@ -33,7 +41,7 @@ class ServerFormSheet extends StatefulWidget {
 
   final ServerFormMode mode;
   final Server? source;
-  final Future<void> Function(Server server) onSave;
+  final ServerSaver onSave;
   final ConnectionTester? onTestConnection;
   final List<Server> existingServers;
   final List<String> savedKeyAliases;
@@ -55,11 +63,11 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     suggestedName: widget.suggestedName,
   );
 
+  int _tab = 0;
   bool _testing = false;
   bool _saving = false;
   String? _testResult;
-  bool _testPassed = false;
-  String? _saveError;
+  String? _error;
 
   @override
   void dispose() {
@@ -68,9 +76,9 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
   }
 
   String get _title => switch (widget.mode) {
-    ServerFormMode.add => 'Add host',
-    ServerFormMode.edit => 'Edit host',
-    ServerFormMode.duplicate => 'Duplicate host',
+    ServerFormMode.duplicate => 'Duplicate Host',
+    ServerFormMode.add => 'Add Linux Remote Host',
+    ServerFormMode.edit => 'Edit Linux Remote Host',
   };
 
   Future<void> _test() async {
@@ -80,63 +88,66 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
       _testing = true;
       _testResult = null;
     });
+    // Bind the eventual OK to the fields as they were when the test started: edits made while it
+    // runs still require a retest, exactly as Kotlin's signatureAtStart.
+    final signatureAtStart = _form.connectionSignature;
     final error = await tester(_form.toServer());
     if (!mounted) return;
     setState(() {
       _testing = false;
-      _testPassed = error == null;
-      _testResult = error ?? 'Connection succeeded';
+      _testResult = error == null ? 'Connection OK' : 'Connection failed: $error';
     });
-    // Only a pass opens the save gate, and only for the configuration as it stands right now.
-    if (error == null) _form.markConnectionTested();
+    if (error == null && _form.connectionSignature == signatureAtStart) {
+      _form.markConnectionTested();
+    }
+  }
+
+  void _next() {
+    final failure = _form.stepError(_tab);
+    setState(() {
+      _error = failure;
+      if (failure == null) _tab += 1;
+    });
   }
 
   Future<void> _save() async {
     if (_saving) return;
-    final validation = _form.validationError;
-    if (validation != null) {
-      setState(() => _saveError = validation);
-      return;
-    }
     final candidate = _form.toServer();
     final identity = serverIdentity(candidate, widget.savedProfiles);
-    if (identity == null) {
-      setState(() => _saveError = 'Select an existing credential profile.');
-      return;
-    }
     for (final existing in [...widget.existingServers, if (widget.source != null) widget.source!]) {
-      if (existing.id != candidate.id &&
+      if (identity != null &&
+          existing.id != candidate.id &&
           serverIdentity(existing, widget.savedProfiles) == identity) {
-        setState(() => _saveError = DuplicateServerException(existing.name).toString());
+        setState(
+          () => _error =
+              'The same host, port, SSH user and authentication method already exist as '
+              '"${existing.name}". Existing server unchanged.',
+        );
         return;
       }
     }
+    setState(() => _error = null);
+    // An untested configuration can still be saved, but only deliberately (both apps): a host may be
+    // reachable through a route this phone's check cannot reproduce, and the real SSH handshake still
+    // asks to trust the host key on first connect.
     if (_form.requiresConnectionTest && !await _confirmUnverifiedSave()) return;
     final duplicate = _duplicateHost();
     if (duplicate != null && !await _confirmDuplicate(duplicate)) return;
-
     if (!mounted) return;
-    setState(() {
-      _saving = true;
-      _saveError = null;
-    });
+    setState(() => _saving = true);
     try {
-      await widget.onSave(_form.toServer());
+      await widget.onSave(_form.toServer(), createProfile: _form.saveProfile);
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
-      if (mounted) setState(() => _saveError = 'Could not save host: $error');
+      if (mounted) setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  /// Keeps host-key verification prominent without making an advisory network check a hard gate.
-  ///
-  /// A server can be reachable through a route this device's probe cannot reproduce, and a typo can
-  /// still be corrected after saving. The actual SSH handshake remains authoritative: its host-key
-  /// prompt is not bypassed here, so saving an unchecked row never means trusting an unchecked key.
   Future<bool> _confirmUnverifiedSave() async {
-    final failedCheck = _testResult != null && !_testPassed;
+    final failedCheck = _testResult != null && _testResult != 'Connection OK';
+    final l10n = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -155,12 +166,12 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
           TextButton(
             key: const ValueKey('serverForm.unverified.review'),
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Review'),
+            child: Text(l10n.review),
           ),
           FilledButton(
             key: const ValueKey('serverForm.unverified.saveAnyway'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Save anyway'),
+            child: Text(l10n.saveAnyway),
           ),
         ],
       ),
@@ -168,15 +179,10 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     return confirmed ?? false;
   }
 
-  /// An existing host already saved at the same address, or null.
-  ///
-  /// Only for a *new* host: editing one deliberately keeps its own address, so matching itself would
-  /// warn on every save. Duplicating counts as new, because that flow's whole purpose is a second
-  /// entry — usually a different credential on the same machine, which is exactly the case the
-  /// warning exists to let through rather than block.
+  /// An existing host already saved at the same address — new and duplicated hosts only.
   Server? _duplicateHost() {
     if (widget.mode == ServerFormMode.edit) return null;
-    final address = _form.toServer().host.trim().toLowerCase();
+    final address = _form.host.trim().toLowerCase();
     if (address.isEmpty) return null;
     for (final server in widget.existingServers) {
       if (server.id != (widget.source?.id ?? 0) && server.host.trim().toLowerCase() == address) {
@@ -186,33 +192,26 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     return null;
   }
 
-  /// Warns that the address is already saved, and lets the user proceed anyway.
-  ///
-  /// Deliberately not a validation error: two entries for one machine is a legitimate setup (a root
-  /// login and an unprivileged one, say), so this reports the collision and leaves the decision with
-  /// the user rather than refusing the save.
   Future<bool> _confirmDuplicate(Server duplicate) async {
     final display = HostDisplay.instance;
+    final l10n = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('serverForm.duplicate.dialog'),
-        title: const Text('Duplicate IP address'),
-        content: Text(
-          'Host ${display.name(duplicate)} already uses ${display.host(duplicate)}. '
-          'A different SSH user, authentication method or port is a separate connection. '
-          'A different display name alone is not.',
-        ),
+        scrollable: true,
+        title: Text(l10n.duplicateIpAddress),
+        content: Text(l10n.duplicateHostBody(display.name(duplicate), display.host(duplicate))),
         actions: [
           TextButton(
             key: const ValueKey('serverForm.duplicate.review'),
             onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Review'),
+            child: Text(l10n.review),
           ),
           FilledButton(
             key: const ValueKey('serverForm.duplicate.saveAnyway'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Save anyway'),
+            child: Text(l10n.saveAnyway),
           ),
         ],
       ),
@@ -222,378 +221,577 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return DefaultTabController(
-      length: 3,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-        child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.85,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxHeight < 260;
-              final tabs = TabBar(
-                key: const ValueKey('serverForm.tabs'),
-                isScrollable: compact,
-                tabAlignment: compact ? TabAlignment.start : TabAlignment.fill,
-                tabs: const [
-                  Tab(text: 'Connect'),
-                  Tab(text: 'Auth'),
-                  Tab(text: 'Advanced'),
-                ],
-              );
-              final close = IconButton(
-                tooltip: 'Close',
-                key: const ValueKey('serverForm.close'),
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.of(context).pop(),
-              );
-              return Column(
+    final l10n = AppLocalizations.of(context);
+    final media = MediaQuery.of(context);
+    return AlertDialog(
+      key: const ValueKey('serverForm.dialog'),
+      // Kotlin keeps the title fixed and scrolls the steps (capped at 560dp). With the keyboard up
+      // on a phone — or in landscape — the title and buttons alone may not fit, so the whole dialog
+      // scrolls instead rather than overflowing.
+      scrollable: media.size.height - media.viewInsets.bottom < 420,
+      title: Text(_title),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 560),
+          child: SingleChildScrollView(
+            child: ListenableBuilder(
+              listenable: _form,
+              builder: (context, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (compact)
-                    Semantics(
-                      label: _title,
-                      child: Padding(
-                        key: const ValueKey('serverForm.compactHeader'),
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Row(
-                          children: [
-                            Expanded(child: tabs),
-                            close,
-                          ],
-                        ),
-                      ),
-                    )
-                  else ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(_title, style: Theme.of(context).textTheme.titleLarge),
-                          ),
-                          close,
-                        ],
-                      ),
-                    ),
-                    tabs,
-                  ],
-                  Expanded(
-                    child: ListenableBuilder(
-                      listenable: _form,
-                      builder: (context, _) => TabBarView(
-                        children: [
-                          _ConnectTab(form: _form, existingServers: widget.existingServers),
-                          _AuthTab(
-                            form: _form,
-                            savedKeyAliases: widget.savedKeyAliases,
-                            savedProfiles: widget.savedProfiles,
-                          ),
-                          _AdvancedTab(form: _form),
-                        ],
-                      ),
-                    ),
+                  OmniTabRow(
+                    key: const ValueKey('serverForm.tabs'),
+                    labels: [l10n.connection, l10n.credentials, l10n.advanced],
+                    selectedIndex: _tab,
+                    onSelected: (i) => setState(() => _tab = i),
+                    tabKeys: const [
+                      ValueKey('serverForm.tab.connect'),
+                      ValueKey('serverForm.tab.auth'),
+                      ValueKey('serverForm.tab.advanced'),
+                    ],
                   ),
-                  if (_testResult != null)
+                  const SizedBox(height: 16),
+                  if (_error != null)
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
-                        _testResult!,
-                        key: const ValueKey('serverForm.testResult'),
-                        style: TextStyle(
-                          color: _testPassed ? OmniColors.green : OmniColors.red,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  if (_saveError != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      child: Text(
-                        _saveError!,
+                        _error!,
                         key: const ValueKey('serverForm.error'),
-                        style: const TextStyle(color: OmniColors.red, fontSize: 12),
+                        style: composeDialogBody(fontSize: 12, color: const Color(0xFFFF0000)),
                       ),
                     ),
-                  Padding(
-                    padding: EdgeInsets.all(compact ? 8 : 12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            key: const ValueKey('serverForm.test'),
-                            onPressed: _testing || widget.onTestConnection == null ? null : _test,
-                            icon: _testing
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.wifi_tethering, size: 18),
-                            label: Text(_testing ? 'Testing…' : 'Test connection'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: ListenableBuilder(
-                            listenable: _form,
-                            builder: (context, _) => FilledButton(
-                              key: const ValueKey('serverForm.save'),
-                              onPressed: _saving ? null : _save,
-                              child: _saving
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        semanticsLabel: 'Saving host…',
-                                      ),
-                                    )
-                                  : Text(
-                                      _form.requiresConnectionTest ? 'Save anyway' : 'Save',
-                                      style: TextStyle(color: scheme.onPrimary),
-                                    ),
-                            ),
-                          ),
-                        ),
-                      ],
+                  switch (_tab) {
+                    0 => _ConnectionStep(form: _form, existingServers: widget.existingServers),
+                    1 => _CredentialsStep(
+                      form: _form,
+                      savedKeyAliases: widget.savedKeyAliases,
+                      savedProfiles: widget.savedProfiles,
+                      testing: _testing,
+                      testResult: _testResult,
+                      onTest: widget.onTestConnection == null || _testing ? null : _test,
                     ),
-                  ),
+                    _ => _AdvancedStep(form: _form, savedKeyAliases: widget.savedKeyAliases),
+                  },
                 ],
-              );
-            },
+              ),
+            ),
           ),
         ),
       ),
+      actions: [
+        TextButton(
+          key: const ValueKey('serverForm.back'),
+          onPressed: _saving
+              ? null
+              : () => _tab > 0 ? setState(() => _tab -= 1) : Navigator.of(context).pop(),
+          child: Text(_tab > 0 ? 'Back' : l10n.cancel),
+        ),
+        if (_tab < 2)
+          FilledButton(
+            key: const ValueKey('serverForm.next'),
+            onPressed: _next,
+            child: Text(l10n.next),
+          )
+        else
+          FilledButton(
+            key: const ValueKey('serverForm.save'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 8),
+                      Text('Saving server…'),
+                    ],
+                  )
+                : Text(widget.mode == ServerFormMode.edit ? 'Update Server' : 'Save Server'),
+          ),
+      ],
     );
   }
 }
 
-class _ConnectTab extends StatelessWidget {
-  const _ConnectTab({required this.form, required this.existingServers});
+/// Kotlin `activeTab == 0`.
+class _ConnectionStep extends StatelessWidget {
+  const _ConnectionStep({required this.form, required this.existingServers});
 
   final ServerFormState form;
   final List<Server> existingServers;
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      key: const ValueKey('serverForm.tab.connect'),
-      padding: const EdgeInsets.all(16),
+    final l10n = AppLocalizations.of(context);
+    final scheme = Theme.of(context).colorScheme;
+    final portFailure = portError(form.port);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 8,
       children: [
         _Field(
           fieldKey: 'serverForm.name',
-          label: 'Display name',
+          label: l10n.displayNameUnique,
           initial: form.name,
           onChanged: (v) => form.update(() => form.name = v),
         ),
         _Field(
           fieldKey: 'serverForm.host',
-          label: 'Host or IP',
+          label: l10n.ipAddressHostname,
           initial: form.host,
+          keyboardType: TextInputType.url,
           onChanged: (v) => form.update(() => form.host = v),
         ),
         _Field(
           fieldKey: 'serverForm.port',
-          label: 'Port',
+          label: l10n.sshPort,
           initial: form.port,
           keyboardType: TextInputType.number,
-          onChanged: (v) => form.update(() => form.port = v),
+          errorText: portFailure,
+          onChanged: (v) => form.update(() => form.port = v.replaceAll(RegExp(r'\D'), '')),
         ),
-        _Field(
-          fieldKey: 'serverForm.username',
-          label: 'Username',
-          initial: form.username,
-          onChanged: (v) => form.update(() => form.username = v),
+        _GroupField(form: form, groups: ServerFormState.groupOptions(existingServers)),
+        Text(
+          l10n.accentColor,
+          style: composeDialogBody(fontSize: 12, color: scheme.onSurfaceVariant),
         ),
-        const SizedBox(height: 8),
-        // Offering the labels already in use stops a typo silently forking a near-duplicate group.
-        DropdownButtonFormField<String>(
-          key: const ValueKey('serverForm.group'),
-          initialValue: ServerFormState.groupOptions(existingServers).contains(form.group)
-              ? form.group
-              : 'Default',
-          decoration: omniInputDecoration(context, labelText: 'Group'),
-          items: [
-            for (final group in ServerFormState.groupOptions(existingServers))
-              DropdownMenuItem(value: group, child: Text(group)),
+        Wrap(
+          key: const ValueKey('serverForm.colours'),
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final (name, colour) in OmniColors.namedColors)
+              Semantics(
+                label: name,
+                selected: form.serverColor == name,
+                button: true,
+                child: GestureDetector(
+                  key: ValueKey('serverForm.colour.$name'),
+                  onTap: () => form.update(() => form.serverColor = name),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: colour,
+                      shape: BoxShape.circle,
+                      border: form.serverColor == name
+                          ? Border.all(color: scheme.onSurface, width: 3)
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
           ],
-          onChanged: (v) => form.update(() => form.group = v ?? 'Default'),
         ),
-        const SizedBox(height: 12),
-        _ColourPicker(form: form),
       ],
     );
   }
 }
 
-class _AuthTab extends StatelessWidget {
-  const _AuthTab({required this.form, required this.savedKeyAliases, required this.savedProfiles});
+/// Kotlin's group field: free text, with an arrow that offers the labels already in use so a typo
+/// cannot silently fork a near-duplicate group.
+class _GroupField extends StatelessWidget {
+  const _GroupField({required this.form, required this.groups});
+
+  final ServerFormState form;
+  final List<String> groups;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return _Field(
+      fieldKey: 'serverForm.group',
+      label: l10n.groupOptional,
+      initial: form.group,
+      onChanged: (v) => form.update(() => form.group = v),
+      suffix: PopupMenuButton<String>(
+        key: const ValueKey('serverForm.group.pick'),
+        tooltip: 'Pick existing group',
+        icon: const Icon(Icons.arrow_drop_down),
+        onSelected: (g) => form.update(() => form.group = g),
+        itemBuilder: (_) => [for (final g in groups) PopupMenuItem(value: g, child: Text(g))],
+      ),
+    );
+  }
+}
+
+/// Kotlin `activeTab == 1`.
+class _CredentialsStep extends StatelessWidget {
+  const _CredentialsStep({
+    required this.form,
+    required this.savedKeyAliases,
+    required this.savedProfiles,
+    required this.testing,
+    required this.testResult,
+    required this.onTest,
+  });
 
   final ServerFormState form;
   final List<String> savedKeyAliases;
   final List<CredentialProfile> savedProfiles;
+  final bool testing;
+  final String? testResult;
+  final VoidCallback? onTest;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return ListView(
-      key: const ValueKey('serverForm.tab.auth'),
-      padding: const EdgeInsets.all(16),
+    final l10n = AppLocalizations.of(context);
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final profileAuth = form.authType == 'profile';
+    Widget radio(String value, String label) => Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        SegmentedButton<String>(
-          key: const ValueKey('serverForm.authType'),
-          segments: const [
-            ButtonSegment(value: 'password', label: Text('Password')),
-            ButtonSegment(value: 'key', label: Text('Key')),
-            ButtonSegment(value: 'profile', label: Text('Profile')),
-          ],
-          selected: {form.authType},
-          onSelectionChanged: (s) => form.update(() => form.authType = s.first),
+        Radio<String>(
+          key: ValueKey('serverForm.authType.$value'),
+          value: value,
+          // ignore: deprecated_member_use
+          groupValue: form.authType,
+          // ignore: deprecated_member_use
+          onChanged: (v) => form.update(() => form.authType = v ?? value),
         ),
-        const SizedBox(height: 16),
-        if (form.authType == 'password')
+        Flexible(child: Text(label, style: composeDialogBody())),
+      ],
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 10,
+      children: [
+        _Field(
+          fieldKey: 'serverForm.username',
+          label: l10n.sshUsername,
+          initial: form.username,
+          enabled: !profileAuth,
+          helperText: profileAuth ? l10n.providedByTheSelectedProfile : null,
+          onChanged: (v) => form.update(() => form.username = v),
+        ),
+        Wrap(
+          key: const ValueKey('serverForm.authType'),
+          spacing: 16,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            radio('password', l10n.password),
+            radio('key', l10n.sshPrivateKey),
+            radio('profile', l10n.profile),
+          ],
+        ),
+        if (form.authType == 'password') ...[
           _SecretField(
             fieldKey: 'serverForm.password',
-            label: 'Password',
+            label: 'SSH Password',
             hasStored: form.hasStoredPassword,
             forget: form.forgetPassword,
             onChanged: (v) => form.update(() => form.password = v),
             onForgetChanged: (v) => form.update(() => form.forgetPassword = v),
           ),
-        if (form.authType == 'key')
-          DropdownButtonFormField<String>(
-            key: const ValueKey('serverForm.key'),
-            initialValue: savedKeyAliases.contains(form.selectedKeyAlias)
-                ? form.selectedKeyAlias
-                : null,
-            decoration: omniInputDecoration(context, labelText: 'Saved key'),
-            items: [
-              for (final alias in savedKeyAliases)
-                DropdownMenuItem(value: alias, child: Text(alias)),
+          Row(
+            children: [
+              Checkbox(
+                key: const ValueKey('serverForm.saveProfile'),
+                value: form.saveProfile,
+                onChanged: (v) => form.update(() => form.saveProfile = v ?? false),
+              ),
+              Expanded(
+                child: Text(
+                  l10n.saveSecurelyToCredentialStore,
+                  style: composeDialogBody(fontSize: 12, color: muted),
+                ),
+              ),
             ],
-            onChanged: (v) => form.update(() => form.selectedKeyAlias = v ?? ''),
           ),
-        if (form.authType == 'profile')
-          DropdownButtonFormField<int>(
-            key: const ValueKey('serverForm.profile'),
-            initialValue: savedProfiles.any((p) => p.id == form.selectedProfileId)
-                ? form.selectedProfileId
-                : null,
-            decoration: omniInputDecoration(context, labelText: 'Credential profile'),
-            items: [
-              for (final profile in savedProfiles)
-                DropdownMenuItem(value: profile.id, child: Text(profile.profileName)),
-            ],
-            onChanged: (id) => form.update(() => form.selectedProfileId = id),
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Text(
+              form.saveProfile
+                  ? l10n.aNewCredentialsProfileWillBe
+                  : l10n.eitherWayThePasswordIsStored,
+              key: const ValueKey('serverForm.saveProfile.note'),
+              style: composeDialogBody(
+                fontSize: 11,
+                color: form.saveProfile ? _kotlinGreen : muted,
+              ),
+            ),
           ),
-        if (form.authType == 'profile' && savedProfiles.isEmpty)
+        ] else if (form.authType == 'key') ...[
+          if (savedKeyAliases.isEmpty)
+            Text(l10n.noSshKeysSavedYetGo, style: composeDialogBody(fontSize: 12, color: muted))
+          else ...[
+            Text(l10n.selectKeypairAlias, style: composeDialogBody()),
+            Wrap(
+              key: const ValueKey('serverForm.key'),
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final alias in savedKeyAliases)
+                  FilterChip(
+                    key: ValueKey('serverForm.key.$alias'),
+                    label: Text(alias),
+                    selected: form.selectedKeyAlias == alias,
+                    onSelected: (_) => form.update(() => form.selectedKeyAlias = alias),
+                  ),
+              ],
+            ),
+          ],
+        ] else ...[
+          if (savedProfiles.isEmpty)
+            Text(
+              l10n.noCredentialsProfilesFoundGoTo,
+              style: composeDialogBody(fontSize: 12, color: muted),
+            )
+          else ...[
+            Text(l10n.selectCredentialsProfile, style: composeDialogBody()),
+            SizedBox(
+              key: const ValueKey('serverForm.profile'),
+              height: 100,
+              child: ListView(
+                children: [
+                  for (final profile in savedProfiles)
+                    InkWell(
+                      key: ValueKey('serverForm.profile.${profile.id}'),
+                      onTap: () => form.update(() => form.selectedProfileId = profile.id),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Radio<int>(
+                              value: profile.id,
+                              // ignore: deprecated_member_use
+                              groupValue: form.selectedProfileId,
+                              // ignore: deprecated_member_use
+                              onChanged: (_) =>
+                                  form.update(() => form.selectedProfileId = profile.id),
+                            ),
+                            const SizedBox(width: 8),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(profile.profileName, style: composeDialogBody()),
+                                Text(
+                                  'User: ${profile.username}',
+                                  style: composeDialogBody(fontSize: 11, color: muted),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+        // A REAL SSH connection + credential test, not a TCP ping.
+        if (testResult != null)
           Text(
-            'No credential profiles saved. Add one in Tools → Auth keys.',
-            style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+            testResult!,
+            key: const ValueKey('serverForm.testResult'),
+            style: composeDialogBody(
+              fontSize: 12,
+              color: testResult == 'Connection OK' ? _kotlinGreen : const Color(0xFFFF0000),
+            ),
           ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton(
+            key: const ValueKey('serverForm.test'),
+            onPressed: onTest,
+            child: testing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(l10n.testConnection),
+          ),
+        ),
       ],
     );
   }
 }
 
-class _AdvancedTab extends StatelessWidget {
-  const _AdvancedTab({required this.form});
+/// Kotlin `activeTab == 2`.
+class _AdvancedStep extends StatelessWidget {
+  const _AdvancedStep({required this.form, required this.savedKeyAliases});
 
   final ServerFormState form;
+  final List<String> savedKeyAliases;
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      key: const ValueKey('serverForm.tab.advanced'),
-      padding: const EdgeInsets.all(16),
+    final l10n = AppLocalizations.of(context);
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    Widget check(
+      String key,
+      bool value,
+      ValueChanged<bool> onChanged,
+      String title, [
+      String? body,
+    ]) => Row(
+      children: [
+        Checkbox(
+          key: ValueKey('serverForm.$key'),
+          value: value,
+          onChanged: (v) => onChanged(v ?? false),
+        ),
+        Expanded(
+          child: body == null
+              ? Text(title, style: composeDialogBody())
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: composeDialogBody()),
+                    Text(body, style: composeDialogBody(fontSize: 11, color: muted)),
+                  ],
+                ),
+        ),
+      ],
+    );
+    final jump = form.proxyType == 'ssh';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 8,
       children: [
         _Field(
           fieldKey: 'serverForm.notes',
-          label: 'Notes',
+          label: l10n.serverNotes,
           initial: form.notes,
+          minLines: 2,
           onChanged: (v) => form.update(() => form.notes = v),
         ),
-        _Field(
-          fieldKey: 'serverForm.keepAlive',
-          label: 'Keepalive (seconds)',
-          initial: form.keepAlive,
-          keyboardType: TextInputType.number,
-          onChanged: (v) => form.update(() => form.keepAlive = v),
+        Text(l10n.keepAliveInterval, style: composeDialogBody()),
+        Wrap(
+          key: const ValueKey('serverForm.keepAlive'),
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final seconds in const ['10', '20', '30', '60', '120'])
+              FilterChip(
+                key: ValueKey('serverForm.keepAlive.$seconds'),
+                label: Text('${seconds}s'),
+                selected: form.keepAlive == seconds,
+                onSelected: (_) => form.update(() => form.keepAlive = seconds),
+              ),
+          ],
         ),
-        SwitchListTile(
-          key: const ValueKey('serverForm.compression'),
-          title: const Text('SSH compression'),
-          subtitle: const Text('Reduces bandwidth on slow links (zlib after authentication)'),
-          value: form.compression,
-          onChanged: (v) => form.update(() => form.compression = v),
+        check(
+          'compression',
+          form.compression,
+          (v) => form.update(() => form.compression = v),
+          l10n.useSshPayloadCompression,
         ),
-        SwitchListTile(
-          key: const ValueKey('serverForm.persistentSession'),
-          title: const Text('Persistent session (tmux)'),
-          subtitle: const Text('Survives a dropped connection'),
-          value: form.persistentSession,
-          onChanged: (v) => form.update(() => form.persistentSession = v),
+        check(
+          'persistentSession',
+          form.persistentSession,
+          (v) => form.update(() => form.persistentSession = v),
+          l10n.persistentSessionTmux,
+          "Runs shells inside tmux so a dropped connection reconnects and long-running commands keep "
+              "going. Requires tmux on the host — you'll be offered to install it on first connect.",
         ),
-        SwitchListTile(
-          key: const ValueKey('serverForm.agentForwarding'),
-          title: const Text('Agent forwarding'),
-          // Worth stating plainly: this grants the remote use of the key for the session.
-          subtitle: const Text('Lets onward hops use your key. Off by default.'),
-          value: form.agentForwarding,
-          onChanged: (v) => form.update(() => form.agentForwarding = v),
+        check(
+          'agentForwarding',
+          form.agentForwarding,
+          (v) => form.update(() => form.agentForwarding = v),
+          l10n.forwardSshAgentSshA,
+          'Lets onward SSH hops from this host authenticate with the key you connect with, without '
+              'copying it to the server. Only enable for hosts you trust.',
         ),
-        const SizedBox(height: 8),
         _SecretField(
           fieldKey: 'serverForm.sudoPassword',
-          label: 'Sudo password',
+          label: 'Sudo password (optional)',
           hasStored: form.hasStoredSudoPassword,
           forget: form.forgetSudoPassword,
           onChanged: (v) => form.update(() => form.sudoPassword = v),
           onForgetChanged: (v) => form.update(() => form.forgetSudoPassword = v),
         ),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
+        const SizedBox(height: 4),
+        Text(l10n.proxySshJump, style: composeDialogBody(fontWeight: FontWeight.bold)),
+        Wrap(
           key: const ValueKey('serverForm.proxyType'),
-          initialValue: form.proxyType,
-          decoration: omniInputDecoration(context, labelText: 'Proxy'),
-          items: const [
-            DropdownMenuItem(value: 'none', child: Text('None')),
-            DropdownMenuItem(value: 'http', child: Text('HTTP')),
-            DropdownMenuItem(value: 'socks5', child: Text('SOCKS5')),
-            DropdownMenuItem(value: 'ssh', child: Text('SSH jump host')),
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final (value, label) in const [
+              ('none', 'None'),
+              ('http', 'HTTP'),
+              ('socks5', 'SOCKS5'),
+              ('ssh', 'SSH Jump'),
+            ])
+              FilterChip(
+                key: ValueKey('serverForm.proxyType.$value'),
+                label: Text(label, style: const TextStyle(fontSize: 11)),
+                selected: form.proxyType == value,
+                onSelected: (_) => form.update(() => form.proxyType = value),
+              ),
           ],
-          onChanged: (v) => form.update(() => form.proxyType = v ?? 'none'),
         ),
         if (form.proxyType != 'none') ...[
-          _Field(
-            fieldKey: 'serverForm.proxyHost',
-            label: 'Proxy host',
-            initial: form.proxyHost,
-            onChanged: (v) => form.update(() => form.proxyHost = v),
-          ),
-          _Field(
-            fieldKey: 'serverForm.proxyPort',
-            label: 'Proxy port',
-            initial: form.proxyPort,
-            keyboardType: TextInputType.number,
-            onChanged: (v) => form.update(() => form.proxyPort = v),
+          Row(
+            spacing: 8,
+            children: [
+              Expanded(
+                flex: 2,
+                child: _Field(
+                  fieldKey: 'serverForm.proxyHost',
+                  label: l10n.proxyHost,
+                  initial: form.proxyHost,
+                  onChanged: (v) => form.update(() => form.proxyHost = v),
+                ),
+              ),
+              Expanded(
+                child: _Field(
+                  fieldKey: 'serverForm.proxyPort',
+                  label: l10n.port,
+                  initial: form.proxyPort,
+                  keyboardType: TextInputType.number,
+                  errorText: form.proxyPort.trim().isNotEmpty ? portError(form.proxyPort) : null,
+                  onChanged: (v) =>
+                      form.update(() => form.proxyPort = v.replaceAll(RegExp(r'\D'), '')),
+                ),
+              ),
+            ],
           ),
           _Field(
             fieldKey: 'serverForm.proxyUser',
-            label: 'Proxy user',
+            label: jump ? 'Jump user (optional)' : 'Proxy user (optional)',
             initial: form.proxyUser,
             onChanged: (v) => form.update(() => form.proxyUser = v),
           ),
           _SecretField(
             fieldKey: 'serverForm.proxyPassword',
-            label: 'Proxy password',
+            label: jump ? 'Jump password (optional)' : 'Proxy password (optional)',
             hasStored: form.hasStoredProxyPassword,
             forget: form.forgetProxyPassword,
             onChanged: (v) => form.update(() => form.proxyPassword = v),
             onForgetChanged: (v) => form.update(() => form.forgetProxyPassword = v),
           ),
+          if (jump) ...[
+            Text(l10n.jumpHostKeyOptional, style: composeDialogBody(fontSize: 12)),
+            if (savedKeyAliases.isEmpty)
+              Text(l10n.noSshKeysSavedYetGo, style: composeDialogBody(fontSize: 12, color: muted))
+            else
+              Wrap(
+                key: const ValueKey('serverForm.proxyKey'),
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final alias in savedKeyAliases)
+                    FilterChip(
+                      key: ValueKey('serverForm.proxyKey.$alias'),
+                      label: Text(alias),
+                      selected: form.proxyKeyAlias == alias,
+                      // Tap again to deselect — key auth on the jump host is optional.
+                      onSelected: (_) => form.update(
+                        () => form.proxyKeyAlias = form.proxyKeyAlias == alias ? '' : alias,
+                      ),
+                    ),
+                ],
+              ),
+          ],
         ],
       ],
     );
@@ -607,6 +805,11 @@ class _Field extends StatelessWidget {
     required this.initial,
     required this.onChanged,
     this.keyboardType,
+    this.errorText,
+    this.helperText,
+    this.enabled = true,
+    this.minLines,
+    this.suffix,
   });
 
   final String fieldKey;
@@ -614,26 +817,30 @@ class _Field extends StatelessWidget {
   final String initial;
   final ValueChanged<String> onChanged;
   final TextInputType? keyboardType;
+  final String? errorText;
+  final String? helperText;
+  final bool enabled;
+  final int? minLines;
+  final Widget? suffix;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: TextFormField(
-        key: ValueKey(fieldKey),
-        initialValue: initial,
-        keyboardType: keyboardType,
-        decoration: omniInputDecoration(context, labelText: label),
-        onChanged: onChanged,
-      ),
-    );
-  }
+  Widget build(BuildContext context) => TextFormField(
+    key: ValueKey(fieldKey),
+    initialValue: initial,
+    keyboardType: minLines != null ? TextInputType.multiline : keyboardType,
+    minLines: minLines,
+    maxLines: minLines == null ? 1 : null,
+    enabled: enabled,
+    decoration: omniInputDecoration(
+      context,
+      labelText: label,
+    ).copyWith(errorText: errorText, helperText: helperText, suffixIcon: suffix),
+    onChanged: onChanged,
+  );
 }
 
-/// A password field that never shows what is stored.
-///
-/// When a secret is already saved the field stays empty and the hint says so; clearing it requires
-/// the explicit "Forget" tick. See [ServerFormState] for why.
+/// Kotlin's `StoredSecretField`: never displays a stored secret. With one saved and nothing typed,
+/// it says leaving the field blank keeps it, and offers Forget to remove it on save.
 class _SecretField extends StatelessWidget {
   const _SecretField({
     required this.fieldKey,
@@ -653,52 +860,81 @@ class _SecretField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextFormField(
-          key: ValueKey(fieldKey),
-          obscureText: true,
-          decoration: omniInputDecoration(
-            context,
-            labelText: label,
-            hintText: hasStored ? 'Saved — leave blank to keep' : null,
-          ),
-          onChanged: onChanged,
-        ),
-        if (hasStored)
-          CheckboxListTile(
-            key: ValueKey('$fieldKey.forget'),
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: Text('Forget the saved $label', style: const TextStyle(fontSize: 12)),
-            value: forget,
-            onChanged: (v) => onForgetChanged(v ?? false),
-          ),
-      ],
+    return _SecretFieldBody(
+      fieldKey: fieldKey,
+      label: label,
+      hasStored: hasStored,
+      forget: forget,
+      onChanged: onChanged,
+      onForgetChanged: onForgetChanged,
     );
   }
 }
 
-class _ColourPicker extends StatelessWidget {
-  const _ColourPicker({required this.form});
+class _SecretFieldBody extends StatefulWidget {
+  const _SecretFieldBody({
+    required this.fieldKey,
+    required this.label,
+    required this.hasStored,
+    required this.forget,
+    required this.onChanged,
+    required this.onForgetChanged,
+  });
 
-  final ServerFormState form;
+  final String fieldKey;
+  final String label;
+  final bool hasStored;
+  final bool forget;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<bool> onForgetChanged;
+
+  @override
+  State<_SecretFieldBody> createState() => _SecretFieldBodyState();
+}
+
+class _SecretFieldBodyState extends State<_SecretFieldBody> {
+  bool _empty = true;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      key: const ValueKey('serverForm.colours'),
-      spacing: 8,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final (name, colour) in OmniColors.namedColors)
-          ChoiceChip(
-            key: ValueKey('serverForm.colour.$name'),
-            label: Text(name),
-            avatar: CircleAvatar(backgroundColor: colour, radius: 7),
-            selected: form.serverColor == name,
-            onSelected: (_) => form.update(() => form.serverColor = name),
+        OmniPasswordField(
+          fieldKey: ValueKey(widget.fieldKey),
+          label: widget.label,
+          onChanged: (v) {
+            setState(() => _empty = v.isEmpty);
+            widget.onChanged(v);
+          },
+        ),
+        if (widget.hasStored && _empty)
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.forget
+                      ? 'Saved password will be removed when you save.'
+                      : 'A password is saved (never shown here). Leave blank to keep it, or type to '
+                            'replace.',
+                  key: ValueKey('${widget.fieldKey}.stored'),
+                  style: composeDialogBody(
+                    fontSize: 11,
+                    color: widget.forget
+                        ? const Color(0xFFFF0000)
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              TextButton(
+                key: ValueKey('${widget.fieldKey}.forget'),
+                onPressed: () => widget.onForgetChanged(!widget.forget),
+                child: Text(
+                  widget.forget ? 'Keep' : 'Forget',
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+            ],
           ),
       ],
     );

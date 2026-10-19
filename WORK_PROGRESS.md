@@ -1,5 +1,14 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 19: Kotlin's add-host wizard and Quick connect dialog, and labels from strings.xml — local/runtime complete
+
+- Flutter's text now comes from Kotlin's `strings.xml`: `scripts/generate-flutter-strings.py` writes `lib/l10n/app_en.arb` (566 strings, `%1$s` placeholders become ICU arguments) and the official `gen-l10n` builds `AppLocalizations` from it on `flutter pub get`. `--check` fails the local gate and Flutter PR Check when the ARB is stale. Screens move to `AppLocalizations` as each one is brought into line.
+- Add/edit/duplicate host is now Kotlin's `AddServerSheet`: a dialog with Connection, Credentials and Advanced steps, Next/Back, Kotlin's labels, step validation messages, keep-alive chips, proxy chips and "Save Server"/"Update Server". The "Save securely to Credential Store" option, which Flutter lacked, creates the credential profile Kotlin creates, and is refused at the free Play Store limit with Kotlin's message. Save without a passing test still asks first ("Save anyway", ported to Kotlin in #123).
+- Quick connect is now Kotlin's dialog rather than a password-only sheet: password, saved key or credential profile; None/SSH jump/HTTP/SOCKS5 proxy with "Use a saved host…" (copies the jump host's key, never its password); Connect stays enabled and a rejected form says why in Kotlin's words. The connection gets a negative id, as in Kotlin, so it can never match a saved host or the `0` alert rules use for "all hosts", and it is never persistent.
+- The parity audit only counts a Kotlin label as present in Flutter when a Flutter screen reads it; the generated localisation files hold every string and would otherwise mark all of them present. Baseline: 372 known differences, down from 413.
+- Controls: every new widget test fails when its behaviour is reverted (the Credential Store profile, the jump host password copy, the empty-profile message).
+- Validation: `./scripts/local-pr-check.sh --full` passed (2,951 Flutter tests, seven optional skips; API 35 instrumentation 24 passes, 42 opt-in assumptions unexecuted). The Flutter core device profile passed at 420 dpi (10 suites, 27 tests, zero skips). On the API 35 emulator against the repository fixture host: the wizard tested, trusted and saved a password host with "Save securely to Credential Store", and Quick connect reached the same host through the profile that save created.
+
 ## October 19: Alerts permission sync, dependency updates and an Actions allowlist guard — local/runtime complete
 
 - Kotlin now has the three Flutter-only additions (merged to main in #122): the blocked-notifications note on Alerts, "Ad privacy choices" on About in Play Store builds only, and key import errors inside the dialog. Flutter's "SSH tunnels are not available in this build" note has no Kotlin counterpart because every Kotlin build has forwarding.

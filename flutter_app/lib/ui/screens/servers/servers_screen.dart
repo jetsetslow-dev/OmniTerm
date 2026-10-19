@@ -212,10 +212,22 @@ Future<void> openServerForm(
   final aliases = (await vm.savedKeyAliases()).toList();
   final profiles = await vm.savedProfiles();
   if (!context.mounted) return;
-  return showModalBottomSheet<void>(
+  // Kotlin's free-tier credential limit (profiles + keys) also gates "Save securely to Credential
+  // Store". Absent in tests and source builds, where there is no limit.
+  bool credentialLimitReached() {
+    LicenseController? license;
+    try {
+      license = context.read<LicenseController>();
+    } on ProviderNotFoundException {
+      license = null;
+    }
+    return isPlayStoreDistribution &&
+        !(license?.state.value.unlocked ?? true) &&
+        profiles.length + aliases.length >= 1;
+  }
+
+  return showDialog<void>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
     builder: (_) => ServerFormSheet(
       mode: mode,
       source: source,
@@ -225,8 +237,13 @@ Future<void> openServerForm(
       existingServers: vm.servers,
       savedKeyAliases: aliases,
       savedProfiles: profiles,
-      onSave: (server) =>
-          mode == ServerFormMode.edit ? vm.updateServer(server) : vm.saveServer(server),
+      onSave: (server, {createProfile = false}) => mode == ServerFormMode.edit
+          ? vm.updateServer(server)
+          : vm.saveServer(
+              server,
+              createProfile: createProfile,
+              credentialLimitReached: credentialLimitReached(),
+            ),
       onTestConnection: vm.canTestConnections ? vm.testConnection : null,
     ),
   );

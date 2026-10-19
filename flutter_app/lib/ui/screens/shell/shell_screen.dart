@@ -5,6 +5,9 @@ import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
 import '../../../domain/host_display.dart';
+import '../../../domain/input_validation.dart';
+import '../../../domain/quick_connect.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../../domain/terminal_key_encoder.dart';
 import '../../../domain/terminal_links.dart';
 import '../../../domain/terminal_soft_input.dart';
@@ -16,7 +19,6 @@ import '../../theme/typography.dart';
 import '../../view_model/shell_session.dart';
 import '../../../domain/session_age.dart';
 import '../../view_model/shell_view_model.dart';
-import '../servers/server_form_state.dart';
 import '../../widgets/terminal_key_bar.dart';
 import '../../widgets/terminal_surface.dart';
 import '../../widgets/terminal_options_dialog.dart';
@@ -250,144 +252,458 @@ Future<void> _quickConnect(
     return;
   }
 
-  final server = await showModalBottomSheet<Server>(
+  final keyAliases = await vm.savedKeyAliases();
+  final profiles = await vm.savedProfiles();
+  if (!context.mounted) return;
+  await showDialog<void>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => const _QuickConnectSheet(),
+    builder: (_) => _QuickConnectDialog(
+      vm: vm,
+      savedKeyAliases: keyAliases,
+      savedProfiles: profiles,
+      savedServers: vm.savedServers,
+    ),
   );
-  if (server != null) await vm.connect(server);
 }
 
-class _QuickConnectSheet extends StatefulWidget {
-  const _QuickConnectSheet();
+/// Kotlin's `QuickConnectSheet` in `ui/ShellScreen.kt`: built from the same pieces as the host form
+/// — the same auth types, saved keys, credential profiles and proxy/jump options — so a connection
+/// that works here works there, but nothing is written to the hosts list.
+///
+/// Add-host's "Test Connection first" is not repeated: here the connection *is* the action, and it
+/// goes through the same connect path, host-key approval included.
+class _QuickConnectDialog extends StatefulWidget {
+  const _QuickConnectDialog({
+    required this.vm,
+    required this.savedKeyAliases,
+    required this.savedProfiles,
+    required this.savedServers,
+  });
+
+  final ShellViewModel vm;
+  final List<String> savedKeyAliases;
+  final List<CredentialProfile> savedProfiles;
+  final List<Server> savedServers;
 
   @override
-  State<_QuickConnectSheet> createState() => _QuickConnectSheetState();
+  State<_QuickConnectDialog> createState() => _QuickConnectDialogState();
 }
 
-class _QuickConnectSheetState extends State<_QuickConnectSheet> {
+class _QuickConnectDialogState extends State<_QuickConnectDialog> {
   final _host = TextEditingController();
   final _port = TextEditingController(text: '22');
   final _user = TextEditingController();
   final _password = TextEditingController();
+  final _proxyHost = TextEditingController();
+  final _proxyPort = TextEditingController();
+  final _proxyUser = TextEditingController();
+  final _proxyPassword = TextEditingController();
+  String _authType = 'password';
+  String _selectedKey = '';
+  int? _selectedProfileId;
+  String _proxyType = 'none';
+  String _proxyKeyAlias = '';
+  String? _errorText;
 
   @override
   void dispose() {
-    _host.dispose();
-    _port.dispose();
-    _user.dispose();
-    _password.dispose();
+    for (final c in [
+      _host,
+      _port,
+      _user,
+      _password,
+      _proxyHost,
+      _proxyPort,
+      _proxyUser,
+      _proxyPassword,
+    ]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  bool get _valid =>
-      _host.text.trim().isNotEmpty &&
-      _user.text.trim().isNotEmpty &&
-      (int.tryParse(_port.text.trim()) ?? 0) > 0;
+  String? get _portIssue => portError(_port.text);
+  String? get _proxyPortIssue => _proxyType != 'none' ? portError(_proxyPort.text) : null;
 
-  /// The in-memory row, built by the same code the host form uses so a quick connection and a saved
-  /// one cannot drift apart in how they resolve credentials.
-  Server _build() {
-    final form = ServerFormState(mode: ServerFormMode.add)
-      ..name = _host.text.trim()
-      ..host = _host.text.trim()
-      ..port = _port.text.trim()
-      ..username = _user.text.trim()
-      ..authType = 'password'
-      ..password = _password.text;
-    return form.toServer();
+  void _connect() {
+    setState(() => _errorText = null);
+    // Field-level checks first so the message points at the offending field; the view model
+    // repeats them because it is the funnel every ad-hoc connection goes through.
+    final portIssue = _portIssue;
+    if (portIssue != null) return setState(() => _errorText = 'SSH port: $portIssue');
+    final proxyPortIssue = _proxyPortIssue;
+    if (proxyPortIssue != null) return setState(() => _errorText = 'Proxy port: $proxyPortIssue');
+    final password = _password.text;
+    final error = widget.vm.quickConnect(
+      QuickConnectInput(
+        host: _host.text,
+        port: int.tryParse(_port.text.trim()) ?? 22,
+        username: _user.text.trim(),
+        authType: _authType,
+        password: _authType == 'password' && password.trim().isNotEmpty ? password : null,
+        keyAlias: _authType == 'key' && _selectedKey.trim().isNotEmpty ? _selectedKey : null,
+        profileId: _authType == 'profile' ? _selectedProfileId : null,
+        proxyType: _proxyType,
+        proxyHost: _proxyHost.text,
+        proxyPort: int.tryParse(_proxyPort.text.trim()) ?? 0,
+        proxyUser: _proxyUser.text,
+        proxyPassword: _proxyPassword.text,
+        proxyKeyAlias: _proxyKeyAlias.trim().isNotEmpty && _proxyType == 'ssh'
+            ? _proxyKeyAlias
+            : null,
+      ),
+    );
+    // Rejected input only: the dialog stays open showing why. An accepted connection closes it and
+    // reports its own outcome in the terminal.
+    if (error != null) return setState(() => _errorText = error);
+    Navigator.of(context).pop();
   }
+
+  /// Saved hosts offered as jump hosts. A saved host's key carries over so the jump authenticates
+  /// as it does when that host is connected to directly; its password never does, because it would
+  /// be shown in a plain field.
+  Future<void> _pickSavedJumpHost() async {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final picked = await showDialog<Server>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('shell.quick.jumpPicker'),
+        title: const Text('Use a saved host as jump host'),
+        content: widget.savedServers.isEmpty
+            ? Text('No saved hosts to use as a jump host.', style: composeDialogBody())
+            : SizedBox(
+                width: double.maxFinite,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final candidate in widget.savedServers)
+                        InkWell(
+                          key: ValueKey('shell.quick.jumpPicker.${candidate.id}'),
+                          onTap: () => Navigator.of(ctx).pop(candidate),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  candidate.name,
+                                  style: composeDialogBody(fontWeight: FontWeight.bold),
+                                ),
+                                Text(
+                                  '${HostDisplay.instance.userAtHost(candidate)}:${candidate.port}',
+                                  style: composeDialogBody(fontSize: 11, color: muted),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(AppLocalizations.of(ctx).cancel),
+          ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _proxyHost.text = picked.host;
+      _proxyPort.text = picked.port.toString();
+      _proxyUser.text = picked.username;
+      _proxyKeyAlias = picked.authKeyAlias ?? '';
+      _proxyPassword.clear();
+    });
+  }
+
+  Widget _chips(
+    String group,
+    Map<String, String> options,
+    String selected,
+    void Function(String) on,
+  ) => Wrap(
+    spacing: 6,
+    children: [
+      for (final MapEntry(:key, :value) in options.entries)
+        FilterChip(
+          key: ValueKey('shell.quick.$group.$key'),
+          label: Text(value, style: composeDialogBody(fontSize: 11)),
+          selected: selected == key,
+          onSelected: (_) => setState(() => on(key)),
+        ),
+    ],
+  );
+
+  Widget _radioList<T>({
+    required String listKey,
+    required double maxHeight,
+    required List<T> items,
+    required bool Function(T) selected,
+    required void Function(T) onTap,
+    required Widget Function(T) label,
+    required String Function(T) itemKey,
+  }) => ConstrainedBox(
+    key: ValueKey(listKey),
+    constraints: BoxConstraints(maxHeight: maxHeight),
+    child: ListView(
+      shrinkWrap: true,
+      children: [
+        for (final item in items)
+          InkWell(
+            key: ValueKey('$listKey.${itemKey(item)}'),
+            onTap: () => setState(() => onTap(item)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    selected(item) ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                    size: 20,
+                    color: selected(item)
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: label(item)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+
+  Widget _field(
+    String key,
+    TextEditingController controller,
+    String label, {
+    bool obscure = false,
+    bool number = false,
+    bool enabled = true,
+    String? error,
+    String? supporting,
+  }) => TextField(
+    key: ValueKey(key),
+    controller: controller,
+    obscureText: obscure,
+    enabled: enabled,
+    keyboardType: number
+        ? TextInputType.number
+        : obscure
+        ? TextInputType.visiblePassword
+        : null,
+    decoration: omniInputDecoration(context, labelText: label).copyWith(
+      errorText: error,
+      errorStyle: const TextStyle(fontSize: 10),
+      helperText: supporting,
+      helperStyle: const TextStyle(fontSize: 10),
+    ),
+    onChanged: (_) => setState(() {}),
+  );
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
+    final l10n = AppLocalizations.of(context);
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final media = MediaQuery.of(context);
+    final profileAuth = _authType == 'profile';
+    final jump = _proxyType == 'ssh';
+    return AlertDialog(
+      key: const ValueKey('shell.quick.dialog'),
+      scrollable: media.size.height - media.viewInsets.bottom < 420,
+      title: const Text('Quick connect'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 520),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              spacing: 8,
               children: [
-                const Expanded(
-                  child: Text(
-                    'Quick connect',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                Text(
+                  'Connects without saving. Nothing here is written to your hosts list.',
+                  key: const ValueKey('shell.quick.note'),
+                  style: composeDialogBody(fontSize: 11, color: muted),
+                ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  spacing: 8,
+                  children: [
+                    Expanded(flex: 2, child: _field('shell.quick.host', _host, l10n.hostnameOrIp)),
+                    Expanded(
+                      child: _field(
+                        'shell.quick.port',
+                        _port,
+                        'Port',
+                        number: true,
+                        error: _portIssue,
+                      ),
+                    ),
+                  ],
+                ),
+                _field(
+                  'shell.quick.username',
+                  _user,
+                  'SSH username',
+                  enabled: !profileAuth,
+                  supporting: profileAuth ? 'Taken from the credential profile' : null,
+                ),
+                Text(
+                  'Authentication',
+                  style: composeDialogBody(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                _chips(
+                  'auth',
+                  const {'password': 'Password', 'key': 'SSH key', 'profile': 'Profile'},
+                  _authType,
+                  (v) => _authType = v,
+                ),
+                switch (_authType) {
+                  'password' => _field(
+                    'shell.quick.password',
+                    _password,
+                    l10n.password,
+                    obscure: true,
                   ),
+                  'key' when widget.savedKeyAliases.isEmpty => Text(
+                    'No saved SSH keys. Add one under Tools › Auth Keys.',
+                    key: const ValueKey('shell.quick.noKeys'),
+                    style: composeDialogBody(fontSize: 11, color: OmniColors.red),
+                  ),
+                  'key' => _radioList<String>(
+                    listKey: 'shell.quick.key',
+                    maxHeight: 120,
+                    items: widget.savedKeyAliases,
+                    selected: (alias) => _selectedKey == alias,
+                    onTap: (alias) => _selectedKey = alias,
+                    itemKey: (alias) => alias,
+                    label: (alias) => Text(alias, style: composeDialogBody(fontSize: 13)),
+                  ),
+                  _ when widget.savedProfiles.isEmpty => Text(
+                    'No credential profiles saved.',
+                    key: const ValueKey('shell.quick.noProfiles'),
+                    style: composeDialogBody(fontSize: 11, color: OmniColors.red),
+                  ),
+                  _ => _radioList<CredentialProfile>(
+                    listKey: 'shell.quick.profile',
+                    maxHeight: 120,
+                    items: widget.savedProfiles,
+                    selected: (profile) => _selectedProfileId == profile.id,
+                    onTap: (profile) => _selectedProfileId = profile.id,
+                    itemKey: (profile) => '${profile.id}',
+                    label: (profile) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(profile.profileName, style: composeDialogBody(fontSize: 13)),
+                        Text(
+                          'User: ${profile.username}',
+                          style: composeDialogBody(fontSize: 10, color: muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                },
+                const Divider(height: 1),
+                Text(
+                  'Proxy / jump host',
+                  style: composeDialogBody(fontSize: 12, fontWeight: FontWeight.bold),
                 ),
-                IconButton(
-                  tooltip: 'Close',
-                  key: const ValueKey('shell.quick.close'),
-                  icon: const Icon(Icons.close, size: 18),
-                  onPressed: () => Navigator.of(context).pop(),
+                _chips(
+                  'proxy',
+                  const {'none': 'None', 'ssh': 'SSH jump', 'http': 'HTTP', 'socks5': 'SOCKS5'},
+                  _proxyType,
+                  (v) => _proxyType = v,
                 ),
+                if (_proxyType != 'none') ...[
+                  if (jump && widget.savedServers.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        key: const ValueKey('shell.quick.useSavedHost'),
+                        onPressed: _pickSavedJumpHost,
+                        child: const Text('Use a saved host…', style: TextStyle(fontSize: 12)),
+                      ),
+                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    spacing: 8,
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: _field('shell.quick.proxyHost', _proxyHost, l10n.proxyHost),
+                      ),
+                      Expanded(
+                        child: _field(
+                          'shell.quick.proxyPort',
+                          _proxyPort,
+                          'Port',
+                          number: true,
+                          error: _proxyPortIssue,
+                        ),
+                      ),
+                    ],
+                  ),
+                  _field(
+                    'shell.quick.proxyUser',
+                    _proxyUser,
+                    jump ? 'Jump user (optional)' : 'Proxy user (optional)',
+                  ),
+                  _field(
+                    'shell.quick.proxyPassword',
+                    _proxyPassword,
+                    jump ? 'Jump password (optional)' : 'Proxy password (optional)',
+                    obscure: true,
+                  ),
+                  if (jump && widget.savedKeyAliases.isNotEmpty) ...[
+                    Text(
+                      'Jump host key (optional)',
+                      style: composeDialogBody(fontSize: 11, color: muted),
+                    ),
+                    _radioList<String>(
+                      listKey: 'shell.quick.jumpKey',
+                      maxHeight: 100,
+                      items: widget.savedKeyAliases,
+                      selected: (alias) => _proxyKeyAlias == alias,
+                      // Tap again to deselect: key auth on the jump host is optional.
+                      onTap: (alias) => _proxyKeyAlias = _proxyKeyAlias == alias ? '' : alias,
+                      itemKey: (alias) => alias,
+                      label: (alias) => Text(alias, style: composeDialogBody(fontSize: 13)),
+                    ),
+                  ],
+                ],
+                if (_errorText != null)
+                  Text(
+                    _errorText!,
+                    key: const ValueKey('shell.quick.error'),
+                    style: composeDialogBody(fontSize: 12, color: OmniColors.red),
+                  ),
               ],
             ),
-            Text(
-              'Nothing here is saved: the host, the username and the password live only for this '
-              'session. The host key is still checked as usual.',
-              key: const ValueKey('shell.quick.note'),
-              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    key: const ValueKey('shell.quick.host'),
-                    controller: _host,
-                    autofocus: true,
-                    decoration: omniInputDecoration(context, labelText: 'Host'),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('shell.quick.port'),
-                    controller: _port,
-                    keyboardType: TextInputType.number,
-                    decoration: omniInputDecoration(context, labelText: 'Port'),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              key: const ValueKey('shell.quick.username'),
-              controller: _user,
-              decoration: omniInputDecoration(context, labelText: 'Username'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              key: const ValueKey('shell.quick.password'),
-              controller: _password,
-              obscureText: true,
-              decoration: omniInputDecoration(
-                context,
-                labelText: 'Password',
-                helperText: 'Leave empty to try the agent or a key-less host',
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(
-                key: const ValueKey('shell.quick.connect'),
-                onPressed: _valid ? () => Navigator.of(context).pop(_build()) : null,
-                child: const Text('Connect'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
+      actions: [
+        TextButton(
+          key: const ValueKey('shell.quick.close'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        ListenableBuilder(
+          listenable: widget.vm,
+          builder: (context, _) => FilledButton(
+            key: const ValueKey('shell.quick.connect'),
+            onPressed: widget.vm.isConnecting ? null : _connect,
+            child: const Text('Connect'),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -1,0 +1,8 @@
+# Flutter's standard localisation pipeline (gen-l10n). The English template is GENERATED from the
+# Kotlin app's app/src/main/res/values/strings.xml by scripts/generate-flutter-strings.py, so both
+# apps show the same text; never edit lib/l10n/app_en.arb by hand.
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+nullable-getter: false

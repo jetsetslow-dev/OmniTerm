@@ -11,6 +11,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/domain/terminal_key_encoder.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/shell/shell_screen.dart';
 import 'package:omniterm/ui/shell_state.dart';
@@ -109,6 +110,8 @@ void main() {
           ChangeNotifierProvider<ShellViewModel>.value(value: vm),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           scrollBehavior: const PopupScrollBehavior(),
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           // Navigator overlays need the same text scale as the terminal underneath them.
@@ -2445,26 +2448,155 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('connect stays disabled until there is something to connect to', (tester) async {
+    String? quickError(WidgetTester tester) {
+      final error = find.byKey(const ValueKey('shell.quick.error'));
+      return error.evaluate().isEmpty ? null : tester.widget<Text>(error).data;
+    }
+
+    Future<void> tapConnect(WidgetTester tester) async {
+      await tester.ensureVisible(find.byKey(const ValueKey('shell.quick.connect')));
+      await tester.tap(find.byKey(const ValueKey('shell.quick.connect')));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> tapKey(WidgetTester tester, String key) async {
+      await tester.ensureVisible(find.byKey(ValueKey(key)));
+      await tester.tap(find.byKey(ValueKey(key)));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('rejected input keeps the dialog open and says why, in Kotlin\'s words', (
+      tester,
+    ) async {
+      // Kotlin keeps Connect enabled and explains a rejection instead of greying the button.
+      await repo.insertServer(server(name: 'saved'));
+      await pump(tester);
+      await openSheet(tester);
+      expect(
+        tester.widget<FilledButton>(find.byKey(const ValueKey('shell.quick.connect'))).onPressed,
+        isNotNull,
+      );
+
+      await tapConnect(tester);
+      expect(quickError(tester), 'Host is required.');
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.host')), '10.9.9.9');
+      await tapConnect(tester);
+      expect(quickError(tester), 'SSH username is required.');
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.username')), 'root');
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.port')), 'abc');
+      await tapConnect(tester);
+      expect(quickError(tester), 'SSH port: Must be a whole number');
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.port')), '22');
+      await tapKey(tester, 'shell.quick.auth.key');
+      await tapConnect(tester);
+      expect(quickError(tester), 'Select a key.');
+
+      await tapKey(tester, 'shell.quick.auth.profile');
+      await tapConnect(tester);
+      expect(quickError(tester), 'Select a credential profile.');
+
+      await tapKey(tester, 'shell.quick.auth.password');
+      await tapKey(tester, 'shell.quick.proxy.http');
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.proxyPort')), '3128');
+      await tapConnect(tester);
+      expect(quickError(tester), 'Proxy host is required for a http proxy.');
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.proxyPort')), '');
+      await tapConnect(tester);
+      expect(quickError(tester), 'Proxy port: Required');
+
+      expect(find.byKey(const ValueKey('shell.quick.dialog')), findsOneWidget);
+      expect(transport.openedWith, isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('empty key and profile lists say so, as Kotlin does', (tester) async {
       await repo.insertServer(server(name: 'saved'));
       await pump(tester);
       await openSheet(tester);
 
-      FilledButton button() =>
-          tester.widget<FilledButton>(find.byKey(const ValueKey('shell.quick.connect')));
-      expect(button().onPressed, isNull);
+      await tapKey(tester, 'shell.quick.auth.key');
+      expect(find.text('No saved SSH keys. Add one under Tools › Auth Keys.'), findsOneWidget);
+
+      await tapKey(tester, 'shell.quick.auth.profile');
+      expect(find.text('No credential profiles saved.'), findsOneWidget);
+      // The profile supplies the user, so the field is disabled and says where it comes from.
+      final user = tester.widget<TextField>(find.byKey(const ValueKey('shell.quick.username')));
+      expect(user.enabled, isFalse);
+      expect(find.text('Taken from the credential profile'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('a credential profile supplies the user and password', (tester) async {
+      await repo.insertServer(server(name: 'saved'));
+      final profileId = await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'ops',
+          username: 'deploy',
+          authType: 'password',
+          password: 'from-profile',
+          groupName: 'General',
+        ),
+      );
+      await pump(tester);
+      await openSheet(tester);
 
       await tester.enterText(find.byKey(const ValueKey('shell.quick.host')), '10.9.9.9');
-      await tester.pumpAndSettle();
-      expect(button().onPressed, isNull, reason: 'a host with no user is not a connection');
+      await tapKey(tester, 'shell.quick.auth.profile');
+      expect(find.text('User: deploy'), findsOneWidget);
+      await tapKey(tester, 'shell.quick.profile.$profileId');
+      await tapConnect(tester);
 
-      await tester.enterText(find.byKey(const ValueKey('shell.quick.username')), 'root');
-      await tester.pumpAndSettle();
-      expect(button().onPressed, isNotNull);
+      expect(quickError(tester), isNull);
+      expect(transport.openedWith.single.username, 'deploy');
+      expect(transport.openedWith.single.password, 'from-profile');
+      expect(await repo.getAllServers(), hasLength(1));
+      await finish(tester);
+    });
 
-      await tester.enterText(find.byKey(const ValueKey('shell.quick.port')), 'abc');
+    testWidgets('a saved host fills the jump fields but never its password', (tester) async {
+      await repo.insertServer(server(name: 'bastion'));
+      await pump(tester);
+      await openSheet(tester);
+
+      // Only an SSH jump can use a shell host; an HTTP proxy is not offered the picker.
+      await tapKey(tester, 'shell.quick.proxy.http');
+      expect(find.byKey(const ValueKey('shell.quick.useSavedHost')), findsNothing);
+      expect(find.text('Proxy user (optional)'), findsOneWidget);
+
+      await tapKey(tester, 'shell.quick.proxy.ssh');
+      expect(find.text('Jump user (optional)'), findsOneWidget);
+      await tapKey(tester, 'shell.quick.useSavedHost');
+      expect(find.text('Use a saved host as jump host'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('shell.quick.jumpPicker')),
+          matching: find.text('bastion'),
+        ),
+      );
       await tester.pumpAndSettle();
-      expect(button().onPressed, isNull, reason: 'a port that is not a number is not a port');
+
+      String field(String key) =>
+          tester.widget<TextField>(find.byKey(ValueKey(key))).controller!.text;
+      expect(field('shell.quick.proxyHost'), '10.0.0.1');
+      expect(field('shell.quick.proxyPort'), '22');
+      expect(field('shell.quick.proxyUser'), 'root');
+      expect(
+        field('shell.quick.proxyPassword'),
+        isEmpty,
+        reason: 'a stored password is never shown',
+      );
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.host')), '10.9.9.9');
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.username')), 'admin');
+      await tapConnect(tester);
+      expect(transport.openedWith.single.host, '10.9.9.9');
+      expect(transport.openedWith.single.proxyType, 'ssh');
+      expect(transport.openedWith.single.proxyHost, '10.0.0.1');
       await finish(tester);
     });
 

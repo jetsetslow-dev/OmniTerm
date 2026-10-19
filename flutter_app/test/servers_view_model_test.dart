@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,6 +90,50 @@ void main() {
     vm.dispose();
     app.dispose();
     await db.close();
+  });
+
+  // Kotlin's "Save securely to Credential Store" (`addServer(createProfile = true)`): the typed
+  // password is also stored as a reusable profile; the host keeps its own copy.
+  group('Credential Store', () {
+    test('saving with createProfile stores "<name> profile" with the same login', () async {
+      await vm.saveServer(
+        hostFixture(name: 'web').copyWith(authType: 'password', authPassword: const Value('pw')),
+        createProfile: true,
+      );
+      final profiles = await repo.getAllProfiles();
+      expect(profiles.single.profileName, 'web profile');
+      expect(profiles.single.username, hostFixture(name: 'web').username);
+      expect(profiles.single.password, 'pw');
+      expect(profiles.single.groupName, 'General');
+      expect((await repo.getAllServers()).single.authPassword, 'pw');
+    });
+
+    test('nothing extra is stored without the tick or without a password', () async {
+      await vm.saveServer(
+        hostFixture(name: 'a').copyWith(authType: 'password', authPassword: const Value('pw')),
+      );
+      await vm.saveServer(
+        hostFixture(
+          name: 'b',
+          host: '10.0.0.3',
+        ).copyWith(authType: 'password', authPassword: const Value('')),
+        createProfile: true,
+      );
+      expect(await repo.getAllProfiles(), isEmpty);
+    });
+
+    test('the free-tier credential limit refuses it before anything is saved', () async {
+      await expectLater(
+        vm.saveServer(
+          hostFixture(name: 'web').copyWith(authType: 'password', authPassword: const Value('pw')),
+          createProfile: true,
+          credentialLimitReached: true,
+        ),
+        throwsA(isA<Exception>()),
+      );
+      expect(await repo.getAllServers(), isEmpty);
+      expect(await repo.getAllProfiles(), isEmpty);
+    });
   });
 
   // Kotlin's `addServer` probes the new host straight away; otherwise it waits for the next sweep.

@@ -93,7 +93,21 @@ def kotlin_files():
 
 
 def flutter_files():
-    return sorted(p for p in FLUTTER_LIB.rglob("*.dart") if not p.name.endswith(".g.dart"))
+    # Generated code is excluded: the gen-l10n output holds every Kotlin resource string whether or
+    # not a screen uses it, so counting it would mark every label "present".
+    return sorted(p for p in FLUTTER_LIB.rglob("*.dart")
+                  if not p.name.endswith(".g.dart") and "l10n" not in p.relative_to(FLUTTER_LIB).parts)
+
+
+def camel(name: str) -> str:
+    head, *rest = name.split("_")
+    return head + "".join(p[:1].upper() + p[1:] for p in rest)
+
+
+def used_l10n_keys() -> set:
+    """Resource keys Flutter UI code actually reads (`l10n.saveAnyway`, `….of(context).cancel`)."""
+    text = "\n".join(p.read_text(errors="ignore") for p in flutter_files())
+    return set(re.findall(r"(?:l10n|AppLocalizations\.of\([^)]*\))\s*\.\s*([a-z][A-Za-z0-9_]*)", text))
 
 
 def kotlin_ui_strings(resources: dict) -> dict:
@@ -147,7 +161,10 @@ def audit() -> dict:
     def present(text, haystack):
         return all(fragment in haystack for fragment in fragments(text))
 
-    kotlin_only = {s: f for s, f in kotlin_ui_strings(resources).items() if not present(s, flutter_text)}
+    used = used_l10n_keys()
+    used_text = {norm(resources[name]) for name in resources if camel(name) in used or camel(name) + "_" in used}
+    kotlin_only = {s: f for s, f in kotlin_ui_strings(resources).items()
+                   if not present(s, flutter_text) and norm(s) not in used_text}
     flutter_only = {s: f for s, f in flutter_ui_strings().items() if not present(s, kotlin_text)}
     settings_kotlin_only, settings_flutter_only = settings_keys()
     return {

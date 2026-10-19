@@ -108,11 +108,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Auth'));
+    await tester.tap(find.byKey(const ValueKey('serverForm.tab.auth')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Profile'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('serverForm.profile')));
+    await tester.tap(find.byKey(const ValueKey('serverForm.authType.profile')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Surface fixture login').last);
     await tester.pumpAndSettle();

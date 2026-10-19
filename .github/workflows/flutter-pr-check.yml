@@ -129,7 +129,9 @@ jobs:
       # Kotlin is the reference app. Fails on a Kotlin/Flutter label, option, settings-key or text
       # style difference that is not in scripts/parity/baseline.json; fixed entries shrink it.
       - name: Kotlin ↔ Flutter parity audit
-        run: python3 ../scripts/parity-audit.py
+        run: |
+          python3 ../scripts/parity-audit.py
+          python3 ../scripts/generate-flutter-strings.py --check
 
       - name: Run tests
         run: flutter test --coverage

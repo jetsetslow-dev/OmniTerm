@@ -228,8 +228,11 @@ void main() {
       // Typed through the framework rather than `adb shell input text`, which mangles anything with
       // a space or a newline and lands it in whichever field happens to hold focus — how a password
       // ended up in a display-name field during the manual walk.
+      // Kotlin's wizard: name and address on Connection, the username on Credentials.
       await tester.enterText(find.byKey(const ValueKey('serverForm.name')), 'flow-host');
       await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '203.0.113.1');
+      await tester.tap(find.byKey(const ValueKey('serverForm.next')));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
       await tester.pumpAndSettle();
       final editorError = tester.takeException();
@@ -242,7 +245,9 @@ void main() {
       );
 
       // Automatic checks are advisory: saving is possible, but only through a second explicit
-      // decision that explains host-key approval is still mandatory.
+      // decision that explains host-key approval is still mandatory. Save is on the last step.
+      await tester.tap(find.byKey(const ValueKey('serverForm.next')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('serverForm.save')));
       await tester.pumpAndSettle();
       final decisionError = tester.takeException();
@@ -260,8 +265,11 @@ void main() {
       expect(find.byKey(const ValueKey('serverForm.tabs')), findsOneWidget);
       expect(tester.takeException(), isNull);
 
-      // Closed without saving: a flow must not leave a host behind for the next run.
-      await tester.tap(find.byKey(const ValueKey('serverForm.close')));
+      // Closed without saving: a flow must not leave a host behind for the next run. Back to the
+      // first step, where Kotlin's dismiss button reads Cancel.
+      await tester.tap(find.byKey(const ValueKey('serverForm.tab.connect')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('serverForm.back')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('serverForm.tabs')), findsNothing);
     });

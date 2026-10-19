@@ -109,6 +109,10 @@ class ServerFormState extends ChangeNotifier {
   late String sudoPassword;
   late String proxyPassword;
 
+  /// Kotlin's "Save securely to Credential Store": also save the typed password as a reusable
+  /// credential profile named `<host name> profile`. The host itself keeps its own password.
+  bool saveProfile = false;
+
   /// Explicit "remove the stored secret" flags, the only way to clear one.
   bool forgetPassword = false;
   bool forgetSudoPassword = false;
@@ -208,6 +212,25 @@ class ServerFormState extends ChangeNotifier {
   }
 
   bool get canSave => validationError == null && !requiresConnectionTest;
+
+  /// Kotlin's Next-button checks for one wizard step (`AddServerSheet` in `ui/AppUi.kt`): the first
+  /// failure for [step], in Kotlin's wording, or null when the step may be left.
+  String? stepError(int step) {
+    if (step == 0) {
+      if (name.trim().isEmpty || host.trim().isEmpty) return 'Name and host are required.';
+      return null;
+    }
+    final portFailure = portError(port);
+    if (portFailure != null) return 'SSH port: $portFailure';
+    if (proxyType != 'none' && proxyPort.trim().isNotEmpty) {
+      final proxyFailure = portError(proxyPort);
+      if (proxyFailure != null) return 'Proxy port: $proxyFailure';
+    }
+    if (authType != 'profile' && username.trim().isEmpty) return 'SSH username is required.';
+    if (authType == 'profile' && selectedProfileId == null) return 'Select a credential profile.';
+    if (authType == 'key' && selectedKeyAlias.trim().isEmpty) return 'Select a key.';
+    return null;
+  }
 
   // ── building the row ───────────────────────────────────────────────────────
 

@@ -1,0 +1,2318 @@
+{
+  "@@locale": "en",
+  "aNewCredentialsProfileWillBe": "A new credentials profile will be built for this connection automatically.",
+  "@aNewCredentialsProfileWillBe": {
+    "description": "Android R.string.a_new_credentials_profile_will_be"
+  },
+  "aNewSshHostKeyWas": "A new SSH host key was presented for:",
+  "@aNewSshHostKeyWas": {
+    "description": "Android R.string.a_new_ssh_host_key_was"
+  },
+  "aa": "Aa",
+  "@aa": {
+    "description": "Android R.string.aa"
+  },
+  "accentColor": "Accent color",
+  "@accentColor": {
+    "description": "Android R.string.accent_color"
+  },
+  "ackAll": "Ack All",
+  "@ackAll": {
+    "description": "Android R.string.ack_all"
+  },
+  "acknowledge": "ACKNOWLEDGE",
+  "@acknowledge": {
+    "description": "Android R.string.acknowledge"
+  },
+  "acknowledgeAll": "ACKNOWLEDGE ALL",
+  "@acknowledgeAll": {
+    "description": "Android R.string.acknowledge_all"
+  },
+  "activeAlerts": "Active alerts",
+  "@activeAlerts": {
+    "description": "Android R.string.active_alerts"
+  },
+  "activeSessions": "Active Sessions",
+  "@activeSessions": {
+    "description": "Android R.string.active_sessions"
+  },
+  "adDebugLoadFailed": "[ads: failed code={a1} — {a2}]",
+  "@adDebugLoadFailed": {
+    "description": "Android R.string.ad_debug_load_failed",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "add": "Add",
+  "@add": {
+    "description": "Android R.string.add"
+  },
+  "addAnSshHostFirst": "Add an SSH host first.",
+  "@addAnSshHostFirst": {
+    "description": "Android R.string.add_an_ssh_host_first"
+  },
+  "addAuthenticationSource": "Add Authentication Source",
+  "@addAuthenticationSource": {
+    "description": "Android R.string.add_authentication_source"
+  },
+  "addHostServer": "Add Host Server",
+  "@addHostServer": {
+    "description": "Android R.string.add_host_server"
+  },
+  "addNetwork": "Add network",
+  "@addNetwork": {
+    "description": "Android R.string.add_network"
+  },
+  "addTarget": "Add target",
+  "@addTarget": {
+    "description": "Android R.string.add_target"
+  },
+  "addVolume": "Add volume",
+  "@addVolume": {
+    "description": "Android R.string.add_volume"
+  },
+  "address": "Address",
+  "@address": {
+    "description": "Android R.string.address"
+  },
+  "advanced": "Advanced",
+  "@advanced": {
+    "description": "Android R.string.advanced"
+  },
+  "alertRulesAndHistoryIncludeServers": "Alert rules and history include Servers. Active alerts also include Alert rules. SSH tunnels include Servers.",
+  "@alertRulesAndHistoryIncludeServers": {
+    "description": "Android R.string.alert_rules_and_history_include_servers"
+  },
+  "all": "All",
+  "@all": {
+    "description": "Android R.string.all"
+  },
+  "allFileOperationsWillRunAs": "All file operations will run as root. Only enable this if you intend to edit protected system files.",
+  "@allFileOperationsWillRunAs": {
+    "description": "Android R.string.all_file_operations_will_run_as"
+  },
+  "allMetricsWithinHealthyThresholdsNo": "All metrics within healthy thresholds. No deductions (start 100).",
+  "@allMetricsWithinHealthyThresholdsNo": {
+    "description": "Android R.string.all_metrics_within_healthy_thresholds_no"
+  },
+  "allowNearbyDevices": "Allow nearby devices",
+  "@allowNearbyDevices": {
+    "description": "Android R.string.allow_nearby_devices"
+  },
+  "alsoRemovesContainersForServicesNo": "Also removes containers for services no longer defined in the compose file. Use with care.",
+  "@alsoRemovesContainersForServicesNo": {
+    "description": "Android R.string.also_removes_containers_for_services_no"
+  },
+  "amoledBlack": "AMOLED black",
+  "@amoledBlack": {
+    "description": "Android R.string.amoled_black"
+  },
+  "anonymousGuestLogin": "Anonymous / guest login",
+  "@anonymousGuestLogin": {
+    "description": "Android R.string.anonymous_guest_login"
+  },
+  "appName": "OmniTerm",
+  "@appName": {
+    "description": "Android R.string.app_name"
+  },
+  "appliesToNewTerminalSessionsExisting": "Applies to new terminal sessions. Existing sessions keep their current buffer.",
+  "@appliesToNewTerminalSessionsExisting": {
+    "description": "Android R.string.applies_to_new_terminal_sessions_existing"
+  },
+  "apply": "Apply",
+  "@apply": {
+    "description": "Android R.string.apply"
+  },
+  "assignGroup": "Assign Group",
+  "@assignGroup": {
+    "description": "Android R.string.assign_group"
+  },
+  "authenticate": "Authenticate",
+  "@authenticate": {
+    "description": "Android R.string.authenticate"
+  },
+  "authenticateForSudo": "Authenticate for sudo",
+  "@authenticateForSudo": {
+    "description": "Android R.string.authenticate_for_sudo"
+  },
+  "authenticateToSave": "Authenticate to save",
+  "@authenticateToSave": {
+    "description": "Android R.string.authenticate_to_save"
+  },
+  "autoRefreshInterval": "Auto-refresh interval",
+  "@autoRefreshInterval": {
+    "description": "Android R.string.auto_refresh_interval"
+  },
+  "automaticSshCheckFailed": "Automatic SSH check failed",
+  "@automaticSshCheckFailed": {
+    "description": "Android R.string.automatic_ssh_check_failed"
+  },
+  "automaticSshCheckFailedDetail": "{a1}:{a2} did not answer through its configured SSH route. You can still try SSH.",
+  "@automaticSshCheckFailedDetail": {
+    "description": "Android R.string.automatic_ssh_check_failed_detail",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "backgroundSessions": "BACKGROUND SESSIONS",
+  "@backgroundSessions": {
+    "description": "Android R.string.background_sessions"
+  },
+  "backup": "Backup",
+  "@backup": {
+    "description": "Android R.string.backup"
+  },
+  "backupSections": "Backup sections",
+  "@backupSections": {
+    "description": "Android R.string.backup_sections"
+  },
+  "batterySaverAvailable": "Battery saver available",
+  "@batterySaverAvailable": {
+    "description": "Android R.string.battery_saver_available"
+  },
+  "batterySaverNotNow": "Not now",
+  "@batterySaverNotNow": {
+    "description": "Android R.string.battery_saver_not_now"
+  },
+  "beginPrivateKey": "-----BEGIN ... PRIVATE KEY-----",
+  "@beginPrivateKey": {
+    "description": "Android R.string.begin_private_key"
+  },
+  "blankUsesPodmanComposeSDefault": "Blank uses Podman Compose's default pod_<project>.",
+  "@blankUsesPodmanComposeSDefault": {
+    "description": "Android R.string.blank_uses_podman_compose_s_default"
+  },
+  "blockScreenshots": "Block screenshots",
+  "@blockScreenshots": {
+    "description": "Android R.string.block_screenshots"
+  },
+  "bookmarkDirectory": "Bookmark Directory",
+  "@bookmarkDirectory": {
+    "description": "Android R.string.bookmark_directory"
+  },
+  "bookmarks": "Bookmarks",
+  "@bookmarks": {
+    "description": "Android R.string.bookmarks"
+  },
+  "bridgeOverlayMacvlan": "bridge / overlay / macvlan",
+  "@bridgeOverlayMacvlan": {
+    "description": "Android R.string.bridge_overlay_macvlan"
+  },
+  "broadcast": "Broadcast",
+  "@broadcast": {
+    "description": "Android R.string.broadcast"
+  },
+  "broadcastControls": "Broadcast controls",
+  "@broadcastControls": {
+    "description": "Android R.string.broadcast_controls"
+  },
+  "broadcastIpNetworkSegment": "Broadcast IP network segment",
+  "@broadcastIpNetworkSegment": {
+    "description": "Android R.string.broadcast_ip_network_segment"
+  },
+  "broadcastTargets": "Broadcast Targets",
+  "@broadcastTargets": {
+    "description": "Android R.string.broadcast_targets"
+  },
+  "buildFromSourceForNoncommercialUse": "Build from source for noncommercial use, file issues, or contribute on GitHub.",
+  "@buildFromSourceForNoncommercialUse": {
+    "description": "Android R.string.build_from_source_for_noncommercial_use"
+  },
+  "builder": "Builder",
+  "@builder": {
+    "description": "Android R.string.builder"
+  },
+  "cancel": "Cancel",
+  "@cancel": {
+    "description": "Android R.string.cancel"
+  },
+  "cancelAll": "Cancel all",
+  "@cancelAll": {
+    "description": "Android R.string.cancel_all"
+  },
+  "categoryGroup": "Category / group",
+  "@categoryGroup": {
+    "description": "Android R.string.category_group"
+  },
+  "categoryGroup2": "Category / Group",
+  "@categoryGroup2": {
+    "description": "Android R.string.category_group_2"
+  },
+  "changePin": "Change PIN",
+  "@changePin": {
+    "description": "Android R.string.change_pin"
+  },
+  "checkingHost": "Checking host…",
+  "@checkingHost": {
+    "description": "Android R.string.checking_host"
+  },
+  "chooseFleetScript": "Choose fleet script",
+  "@chooseFleetScript": {
+    "description": "Android R.string.choose_fleet_script"
+  },
+  "chooseHostToKeep": "Choose host to keep",
+  "@chooseHostToKeep": {
+    "description": "Android R.string.choose_host_to_keep"
+  },
+  "chooseLocation": "Choose location",
+  "@chooseLocation": {
+    "description": "Android R.string.choose_location"
+  },
+  "chooseSessionOrHost": "Choose session or host",
+  "@chooseSessionOrHost": {
+    "description": "Android R.string.choose_session_or_host"
+  },
+  "chooseTheTerminalTextRangeTo": "Choose the terminal text range to copy.",
+  "@chooseTheTerminalTextRangeTo": {
+    "description": "Android R.string.choose_the_terminal_text_range_to"
+  },
+  "chooseWhatToRestoreFromThis": "Choose what to restore from this backup.",
+  "@chooseWhatToRestoreFromThis": {
+    "description": "Android R.string.choose_what_to_restore_from_this"
+  },
+  "clear": "Clear",
+  "@clear": {
+    "description": "Android R.string.clear"
+  },
+  "clearBroadcastOutput": "Clear broadcast output?",
+  "@clearBroadcastOutput": {
+    "description": "Android R.string.clear_broadcast_output"
+  },
+  "clearHistory": "Clear History",
+  "@clearHistory": {
+    "description": "Android R.string.clear_history"
+  },
+  "clearHistory2": "Clear history",
+  "@clearHistory2": {
+    "description": "Android R.string.clear_history_2"
+  },
+  "clearLogs": "Clear logs",
+  "@clearLogs": {
+    "description": "Android R.string.clear_logs"
+  },
+  "clearOutputs": "Clear Outputs",
+  "@clearOutputs": {
+    "description": "Android R.string.clear_outputs"
+  },
+  "clearScrollback": "Clear scrollback",
+  "@clearScrollback": {
+    "description": "Android R.string.clear_scrollback"
+  },
+  "clearTransferHistory": "Clear transfer history?",
+  "@clearTransferHistory": {
+    "description": "Android R.string.clear_transfer_history"
+  },
+  "cleartextWebdavIsDisabledBecauseIt": "Cleartext WebDAV is disabled because it exposes credentials and file contents.",
+  "@cleartextWebdavIsDisabledBecauseIt": {
+    "description": "Android R.string.cleartext_webdav_is_disabled_because_it"
+  },
+  "close": "Close",
+  "@close": {
+    "description": "Android R.string.close"
+  },
+  "command": "Command",
+  "@command": {
+    "description": "Android R.string.command"
+  },
+  "commentOut": "Comment out",
+  "@commentOut": {
+    "description": "Android R.string.comment_out"
+  },
+  "commented": "# commented",
+  "@commented": {
+    "description": "Android R.string.commented"
+  },
+  "composeBuilder": "Compose Builder",
+  "@composeBuilder": {
+    "description": "Android R.string.compose_builder"
+  },
+  "composeFile": "COMPOSE FILE",
+  "@composeFile": {
+    "description": "Android R.string.compose_file"
+  },
+  "compressToTarGz": "Compress to .tar.gz",
+  "@compressToTarGz": {
+    "description": "Android R.string.compress_to_tar_gz"
+  },
+  "configureSecurityPin": "Configure Security PIN",
+  "@configureSecurityPin": {
+    "description": "Android R.string.configure_security_pin"
+  },
+  "confirm": "Confirm",
+  "@confirm": {
+    "description": "Android R.string.confirm"
+  },
+  "confirmToRunThisPrivilegedAction": "Confirm to run this privileged action with the stored sudo password.",
+  "@confirmToRunThisPrivilegedAction": {
+    "description": "Android R.string.confirm_to_run_this_privileged_action"
+  },
+  "confirmYourAppPinToRun": "Confirm your app PIN to run SFTP operations as root.",
+  "@confirmYourAppPinToRun": {
+    "description": "Android R.string.confirm_your_app_pin_to_run"
+  },
+  "connect": "Connect",
+  "@connect": {
+    "description": "Android R.string.connect"
+  },
+  "connectAnyway": "Connect anyway",
+  "@connectAnyway": {
+    "description": "Android R.string.connect_anyway"
+  },
+  "connectNonResumable": "Connect non-resumable",
+  "@connectNonResumable": {
+    "description": "Android R.string.connect_non_resumable"
+  },
+  "connectYourFirstServer": "Connect your first server",
+  "@connectYourFirstServer": {
+    "description": "Android R.string.connect_your_first_server"
+  },
+  "connection": "Connection",
+  "@connection": {
+    "description": "Android R.string.connection"
+  },
+  "connectionFailed": "CONNECTION FAILED",
+  "@connectionFailed": {
+    "description": "Android R.string.connection_failed"
+  },
+  "continueLabel": "Continue",
+  "@continueLabel": {
+    "description": "Android R.string.continue_label"
+  },
+  "copy": "Copy",
+  "@copy": {
+    "description": "Android R.string.copy"
+  },
+  "copyAll": "Copy all",
+  "@copyAll": {
+    "description": "Android R.string.copy_all"
+  },
+  "copyDiagnostics": "Copy diagnostics",
+  "@copyDiagnostics": {
+    "description": "Android R.string.copy_diagnostics"
+  },
+  "copyError": "Copy error",
+  "@copyError": {
+    "description": "Android R.string.copy_error"
+  },
+  "copyInstallCommand": "Copy Install Command",
+  "@copyInstallCommand": {
+    "description": "Android R.string.copy_install_command"
+  },
+  "copyOtherPane": "Copy → other pane",
+  "@copyOtherPane": {
+    "description": "Android R.string.copy_other_pane"
+  },
+  "copyPath": "Copy path",
+  "@copyPath": {
+    "description": "Android R.string.copy_path"
+  },
+  "copyPrivateKey": "Copy Private Key",
+  "@copyPrivateKey": {
+    "description": "Android R.string.copy_private_key"
+  },
+  "copyPublicKey": "Copy Public Key",
+  "@copyPublicKey": {
+    "description": "Android R.string.copy_public_key"
+  },
+  "copyTerminalText": "Copy terminal text",
+  "@copyTerminalText": {
+    "description": "Android R.string.copy_terminal_text"
+  },
+  "couldNotQueryContainers": "Could not query containers",
+  "@couldNotQueryContainers": {
+    "description": "Android R.string.could_not_query_containers"
+  },
+  "cpu": "↓ CPU",
+  "@cpu": {
+    "description": "Android R.string.cpu"
+  },
+  "cpu2": "CPU",
+  "@cpu2": {
+    "description": "Android R.string.cpu_2"
+  },
+  "cpuRamDiskServicesLogsContainers": "CPU/RAM, disk, services, logs, containers, ports, and kernel presets for broadcast use.",
+  "@cpuRamDiskServicesLogsContainers": {
+    "description": "Android R.string.cpu_ram_disk_services_logs_containers"
+  },
+  "cpuUtilisation": "CPU UTILISATION",
+  "@cpuUtilisation": {
+    "description": "Android R.string.cpu_utilisation"
+  },
+  "crashClearRetry": "Clear and try again",
+  "@crashClearRetry": {
+    "description": "Android R.string.crash_clear_retry"
+  },
+  "crashCopy": "Copy report",
+  "@crashCopy": {
+    "description": "Android R.string.crash_copy"
+  },
+  "crashReportGithub": "Report on GitHub",
+  "@crashReportGithub": {
+    "description": "Android R.string.crash_report_github"
+  },
+  "crashShareFull": "Share full report",
+  "@crashShareFull": {
+    "description": "Android R.string.crash_share_full"
+  },
+  "crashStartTitle": "OmniTerm could not start",
+  "@crashStartTitle": {
+    "description": "Android R.string.crash_start_title"
+  },
+  "create": "Create",
+  "@create": {
+    "description": "Android R.string.create"
+  },
+  "createCredentialProfile": "Create Credential Profile",
+  "@createCredentialProfile": {
+    "description": "Android R.string.create_credential_profile"
+  },
+  "createDirectory": "Create Directory",
+  "@createDirectory": {
+    "description": "Android R.string.create_directory"
+  },
+  "created": "CREATED",
+  "@created": {
+    "description": "Android R.string.created"
+  },
+  "credentialProfile": "Credential profile",
+  "@credentialProfile": {
+    "description": "Android R.string.credential_profile"
+  },
+  "credentialProfilesUsernamePassword": "Credential Profiles (Username/Password)",
+  "@credentialProfilesUsernamePassword": {
+    "description": "Android R.string.credential_profiles_username_password"
+  },
+  "credentials": "Credentials",
+  "@credentials": {
+    "description": "Android R.string.credentials"
+  },
+  "customCommand": "Custom command",
+  "@customCommand": {
+    "description": "Android R.string.custom_command"
+  },
+  "customName": "Custom name",
+  "@customName": {
+    "description": "Android R.string.custom_name"
+  },
+  "customNetworksReferencedByServicesMust": "Custom networks referenced by services must be declared here. Set a driver (bridge/overlay/…) or external: true to attach to a network Docker manages outside this stack.",
+  "@customNetworksReferencedByServicesMust": {
+    "description": "Android R.string.custom_networks_referenced_by_services_must"
+  },
+  "cut": "Cut",
+  "@cut": {
+    "description": "Android R.string.cut"
+  },
+  "cutOtherPane": "Cut → other pane",
+  "@cutOtherPane": {
+    "description": "Android R.string.cut_other_pane"
+  },
+  "darkTheme": "Dark Theme",
+  "@darkTheme": {
+    "description": "Android R.string.dark_theme"
+  },
+  "dashboard": "Dashboard",
+  "@dashboard": {
+    "description": "Android R.string.dashboard"
+  },
+  "defaultAlertRules": "Default alert rules",
+  "@defaultAlertRules": {
+    "description": "Android R.string.default_alert_rules"
+  },
+  "delete": "Delete",
+  "@delete": {
+    "description": "Android R.string.delete"
+  },
+  "deleteNode": "Delete node",
+  "@deleteNode": {
+    "description": "Android R.string.delete_node"
+  },
+  "deleteSelected": "Delete Selected",
+  "@deleteSelected": {
+    "description": "Android R.string.delete_selected"
+  },
+  "deleteServerHostConnection": "Delete Server Host Connection",
+  "@deleteServerHostConnection": {
+    "description": "Android R.string.delete_server_host_connection"
+  },
+  "destHost": "Dest host",
+  "@destHost": {
+    "description": "Android R.string.dest_host"
+  },
+  "directoryName": "Directory Name",
+  "@directoryName": {
+    "description": "Android R.string.directory_name"
+  },
+  "discard": "Discard",
+  "@discard": {
+    "description": "Android R.string.discard"
+  },
+  "discardChanges": "Discard changes?",
+  "@discardChanges": {
+    "description": "Android R.string.discard_changes"
+  },
+  "disconnectAll": "Disconnect all",
+  "@disconnectAll": {
+    "description": "Android R.string.disconnect_all"
+  },
+  "disconnectAllActiveTerminalSessionsAny": "Disconnect all active terminal sessions? Any running shell processes in those PTYs will be terminated.",
+  "@disconnectAllActiveTerminalSessionsAny": {
+    "description": "Android R.string.disconnect_all_active_terminal_sessions_any"
+  },
+  "disconnectAllSessions": "Disconnect all sessions?",
+  "@disconnectAllSessions": {
+    "description": "Android R.string.disconnect_all_sessions"
+  },
+  "diskMounts": "Disk Mounts",
+  "@diskMounts": {
+    "description": "Android R.string.disk_mounts"
+  },
+  "dismiss": "Dismiss",
+  "@dismiss": {
+    "description": "Android R.string.dismiss"
+  },
+  "dismissRefreshError": "Dismiss refresh error",
+  "@dismissRefreshError": {
+    "description": "Android R.string.dismiss_refresh_error"
+  },
+  "displayNameUnique": "Display Name (Unique)",
+  "@displayNameUnique": {
+    "description": "Android R.string.display_name_unique"
+  },
+  "docker": "Docker",
+  "@docker": {
+    "description": "Android R.string.docker"
+  },
+  "domainNameHostname": "Domain Name / Hostname",
+  "@domainNameHostname": {
+    "description": "Android R.string.domain_name_hostname"
+  },
+  "domainNameOrIpAddress": "Domain Name or IP Address",
+  "@domainNameOrIpAddress": {
+    "description": "Android R.string.domain_name_or_ip_address"
+  },
+  "donTShowAgain": "Don't show again",
+  "@donTShowAgain": {
+    "description": "Android R.string.don_t_show_again"
+  },
+  "done": "Done",
+  "@done": {
+    "description": "Android R.string.done"
+  },
+  "down": "DOWN",
+  "@down": {
+    "description": "Android R.string.down"
+  },
+  "downloadToDevice": "Download to device",
+  "@downloadToDevice": {
+    "description": "Android R.string.download_to_device"
+  },
+  "downloadToDevice2": "Download to Device",
+  "@downloadToDevice2": {
+    "description": "Android R.string.download_to_device_2"
+  },
+  "downloadUrl": "Download URL",
+  "@downloadUrl": {
+    "description": "Android R.string.download_url"
+  },
+  "downloaded": "downloaded",
+  "@downloaded": {
+    "description": "Android R.string.downloaded"
+  },
+  "dragToSelectOrCopyAll": "Drag to select, or Copy all",
+  "@dragToSelectOrCopyAll": {
+    "description": "Android R.string.drag_to_select_or_copy_all"
+  },
+  "driverOptional": "Driver (optional)",
+  "@driverOptional": {
+    "description": "Android R.string.driver_optional"
+  },
+  "duplicateHostBody": "Host {a1} already uses {a2}. A different SSH user, authentication method or port is a separate connection. A different display name alone is not.",
+  "@duplicateHostBody": {
+    "description": "Android R.string.duplicate_host_body",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "duplicateHostReuseCredentials": "Duplicate Host (reuse credentials)",
+  "@duplicateHostReuseCredentials": {
+    "description": "Android R.string.duplicate_host_reuse_credentials"
+  },
+  "duplicateIpAddress": "Duplicate IP address",
+  "@duplicateIpAddress": {
+    "description": "Android R.string.duplicate_ip_address"
+  },
+  "eGExampleStack": "e.g. example_stack",
+  "@eGExampleStack": {
+    "description": "Android R.string.e_g_example_stack"
+  },
+  "eGMyStack": "e.g. my_stack",
+  "@eGMyStack": {
+    "description": "Android R.string.e_g_my_stack"
+  },
+  "edit": "Edit",
+  "@edit": {
+    "description": "Android R.string.edit"
+  },
+  "editCredentialProfile": "Edit Credential Profile",
+  "@editCredentialProfile": {
+    "description": "Android R.string.edit_credential_profile"
+  },
+  "editServerConfiguration": "Edit Server Configuration",
+  "@editServerConfiguration": {
+    "description": "Android R.string.edit_server_configuration"
+  },
+  "editSshKey": "Edit SSH Key",
+  "@editSshKey": {
+    "description": "Android R.string.edit_ssh_key"
+  },
+  "editTextFile": "Edit text file",
+  "@editTextFile": {
+    "description": "Android R.string.edit_text_file"
+  },
+  "editTextFileConfiguration": "Edit Text File Configuration",
+  "@editTextFileConfiguration": {
+    "description": "Android R.string.edit_text_file_configuration"
+  },
+  "editingTheFileDirectlyNothingIs": "Editing the file directly. Nothing is changed until you deploy, and the file is validated first.",
+  "@editingTheFileDirectlyNothingIs": {
+    "description": "Android R.string.editing_the_file_directly_nothing_is"
+  },
+  "editorSyntaxHighlighting": "Editor syntax highlighting",
+  "@editorSyntaxHighlighting": {
+    "description": "Android R.string.editor_syntax_highlighting"
+  },
+  "eitherWayThePasswordIsStored": "Either way the password is stored encrypted on this device so OmniTerm can reconnect; the Credential Store just makes it reusable across hosts.",
+  "@eitherWayThePasswordIsStored": {
+    "description": "Android R.string.either_way_the_password_is_stored"
+  },
+  "emptyDirectory": "Empty Directory",
+  "@emptyDirectory": {
+    "description": "Android R.string.empty_directory"
+  },
+  "emptyFolder": "Empty folder.",
+  "@emptyFolder": {
+    "description": "Android R.string.empty_folder"
+  },
+  "emptyPane": "Empty pane",
+  "@emptyPane": {
+    "description": "Android R.string.empty_pane"
+  },
+  "enable": "Enable",
+  "@enable": {
+    "description": "Android R.string.enable"
+  },
+  "enableSudoMode": "Enable sudo mode?",
+  "@enableSudoMode": {
+    "description": "Android R.string.enable_sudo_mode"
+  },
+  "encryptBackup": "Encrypt Backup",
+  "@encryptBackup": {
+    "description": "Android R.string.encrypt_backup"
+  },
+  "encryptedBackup": "Encrypted Backup",
+  "@encryptedBackup": {
+    "description": "Android R.string.encrypted_backup"
+  },
+  "enterBashCommandScriptHere": "Enter bash command script here...",
+  "@enterBashCommandScriptHere": {
+    "description": "Android R.string.enter_bash_command_script_here"
+  },
+  "enterHostCommandScriptHere": "Enter host command script here...",
+  "@enterHostCommandScriptHere": {
+    "description": "Android R.string.enter_host_command_script_here"
+  },
+  "enterPinForSudoMode": "Enter PIN for sudo mode",
+  "@enterPinForSudoMode": {
+    "description": "Android R.string.enter_pin_for_sudo_mode"
+  },
+  "enterThePasswordToDecryptThe": "Enter the password to decrypt the backup.",
+  "@enterThePasswordToDecryptThe": {
+    "description": "Android R.string.enter_the_password_to_decrypt_the"
+  },
+  "enterYourAppPinToApply": "Enter your app PIN to apply these changes.",
+  "@enterYourAppPinToApply": {
+    "description": "Android R.string.enter_your_app_pin_to_apply"
+  },
+  "executionOutputs": "Execution outputs",
+  "@executionOutputs": {
+    "description": "Android R.string.execution_outputs"
+  },
+  "exitOmniterm": "Exit OmniTerm?",
+  "@exitOmniterm": {
+    "description": "Android R.string.exit_omniterm"
+  },
+  "exitingWillTerminateAllActiveBackground": "Exiting will terminate all active background SSH sessions.",
+  "@exitingWillTerminateAllActiveBackground": {
+    "description": "Android R.string.exiting_will_terminate_all_active_background"
+  },
+  "exporting": "Exporting…",
+  "@exporting": {
+    "description": "Android R.string.exporting"
+  },
+  "ext": "Ext",
+  "@ext": {
+    "description": "Android R.string.ext"
+  },
+  "extractHere": "Extract here",
+  "@extractHere": {
+    "description": "Android R.string.extract_here"
+  },
+  "fleet": "Fleet",
+  "@fleet": {
+    "description": "Android R.string.fleet"
+  },
+  "fleet2": "FLEET",
+  "@fleet2": {
+    "description": "Android R.string.fleet_2"
+  },
+  "fleetCommands": "Fleet commands",
+  "@fleetCommands": {
+    "description": "Android R.string.fleet_commands"
+  },
+  "fleetDefaultCommands": "Fleet default commands",
+  "@fleetDefaultCommands": {
+    "description": "Android R.string.fleet_default_commands"
+  },
+  "folderName": "Folder name",
+  "@folderName": {
+    "description": "Android R.string.folder_name"
+  },
+  "forwardSshAgentSshA": "Forward SSH agent (ssh -A)",
+  "@forwardSshAgentSshA": {
+    "description": "Android R.string.forward_ssh_agent_ssh_a"
+  },
+  "freePlayStoreBuildIsLimited": "Free Play Store build is limited to 1 saved host. Unlock OmniTerm to add more.",
+  "@freePlayStoreBuildIsLimited": {
+    "description": "Android R.string.free_play_store_build_is_limited"
+  },
+  "fromAComputerWithSshInstalled": "From a computer with ssh installed you can instead run: ssh-copy-id user@host",
+  "@fromAComputerWithSshInstalled": {
+    "description": "Android R.string.from_a_computer_with_ssh_installed"
+  },
+  "frontend": "frontend",
+  "@frontend": {
+    "description": "Android R.string.frontend"
+  },
+  "ftpSendsUsernamesAndPasswordsIn": "FTP sends usernames and passwords in cleartext. Prefer SFTP for credentials.",
+  "@ftpSendsUsernamesAndPasswordsIn": {
+    "description": "Android R.string.ftp_sends_usernames_and_passwords_in"
+  },
+  "fullBuffer": "Full buffer",
+  "@fullBuffer": {
+    "description": "Android R.string.full_buffer"
+  },
+  "generateCryptographicKeypair": "Generate Cryptographic Keypair",
+  "@generateCryptographicKeypair": {
+    "description": "Android R.string.generate_cryptographic_keypair"
+  },
+  "generateKeys": "Generate Keys",
+  "@generateKeys": {
+    "description": "Android R.string.generate_keys"
+  },
+  "generateSshKey": "Generate SSH Key",
+  "@generateSshKey": {
+    "description": "Android R.string.generate_ssh_key"
+  },
+  "generating": "Generating…",
+  "@generating": {
+    "description": "Android R.string.generating"
+  },
+  "go": "Go",
+  "@go": {
+    "description": "Android R.string.go"
+  },
+  "grantPermissions": "Grant Permissions",
+  "@grantPermissions": {
+    "description": "Android R.string.grant_permissions"
+  },
+  "group": "Group",
+  "@group": {
+    "description": "Android R.string.group"
+  },
+  "groupName": "Group name",
+  "@groupName": {
+    "description": "Android R.string.group_name"
+  },
+  "groupOptional": "Group (optional)",
+  "@groupOptional": {
+    "description": "Android R.string.group_optional"
+  },
+  "groupServicesInAPod": "Group services in a pod",
+  "@groupServicesInAPod": {
+    "description": "Android R.string.group_services_in_a_pod"
+  },
+  "groups": "Groups",
+  "@groups": {
+    "description": "Android R.string.groups"
+  },
+  "healthScoring": "Health scoring",
+  "@healthScoring": {
+    "description": "Android R.string.health_scoring"
+  },
+  "hidesTerminalsAndCredentialsFromScreenshots": "Hides terminals and credentials from screenshots and the app switcher.",
+  "@hidesTerminalsAndCredentialsFromScreenshots": {
+    "description": "Android R.string.hides_terminals_and_credentials_from_screenshots"
+  },
+  "highContrastMode": "High-contrast mode",
+  "@highContrastMode": {
+    "description": "Android R.string.high_contrast_mode"
+  },
+  "history": "History",
+  "@history": {
+    "description": "Android R.string.history"
+  },
+  "homelabPresetScripts": "Homelab preset scripts",
+  "@homelabPresetScripts": {
+    "description": "Android R.string.homelab_preset_scripts"
+  },
+  "host": "Host",
+  "@host": {
+    "description": "Android R.string.host"
+  },
+  "hostAppearsOffline": "Host Appears Offline",
+  "@hostAppearsOffline": {
+    "description": "Android R.string.host_appears_offline"
+  },
+  "hostIpAddressForOnlineStatus": "Host IP address (for online status)",
+  "@hostIpAddressForOnlineStatus": {
+    "description": "Android R.string.host_ip_address_for_online_status"
+  },
+  "hostIsOfflineOrUnreachableScore": "Host is offline or unreachable — score is forced to 0.",
+  "@hostIsOfflineOrUnreachableScore": {
+    "description": "Android R.string.host_is_offline_or_unreachable_score"
+  },
+  "hostKeyChanged": "Host Key Changed",
+  "@hostKeyChanged": {
+    "description": "Android R.string.host_key_changed"
+  },
+  "hostOsAndSystemDetailsWill": "Host OS and system details will appear after the next monitor refresh.",
+  "@hostOsAndSystemDetailsWill": {
+    "description": "Android R.string.host_os_and_system_details_will"
+  },
+  "hostnameOrIp": "Hostname or IP",
+  "@hostnameOrIp": {
+    "description": "Android R.string.hostname_or_ip"
+  },
+  "hostnameOrIpAddress": "Hostname or IP address",
+  "@hostnameOrIpAddress": {
+    "description": "Android R.string.hostname_or_ip_address"
+  },
+  "hostsToRestore": "Hosts to restore",
+  "@hostsToRestore": {
+    "description": "Android R.string.hosts_to_restore"
+  },
+  "howOftenHostMetricsRefresh": "How often host metrics refresh",
+  "@howOftenHostMetricsRefresh": {
+    "description": "Android R.string.how_often_host_metrics_refresh"
+  },
+  "httpsTlsRequired": "HTTPS (TLS) required",
+  "@httpsTlsRequired": {
+    "description": "Android R.string.https_tls_required"
+  },
+  "images": "Images",
+  "@images": {
+    "description": "Android R.string.images"
+  },
+  "importExistingSshKey": "Import existing SSH Key",
+  "@importExistingSshKey": {
+    "description": "Android R.string.import_existing_ssh_key"
+  },
+  "importSshKey": "Import SSH Key",
+  "@importSshKey": {
+    "description": "Android R.string.import_ssh_key"
+  },
+  "inAppMonitoring": "In-app monitoring",
+  "@inAppMonitoring": {
+    "description": "Android R.string.in_app_monitoring"
+  },
+  "includeFoldersCopyTheirContentsRecursively": "Include folders (copy their contents recursively)",
+  "@includeFoldersCopyTheirContentsRecursively": {
+    "description": "Android R.string.include_folders_copy_their_contents_recursively"
+  },
+  "infrastructureContainers": "Infrastructure & Containers",
+  "@infrastructureContainers": {
+    "description": "Android R.string.infrastructure_containers"
+  },
+  "initiateRangeScan": "Initiate Range Scan",
+  "@initiateRangeScan": {
+    "description": "Android R.string.initiate_range_scan"
+  },
+  "installOnYourServer": "Install on your server",
+  "@installOnYourServer": {
+    "description": "Android R.string.install_on_your_server"
+  },
+  "ipAddressHostname": "IP Address / Hostname",
+  "@ipAddressHostname": {
+    "description": "Android R.string.ip_address_hostname"
+  },
+  "isDockerOrPodmanInstalledAnd": "Is Docker or Podman installed, and can this user access it?",
+  "@isDockerOrPodmanInstalledAnd": {
+    "description": "Android R.string.is_docker_or_podman_installed_and"
+  },
+  "jumpHostKeyOptional": "Jump host key (optional):",
+  "@jumpHostKeyOptional": {
+    "description": "Android R.string.jump_host_key_optional"
+  },
+  "keepAliveInterval": "Keep alive interval:",
+  "@keepAliveInterval": {
+    "description": "Android R.string.keep_alive_interval"
+  },
+  "keepDeviceScreenAlwaysOn": "Keep device screen always on",
+  "@keepDeviceScreenAlwaysOn": {
+    "description": "Android R.string.keep_device_screen_always_on"
+  },
+  "keepEditing": "Keep editing",
+  "@keepEditing": {
+    "description": "Android R.string.keep_editing"
+  },
+  "keepScreenOn": "Keep Screen On?",
+  "@keepScreenOn": {
+    "description": "Android R.string.keep_screen_on"
+  },
+  "keepSelected": "Keep selected",
+  "@keepSelected": {
+    "description": "Android R.string.keep_selected"
+  },
+  "keepSessionsActiveInBackground": "Keep sessions active in background?",
+  "@keepSessionsActiveInBackground": {
+    "description": "Android R.string.keep_sessions_active_in_background"
+  },
+  "keepSessionsAliveInBackground": "Keep sessions alive in background",
+  "@keepSessionsAliveInBackground": {
+    "description": "Android R.string.keep_sessions_alive_in_background"
+  },
+  "keepingTheScreenOnPreventsDisplay": "Keeping the screen on prevents display sleep and will increase battery consumption.",
+  "@keepingTheScreenOnPreventsDisplay": {
+    "description": "Android R.string.keeping_the_screen_on_prevents_display"
+  },
+  "keyAliasName": "Key Alias Name",
+  "@keyAliasName": {
+    "description": "Android R.string.key_alias_name"
+  },
+  "keyCustomName": "Key Custom Name",
+  "@keyCustomName": {
+    "description": "Android R.string.key_custom_name"
+  },
+  "labelOptional": "Label (optional)",
+  "@labelOptional": {
+    "description": "Android R.string.label_optional"
+  },
+  "lanShareScan": "LAN share scan",
+  "@lanShareScan": {
+    "description": "Android R.string.lan_share_scan"
+  },
+  "largeDownloadSelection": "Large download selection",
+  "@largeDownloadSelection": {
+    "description": "Android R.string.large_download_selection"
+  },
+  "largeFileModeSyntaxColorsAnd": "Large file mode · syntax colors and line gutter are disabled for responsiveness",
+  "@largeFileModeSyntaxColorsAnd": {
+    "description": "Android R.string.large_file_mode_syntax_colors_and"
+  },
+  "largeUploadBatch": "Large upload batch",
+  "@largeUploadBatch": {
+    "description": "Android R.string.large_upload_batch"
+  },
+  "lightTheme": "Light Theme",
+  "@lightTheme": {
+    "description": "Android R.string.light_theme"
+  },
+  "line": "Line",
+  "@line": {
+    "description": "Android R.string.line"
+  },
+  "live": "LIVE",
+  "@live": {
+    "description": "Android R.string.live"
+  },
+  "loadPrivateKeyFromFile": "Load private key from file",
+  "@loadPrivateKeyFromFile": {
+    "description": "Android R.string.load_private_key_from_file"
+  },
+  "loadPublicKeyPubFromFile": "Load public key (.pub) from file",
+  "@loadPublicKeyPubFromFile": {
+    "description": "Android R.string.load_public_key_pub_from_file"
+  },
+  "localLRemoteRAndDynamic": "Local (-L), remote (-R) and dynamic SOCKS (-D) forwards over a saved SSH host. Tunnels stay up until you stop them or leave the app.",
+  "@localLRemoteRAndDynamic": {
+    "description": "Android R.string.local_l_remote_r_and_dynamic"
+  },
+  "localNetworkAccess": "Connect to devices on your network",
+  "@localNetworkAccess": {
+    "description": "Android R.string.local_network_access"
+  },
+  "localNetworkAccessExplanation": "Android requires permission before OmniTerm can connect directly to hosts on Wi‑Fi or Ethernet. This is used for SSH, files, monitoring, LAN discovery, tunnels, shares, and Wake-on-LAN. If you choose Not now, internet hosts remain available but nearby-device features may not work.",
+  "@localNetworkAccessExplanation": {
+    "description": "Android R.string.local_network_access_explanation"
+  },
+  "logs": "Logs",
+  "@logs": {
+    "description": "Android R.string.logs"
+  },
+  "lowBatterySaver": "Low-battery saver",
+  "@lowBatterySaver": {
+    "description": "Android R.string.low_battery_saver"
+  },
+  "macAddressTarget": "MAC Address target",
+  "@macAddressTarget": {
+    "description": "Android R.string.mac_address_target"
+  },
+  "machineName": "Machine Name",
+  "@machineName": {
+    "description": "Android R.string.machine_name"
+  },
+  "maintainActiveSshSftpSessionsWhen": "Maintain active SSH/SFTP sessions when app is minimized",
+  "@maintainActiveSshSftpSessionsWhen": {
+    "description": "Android R.string.maintain_active_ssh_sftp_sessions_when"
+  },
+  "mbps": "Mbps",
+  "@mbps": {
+    "description": "Android R.string.mbps"
+  },
+  "measuresThisDeviceSDownloadThroughput": "Measures this device's download throughput from a URL. Pick a test server near you (or one deliberately far away), or point the URL at your own server to test a specific link.",
+  "@measuresThisDeviceSDownloadThroughput": {
+    "description": "Android R.string.measures_this_device_s_download_throughput"
+  },
+  "mem": "↓ MEM",
+  "@mem": {
+    "description": "Android R.string.mem"
+  },
+  "mem2": "MEM",
+  "@mem2": {
+    "description": "Android R.string.mem_2"
+  },
+  "memoryOccupancy": "MEMORY OCCUPANCY",
+  "@memoryOccupancy": {
+    "description": "Android R.string.memory_occupancy"
+  },
+  "monitorLiveMetrics": "Monitor Live Metrics",
+  "@monitorLiveMetrics": {
+    "description": "Android R.string.monitor_live_metrics"
+  },
+  "mute1h": "MUTE 1H",
+  "@mute1h": {
+    "description": "Android R.string.mute_1h"
+  },
+  "muted": "MUTED",
+  "@muted": {
+    "description": "Android R.string.muted"
+  },
+  "mutedIncidents": "Muted incidents",
+  "@mutedIncidents": {
+    "description": "Android R.string.muted_incidents"
+  },
+  "mydata": "mydata",
+  "@mydata": {
+    "description": "Android R.string.mydata"
+  },
+  "name": "Name",
+  "@name": {
+    "description": "Android R.string.name"
+  },
+  "namedVolumesReferencedByServicesMust": "Named volumes referenced by services must be declared here. Set external: true to use a pre-existing volume Docker manages outside this stack.",
+  "@namedVolumesReferencedByServicesMust": {
+    "description": "Android R.string.named_volumes_referenced_by_services_must"
+  },
+  "network": "Network",
+  "@network": {
+    "description": "Android R.string.network"
+  },
+  "networkName": "Network name",
+  "@networkName": {
+    "description": "Android R.string.network_name"
+  },
+  "networkShares": "Network Shares",
+  "@networkShares": {
+    "description": "Android R.string.network_shares"
+  },
+  "networks": "Networks",
+  "@networks": {
+    "description": "Android R.string.networks"
+  },
+  "newClear": "New / Clear",
+  "@newClear": {
+    "description": "Android R.string.new_clear"
+  },
+  "newFolder": "New folder",
+  "@newFolder": {
+    "description": "Android R.string.new_folder"
+  },
+  "newName": "New name",
+  "@newName": {
+    "description": "Android R.string.new_name"
+  },
+  "newName2": "New Name",
+  "@newName2": {
+    "description": "Android R.string.new_name_2"
+  },
+  "newProfile": "New profile",
+  "@newProfile": {
+    "description": "Android R.string.new_profile"
+  },
+  "newSession": "NEW SESSION",
+  "@newSession": {
+    "description": "Android R.string.new_session"
+  },
+  "next": "Next",
+  "@next": {
+    "description": "Android R.string.next"
+  },
+  "noActiveAlertIncidents": "No active alert incidents.",
+  "@noActiveAlertIncidents": {
+    "description": "Android R.string.no_active_alert_incidents"
+  },
+  "noActiveSessions": "No active sessions.",
+  "@noActiveSessions": {
+    "description": "Android R.string.no_active_sessions"
+  },
+  "noAlertHistoryYet": "No alert history yet.",
+  "@noAlertHistoryYet": {
+    "description": "Android R.string.no_alert_history_yet"
+  },
+  "noBookmarksYetStarAFolder": "No bookmarks yet. Star a folder in the SFTP or Shares browser to pin it here.",
+  "@noBookmarksYetStarAFolder": {
+    "description": "Android R.string.no_bookmarks_yet_star_a_folder"
+  },
+  "noComposeStacksFound": "No compose stacks found.",
+  "@noComposeStacksFound": {
+    "description": "Android R.string.no_compose_stacks_found"
+  },
+  "noContainersFoundOnThisHost": "No containers found on this host.",
+  "@noContainersFoundOnThisHost": {
+    "description": "Android R.string.no_containers_found_on_this_host"
+  },
+  "noCrashesRecordedReportsAppearHere": "No crashes recorded. Reports appear here automatically if the app crashes.",
+  "@noCrashesRecordedReportsAppearHere": {
+    "description": "Android R.string.no_crashes_recorded_reports_appear_here"
+  },
+  "noCredentialsProfilesFoundGoTo": "No credentials profiles found. Go to Tools -> Auth to create one or enter a raw password.",
+  "@noCredentialsProfilesFoundGoTo": {
+    "description": "Android R.string.no_credentials_profiles_found_go_to"
+  },
+  "noHostsYetRunAScan": "No hosts yet — run a scan.",
+  "@noHostsYetRunAScan": {
+    "description": "Android R.string.no_hosts_yet_run_a_scan"
+  },
+  "noImagesFoundOnThisHost": "No images found on this host.",
+  "@noImagesFoundOnThisHost": {
+    "description": "Android R.string.no_images_found_on_this_host"
+  },
+  "noLogsSelectHostsAndTap": "No logs. Select hosts and tap Fetch Logs.",
+  "@noLogsSelectHostsAndTap": {
+    "description": "Android R.string.no_logs_select_hosts_and_tap"
+  },
+  "noMatchesInThisFolder": "No matches in this folder",
+  "@noMatchesInThisFolder": {
+    "description": "Android R.string.no_matches_in_this_folder"
+  },
+  "noNetworkSharesSavedYet": "No network shares saved yet.",
+  "@noNetworkSharesSavedYet": {
+    "description": "Android R.string.no_network_shares_saved_yet"
+  },
+  "noNetworksFoundOnThisHost": "No networks found on this host.",
+  "@noNetworksFoundOnThisHost": {
+    "description": "Android R.string.no_networks_found_on_this_host"
+  },
+  "noOnlineHostsAvailableContainerData": "No online hosts available. Container data appears when a host comes back online.",
+  "@noOnlineHostsAvailableContainerData": {
+    "description": "Android R.string.no_online_hosts_available_container_data"
+  },
+  "noOnlineHostsAvailableFleetDetails": "No online hosts available. Fleet details appear when hosts come back online.",
+  "@noOnlineHostsAvailableFleetDetails": {
+    "description": "Android R.string.no_online_hosts_available_fleet_details"
+  },
+  "noOnlineHostsAvailableToMonitor": "No online hosts available to monitor. Offline hosts reappear after the next successful probe.",
+  "@noOnlineHostsAvailableToMonitor": {
+    "description": "Android R.string.no_online_hosts_available_to_monitor"
+  },
+  "noOnlineSshHostsAvailableOffline": "No online SSH hosts available. Offline hosts reappear here after the next successful probe.",
+  "@noOnlineSshHostsAvailableOffline": {
+    "description": "Android R.string.no_online_ssh_hosts_available_offline"
+  },
+  "noPublishedPortsWereReportedFor": "No published ports were reported for this stack.",
+  "@noPublishedPortsWereReportedFor": {
+    "description": "Android R.string.no_published_ports_were_reported_for"
+  },
+  "noQuickScriptsMatchThisHost": "No quick scripts match this host.",
+  "@noQuickScriptsMatchThisHost": {
+    "description": "Android R.string.no_quick_scripts_match_this_host"
+  },
+  "noReadableLogSource": "This host exposes no readable log source (no journalctl, logread, or syslog file).",
+  "@noReadableLogSource": {
+    "description": "Android R.string.no_readable_log_source"
+  },
+  "noServersFound": "No servers found",
+  "@noServersFound": {
+    "description": "Android R.string.no_servers_found"
+  },
+  "noSessionsOrOnlineHosts": "No sessions or online hosts",
+  "@noSessionsOrOnlineHosts": {
+    "description": "Android R.string.no_sessions_or_online_hosts"
+  },
+  "noSharesYetRunAScan": "No shares yet - run a scan.",
+  "@noSharesYetRunAScan": {
+    "description": "Android R.string.no_shares_yet_run_a_scan"
+  },
+  "noSshKeysSavedYetGo": "No SSH keys saved yet. Go to Tools → Keys to generate or import one.",
+  "@noSshKeysSavedYetGo": {
+    "description": "Android R.string.no_ssh_keys_saved_yet_go"
+  },
+  "noTransfersRecordedThisSession": "No transfers recorded this session.",
+  "@noTransfersRecordedThisSession": {
+    "description": "Android R.string.no_transfers_recorded_this_session"
+  },
+  "noTrustedHostKeysYet": "No trusted host keys yet.",
+  "@noTrustedHostKeysYet": {
+    "description": "Android R.string.no_trusted_host_keys_yet"
+  },
+  "noTunnelsYetTapAddTo": "No tunnels yet. Tap Add to create one.",
+  "@noTunnelsYetTapAddTo": {
+    "description": "Android R.string.no_tunnels_yet_tap_add_to"
+  },
+  "noVolumesFoundOnThisHost": "No volumes found on this host.",
+  "@noVolumesFoundOnThisHost": {
+    "description": "Android R.string.no_volumes_found_on_this_host"
+  },
+  "notNow": "Not now",
+  "@notNow": {
+    "description": "Android R.string.not_now"
+  },
+  "notes": "Notes",
+  "@notes": {
+    "description": "Android R.string.notes"
+  },
+  "notesOptional": "Notes (optional)",
+  "@notesOptional": {
+    "description": "Android R.string.notes_optional"
+  },
+  "notificationAccessAndABatteryOptimization": "Notification access and a battery-optimization exemption improve background SSH reliability. They are optional; foreground terminals continue to work without them.",
+  "@notificationAccessAndABatteryOptimization": {
+    "description": "Android R.string.notification_access_and_a_battery_optimization"
+  },
+  "offlineUnreachable": "Offline · unreachable",
+  "@offlineUnreachable": {
+    "description": "Android R.string.offline_unreachable"
+  },
+  "omniterm": "OmniTerm",
+  "@omniterm": {
+    "description": "Android R.string.omniterm"
+  },
+  "omniterm2": "OMNITERM",
+  "@omniterm2": {
+    "description": "Android R.string.omniterm_2"
+  },
+  "omnitermAppBackup": "OmniTerm app backup",
+  "@omnitermAppBackup": {
+    "description": "Android R.string.omniterm_app_backup"
+  },
+  "omnitermTerminalConsole": "OmniTerm Terminal Console",
+  "@omnitermTerminalConsole": {
+    "description": "Android R.string.omniterm_terminal_console"
+  },
+  "omnitermWillGenerateARealRsa": "OmniTerm will generate a real RSA 4096-bit SSH keypair and store the private key in the local key vault.",
+  "@omnitermWillGenerateARealRsa": {
+    "description": "Android R.string.omniterm_will_generate_a_real_rsa"
+  },
+  "open": "OPEN ▾",
+  "@open": {
+    "description": "Android R.string.open"
+  },
+  "openLinksInApp": "Open links in-app",
+  "@openLinksInApp": {
+    "description": "Android R.string.open_links_in_app"
+  },
+  "openTerminalConsole": "Open Terminal Console",
+  "@openTerminalConsole": {
+    "description": "Android R.string.open_terminal_console"
+  },
+  "openWithDeviceApp": "Open with device app",
+  "@openWithDeviceApp": {
+    "description": "Android R.string.open_with_device_app"
+  },
+  "openWithDeviceApp2": "Open with Device App",
+  "@openWithDeviceApp2": {
+    "description": "Android R.string.open_with_device_app_2"
+  },
+  "password": "Password",
+  "@password": {
+    "description": "Android R.string.password"
+  },
+  "paste": "Paste",
+  "@paste": {
+    "description": "Android R.string.paste"
+  },
+  "pasteHere": "Paste here",
+  "@pasteHere": {
+    "description": "Android R.string.paste_here"
+  },
+  "path": "Path",
+  "@path": {
+    "description": "Android R.string.path"
+  },
+  "perInterfaceRatesAppearAfterThe": "Per-interface rates appear after the next refresh.",
+  "@perInterfaceRatesAppearAfterThe": {
+    "description": "Android R.string.per_interface_rates_appear_after_the"
+  },
+  "persistentSessionTmux": "Persistent session (tmux)",
+  "@persistentSessionTmux": {
+    "description": "Android R.string.persistent_session_tmux"
+  },
+  "pick": "PICK ▾",
+  "@pick": {
+    "description": "Android R.string.pick"
+  },
+  "pickAHostToBrowse": "Pick a host to browse.",
+  "@pickAHostToBrowse": {
+    "description": "Android R.string.pick_a_host_to_browse"
+  },
+  "pickALanHost": "Pick a LAN host",
+  "@pickALanHost": {
+    "description": "Android R.string.pick_a_lan_host"
+  },
+  "pickAnExistingGroupOrType": "Pick an existing group or type a new group name.",
+  "@pickAnExistingGroupOrType": {
+    "description": "Android R.string.pick_an_existing_group_or_type"
+  },
+  "pickLanHost": "Pick LAN host",
+  "@pickLanHost": {
+    "description": "Android R.string.pick_lan_host"
+  },
+  "pin": "PIN",
+  "@pin": {
+    "description": "Android R.string.pin"
+  },
+  "pin48Digits": "PIN (4-8 digits)",
+  "@pin48Digits": {
+    "description": "Android R.string.pin_4_8_digits"
+  },
+  "pinToHomeScreen": "Pin to home screen",
+  "@pinToHomeScreen": {
+    "description": "Android R.string.pin_to_home_screen"
+  },
+  "pingsAreSentFromThisDevice": "Pings are sent from this device, so they tell you whether the HOST is reachable on your current network — independent of SSH.",
+  "@pingsAreSentFromThisDevice": {
+    "description": "Android R.string.pings_are_sent_from_this_device"
+  },
+  "pleaseTapBelowToGrantThem": "Please tap below to grant them.",
+  "@pleaseTapBelowToGrantThem": {
+    "description": "Android R.string.please_tap_below_to_grant_them"
+  },
+  "podNameOptional": "Pod name (optional)",
+  "@podNameOptional": {
+    "description": "Android R.string.pod_name_optional"
+  },
+  "podProject": "pod_<project>",
+  "@podProject": {
+    "description": "Android R.string.pod_project"
+  },
+  "podman": "Podman",
+  "@podman": {
+    "description": "Android R.string.podman"
+  },
+  "podmanModifiers": "Podman modifiers",
+  "@podmanModifiers": {
+    "description": "Android R.string.podman_modifiers"
+  },
+  "podmanRunsAsTheSshUser": "Podman runs as the SSH user. Keep-ID maps that user's UID/GID into each container.",
+  "@podmanRunsAsTheSshUser": {
+    "description": "Android R.string.podman_runs_as_the_ssh_user"
+  },
+  "port": "Port",
+  "@port": {
+    "description": "Android R.string.port"
+  },
+  "portsListRangeCommaSplit": "Ports list range (comma-split)",
+  "@portsListRangeCommaSplit": {
+    "description": "Android R.string.ports_list_range_comma_split"
+  },
+  "presets": "Presets",
+  "@presets": {
+    "description": "Android R.string.presets"
+  },
+  "preview": "Preview",
+  "@preview": {
+    "description": "Android R.string.preview"
+  },
+  "previous": "Previous",
+  "@previous": {
+    "description": "Android R.string.previous"
+  },
+  "privacyPolicy": "Privacy Policy",
+  "@privacyPolicy": {
+    "description": "Android R.string.privacy_policy"
+  },
+  "privateKey": "Private Key",
+  "@privateKey": {
+    "description": "Android R.string.private_key"
+  },
+  "privateKeyRequired": "Private key (required)",
+  "@privateKeyRequired": {
+    "description": "Android R.string.private_key_required"
+  },
+  "probesSmb445Ftp21Sftp": "Probes SMB 445, FTP 21, SFTP 22, NFS 2049, WebDAV 80/443 — untick protocols to cut noise.",
+  "@probesSmb445Ftp21Sftp": {
+    "description": "Android R.string.probes_smb_445_ftp_21_sftp"
+  },
+  "profile": "Profile",
+  "@profile": {
+    "description": "Android R.string.profile"
+  },
+  "profileName": "Profile Name",
+  "@profileName": {
+    "description": "Android R.string.profile_name"
+  },
+  "profileUserPass": "Profile (User/Pass)",
+  "@profileUserPass": {
+    "description": "Android R.string.profile_user_pass"
+  },
+  "projectNameNameDeployDirectory": "Project name (~/<name> deploy directory)",
+  "@projectNameNameDeployDirectory": {
+    "description": "Android R.string.project_name_name_deploy_directory"
+  },
+  "protocol": "Protocol",
+  "@protocol": {
+    "description": "Android R.string.protocol"
+  },
+  "providedByTheSelectedProfile": "Provided by the selected profile",
+  "@providedByTheSelectedProfile": {
+    "description": "Android R.string.provided_by_the_selected_profile"
+  },
+  "proxmoxCasaosHomeAssistantLinuxAnd": "Proxmox, CasaOS, Home Assistant, Linux, and general ops snippets. Each script remains editable.",
+  "@proxmoxCasaosHomeAssistantLinuxAnd": {
+    "description": "Android R.string.proxmox_casaos_home_assistant_linux_and"
+  },
+  "proxyHost": "Proxy host",
+  "@proxyHost": {
+    "description": "Android R.string.proxy_host"
+  },
+  "proxySshJump": "Proxy / SSH jump",
+  "@proxySshJump": {
+    "description": "Android R.string.proxy_ssh_jump"
+  },
+  "pruneUnused": "Prune Unused",
+  "@pruneUnused": {
+    "description": "Android R.string.prune_unused"
+  },
+  "publicKey": "Public Key",
+  "@publicKey": {
+    "description": "Android R.string.public_key"
+  },
+  "publicKeyOptional": "Public key (optional)",
+  "@publicKeyOptional": {
+    "description": "Android R.string.public_key_optional"
+  },
+  "pureBlackSurfacesInDarkMode": "Pure-black surfaces in dark mode to save power on OLED screens. No effect in Light or High-contrast mode.",
+  "@pureBlackSurfacesInDarkMode": {
+    "description": "Android R.string.pure_black_surfaces_in_dark_mode"
+  },
+  "queryType": "Query Type",
+  "@queryType": {
+    "description": "Android R.string.query_type"
+  },
+  "querying": "Querying...",
+  "@querying": {
+    "description": "Android R.string.querying"
+  },
+  "quick": "Quick",
+  "@quick": {
+    "description": "Android R.string.quick"
+  },
+  "quickAccessBookmarksEveryHostAnd": "Quick-access bookmarks — every host and share. Offline endpoints are greyed out.",
+  "@quickAccessBookmarksEveryHostAnd": {
+    "description": "Android R.string.quick_access_bookmarks_every_host_and"
+  },
+  "quickOs": "Quick OS",
+  "@quickOs": {
+    "description": "Android R.string.quick_os"
+  },
+  "quickScripts": "Quick scripts",
+  "@quickScripts": {
+    "description": "Android R.string.quick_scripts"
+  },
+  "quickSystem": "Quick system",
+  "@quickSystem": {
+    "description": "Android R.string.quick_system"
+  },
+  "reboot": "Reboot",
+  "@reboot": {
+    "description": "Android R.string.reboot"
+  },
+  "recursive": "Recursive",
+  "@recursive": {
+    "description": "Android R.string.recursive"
+  },
+  "refresh": "REFRESH",
+  "@refresh": {
+    "description": "Android R.string.refresh"
+  },
+  "reject": "Reject",
+  "@reject": {
+    "description": "Android R.string.reject"
+  },
+  "reload": "Reload",
+  "@reload": {
+    "description": "Android R.string.reload"
+  },
+  "removeOrphans": "--remove-orphans",
+  "@removeOrphans": {
+    "description": "Android R.string.remove_orphans"
+  },
+  "removeReconnect": "Remove & Reconnect",
+  "@removeReconnect": {
+    "description": "Android R.string.remove_reconnect"
+  },
+  "rename": "Rename",
+  "@rename": {
+    "description": "Android R.string.rename"
+  },
+  "renameFile": "Rename file",
+  "@renameFile": {
+    "description": "Android R.string.rename_file"
+  },
+  "renameNode": "Rename node",
+  "@renameNode": {
+    "description": "Android R.string.rename_node"
+  },
+  "replace": "Replace",
+  "@replace": {
+    "description": "Android R.string.replace"
+  },
+  "replacementPrivateKeyOptional": "Replacement private key (optional)",
+  "@replacementPrivateKeyOptional": {
+    "description": "Android R.string.replacement_private_key_optional"
+  },
+  "replacementPublicKeyOptional": "Replacement public key (optional)",
+  "@replacementPublicKeyOptional": {
+    "description": "Android R.string.replacement_public_key_optional"
+  },
+  "replicas": "Replicas",
+  "@replicas": {
+    "description": "Android R.string.replicas"
+  },
+  "report": "Report",
+  "@report": {
+    "description": "Android R.string.report"
+  },
+  "requirePinToUnlock": "Require PIN to unlock",
+  "@requirePinToUnlock": {
+    "description": "Android R.string.require_pin_to_unlock"
+  },
+  "resetDefaults": "Reset defaults",
+  "@resetDefaults": {
+    "description": "Android R.string.reset_defaults"
+  },
+  "restore": "Restore",
+  "@restore": {
+    "description": "Android R.string.restore"
+  },
+  "restoreBackup": "Restore backup",
+  "@restoreBackup": {
+    "description": "Android R.string.restore_backup"
+  },
+  "restoring": "Restoring…",
+  "@restoring": {
+    "description": "Android R.string.restoring"
+  },
+  "resumableTmux": "RESUMABLE TMUX",
+  "@resumableTmux": {
+    "description": "Android R.string.resumable_tmux"
+  },
+  "retry": "Retry",
+  "@retry": {
+    "description": "Android R.string.retry"
+  },
+  "review": "Review",
+  "@review": {
+    "description": "Android R.string.review"
+  },
+  "rootlessKeepIdMapping": "Rootless keep-ID mapping",
+  "@rootlessKeepIdMapping": {
+    "description": "Android R.string.rootless_keep_id_mapping"
+  },
+  "rules": "Rules",
+  "@rules": {
+    "description": "Android R.string.rules"
+  },
+  "rulesAndIncidentHistoryAreAvailable": "Rules and incident history are available in Tools → Alerts & Rules.",
+  "@rulesAndIncidentHistoryAreAvailable": {
+    "description": "Android R.string.rules_and_incident_history_are_available"
+  },
+  "run": "Run",
+  "@run": {
+    "description": "Android R.string.run"
+  },
+  "runComposeDown": "Run compose down?",
+  "@runComposeDown": {
+    "description": "Android R.string.run_compose_down"
+  },
+  "runDnsQuery": "Run DNS Query",
+  "@runDnsQuery": {
+    "description": "Android R.string.run_dns_query"
+  },
+  "runWhoisQuery": "Run WHOIS Query",
+  "@runWhoisQuery": {
+    "description": "Android R.string.run_whois_query"
+  },
+  "running": "Running",
+  "@running": {
+    "description": "Android R.string.running"
+  },
+  "running2": "Running…",
+  "@running2": {
+    "description": "Android R.string.running_2"
+  },
+  "runtime": "Runtime",
+  "@runtime": {
+    "description": "Android R.string.runtime"
+  },
+  "save": "Save",
+  "@save": {
+    "description": "Android R.string.save"
+  },
+  "saveAnyway": "Save anyway",
+  "@saveAnyway": {
+    "description": "Android R.string.save_anyway"
+  },
+  "saveChanges": "Save Changes",
+  "@saveChanges": {
+    "description": "Android R.string.save_changes"
+  },
+  "saveChanges2": "Save changes",
+  "@saveChanges2": {
+    "description": "Android R.string.save_changes_2"
+  },
+  "saveKey": "Save Key",
+  "@saveKey": {
+    "description": "Android R.string.save_key"
+  },
+  "savePin": "Save PIN",
+  "@savePin": {
+    "description": "Android R.string.save_pin"
+  },
+  "saveProfile": "Save Profile",
+  "@saveProfile": {
+    "description": "Android R.string.save_profile"
+  },
+  "saveScoring": "Save scoring",
+  "@saveScoring": {
+    "description": "Android R.string.save_scoring"
+  },
+  "saveSecurelyToCredentialStore": "Save securely to Credential Store",
+  "@saveSecurelyToCredentialStore": {
+    "description": "Android R.string.save_securely_to_credential_store"
+  },
+  "savedPersistentSessions": "Saved persistent sessions",
+  "@savedPersistentSessions": {
+    "description": "Android R.string.saved_persistent_sessions"
+  },
+  "savedSmbFtpSftpNfsWebdav": "Saved SMB/FTP/SFTP/NFS/WebDAV profiles are separate from SSH hosts.",
+  "@savedSmbFtpSftpNfsWebdav": {
+    "description": "Android R.string.saved_smb_ftp_sftp_nfs_webdav"
+  },
+  "savedTargets": "Saved targets",
+  "@savedTargets": {
+    "description": "Android R.string.saved_targets"
+  },
+  "saving": "Saving…",
+  "@saving": {
+    "description": "Android R.string.saving"
+  },
+  "savingWillCreateAReusableCredential": "Saving will create a reusable credential profile in the Network Shares group.",
+  "@savingWillCreateAReusableCredential": {
+    "description": "Android R.string.saving_will_create_a_reusable_credential"
+  },
+  "scale": "Scale",
+  "@scale": {
+    "description": "Android R.string.scale"
+  },
+  "scalesTextAcrossAllScreens": "Scales text across all screens.",
+  "@scalesTextAcrossAllScreens": {
+    "description": "Android R.string.scales_text_across_all_screens"
+  },
+  "scanLanForShares": "Scan LAN for shares",
+  "@scanLanForShares": {
+    "description": "Android R.string.scan_lan_for_shares"
+  },
+  "scanLanToAddATarget": "Scan LAN to add a target",
+  "@scanLanToAddATarget": {
+    "description": "Android R.string.scan_lan_to_add_a_target"
+  },
+  "scanningNetwork": "Scanning network…",
+  "@scanningNetwork": {
+    "description": "Android R.string.scanning_network"
+  },
+  "scanningShares": "Scanning shares",
+  "@scanningShares": {
+    "description": "Android R.string.scanning_shares"
+  },
+  "schedule": "Schedule",
+  "@schedule": {
+    "description": "Android R.string.schedule"
+  },
+  "scriptName": "Script name",
+  "@scriptName": {
+    "description": "Android R.string.script_name"
+  },
+  "search": "Search",
+  "@search": {
+    "description": "Android R.string.search"
+  },
+  "searchHosts": "Search hosts",
+  "@searchHosts": {
+    "description": "Android R.string.search_hosts"
+  },
+  "searchPresets": "Search presets",
+  "@searchPresets": {
+    "description": "Android R.string.search_presets"
+  },
+  "selectAServerFirst": "Select a server first.",
+  "@selectAServerFirst": {
+    "description": "Android R.string.select_a_server_first"
+  },
+  "selectAll": "Select All",
+  "@selectAll": {
+    "description": "Android R.string.select_all"
+  },
+  "selectAll2": "Select all",
+  "@selectAll2": {
+    "description": "Android R.string.select_all_2"
+  },
+  "selectCredentialsProfile": "Select Credentials Profile:",
+  "@selectCredentialsProfile": {
+    "description": "Android R.string.select_credentials_profile"
+  },
+  "selectHostsThenTapFetchLogs": "Select hosts then tap Fetch Logs:",
+  "@selectHostsThenTapFetchLogs": {
+    "description": "Android R.string.select_hosts_then_tap_fetch_logs"
+  },
+  "selectKeypairAlias": "Select Keypair Alias:",
+  "@selectKeypairAlias": {
+    "description": "Android R.string.select_keypair_alias"
+  },
+  "selectMetricKey": "Select Metric Key:",
+  "@selectMetricKey": {
+    "description": "Android R.string.select_metric_key"
+  },
+  "sending": "Sending…",
+  "@sending": {
+    "description": "Android R.string.sending"
+  },
+  "sensitiveBackupSectionsRequireEncryptionCho": "Sensitive backup sections require encryption. Choose a passphrase you'll need for restore.",
+  "@sensitiveBackupSectionsRequireEncryptionCho": {
+    "description": "Android R.string.sensitive_backup_sections_require_encryption_cho"
+  },
+  "sensitiveSelectingForcesAnEncryptedBackup": "* Sensitive — selecting forces an encrypted backup.",
+  "@sensitiveSelectingForcesAnEncryptedBackup": {
+    "description": "Android R.string.sensitive_selecting_forces_an_encrypted_backup"
+  },
+  "serverNotes": "Server Notes",
+  "@serverNotes": {
+    "description": "Android R.string.server_notes"
+  },
+  "servers": "Servers",
+  "@servers": {
+    "description": "Android R.string.servers"
+  },
+  "servicesSharePodmanPodNamespacesUsing": "Services share Podman pod namespaces using x-podman.in_pod.",
+  "@servicesSharePodmanPodNamespacesUsing": {
+    "description": "Android R.string.services_share_podman_pod_namespaces_using"
+  },
+  "sftp": "SFTP",
+  "@sftp": {
+    "description": "Android R.string.sftp"
+  },
+  "share": "Share",
+  "@share": {
+    "description": "Android R.string.share"
+  },
+  "sharePath": "Share/path",
+  "@sharePath": {
+    "description": "Android R.string.share_path"
+  },
+  "sharedfolderOrExportsMedia": "SharedFolder or exports/media",
+  "@sharedfolderOrExportsMedia": {
+    "description": "Android R.string.sharedfolder_or_exports_media"
+  },
+  "shares": "Shares",
+  "@shares": {
+    "description": "Android R.string.shares"
+  },
+  "shortcutHostMissing": "This host no longer exists.",
+  "@shortcutHostMissing": {
+    "description": "Android R.string.shortcut_host_missing"
+  },
+  "shortcutLabel": "Shortcut label",
+  "@shortcutLabel": {
+    "description": "Android R.string.shortcut_label"
+  },
+  "shortcutNetworkLong": "Ping, port scan and Wake-on-LAN",
+  "@shortcutNetworkLong": {
+    "description": "Android R.string.shortcut_network_long"
+  },
+  "shortcutNetworkShort": "Net tools",
+  "@shortcutNetworkShort": {
+    "description": "Android R.string.shortcut_network_short"
+  },
+  "shortcutNewHostLong": "Add a new SSH host",
+  "@shortcutNewHostLong": {
+    "description": "Android R.string.shortcut_new_host_long"
+  },
+  "shortcutNewHostShort": "New host",
+  "@shortcutNewHostShort": {
+    "description": "Android R.string.shortcut_new_host_short"
+  },
+  "shortcutSftpLong": "Browse SFTP and network shares",
+  "@shortcutSftpLong": {
+    "description": "Android R.string.shortcut_sftp_long"
+  },
+  "shortcutSftpShort": "Files",
+  "@shortcutSftpShort": {
+    "description": "Android R.string.shortcut_sftp_short"
+  },
+  "shortcutShareMissing": "This network share no longer exists.",
+  "@shortcutShareMissing": {
+    "description": "Android R.string.shortcut_share_missing"
+  },
+  "smartSwipeInput": "Smart swipe input",
+  "@smartSwipeInput": {
+    "description": "Android R.string.smart_swipe_input"
+  },
+  "sourceCodeContributions": "Source code & contributions",
+  "@sourceCodeContributions": {
+    "description": "Android R.string.source_code_contributions"
+  },
+  "sshAnyway": "SSH anyway",
+  "@sshAnyway": {
+    "description": "Android R.string.ssh_anyway"
+  },
+  "sshHost": "SSH host",
+  "@sshHost": {
+    "description": "Android R.string.ssh_host"
+  },
+  "sshKeys": "SSH Keys",
+  "@sshKeys": {
+    "description": "Android R.string.ssh_keys"
+  },
+  "sshLeaveBlankToAutoDerive": "ssh-… (leave blank to auto-derive)",
+  "@sshLeaveBlankToAutoDerive": {
+    "description": "Android R.string.ssh_leave_blank_to_auto_derive"
+  },
+  "sshPort": "SSH Port",
+  "@sshPort": {
+    "description": "Android R.string.ssh_port"
+  },
+  "sshPrivateKey": "SSH Private Key",
+  "@sshPrivateKey": {
+    "description": "Android R.string.ssh_private_key"
+  },
+  "sshRsaAaaaLeaveBlankTo": "ssh-rsa AAAA… (leave blank to auto-derive)",
+  "@sshRsaAaaaLeaveBlankTo": {
+    "description": "Android R.string.ssh_rsa_aaaa_leave_blank_to"
+  },
+  "sshTunnels": "SSH Tunnels",
+  "@sshTunnels": {
+    "description": "Android R.string.ssh_tunnels"
+  },
+  "sshUsername": "SSH Username",
+  "@sshUsername": {
+    "description": "Android R.string.ssh_username"
+  },
+  "stackNameComposeNameKeyOptional": "Stack name (compose name: key, optional)",
+  "@stackNameComposeNameKeyOptional": {
+    "description": "Android R.string.stack_name_compose_name_key_optional"
+  },
+  "stacks": "Stacks",
+  "@stacks": {
+    "description": "Android R.string.stacks"
+  },
+  "startPing": "Start Ping",
+  "@startPing": {
+    "description": "Android R.string.start_ping"
+  },
+  "startSaving": "Start saving",
+  "@startSaving": {
+    "description": "Android R.string.start_saving"
+  },
+  "startSpeedTest": "Start Speed Test",
+  "@startSpeedTest": {
+    "description": "Android R.string.start_speed_test"
+  },
+  "startTraceroute": "Start Traceroute",
+  "@startTraceroute": {
+    "description": "Android R.string.start_traceroute"
+  },
+  "startWhenOmnitermOpens": "Start when OmniTerm opens",
+  "@startWhenOmnitermOpens": {
+    "description": "Android R.string.start_when_omniterm_opens"
+  },
+  "startingFrom100TheFollowingDeductions": "Starting from 100, the following deductions apply:",
+  "@startingFrom100TheFollowingDeductions": {
+    "description": "Android R.string.starting_from_100_the_following_deductions"
+  },
+  "stay": "Stay",
+  "@stay": {
+    "description": "Android R.string.stay"
+  },
+  "stop": "Stop",
+  "@stop": {
+    "description": "Android R.string.stop"
+  },
+  "str0Containers": "0 containers",
+  "@str0Containers": {
+    "description": "Android R.string.str_0_containers"
+  },
+  "str1921681024Or": "192.168.1.0/24 or nas.local",
+  "@str1921681024Or": {
+    "description": "Android R.string.str_192_168_1_0_24_or"
+  },
+  "str7DayHistory": "7-DAY HISTORY",
+  "@str7DayHistory": {
+    "description": "Android R.string.str_7_day_history"
+  },
+  "strongerColorsAndBordersForBetter": "Stronger colors and borders for better readability. Applies on top of your Dark/Light theme.",
+  "@strongerColorsAndBordersForBetter": {
+    "description": "Android R.string.stronger_colors_and_borders_for_better"
+  },
+  "subnetOrHost": "Subnet or host",
+  "@subnetOrHost": {
+    "description": "Android R.string.subnet_or_host"
+  },
+  "sudoModeEditsCopyMoveAnd": "Sudo mode: edits, copy/move, and delete run as root",
+  "@sudoModeEditsCopyMoveAnd": {
+    "description": "Android R.string.sudo_mode_edits_copy_move_and"
+  },
+  "sweepYourLocalNetworkAndGather": "Sweep your local network and gather as much detail as possible per host: hostname, MAC + vendor, and which common ports answer. Tap a host for actions — save it, ping, port scan, and more.",
+  "@sweepYourLocalNetworkAndGather": {
+    "description": "Android R.string.sweep_your_local_network_and_gather"
+  },
+  "systemDefault": "System Default",
+  "@systemDefault": {
+    "description": "Android R.string.system_default"
+  },
+  "takenDownItsContainersAndNetworks": "Taken down — its containers and networks no longer exist. OmniTerm recorded this stack while it was up; the compose file stays on the host.",
+  "@takenDownItsContainersAndNetworks": {
+    "description": "Android R.string.taken_down_its_containers_and_networks"
+  },
+  "tapASessionToResumeOr": "Tap a session to resume, or start a new one.",
+  "@tapASessionToResumeOr": {
+    "description": "Android R.string.tap_a_session_to_resume_or"
+  },
+  "tapBackupToChooseExportSections": "Tap Backup to choose export sections. Restore shows available sections after the selected file is read.",
+  "@tapBackupToChooseExportSections": {
+    "description": "Android R.string.tap_backup_to_choose_export_sections"
+  },
+  "tapToOpenLinks": "Tap-to-open links",
+  "@tapToOpenLinks": {
+    "description": "Android R.string.tap_to_open_links"
+  },
+  "tapToReattachTmuxSession": "Tap to reattach tmux session",
+  "@tapToReattachTmuxSession": {
+    "description": "Android R.string.tap_to_reattach_tmux_session"
+  },
+  "targetHostIpScanPointer": "Target Host IP (Scan pointer)",
+  "@targetHostIpScanPointer": {
+    "description": "Android R.string.target_host_ip_scan_pointer"
+  },
+  "terminateExit": "Terminate & Exit",
+  "@terminateExit": {
+    "description": "Android R.string.terminate_exit"
+  },
+  "testConnection": "Test Connection",
+  "@testConnection": {
+    "description": "Android R.string.test_connection"
+  },
+  "testServer": "Test Server",
+  "@testServer": {
+    "description": "Android R.string.test_server"
+  },
+  "textSize": "Text size",
+  "@textSize": {
+    "description": "Android R.string.text_size"
+  },
+  "theOtherPaneStaysConnected": "The other pane stays connected.",
+  "@theOtherPaneStaysConnected": {
+    "description": "Android R.string.the_other_pane_stays_connected"
+  },
+  "theStatusMayBeOutOf": "The status may be out of date — connect anyway to try, or cancel and wait for it to come back online.",
+  "@theStatusMayBeOutOf": {
+    "description": "Android R.string.the_status_may_be_out_of"
+  },
+  "theTunnelRemainsScopedToThe": "The tunnel remains scoped to the app and stops when OmniTerm closes.",
+  "@theTunnelRemainsScopedToThe": {
+    "description": "Android R.string.the_tunnel_remains_scoped_to_the"
+  },
+  "theme": "Theme",
+  "@theme": {
+    "description": "Android R.string.theme"
+  },
+  "themeAppAppearance": "Theme App Appearance",
+  "@themeAppAppearance": {
+    "description": "Android R.string.theme_app_appearance"
+  },
+  "thisClearsCompletedTransferRowsRunning": "This clears completed transfer rows. Running transfers cannot be cleared.",
+  "@thisClearsCompletedTransferRowsRunning": {
+    "description": "Android R.string.this_clears_completed_transfer_rows_running"
+  },
+  "thisClearsTheVisibleFleetBroadcast": "This clears the visible Fleet broadcast output history.",
+  "@thisClearsTheVisibleFleetBroadcast": {
+    "description": "Android R.string.this_clears_the_visible_fleet_broadcast"
+  },
+  "thisSession": "This session",
+  "@thisSession": {
+    "description": "Android R.string.this_session"
+  },
+  "thresholdsAndWeightsAreEditableIn": "Thresholds and weights are editable in Tools → Settings → Health scoring.",
+  "@thresholdsAndWeightsAreEditableIn": {
+    "description": "Android R.string.thresholds_and_weights_are_editable_in"
+  },
+  "timeToFirstByte": "time to first byte",
+  "@timeToFirstByte": {
+    "description": "Android R.string.time_to_first_byte"
+  },
+  "tmuxControlModeExperimental": "tmux control mode (experimental)",
+  "@tmuxControlModeExperimental": {
+    "description": "Android R.string.tmux_control_mode_experimental"
+  },
+  "topLevelNetworks": "Top-level networks",
+  "@topLevelNetworks": {
+    "description": "Android R.string.top_level_networks"
+  },
+  "topLevelVolumes": "Top-level volumes",
+  "@topLevelVolumes": {
+    "description": "Android R.string.top_level_volumes"
+  },
+  "tracesEachNetworkHopFromThis": "Traces each network hop from this device to the host. Uses the platform traceroute; if it isn't available, a clear message is shown.",
+  "@tracesEachNetworkHopFromThis": {
+    "description": "Android R.string.traces_each_network_hop_from_this"
+  },
+  "transferLogFeed": "Transfer Log Feed",
+  "@transferLogFeed": {
+    "description": "Android R.string.transfer_log_feed"
+  },
+  "transfers": "Transfers",
+  "@transfers": {
+    "description": "Android R.string.transfers"
+  },
+  "tries0KeepPingingUntilStopped": "Tries (0 = keep pinging until stopped)",
+  "@tries0KeepPingingUntilStopped": {
+    "description": "Android R.string.tries_0_keep_pinging_until_stopped"
+  },
+  "triggerWindowLabel": "Trigger after breaching for:",
+  "@triggerWindowLabel": {
+    "description": "Android R.string.trigger_window_label"
+  },
+  "trustConnect": "Trust & Connect",
+  "@trustConnect": {
+    "description": "Android R.string.trust_connect"
+  },
+  "trustThisServer": "Trust This Server?",
+  "@trustThisServer": {
+    "description": "Android R.string.trust_this_server"
+  },
+  "type": "Type",
+  "@type": {
+    "description": "Android R.string.type"
+  },
+  "udpPort": "UDP port",
+  "@udpPort": {
+    "description": "Android R.string.udp_port"
+  },
+  "unlock": "Unlock",
+  "@unlock": {
+    "description": "Android R.string.unlock"
+  },
+  "unlockWithBiometrics": "Unlock with biometrics",
+  "@unlockWithBiometrics": {
+    "description": "Android R.string.unlock_with_biometrics"
+  },
+  "unmute": "UNMUTE",
+  "@unmute": {
+    "description": "Android R.string.unmute"
+  },
+  "useBiometrics": "Use biometrics",
+  "@useBiometrics": {
+    "description": "Android R.string.use_biometrics"
+  },
+  "useSshPayloadCompression": "Use SSH Payload compression",
+  "@useSshPayloadCompression": {
+    "description": "Android R.string.use_ssh_payload_compression"
+  },
+  "useSystemOrOverride": "Use system or override",
+  "@useSystemOrOverride": {
+    "description": "Android R.string.use_system_or_override"
+  },
+  "useYourBiometricPromptToContinue": "Use your biometric prompt to continue.",
+  "@useYourBiometricPromptToContinue": {
+    "description": "Android R.string.use_your_biometric_prompt_to_continue"
+  },
+  "username": "Username",
+  "@username": {
+    "description": "Android R.string.username"
+  },
+  "verifyThisFingerprintMatchesTheServer": "Verify this fingerprint matches the server before trusting. Once trusted, it will be stored and checked on future connections.",
+  "@verifyThisFingerprintMatchesTheServer": {
+    "description": "Android R.string.verify_this_fingerprint_matches_the_server"
+  },
+  "viewImage": "View image",
+  "@viewImage": {
+    "description": "Android R.string.view_image"
+  },
+  "viewImage2": "View Image",
+  "@viewImage2": {
+    "description": "Android R.string.view_image_2"
+  },
+  "viewOnGithub": "View on GitHub",
+  "@viewOnGithub": {
+    "description": "Android R.string.view_on_github"
+  },
+  "visibleScreen": "Visible screen",
+  "@visibleScreen": {
+    "description": "Android R.string.visible_screen"
+  },
+  "volumeName": "Volume name",
+  "@volumeName": {
+    "description": "Android R.string.volume_name"
+  },
+  "volumes": "Volumes",
+  "@volumes": {
+    "description": "Android R.string.volumes"
+  },
+  "wake": "Wake",
+  "@wake": {
+    "description": "Android R.string.wake"
+  },
+  "warnAtFileCount": "Warn at file count",
+  "@warnAtFileCount": {
+    "description": "Android R.string.warn_at_file_count"
+  },
+  "warnAtTotalDownloadSizeGb": "Warn at total download size (GB)",
+  "@warnAtTotalDownloadSizeGb": {
+    "description": "Android R.string.warn_at_total_download_size_gb"
+  },
+  "warningPrivateKeyIsShownOnly": "Warning: Private key is shown only once. Please copy it now if you need it.",
+  "@warningPrivateKeyIsShownOnly": {
+    "description": "Android R.string.warning_private_key_is_shown_only"
+  },
+  "whatThisScriptDoesCaveatsEtc": "What this script does, caveats, etc.",
+  "@whatThisScriptDoesCaveatsEtc": {
+    "description": "Android R.string.what_this_script_does_caveats_etc"
+  },
+  "whyThisRuleExistsWhatIt": "Why this rule exists / what it watches for",
+  "@whyThisRuleExistsWhatIt": {
+    "description": "Android R.string.why_this_rule_exists_what_it"
+  },
+  "widgetAddServer": "Add a host to get started",
+  "@widgetAddServer": {
+    "description": "Android R.string.widget_add_server"
+  },
+  "widgetConfigLoadFailed": "Could not load saved hosts for this widget.",
+  "@widgetConfigLoadFailed": {
+    "description": "Android R.string.widget_config_load_failed"
+  },
+  "widgetConnecting": "…",
+  "@widgetConnecting": {
+    "description": "Android R.string.widget_connecting"
+  },
+  "widgetDescription": "Monitor your fleet: online status, health and live metrics on the home screen.",
+  "@widgetDescription": {
+    "description": "Android R.string.widget_description"
+  },
+  "widgetErrorHint": "Open OmniTerm, then refresh the widget.",
+  "@widgetErrorHint": {
+    "description": "Android R.string.widget_error_hint"
+  },
+  "widgetFleetSummary": "OmniTerm Fleet ({a1}/{a2})",
+  "@widgetFleetSummary": {
+    "description": "Android R.string.widget_fleet_summary",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "widgetHealth": "HP {a1}",
+  "@widgetHealth": {
+    "description": "Android R.string.widget_health",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "widgetLoadFailed": "Couldn't load fleet data",
+  "@widgetLoadFailed": {
+    "description": "Android R.string.widget_load_failed"
+  },
+  "widgetLoading": "Loading OmniTerm…",
+  "@widgetLoading": {
+    "description": "Android R.string.widget_loading"
+  },
+  "widgetMetrics": "CPU {a1}% · RAM {a2}% · TEMP {a3} · DISK {a4}%",
+  "@widgetMetrics": {
+    "description": "Android R.string.widget_metrics",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      },
+      "a4": {
+        "type": "Object"
+      }
+    }
+  },
+  "widgetNoServers": "No servers added.",
+  "@widgetNoServers": {
+    "description": "Android R.string.widget_no_servers"
+  },
+  "widgetOffline": "offline",
+  "@widgetOffline": {
+    "description": "Android R.string.widget_offline"
+  },
+  "widgetTapToRetry": "Tap to retry",
+  "@widgetTapToRetry": {
+    "description": "Android R.string.widget_tap_to_retry"
+  },
+  "widgetUnnamedHost": "Unnamed host",
+  "@widgetUnnamedHost": {
+    "description": "Android R.string.widget_unnamed_host"
+  },
+  "wildcards": "Wildcards * ?",
+  "@wildcards": {
+    "description": "Android R.string.wildcards"
+  },
+  "workgroupDomain": "Workgroup / domain",
+  "@workgroupDomain": {
+    "description": "Android R.string.workgroup_domain"
+  },
+  "youHaveUnsavedSettingsChangesLeave": "You have unsaved settings changes. Leave without saving them?",
+  "@youHaveUnsavedSettingsChangesLeave": {
+    "description": "Android R.string.you_have_unsaved_settings_changes_leave"
+  },
+  "youReAboutToPasteA": "You're about to paste a large block of text into the terminal. Confirm to send it.",
+  "@youReAboutToPasteA": {
+    "description": "Android R.string.you_re_about_to_paste_a"
+  }
+}

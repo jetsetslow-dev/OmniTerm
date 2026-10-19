@@ -9,6 +9,7 @@ import '../../data/ssh/dartssh_transport.dart' show SshHostKeyException;
 import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/remote_commands.dart';
 import '../../domain/host_display.dart';
+import '../../domain/quick_connect.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../platform/review_prompt.dart';
 import '../../data/term/terminal_emulator.dart';
@@ -1348,6 +1349,30 @@ class ShellViewModel extends ChangeNotifier {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Saved key aliases and credential profiles, offered by the Quick connect dialog.
+  Future<List<String>> savedKeyAliases() async =>
+      (await _app.repository.getAllKeys()).map((k) => k.alias).toList();
+
+  Future<List<CredentialProfile>> savedProfiles() => _app.repository.getAllProfiles();
+
+  /// Every saved host, offered by Quick connect as a jump host.
+  List<Server> get savedServers => List.unmodifiable(_app.servers);
+
+  int _nextAdHocServerId = -1;
+
+  /// Connects to a host that is not saved, as Kotlin's `AppViewModel.quickConnect` does. Returns
+  /// why [input] was rejected so the dialog can stay open, or null once the connection has started;
+  /// how an accepted connection goes is reported by the terminal itself.
+  String? quickConnect(QuickConnectInput input) {
+    final error = quickConnectError(input, connecting: isConnecting);
+    if (error != null) return error;
+    final adHoc = quickConnectServer(input, id: _nextAdHocServerId--);
+    // A one-off host replaces the split view rather than landing in whichever pane had focus.
+    unsplit();
+    unawaited(connect(adHoc));
+    return null;
   }
 
   Future<void> connect(

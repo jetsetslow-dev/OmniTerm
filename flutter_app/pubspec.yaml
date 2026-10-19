@@ -30,6 +30,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Standard localisation (gen-l10n). Messages come from lib/l10n/app_en.arb, which is generated from
+  # the Kotlin app's string resources so both apps show identical text.
+  flutter_localizations:
+    sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -61,7 +65,7 @@ dependencies:
   flutter_local_notifications: ^22.3.0
   flutter_foreground_task: ^10.0.0
   home_widget: ^0.9.3
-  intl: ^0.20.3
+  intl: ^0.20.2
   collection: ^1.19.1
   url_launcher: ^6.3.2
   file_selector: ^1.1.0
@@ -103,6 +107,8 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  # Runs gen-l10n (see l10n.yaml) on every `flutter pub get`.
+  generate: true
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

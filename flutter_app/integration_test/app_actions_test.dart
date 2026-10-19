@@ -272,10 +272,12 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('serverForm.name')), name);
       await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '127.0.0.1');
       await tester.enterText(find.byKey(const ValueKey('serverForm.port')), '1');
+      await tapKey(tester, 'serverForm.next');
       await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
       await tester.pumpAndSettle();
       await tapKey(tester, 'serverForm.test');
       expect(find.byKey(const ValueKey('serverForm.testResult')), findsOneWidget);
+      await tapKey(tester, 'serverForm.next');
       await tapKey(tester, 'serverForm.save');
       expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
       await tapKey(tester, 'serverForm.unverified.saveAnyway');
