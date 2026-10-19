@@ -34,9 +34,17 @@ class _AlertsScreenState extends State<AlertsScreen> {
   /// minute tick keeps the Active/Muted partition honest, as Kotlin's `LaunchedEffect` does.
   Timer? _muteExpiryTicker;
 
+  /// Returning from system settings is how a user unblocks notifications; re-read on resume.
+  AppLifecycleListener? _lifecycle;
+
   @override
   void initState() {
     super.initState();
+    _lifecycle = AppLifecycleListener(
+      onResume: () {
+        if (mounted) context.read<AlertsViewModel>().refreshNotificationsAllowed();
+      },
+    );
     _muteExpiryTicker = Timer.periodic(const Duration(seconds: 60), (_) {
       if (mounted) setState(() {});
     });
@@ -48,6 +56,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
   @override
   void dispose() {
     _muteExpiryTicker?.cancel();
+    _lifecycle?.dispose();
     super.dispose();
   }
 
@@ -173,8 +182,8 @@ class _MonitoringCard extends StatelessWidget {
 
 /// Says when alerts will fire but nothing will reach the notification shade.
 ///
-/// Not in Kotlin's screen: a deliberate, reported deviation. It renders nothing unless Android has
-/// denied notifications (or the build cannot post them), so the normal screen matches Kotlin.
+/// Kotlin's `AlertNotificationBlockedNote` shows the same note. It renders nothing unless
+/// notifications are blocked (or the build cannot post them), so the normal screen is unchanged.
 class _NotificationWarning extends StatelessWidget {
   const _NotificationWarning({required this.vm});
 

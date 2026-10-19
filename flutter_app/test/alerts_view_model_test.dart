@@ -57,9 +57,9 @@ void main() {
 
   late FakeAlertNotifier notifier;
 
-  Future<AlertsViewModel> boot() async {
+  Future<AlertsViewModel> boot({bool permission = true}) async {
     await app.start();
-    notifier = FakeAlertNotifier();
+    notifier = FakeAlertNotifier(permission: permission);
     final vm = AlertsViewModel(app, notifier: notifier);
     await vm.start();
     await Future<void>.delayed(Duration.zero);
@@ -842,6 +842,22 @@ void main() {
       await vm.setAlertsEnabled(true);
       expect(notifier.permissionRequests, 1);
       expect(vm.notificationsAllowed, isTrue);
+      vm.dispose();
+    });
+
+    // A user who blocked notifications before this launch used to see no note at all: the state was
+    // only learned by toggling alerts on in the same session. Kotlin reads it on every resume.
+    test('an already blocked permission is known on start, without asking', () async {
+      final vm = await boot(permission: false);
+
+      expect(vm.notificationsAllowed, isFalse);
+      expect(notifier.permissionRequests, 0);
+
+      // Granted in system settings, then the app resumes.
+      notifier.permission = true;
+      await vm.refreshNotificationsAllowed();
+      expect(vm.notificationsAllowed, isTrue);
+      expect(notifier.permissionRequests, 0);
       vm.dispose();
     });
 

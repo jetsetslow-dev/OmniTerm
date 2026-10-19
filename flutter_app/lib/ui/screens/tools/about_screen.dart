@@ -250,8 +250,8 @@ class _AboutScreenState extends State<AboutScreen> {
                         },
                       ),
                     ),
-                    // Not in Kotlin: Play builds that show ads need a consent entry point. Hidden
-                    // whenever ads are off, which includes every source build.
+                    // Kotlin's `FlavorAdPrivacyButton`: Play builds only, where ads need a consent
+                    // entry point. Hidden whenever ads are off, which includes every source build.
                     if (_ads?.enabled == true)
                       fullWidth(
                         OutlinedButton.icon(

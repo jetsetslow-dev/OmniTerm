@@ -87,9 +87,22 @@ class AlertsViewModel extends ChangeNotifier {
     _presetsEnabled =
         (await _app.repository.getSetting(alertPresetsSetting))?.toLowerCase() == 'true';
     _safeNotify();
+    await refreshNotificationsAllowed();
   }
 
-  /// True once the platform has agreed to show notifications; null until asked.
+  /// Re-reads whether alerts can reach the shade, without prompting. Called on start and whenever
+  /// the app resumes, so a permission granted or revoked in system settings shows up at once — as
+  /// Kotlin re-reads it on every resume.
+  Future<void> refreshNotificationsAllowed() async {
+    final target = notifier;
+    if (target == null) return;
+    final allowed = await target.notificationsEnabled();
+    if (_disposed) return;
+    _notificationsAllowed = allowed;
+    _safeNotify();
+  }
+
+  /// Whether the platform will show notifications; null until read.
   ///
   /// Surfaced so the screen can say that alerts will fire but nothing will appear in the shade —
   /// which is a working feature the user cannot see, and the least obvious kind of broken.

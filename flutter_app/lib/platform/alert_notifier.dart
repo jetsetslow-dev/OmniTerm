@@ -17,6 +17,10 @@ abstract interface class AlertNotifier {
   /// Ask for permission if the platform requires it. Returns whether notifications can be posted.
   Future<bool> ensurePermission();
 
+  /// Whether a posted alert would reach the notification shade right now, without asking. Covers
+  /// both a denied permission and notifications switched off for the app in system settings.
+  Future<bool> notificationsEnabled();
+
   Future<void> post(AlertNotification notification);
 
   /// Clear a previously posted alert, by the same stable id.
@@ -59,6 +63,23 @@ class LocalAlertNotifier implements AlertNotifier {
       ),
     );
     _initialised = true;
+  }
+
+  @override
+  Future<bool> notificationsEnabled() async {
+    try {
+      await _init();
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      // Kotlin's Alerts screen reads the same `NotificationManagerCompat.areNotificationsEnabled()`.
+      if (android != null) return await android.areNotificationsEnabled() ?? false;
+      final darwin = _plugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+      if (darwin != null) return (await darwin.checkPermissions())?.isEnabled ?? false;
+    } catch (_) {
+      return false;
+    }
+    return false;
   }
 
   @override

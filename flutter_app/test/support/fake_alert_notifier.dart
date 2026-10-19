@@ -21,6 +21,9 @@ class FakeAlertNotifier implements AlertNotifier {
   }
 
   @override
+  Future<bool> notificationsEnabled() async => permission;
+
+  @override
   Future<void> post(AlertNotification notification) async {
     final failure = postFailure;
     if (failure != null) throw failure;
