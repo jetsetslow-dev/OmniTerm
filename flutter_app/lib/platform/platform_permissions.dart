@@ -8,6 +8,7 @@ class PlatformPermissions {
   Future<bool> get localNetworkRequired => _read('localNetworkRequired', fallback: false);
   Future<bool> get localNetworkGranted => _read('localNetworkGranted', fallback: true);
   Future<bool> get notificationGranted => _read('notificationGranted', fallback: true);
+  Future<bool> get notificationsEnabled => _read('notificationsEnabled', fallback: true);
   Future<bool> get batteryExempt => _read('batteryExempt', fallback: true);
 
   Future<bool> requestLocalNetwork() => _read('requestLocalNetwork', fallback: false);

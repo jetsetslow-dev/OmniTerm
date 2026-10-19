@@ -68,11 +68,11 @@ class LocalAlertNotifier implements AlertNotifier {
   @override
   Future<bool> notificationsEnabled() async {
     try {
+      // Asked through OmniTerm's own bridge on Android (`NotificationManagerCompat.
+      // areNotificationsEnabled()`, as Kotlin's Alerts screen does) so that reading the state at
+      // launch does not initialise the notification plugin, which stays lazy until the first post.
+      if (_platform == TargetPlatform.android) return await _permissions.notificationsEnabled;
       await _init();
-      final android = _plugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      // Kotlin's Alerts screen reads the same `NotificationManagerCompat.areNotificationsEnabled()`.
-      if (android != null) return await android.areNotificationsEnabled() ?? false;
       final darwin = _plugin
           .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
       if (darwin != null) return (await darwin.checkPermissions())?.isEnabled ?? false;

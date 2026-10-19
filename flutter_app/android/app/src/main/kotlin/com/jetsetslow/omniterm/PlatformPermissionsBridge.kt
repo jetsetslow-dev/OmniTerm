@@ -33,6 +33,11 @@ object PlatformPermissionsBridge {
                         activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                         PackageManager.PERMISSION_GRANTED,
                 )
+                // Whether a notification would reach the shade: the app-level switch as well as the
+                // 13+ permission. Kotlin's Alerts screen reads the same call.
+                "notificationsEnabled" -> result.success(
+                    androidx.core.app.NotificationManagerCompat.from(activity).areNotificationsEnabled(),
+                )
                 "batteryExempt" -> result.success(
                     activity.getSystemService(PowerManager::class.java)
                         ?.isIgnoringBatteryOptimizations(activity.packageName) == true,

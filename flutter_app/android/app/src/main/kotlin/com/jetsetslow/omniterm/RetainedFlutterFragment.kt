@@ -1,5 +1,10 @@
 package com.jetsetslow.omniterm
 
+import android.os.Build
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import io.flutter.embedding.android.FlutterFragment
 
 /** The engine belongs to RetainedFlutterEngine, not this replaceable Android Fragment.
@@ -11,4 +16,17 @@ import io.flutter.embedding.android.FlutterFragment
  */
 class RetainedFlutterFragment : FlutterFragment() {
     override fun shouldDestroyEngineWithHost(): Boolean = false
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?,
+    ): View? = super.onCreateView(inflater, container, savedInstanceState)?.also { view ->
+        // The FlutterView is one focused, full-screen View. Once a hardware key ends touch mode,
+        // Android paints its default focus highlight over it, which covers the SurfaceView Flutter
+        // renders into and greys the whole app; the view never redraws itself, so the grey stays
+        // until the window is recreated. Flutter draws its own focus indicators, and Compose turns
+        // the platform highlight off on its root view in the same way.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) view.defaultFocusHighlightEnabled = false
+    }
 }
