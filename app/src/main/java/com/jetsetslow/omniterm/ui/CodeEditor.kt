@@ -413,7 +413,7 @@ fun FullScreenCodeEditor(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = onClose) {
-                            Icon(Icons.Filled.Close, contentDescription = "Close editor")
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_editor))
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -580,13 +580,13 @@ private fun FindReplaceBar(
             val countLabel = if (query.isEmpty()) "" else if (matchCount == 0) "0/0" else "${currentIndex + 1}/$matchCount"
             Text(countLabel, fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
             IconButton(onClick = onPrev, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowUpward, contentDescription = "Previous match", modifier = Modifier.width(18.dp))
+                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.previous_match), modifier = Modifier.width(18.dp))
             }
             IconButton(onClick = onNext, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowDownward, contentDescription = "Next match", modifier = Modifier.width(18.dp))
+                Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.next_match), modifier = Modifier.width(18.dp))
             }
             IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "Close find")
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_find))
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -133,10 +133,10 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 val critical = srvList.count { it.status == "online" && viewModel.currentHealthScore(it) in 0..49 }
                 val avgScore = srvList.map { viewModel.currentHealthScore(it) }.filter { it >= 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: -1
 
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$total", label = "Hosts") }
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = "Online", color = OmniColors.green) }
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$critical", label = "Critical", color = if (critical > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant) }
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = if (avgScore < 0) "—" else "$avgScore", label = "Avg Score", color = OmniColors.cyan) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$total", label = stringResource(R.string.hosts)) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = stringResource(R.string.online_3), color = OmniColors.green) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$critical", label = stringResource(R.string.critical), color = if (critical > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = if (avgScore < 0) "—" else "$avgScore", label = stringResource(R.string.avg_score_2), color = OmniColors.cyan) }
             }
         }
 
@@ -177,7 +177,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                             points = viewModel.fetchCachedSparkline(s.id),
                             timestamps = viewModel.fetchCachedSparklineTimestamps(s.id),
                             color = accentColor,
-                            label = "CPU",
+                            label = stringResource(R.string.cpu_2),
                             unit = "%",
                         )
 
@@ -525,7 +525,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     )
                     if (filteredPresets.isEmpty()) {
                         Text(
-                            if (commandPresets.isEmpty()) "No fleet presets saved yet." else "No presets match your search.",
+                            if (commandPresets.isEmpty()) stringResource(R.string.no_fleet_presets_saved_yet) else stringResource(R.string.no_presets_match_your_search),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -569,7 +569,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     if (showPresetEditor) {
         SharedScriptEditorDialog(
             existing = null,
-            title = "Save script",
+            title = stringResource(R.string.save_script),
             initialCommand = viewModel.broadcastCommandText,
             initialCategory = "Fleet",
             defaultAvailableForQuick = false,
@@ -647,7 +647,7 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
             horizontalArrangement = Arrangement.End,
         ) {
             Text(
-                if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) "All Online" else "All Groups",
+                if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) stringResource(R.string.all_online) else stringResource(R.string.all_groups),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -677,7 +677,7 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
             // A dialog picker instead of a horizontal chip strip: with more than a few hosts the
             // strip hides most of the fleet offscreen, so selection state becomes invisible.
             HostPickerField(
-                label = "Target hosts",
+                label = stringResource(R.string.target_hosts),
                 servers = srvList,
                 selectedIds = viewModel.broadcastTargetServerIds.toSet(),
                 onToggle = { id ->
@@ -795,7 +795,7 @@ fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.select_hosts_then_tap_fetch_logs), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         HostPickerField(
-            label = "Log hosts",
+            label = stringResource(R.string.log_hosts),
             servers = srvList,
             selectedIds = viewModel.fleetLogSelectedServerIds.toSet(),
             onToggle = { viewModel.toggleFleetLogServer(it) },

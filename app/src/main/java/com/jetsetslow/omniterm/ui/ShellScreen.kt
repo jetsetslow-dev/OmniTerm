@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
@@ -171,7 +172,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             // Manual reconnect for a dropped session whose auto-retry gave up.
                             if (!s.isConnected && !s.reconnecting) {
                                 IconButton(onClick = { viewModel.retrySession(s.id) }) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = "Reconnect", tint = OmniColors.cyan)
+                                    Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.reconnect), tint = OmniColors.cyan)
                                 }
                             }
                             IconButton(onClick = { viewModel.requestDisconnectSession(s.id) }) {
@@ -212,7 +213,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                     Text(stringResource(R.string.tap_to_reattach_tmux_session), fontSize = 12.sp, color = OmniColors.amber)
                                 }
                                 IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = "Resume", tint = OmniColors.cyan)
+                                    Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.resume), tint = OmniColors.cyan)
                                 }
                             }
                         }
@@ -502,7 +503,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                     onOpenSplit = viewModel::openMultiSshForServers,
                     leadingContent = {
                         Text(
-                            if (viewModel.isMultiSsh) "P${viewModel.multiSshFocusedPane}" else "TERM",
+                            if (viewModel.isMultiSsh) "P${viewModel.multiSshFocusedPane}" else stringResource(R.string.term),
                             color = chrome.text,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
@@ -511,12 +512,12 @@ fun ShellScreen(viewModel: AppViewModel) {
                     },
                     trailingContent = {
                         Text(
-                            if (viewModel.isMultiSsh) "FOCUSED" else "CURRENT",
+                            if (viewModel.isMultiSsh) stringResource(R.string.focused) else stringResource(R.string.current),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             color = chrome.text,
                         )
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch host", tint = chrome.mutedText)
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.switch_host), tint = chrome.mutedText)
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -852,7 +853,7 @@ private fun TerminalOpenPicker(
                     text = {
                         Column {
                             Text(
-                                if (viewModel.isMultiSsh) "PANE $focusedPane · ${session.serverName}" else "CURRENT · ${session.serverName}",
+                                if (viewModel.isMultiSsh) stringResource(R.string.pane, focusedPane, session.serverName) else stringResource(R.string.current_2, session.serverName),
                                 fontFamily = OmniFonts.mono,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -1038,9 +1039,13 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                     letterSpacing = 1.sp,
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            TextButton(onClick = { viewModel.quickConnectSheetOpen = true }) {
-                Text(stringResource(R.string.quick_connect_to_another_host), fontSize = 12.sp, color = OmniColors.cyan)
+            // Absent on the free build, like the other Quick connect entries: shown and refused
+            // would be a button that does nothing.
+            if (viewModel.isQuickConnectAvailable) {
+                Spacer(Modifier.height(10.dp))
+                TextButton(onClick = { viewModel.quickConnectSheetOpen = true }) {
+                    Text(stringResource(R.string.quick_connect_to_another_host), fontSize = 12.sp, color = OmniColors.cyan)
+                }
             }
         }
     }
@@ -1295,14 +1300,14 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                     OutlinedTextField(
                         value = proxyUser,
                         onValueChange = { proxyUser = it },
-                        label = { Text(if (proxyType == "ssh") "Jump user (optional)" else "Proxy user (optional)") },
+                        label = { Text(if (proxyType == "ssh") stringResource(R.string.jump_user_optional) else stringResource(R.string.proxy_user_optional)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = proxyPassword,
                         onValueChange = { proxyPassword = it },
-                        label = { Text(if (proxyType == "ssh") "Jump password (optional)" else "Proxy password (optional)") },
+                        label = { Text(if (proxyType == "ssh") stringResource(R.string.jump_password_optional) else stringResource(R.string.proxy_password_optional)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
@@ -1600,7 +1605,7 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
         if (session != null) {
             Spacer(Modifier.width(2.dp))
             Text(
-                if (session.persistent) "LEAVE" else "BG",
+                if (session.persistent) stringResource(R.string.leave) else stringResource(R.string.bg),
                 color = chrome.mutedText,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
@@ -1700,7 +1705,7 @@ private fun MultiSshPanePicker(
                             Column {
                                 Text(candidateLabel, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(
-                                    if (candidate.isConnected) "Connected" else "Disconnected",
+                                    if (candidate.isConnected) stringResource(R.string.connected) else stringResource(R.string.disconnected),
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1881,6 +1886,7 @@ private fun PaneTerminalContent(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val linkContext = LocalContext.current
+    val linkResources = LocalResources.current
     val linkToolbarColor = MaterialTheme.colorScheme.surface.toArgb()
     val measurer = rememberTextMeasurer()
     var showCopyOptions by remember { mutableStateOf(false) }
@@ -2111,7 +2117,7 @@ private fun PaneTerminalContent(
                                 if (url != null) {
                                     if (!openLink(linkContext, url, viewModel.linkOpenInApp, linkToolbarColor)) {
                                         android.widget.Toast.makeText(
-                                            linkContext, "No app on this device can open links", android.widget.Toast.LENGTH_SHORT
+                                            linkContext, linkResources.getString(R.string.no_app_on_this_device_can), android.widget.Toast.LENGTH_SHORT
                                         ).show()
                                     }
                                 } else if (isFocused && !viewModel.terminalReadOnly) {
@@ -2168,7 +2174,7 @@ private fun PaneTerminalContent(
                 ) {
                     Icon(
                         Icons.Filled.KeyboardDoubleArrowDown,
-                        contentDescription = "Jump to bottom",
+                        contentDescription = stringResource(R.string.jump_to_bottom),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp),
                     )
@@ -2472,12 +2478,12 @@ private fun PaneTerminalContent(
                                     when (terminalClipboardPasteAction(text, viewModel.terminalReadOnly)) {
                                         TerminalClipboardPasteAction.EMPTY -> android.widget.Toast.makeText(
                                             linkContext,
-                                            "Clipboard has no text to paste",
+                                            linkResources.getString(R.string.clipboard_has_no_text_to_paste),
                                             android.widget.Toast.LENGTH_SHORT,
                                         ).show()
                                         TerminalClipboardPasteAction.BLOCKED_READ_ONLY -> android.widget.Toast.makeText(
                                             linkContext,
-                                            "Disable read-only mode before pasting",
+                                            linkResources.getString(R.string.disable_read_only_mode_before_pasting),
                                             android.widget.Toast.LENGTH_SHORT,
                                         ).show()
                                         TerminalClipboardPasteAction.CONFIRM -> {
@@ -2495,7 +2501,7 @@ private fun PaneTerminalContent(
                             ) {
                                 Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text(if (viewModel.terminalReadOnly) "Paste unavailable in read-only mode" else "Paste from clipboard")
+                                Text(if (viewModel.terminalReadOnly) stringResource(R.string.paste_unavailable_in_read_only_mode) else stringResource(R.string.paste_from_clipboard))
                             }
                         }
                         @Composable
@@ -2518,14 +2524,14 @@ private fun PaneTerminalContent(
                                 // menu after toggling so the user can adjust both without re-opening it.
                                 Text(stringResource(R.string.this_session), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                                 TerminalToggleRow(
-                                    title = "Swipe-typing",
+                                    title = stringResource(R.string.swipe_typing),
                                     subtitle = if (viewModel.smartSwipeInput) "On — text streams as you swipe/autocorrect"
                                         else "Off — each keystroke is sent immediately",
                                     checked = viewModel.smartSwipeInput,
                                     onCheckedChange = { viewModel.toggleSmartSwipeRuntime() },
                                 )
                                 TerminalToggleRow(
-                                    title = "Keep screen on",
+                                    title = stringResource(R.string.keep_screen_on_2),
                                     subtitle = if (viewModel.isKeepScreenOnEnabled) "On — screen stays awake in this session"
                                         else "Off — screen may sleep normally",
                                     checked = viewModel.isKeepScreenOnEnabled,
@@ -2643,7 +2649,7 @@ private fun PaneTerminalContent(
                     },
                     confirmButton = {
                         TextButton(onClick = { dismissFeedback() }) {
-                            Text(if (feedback.busy) "Hide progress" else "OK")
+                            Text(if (feedback.busy) stringResource(R.string.hide_progress) else stringResource(R.string.ok))
                         }
                     },
                 )
@@ -2673,6 +2679,7 @@ private fun PaneTerminalContent(
 
         copyDialogTitle?.let { title ->
             val context = LocalContext.current
+            val resources = LocalResources.current
             fun dismiss() {
                 copyDialogTitle = null
                 copyDialogText = ""
@@ -2714,7 +2721,7 @@ private fun PaneTerminalContent(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(if (title == "Full buffer") "Show visible screen" else "Show full buffer")
+                            Text(if (title == "Full buffer") stringResource(R.string.show_visible_screen) else stringResource(R.string.show_full_buffer))
                         }
                         // Must be a theme surface, not a fixed dark token: with the light or
                         // high-contrast-light app theme, onSurface is near-black and a fixed
@@ -2779,7 +2786,7 @@ private fun PaneTerminalContent(
                                         android.content.ClipData.newPlainText("Terminal", copyDialogText)
                                     )
                                     // Android 13+ shows its own copy confirmation; toast covers older.
-                                    android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                    android.widget.Toast.makeText(context, resources.getString(R.string.copied_to_clipboard), android.widget.Toast.LENGTH_SHORT).show()
                                     dismiss()
                                 },
                                 enabled = copyDialogText.isNotBlank(),

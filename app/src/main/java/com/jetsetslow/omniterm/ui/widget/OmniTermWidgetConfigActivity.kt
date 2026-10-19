@@ -173,7 +173,7 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
             if (!preferencesSaved) {
                 Toast.makeText(
                     this@OmniTermWidgetConfigActivity,
-                    "Could not save the widget configuration.",
+                    this@OmniTermWidgetConfigActivity.getString(R.string.could_not_save_the_widget_configuration),
                     Toast.LENGTH_LONG,
                 ).show()
                 onFailure()

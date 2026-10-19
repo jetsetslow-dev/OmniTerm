@@ -1284,7 +1284,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        if (ok) "Stack deployed" else "Deploy failed — stack left unchanged",
+                        if (ok) stringResource(R.string.stack_deployed) else stringResource(R.string.deploy_failed_stack_left_unchanged),
                         fontWeight = FontWeight.Bold,
                         color = if (ok) OmniColors.green else OmniColors.red,
                     )
@@ -1298,7 +1298,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 }
                 if (msg.isNotBlank()) {
                     IconButton(onClick = { copyToClipboard(msg) }) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy deploy output")
+                        Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_deploy_output))
                     }
                 }
                 TextButton(onClick = { result = null }) { Text(stringResource(R.string.dismiss)) }
@@ -1312,7 +1312,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text(stringResource(R.string.compose_builder), fontWeight = FontWeight.Bold, fontSize = 20.sp, color = OmniColors.cyan)
-                    Text(if (isExisting) "Editing existing stack" else "New stack", fontSize = 11.sp, color = OmniColors.textMuted)
+                    Text(if (isExisting) stringResource(R.string.editing_existing_stack) else stringResource(R.string.new_stack), fontSize = 11.sp, color = OmniColors.textMuted)
                 }
                 if (active != null) {
                     TextButton(onClick = { attemptClearOrExit(exitBuilder = false) }) { Text(stringResource(R.string.new_clear)) }
@@ -1397,7 +1397,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                     rawFullScreen = false
                                     fullScreenEditorHost.dismiss()
                                 },
-                                subtitle = "${rawText.count { it == '\n' } + 1} lines · ${rawText.length} chars",
+                                subtitle = stringResource(R.string.lines_chars, rawText.count { it == '\n' } + 1, rawText.length),
                                 dirty = false,
                                 canSave = true,
                                 saveLabel = "Done",
@@ -1407,7 +1407,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                             )
                         }
                     }) {
-                        Icon(Icons.Filled.Fullscreen, contentDescription = "Edit full screen", tint = OmniColors.cyan)
+                        Icon(Icons.Filled.Fullscreen, contentDescription = stringResource(R.string.edit_full_screen), tint = OmniColors.cyan)
                     }
                 }
                 CodeEditor(
@@ -1694,7 +1694,7 @@ fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit
                 }
                 item(key = "add-service") {
                     OmniButton(
-                        label = "Add service",
+                        label = stringResource(R.string.add_service),
                         color = OmniColors.green,
                         modifier = Modifier.fillMaxWidth(),
                         onClick = ::addSvc,
@@ -1711,7 +1711,7 @@ fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit
                 )
             }
             OmniButton(
-                label = "Add service",
+                label = stringResource(R.string.add_service),
                 color = OmniColors.green,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = ::addSvc,

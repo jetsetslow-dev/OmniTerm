@@ -79,7 +79,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
             trailingContent = {
                 RefreshCountdown(viewModel.lastTelemetryStartMs, viewModel.telemetryIntervalMs, size = 28.dp, color = getServerColor(srv))
                 IconButton(onClick = { showRebootDialog = true }, enabled = srv.status == "online", modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.RestartAlt, contentDescription = "Reboot host", tint = OmniColors.red, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(R.string.reboot_host), tint = OmniColors.red, modifier = Modifier.size(18.dp))
                 }
             }
         )
@@ -276,7 +276,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
     if (showSaveDialog) {
         SharedScriptEditorDialog(
             existing = null,
-            title = "Save script",
+            title = stringResource(R.string.save_script),
             initialCommand = customCommand,
             defaultAvailableForQuick = true,
             defaultAvailableForFleet = false,
@@ -388,7 +388,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
 
     if (createNew) {
         CronScheduleDialog(
-            title = "Add cron schedule",
+            title = stringResource(R.string.add_cron_schedule),
             initial = null,
             onDismiss = { createNew = false },
             onSave = { line ->
@@ -401,7 +401,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
 
     editorTarget?.let { target ->
         CronScheduleDialog(
-            title = "Edit cron schedule",
+            title = stringResource(R.string.edit_cron_schedule),
             initial = target,
             onDismiss = { editorTarget = null },
             onSave = { line ->
@@ -461,10 +461,10 @@ private fun CronLineCard(line: CronLine, onEdit: () -> Unit, onDelete: () -> Uni
         }
         Row {
             IconButton(onClick = onEdit, enabled = line.editable, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Filled.Edit, contentDescription = "Edit cron entry", modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit_cron_entry), modifier = Modifier.size(18.dp))
             }
             IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete cron entry", tint = OmniColors.red, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_cron_entry), tint = OmniColors.red, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -712,7 +712,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text(stringResource(R.string.cpu_utilisation), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(if (metricsAvailable) "Load: ${m.load1} · ${m.load5} · ${m.load15}" else "Current load unavailable", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (metricsAvailable) stringResource(R.string.load, m.load1, m.load5, m.load15) else stringResource(R.string.current_load_unavailable), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         m.cpuTempC?.let {
                             Text(
                                 stringResource(R.string.temp, formatTemperature(it, measurementSystem)),
@@ -728,7 +728,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                     points = spark,
                     timestamps = sparkTimes,
                     color = accent,
-                    label = "CPU utilisation",
+                    label = stringResource(R.string.cpu_utilisation_2),
                     unit = "%",
                 )
                 if (m.perCoreCpu.isNotEmpty()) {
@@ -751,7 +751,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 Text(stringResource(R.string.memory_occupancy), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    if (metricsAvailable) "${RemoteParsers.humanBytes(m.memUsedBytes)} of ${RemoteParsers.humanBytes(m.memTotalBytes)} occupied (${m.memPercent.roundToInt()}%)" else "Current memory unavailable",
+                    if (metricsAvailable) stringResource(R.string.of_occupied, RemoteParsers.humanBytes(m.memUsedBytes), RemoteParsers.humanBytes(m.memTotalBytes), m.memPercent.roundToInt()) else stringResource(R.string.current_memory_unavailable),
                     fontSize = 14.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -761,7 +761,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                     points = ramSpark,
                     timestamps = sparkTimes,
                     color = OmniColors.amber,
-                    label = "RAM utilisation",
+                    label = stringResource(R.string.ram_utilisation),
                     unit = "%",
                 )
             }
@@ -884,7 +884,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         points = series.cpu.map { it.value },
                         timestamps = series.cpu.map { it.timestamp },
                         color = accent,
-                        label = "CPU (hourly avg)",
+                        label = stringResource(R.string.cpu_hourly_avg),
                         unit = "%",
                     )
                     Spacer(Modifier.height(12.dp))
@@ -892,7 +892,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         points = series.ram.map { it.value },
                         timestamps = series.ram.map { it.timestamp },
                         color = OmniColors.amber,
-                        label = "RAM (hourly avg)",
+                        label = stringResource(R.string.ram_hourly_avg),
                         unit = "%",
                     )
                     if (series.temperature.isNotEmpty()) {
@@ -904,7 +904,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                             points = displayedTemperatures,
                             timestamps = series.temperature.map { it.timestamp },
                             color = OmniColors.red,
-                            label = "Temperature (hourly avg)",
+                            label = stringResource(R.string.temperature_hourly_avg),
                             unit = temperatureUnit(measurementSystem),
                             maxY = maxOf(
                                 celsiusToDisplay(100f, measurementSystem),
@@ -1038,7 +1038,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
                             ) {
                                 OmniButton(
-                                    label = "KILL -15",
+                                    label = stringResource(R.string.kill_15),
                                     onClick = {
                                         confirm.ask(
                                             "Send SIGTERM?",
@@ -1053,7 +1053,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     small = true
                                 )
                                 OmniButton(
-                                    label = "KILL -9",
+                                    label = stringResource(R.string.kill_9),
                                     onClick = {
                                         confirm.ask(
                                             "Force kill (SIGKILL)?",
@@ -1114,7 +1114,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                 ) {
                     Text(it, fontSize = 14.sp)
                     IconButton(onClick = { viewModel.serviceActionFeedback = null }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Dismiss")
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss))
                     }
                 }
             }
@@ -1157,7 +1157,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
                         ) {
                             OmniButton(
-                                label = "Restart",
+                                label = stringResource(R.string.restart),
                                 onClick = {
                                     confirm.ask(
                                         "Restart ${svc.name}?",
@@ -1170,7 +1170,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             )
                             if (svc.status == "running") {
                                 OmniButton(
-                                    label = "Stop",
+                                    label = stringResource(R.string.stop),
                                     onClick = {
                                         confirm.ask(
                                             "Stop ${svc.name}?",
@@ -1183,7 +1183,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 )
                             } else {
                                 OmniButton(
-                                    label = "Start",
+                                    label = stringResource(R.string.start),
                                     onClick = { viewModel.runServiceCommand(svc.name, "start") },
                                     color = OmniColors.green,
                                     small = true
@@ -1191,7 +1191,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             }
                             if (svc.enabled) {
                                 OmniButton(
-                                    label = "Disable",
+                                    label = stringResource(R.string.disable),
                                     onClick = {
                                         confirm.ask("Disable ${svc.name}?", "Stop ${svc.name} from starting at boot.", confirmLabel = "Disable") {
                                             viewModel.runServiceCommand(svc.name, "disable")
@@ -1201,7 +1201,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 )
                             } else {
                                 OmniButton(
-                                    label = "Enable",
+                                    label = stringResource(R.string.enable),
                                     onClick = { viewModel.runServiceCommand(svc.name, "enable") },
                                     color = OmniColors.purple, small = true
                                 )

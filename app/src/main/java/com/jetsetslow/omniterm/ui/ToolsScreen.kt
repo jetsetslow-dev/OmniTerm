@@ -48,6 +48,7 @@ import com.jetsetslow.omniterm.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalLocale
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import java.io.InputStream
@@ -202,7 +203,7 @@ fun ToolScaffold(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { viewModel.navigateTo(Screen.Tools) }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
             }
             Spacer(modifier = Modifier.width(4.dp))
             Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp, fontFamily = OmniFonts.display, modifier = Modifier.weight(1f))
@@ -211,7 +212,7 @@ fun ToolScaffold(
                 IconButton(onClick = onAdd, enabled = addEnabled) {
                     Icon(
                         Icons.Filled.Add,
-                        contentDescription = "Add",
+                        contentDescription = stringResource(R.string.add),
                         tint = if (addEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
                     )
                 }
@@ -278,7 +279,7 @@ fun AlertsPopup(
                     ) {
                         Text(message, color = OmniColors.red, fontSize = OmniTextSize.Meta, modifier = Modifier.weight(1f))
                         IconButton(onClick = viewModel::dismissManualRefreshError) {
-                            Icon(Icons.Filled.Close, contentDescription = "Dismiss refresh error", tint = OmniColors.red)
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss_refresh_error), tint = OmniColors.red)
                         }
                     }
                 }
@@ -342,7 +343,7 @@ fun AlertPopupHeader(
             )
         }
         IconButton(onClick = onDismiss) {
-            Icon(Icons.Filled.Close, contentDescription = "Close alerts popup")
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_alerts_popup))
         }
     }
 
@@ -427,7 +428,7 @@ fun AlertPopupIncidentCard(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = OmniTextSize.Dense)
                 Text(
-                    if (muted) "MUTED" else alert.severity,
+                    if (muted) stringResource(R.string.muted) else alert.severity,
                     color = accent,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = OmniTextSize.Tag,
@@ -465,7 +466,7 @@ fun AlertPopupIncidentCard(
                     }
                 }
                 TextButton(onClick = onMuteToggle) {
-                    Text(if (muted) "UNMUTE" else "MUTE 1H", fontSize = OmniTextSize.Meta)
+                    Text(if (muted) stringResource(R.string.unmute) else stringResource(R.string.mute_1h), fontSize = OmniTextSize.Meta)
                 }
             }
         }
@@ -536,7 +537,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
 
     ToolScaffold(
         viewModel = viewModel,
-        title = "Alerts Center",
+        title = stringResource(R.string.alerts_center),
         onAdd = if (activeTab == 1) { { showCreateRuleDialog = true } } else null
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
@@ -552,7 +553,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(stringResource(R.string.in_app_monitoring), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(
-                                if (viewModel.alertsEnabled) "Global alerts are on." else "Global alerts are off.",
+                                if (viewModel.alertsEnabled) stringResource(R.string.global_alerts_are_on) else stringResource(R.string.global_alerts_are_off),
                                 fontSize = 11.sp,
                                 color = if (viewModel.alertsEnabled) MaterialTheme.colorScheme.onSurfaceVariant else OmniColors.red,
                             )
@@ -591,7 +592,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                 ) {
                     Text(message, color = OmniColors.red, fontSize = OmniTextSize.Meta, modifier = Modifier.weight(1f))
                     IconButton(onClick = viewModel::dismissManualRefreshError) {
-                        Icon(Icons.Filled.Close, contentDescription = "Dismiss refresh error", tint = OmniColors.red)
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss_refresh_error), tint = OmniColors.red)
                     }
                 }
             }
@@ -633,7 +634,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (alert.acknowledged) Color.Gray else Color.Unspecified)
                                         }
-                                        Text(if (alert.acknowledged) "ACKNOWLEDGED" else alert.severity,
+                                        Text(if (alert.acknowledged) stringResource(R.string.acknowledged) else alert.severity,
                                             color = if (alert.acknowledged) Color.Gray else if (alert.severity == "CRITICAL") Color.Red else Color(0xFFF59E0B),
                                             fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                     }
@@ -848,7 +849,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
-            title = { Text(if (existing == null) "Add Alert Rule Trigger" else "Edit Alert Rule") },
+            title = { Text(if (existing == null) stringResource(R.string.add_alert_rule_trigger) else stringResource(R.string.edit_alert_rule)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     HostPickerField(
@@ -986,7 +987,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
 
     ToolScaffold(
         viewModel = viewModel,
-        title = "Scripts",
+        title = stringResource(R.string.scripts),
         onAdd = {
             createScriptTab = activeScriptTab
             showCreateScriptSheet = true
@@ -1256,7 +1257,7 @@ private fun QuickScriptEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (existing != null) "Edit script" else "Add script") },
+        title = { Text(if (existing != null) stringResource(R.string.edit_script) else stringResource(R.string.add_script)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(value = emojiInput, onValueChange = { emojiInput = it.take(6).uppercase() }, label = { Text(stringResource(R.string.shortcut_label)) }, modifier = Modifier.fillMaxWidth())
@@ -1338,7 +1339,7 @@ private fun QuickScriptEditorDialog(
                 enabled = nameInput.isNotBlank() && cmdInput.isNotBlank() && (availableForQuick || availableForFleet),
                 onClick = { onSave(emojiInput, nameInput, cmdInput, categoryInput, availableForQuick, availableForFleet, targetOs.ifBlank { "Any" }, targetSystem.ifBlank { "Any" }) }
             ) {
-                Text(if (existing != null) "Save changes" else "Add script")
+                Text(if (existing != null) stringResource(R.string.save_changes_2) else stringResource(R.string.add_script))
             }
         },
         dismissButton = {
@@ -1424,7 +1425,7 @@ private fun HostScanTab(viewModel: AppViewModel) {
             } else {
                 Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(if (hosts.isEmpty()) "Scan network" else "Rescan network")
+                Text(if (hosts.isEmpty()) stringResource(R.string.scan_network) else stringResource(R.string.rescan_network))
             }
         }
         if (!scanning && hosts.isEmpty()) {
@@ -1543,7 +1544,7 @@ private fun ScannedHostActionsSheet(
                 } else {
                     HostActionRow(
                         icon = Icons.Filled.AddCircle,
-                        label = "Add as OmniTerm host",
+                        label = stringResource(R.string.add_as_omniterm_host),
                         detail = if (22 in host.openPorts) "SSH is open on port 22" else "Opens the add-host form for ${host.ip}",
                         tint = OmniColors.cyan,
                     ) { act { viewModel.addServerFromScan(host) } }
@@ -1557,7 +1558,7 @@ private fun ScannedHostActionsSheet(
                 }
                 HostActionRow(
                     icon = Icons.Filled.NetworkCheck,
-                    label = "Port scan",
+                    label = stringResource(R.string.port_scan),
                     detail = if (host.openPorts.isEmpty()) {
                         "Scan the common port list"
                     } else {
@@ -1571,7 +1572,7 @@ private fun ScannedHostActionsSheet(
                 if (host.mac.isNotBlank()) {
                     HostActionRow(
                         icon = Icons.Filled.PowerSettingsNew,
-                        label = "Add as Wake-on-LAN target",
+                        label = stringResource(R.string.add_as_wake_on_lan_target),
                         detail = "MAC ${host.mac} is known, so this host can be woken",
                     ) { act { viewModel.addWolTargetFromScan(host) } }
                 }
@@ -1673,7 +1674,7 @@ private fun LanHostPickerDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(R.string.scanning_network))
                     } else {
-                        Text(if (hosts.isEmpty()) "Scan LAN" else "Rescan LAN", fontSize = 12.sp)
+                        Text(if (hosts.isEmpty()) stringResource(R.string.scan_lan) else stringResource(R.string.rescan_lan), fontSize = 12.sp)
                     }
                 }
                 if (!isScanning && hosts.isEmpty()) {
@@ -1998,7 +1999,7 @@ private fun WolTab(viewModel: AppViewModel) {
                                 Text(stringResource(R.string.wake), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                             }
                             IconButton(onClick = { editingTarget = target }) {
-                                Icon(Icons.Filled.Edit, contentDescription = "Edit WOL target", tint = OmniColors.cyan)
+                                Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit_wol_target), tint = OmniColors.cyan)
                             }
                             IconButton(
                                 onClick = {
@@ -2009,7 +2010,7 @@ private fun WolTab(viewModel: AppViewModel) {
                                     ) { viewModel.deleteWolTarget(target) }
                                 }
                             ) {
-                                Icon(Icons.Filled.Delete, contentDescription = "Delete WOL target", tint = Color.Red)
+                                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_wol_target), tint = Color.Red)
                             }
                         }
                     }
@@ -2043,7 +2044,7 @@ private fun WolTab(viewModel: AppViewModel) {
 
         AlertDialog(
             onDismissRequest = { dismissEditor() },
-            title = { Text(if (target == null) "Configure WOL Pointer" else "Edit WOL Pointer") },
+            title = { Text(if (target == null) stringResource(R.string.configure_wol_pointer) else stringResource(R.string.edit_wol_pointer)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.machine_name)) }, modifier = Modifier.fillMaxWidth())
@@ -2084,7 +2085,7 @@ private fun WolTab(viewModel: AppViewModel) {
                     enabled = name.isNotBlank() && broadcastIp.isNotBlank() &&
                         macError == null && wolPortError == null,
                 ) {
-                    Text(if (target == null) "Add configuration" else "Save changes")
+                    Text(if (target == null) stringResource(R.string.add_configuration) else stringResource(R.string.save_changes_2))
                 }
             },
             dismissButton = {
@@ -2189,7 +2190,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
     ToolScaffold(
         viewModel = viewModel,
-        title = "Auth Keys & Profiles",
+        title = stringResource(R.string.auth_keys_profiles),
         onAdd = { showAuthOption = true },
         addEnabled = !credentialLimitReached
     ) {
@@ -2343,7 +2344,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value = pName, onValueChange = { pName = it }, enabled = !saving, label = { Text(stringResource(R.string.profile_name)) }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = pUser, onValueChange = { pUser = it }, enabled = !saving, label = { Text(stringResource(R.string.username)) }, modifier = Modifier.fillMaxWidth())
-                    OmniPasswordField(value = pPass, onValueChange = { if (!saving) pPass = it }, label = "Password", modifier = Modifier.fillMaxWidth())
+                    OmniPasswordField(value = pPass, onValueChange = { if (!saving) pPass = it }, label = stringResource(R.string.password), modifier = Modifier.fillMaxWidth())
                     saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
@@ -2431,6 +2432,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         // otherwise looked like a Save button that did nothing.
         var importError by remember { mutableStateOf<String?>(null) }
         val context = LocalContext.current
+        val resources = LocalResources.current
         var pickTarget by remember { mutableStateOf("private") }
         val keyFileLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
@@ -2443,7 +2445,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     }
                 } catch (e: Exception) {
                     android.util.Log.w("ToolsScreen", "Failed to read key file", e)
-                    android.widget.Toast.makeText(context, "Could not read file: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(context, resources.getString(R.string.could_not_read_file, e.message), android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -2544,7 +2546,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         OmniPasswordField(
                             value = pPass,
                             onValueChange = { if (!saving) pPass = it },
-                            label = "Password (leave blank to keep current)",
+                            label = stringResource(R.string.password_leave_blank_to_keep_current),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
@@ -2584,6 +2586,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var newPrivate by remember(key.id) { mutableStateOf("") }
         var newPublic by remember(key.id) { mutableStateOf("") }
         val context = LocalContext.current
+        val resources = LocalResources.current
         var pickTarget by remember(key.id) { mutableStateOf("private") }
         val keyFileLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
@@ -2596,7 +2599,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     }
                 } catch (e: Exception) {
                     android.util.Log.w("ToolsScreen", "Failed to read key file", e)
-                    android.widget.Toast.makeText(context, "Could not read file: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(context, resources.getString(R.string.could_not_read_file_2, e.message), android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -2861,7 +2864,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Filled.CloudUpload, contentDescription = "Backup")
+                            Icon(Icons.Filled.CloudUpload, contentDescription = stringResource(R.string.backup))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(stringResource(R.string.backup), fontSize = 12.sp)
                         }
@@ -2874,7 +2877,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                         ) {
-                            Icon(Icons.Filled.CloudDownload, contentDescription = "Restore Backup")
+                            Icon(Icons.Filled.CloudDownload, contentDescription = stringResource(R.string.restore_backup_2))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(stringResource(R.string.restore), fontSize = 12.sp)
                         }
@@ -2922,7 +2925,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                 ) {
                                     BackupSelectionFeedback(viewModel)
                                     BackupSelectionList(
-                                        title = "Choose what to include",
+                                        title = stringResource(R.string.choose_what_to_include),
                                         selection = pendingExportSelection,
                                         contents = null,
                                         onChange = {
@@ -2931,7 +2934,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                         },
                                     )
                                     Text(
-                                        if (pendingExportSelection.hasSensitiveData()) "Sensitive sections selected: backup will be encrypted." else "No sensitive sections selected: backup will be plain JSON.",
+                                        if (pendingExportSelection.hasSensitiveData()) stringResource(R.string.sensitive_sections_selected_backup_will_be) else stringResource(R.string.no_sensitive_sections_selected_backup_will),
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -2976,7 +2979,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                     OmniPasswordField(
                                         value = exportPassword,
                                         onValueChange = { exportPassword = it },
-                                        label = "Passphrase (min $BACKUP_PASSPHRASE_MIN_LENGTH chars)",
+                                        label = stringResource(R.string.passphrase_min_chars, BACKUP_PASSPHRASE_MIN_LENGTH),
                                     )
                                 }
                             },
@@ -3015,7 +3018,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                             OmniPasswordField(
                                 value = importPassword,
                                 onValueChange = { importPassword = it },
-                                label = "Password",
+                                label = stringResource(R.string.password),
                             )
                         }
                     },
@@ -3079,7 +3082,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                             Text(stringResource(R.string.choose_what_to_restore_from_this), fontSize = 12.sp)
                             if (contents != null) {
                                 BackupSelectionList(
-                                    title = "Available sections",
+                                    title = stringResource(R.string.available_sections),
                                     selection = restoreSelection,
                                     contents = contents,
                                     onChange = { restoreSelection = it },
@@ -3141,7 +3144,7 @@ internal fun BackupReadProgressDialog(decrypting: Boolean) {
         modifier = Modifier.testTag("backup.readProgress"),
         onDismissRequest = {},
         properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-        title = { Text(if (decrypting) "Decrypting backup…" else "Reading backup…") },
+        title = { Text(if (decrypting) stringResource(R.string.decrypting_backup) else stringResource(R.string.reading_backup)) },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 CircularProgressIndicator()
@@ -3504,8 +3507,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                         if (on && activity != null) {
                                             BiometricCryptoGate.authenticate(
                                                 activity = activity,
-                                                title = "Verify Biometrics",
-                                                subtitle = "Authenticate to enable biometric unlock",
+                                                title = activity.getString(R.string.verify_biometrics),
+                                                subtitle = activity.getString(R.string.authenticate_to_enable_biometric_unlock),
                                                 onAuthenticated = { draftBiometrics = true },
                                             )
                                         } else {
@@ -4134,8 +4137,8 @@ private fun SettingsSaveAuthDialog(
             context.getActivity()?.let { activity ->
                 BiometricCryptoGate.authenticate(
                     activity = activity,
-                    title = "Authenticate to save settings",
-                    subtitle = "Confirm it's you",
+                    title = activity.getString(R.string.authenticate_to_save_settings),
+                    subtitle = activity.getString(R.string.confirm_it_s_you),
                     onAuthenticated = onAuthenticated,
                 )
             }
@@ -5014,7 +5017,7 @@ private fun TunnelEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (existing == null) "New tunnel" else "Edit tunnel") },
+        title = { Text(if (existing == null) stringResource(R.string.new_tunnel) else stringResource(R.string.edit_tunnel)) },
         text = {
             Column(
                 modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
@@ -5053,7 +5056,7 @@ private fun TunnelEditorDialog(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = bindHost, onValueChange = { bindHost = it }, label = { Text(if (kind == "remote") "Remote bind host" else "Bind host") }, singleLine = true, modifier = Modifier.weight(1.4f))
+                    OutlinedTextField(value = bindHost, onValueChange = { bindHost = it }, label = { Text(if (kind == "remote") stringResource(R.string.remote_bind_host) else stringResource(R.string.bind_host)) }, singleLine = true, modifier = Modifier.weight(1.4f))
                     OutlinedTextField(
                         value = bindPort,
                         onValueChange = { bindPort = it.filter(Char::isDigit).take(5) },

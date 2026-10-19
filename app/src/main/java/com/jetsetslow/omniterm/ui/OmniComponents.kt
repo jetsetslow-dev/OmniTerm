@@ -582,7 +582,7 @@ fun HostPickerField(
         }
         Icon(
             Icons.Filled.ArrowDropDown,
-            contentDescription = "Choose hosts",
+            contentDescription = stringResource(R.string.choose_hosts),
             tint = OmniColors.cyan,
         )
     }

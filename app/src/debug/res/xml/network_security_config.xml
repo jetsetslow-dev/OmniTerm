@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <!-- The disposable physical-device lab uses its own CA. This source set is packaged only in
-         debuggable builds; release variants retain main's system-only trust configuration. -->
-    <base-config cleartextTrafficPermitted="false">
+         debuggable builds; release variants retain main's system-only trust configuration.
+         Cleartext matches main: a WebDAV share may be set to plain HTTP. -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
             <certificates src="@raw/omniterm_e2e_ca" />

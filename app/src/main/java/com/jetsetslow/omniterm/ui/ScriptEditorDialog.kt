@@ -220,7 +220,7 @@ fun SharedScriptEditorDialog(
                     )
                 },
             ) {
-                Text(if (existing != null) "Save changes" else "Save")
+                Text(if (existing != null) stringResource(R.string.save_changes_2) else stringResource(R.string.save))
             }
         },
         dismissButton = {
