@@ -251,7 +251,7 @@ private fun NativeLargeEditorBody(
                 onClick = { requestedWindowStart = (windowStart - LARGE_EDITOR_WINDOW_CHARS).coerceAtLeast(0) },
             ) { Text(stringResource(R.string.previous)) }
             Text(
-                "Chars ${windowStart + 1}–$windowEnd of ${field.text.length}",
+                stringResource(R.string.chars_of, windowStart + 1, windowEnd, field.text.length),
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),

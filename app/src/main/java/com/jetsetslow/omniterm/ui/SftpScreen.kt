@@ -591,9 +591,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             title = { Text(stringResource(R.string.large_download_selection)) },
             text = {
                 Text(
-                    "You selected ${selectedShareFileNames.size} file(s), about ${formatBytes(selectedShareBytes)}. " +
-                        "This meets your configured large-transfer warning threshold. It downloads file-by-file into a folder without zipping. " +
-                        "For reliability on slow links, consider smaller batches.",
+                    stringResource(R.string.you_selected_file_s_about_this, selectedShareFileNames.size, formatBytes(selectedShareBytes)),
                     fontSize = 14.sp,
                 )
             },
@@ -615,9 +613,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             title = { Text(stringResource(R.string.large_upload_batch)) },
             text = {
                 Text(
-                    "You selected ${pendingLargeUploadUris.size} file(s). They will upload one at a time so failures are isolated. " +
-                        "This meets your configured large-transfer warning threshold. " +
-                        "For very large batches, smaller groups are easier to retry.",
+                    stringResource(R.string.you_selected_file_s_they_will, pendingLargeUploadUris.size),
                     fontSize = 14.sp,
                 )
             },
@@ -664,7 +660,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                     Icon(Icons.Filled.Close, contentDescription = "Cancel selection")
                 }
                 Text(
-                    "${viewModel.shareSelected.size} selected",
+                    stringResource(R.string.selected, viewModel.shareSelected.size),
                     fontFamily = OmniFonts.mono, fontSize = 14.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
@@ -819,7 +815,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                     }
                     if (viewModel.shareSearchTruncated) {
                         Text(
-                            "Showing first ${viewModel.shareSearchResults?.size ?: 0} matches — narrow the pattern.",
+                            stringResource(R.string.showing_first_matches_narrow_the_pattern, viewModel.shareSearchResults?.size ?: 0),
                             fontSize = 11.sp, color = OmniColors.amber,
                         )
                     }
@@ -918,7 +914,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             TransferAggregateBar(viewModel, endpointId = if (viewModel.crossPasteRunning) null else -share.id)
             viewModel.crossPasteProgress?.let { current ->
                 Text(
-                    "Copying: $current",
+                    stringResource(R.string.copying, current),
                     fontSize = 10.sp,
                     fontFamily = OmniFonts.mono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -953,14 +949,14 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator()
                         Spacer(Modifier.height(8.dp))
-                        Text("Searching $currentDir…", fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.searching, currentDir), fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
             showRecursiveResults && recursiveResults != null -> {
                 if (recursiveResults.isEmpty()) {
                     Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Text("No matches under $currentDir", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.no_matches_under, currentDir), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     OverflowLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -997,7 +993,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             showRecursiveResults -> {
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     Text(
-                        "Type a ${if (viewModel.shareSearchWildcard) "pattern" else "name"} and hit Search to scan under $currentDir",
+                        stringResource(R.string.type_a_and_hit_search_to, if (viewModel.shareSearchWildcard) "pattern" else "name", currentDir),
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp,
                     )
                 }
@@ -1188,7 +1184,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
     renameTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename \"${target.name}\"") },
+            title = { Text(stringResource(R.string.rename_2, target.name)) },
             text = {
                 OutlinedTextField(
                     value = renameInput,
@@ -1241,12 +1237,12 @@ private fun CrossClipboardBar(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            "${viewModel.crossClipboard.size} item(s) ready to ${if (viewModel.crossClipboardIsMove) "move" else "copy"}",
+                            stringResource(R.string.item_s_ready_to, viewModel.crossClipboard.size, if (viewModel.crossClipboardIsMove) "move" else "copy"),
                             fontSize = 12.sp,
                             fontFamily = OmniFonts.mono,
                         )
                         Text(
-                            "from ${viewModel.crossClipboard.map { it.sourceLabel }.distinct().joinToString(", ")}",
+                            stringResource(R.string.from, viewModel.crossClipboard.map { it.sourceLabel }.distinct().joinToString(", ")),
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1729,7 +1725,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             Icon(Icons.Filled.Close, contentDescription = "Cancel selection")
                         }
                         Text(
-                            "${viewModel.sftpSelected.size} selected",
+                            stringResource(R.string.selected_2, viewModel.sftpSelected.size),
                             fontFamily = OmniFonts.mono,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
@@ -2076,7 +2072,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     }
                     if (viewModel.sftpSearchTruncated) {
                         Text(
-                            "Showing first ${viewModel.sftpSearchResults?.size ?: 0} matches — narrow the pattern for more precision.",
+                            stringResource(R.string.showing_first_matches_narrow_the_pattern_2, viewModel.sftpSearchResults?.size ?: 0),
                             fontSize = 11.sp,
                             color = OmniColors.amber,
                         )
@@ -2091,9 +2087,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 title = { Text(stringResource(R.string.large_download_selection)) },
                 text = {
                     Text(
-                        "You selected ${selectedRemoteFileNames.size} file(s), about ${formatBytes(selectedRemoteBytes)}. " +
-                            "This meets your configured large-transfer warning threshold. It downloads file-by-file into a folder without zipping. " +
-                            "For reliability on slow links, consider smaller batches.",
+                        stringResource(R.string.you_selected_file_s_about_this_2, selectedRemoteFileNames.size, formatBytes(selectedRemoteBytes)),
                         fontSize = 14.sp,
                     )
                 },
@@ -2115,9 +2109,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 title = { Text(stringResource(R.string.large_upload_batch)) },
                 text = {
                     Text(
-                        "You selected ${pendingLargeUploadUris.size} file(s). They will upload one at a time so failures are isolated. " +
-                            "This meets your configured large-transfer warning threshold. " +
-                            "For very large batches, smaller groups are easier to retry.",
+                        stringResource(R.string.you_selected_file_s_they_will_2, pendingLargeUploadUris.size),
                         fontSize = 14.sp,
                     )
                 },
@@ -2167,7 +2159,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "${viewModel.sftpClipboard.size} item(s) ready to ${if (viewModel.sftpClipboardIsMove) "move" else "copy"}",
+                            stringResource(R.string.item_s_ready_to_2, viewModel.sftpClipboard.size, if (viewModel.sftpClipboardIsMove) "move" else "copy"),
                             fontSize = 12.sp,
                             fontFamily = OmniFonts.mono,
                         )
@@ -2204,7 +2196,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
             TransferAggregateBar(viewModel, endpointId = if (viewModel.crossPasteRunning) null else srvId)
             viewModel.crossPasteProgress?.let { current ->
                 Text(
-                    "Copying: $current",
+                    stringResource(R.string.copying_2, current),
                     fontSize = 10.sp,
                     fontFamily = OmniFonts.mono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2267,13 +2259,13 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Searching $currentPath…", fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.searching_2, currentPath), fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else if (showRecursiveResults && searchResults != null) {
             if (searchResults.isEmpty()) {
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text("No matches under $currentPath", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_matches_under_2, currentPath), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 OverflowLazyColumn(
@@ -2322,7 +2314,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
         } else if (showRecursiveResults) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text(
-                    "Type a ${if (viewModel.sftpSearchWildcard) "pattern" else "name"} and hit Search to scan under $currentPath",
+                    stringResource(R.string.type_a_and_hit_search_to_2, if (viewModel.sftpSearchWildcard) "pattern" else "name", currentPath),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
                 )
@@ -2560,7 +2552,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.ContentCopy, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Copy ${if (file.isDirectory) "folder" else "file"} path")
+                            Text(stringResource(R.string.copy_path_2, if (file.isDirectory) "folder" else "file"))
                         }
                         TextButton(
                             onClick = {
@@ -3398,21 +3390,19 @@ fun PasteConflictDialog(viewModel: AppViewModel) {
 
     AlertDialog(
         onDismissRequest = { viewModel.cancelPasteConflicts() },
-        title = { Text("${conflicts.size} item(s) already exist") },
+        title = { Text(stringResource(R.string.item_s_already_exist, conflicts.size)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (viewModel.pasteConflictUnverified) {
                     // Never imply a comparison happened when it could not.
                     Text(
-                        "This host has no checksum tool (sha256sum/shasum/md5sum/cksum), so items " +
-                            "marked \"Not verified\" could NOT be compared by content. They may or " +
-                            "may not differ — matching sizes and dates do not prove files are the same.",
+                        stringResource(R.string.this_host_has_no_checksum_tool),
                         fontSize = 11.sp,
                         color = OmniColors.amber,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Apply to all:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.apply_to_all), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     ConflictAction.entries.forEach { act ->
                         TextButton(
                             onClick = { viewModel.setAllPasteConflictActions(act) },

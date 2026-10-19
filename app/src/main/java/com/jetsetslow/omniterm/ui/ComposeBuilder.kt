@@ -1439,7 +1439,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text("${validationIssues.size} issue(s) before deploy", fontWeight = FontWeight.Bold, color = OmniColors.red)
+                            Text(stringResource(R.string.issue_s_before_deploy, validationIssues.size), fontWeight = FontWeight.Bold, color = OmniColors.red)
                             validationIssues.take(5).forEach {
                                 Text("• $it", fontSize = 11.sp, color = OmniColors.textPrimary)
                             }
@@ -1524,7 +1524,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 }
             } else if (isExisting && bothRuntimes && draft.runtime.isNotBlank()) {
                 Text(
-                    "Runtime: ${draft.runtime} (owned by this runtime; redeploys stay on it)",
+                    stringResource(R.string.runtime_owned_by_this_runtime_redeploys, draft.runtime),
                     fontSize = 11.sp, color = OmniColors.textMuted,
                 )
             }
@@ -1676,7 +1676,7 @@ fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit
         }
         if (draft.services.size > LARGE_VISUAL_SERVICE_THRESHOLD) {
             Text(
-                "${draft.services.size} services · list is virtualized for responsive editing",
+                stringResource(R.string.services_list_is_virtualized_for_responsive, draft.services.size),
                 fontSize = 11.sp,
                 color = OmniColors.textMuted,
             )

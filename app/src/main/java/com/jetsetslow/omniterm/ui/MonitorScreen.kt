@@ -87,8 +87,8 @@ fun MonitorScreen(viewModel: AppViewModel) {
         if (showRebootDialog) {
             AlertDialog(
                 onDismissRequest = { showRebootDialog = false },
-                title = { Text("Reboot ${srv.name}?") },
-                text = { Text("This runs `sudo reboot` on ${HostDisplay.host(srv)}. The host will drop offline until it comes back up. Requires passwordless sudo for the SSH user.") },
+                title = { Text(stringResource(R.string.reboot_2, srv.name)) },
+                text = { Text(stringResource(R.string.this_runs_sudo_reboot_on_the, HostDisplay.host(srv))) },
                 confirmButton = {
                     TextButton(onClick = {
                         showRebootDialog = false
@@ -359,7 +359,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                 else -> {
                     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.amber) {
                         if (cronLines.isEmpty()) {
-                            Text("No crontab entries for ${srv.username}.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            Text(stringResource(R.string.no_crontab_entries_for, srv.username), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 cronLines.forEach { line ->
@@ -526,7 +526,7 @@ private fun CronScheduleDialog(
                 CronPartField("Day", day, { day = it; preset = "custom" }, "1-31 or *")
                 CronPartField("Month", month, { month = it; preset = "custom" }, "1-12 or *")
                 CronPartField("Weekday", weekday, { weekday = it; preset = "custom" }, "0-7, Sunday=0/7")
-                Text("Preview: ${cronSummary(expression)}", fontSize = 12.sp, color = OmniColors.amber)
+                Text(stringResource(R.string.preview_2, cronSummary(expression)), fontSize = 12.sp, color = OmniColors.amber)
                 Text(expression, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = name,
@@ -702,7 +702,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 OmniCard(modifier = Modifier.fillMaxWidth()) {
                     if (viewModel.metricsLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text(viewModel.metricsErrorsById[srv.id] ?: "Waiting for verified CPU, memory and disk metrics.")
-                    TextButton(onClick = { viewModel.loadHostMetrics() }, enabled = !viewModel.metricsLoading) { Text("Retry metrics") }
+                    TextButton(onClick = { viewModel.loadHostMetrics() }, enabled = !viewModel.metricsLoading) { Text(stringResource(R.string.retry_metrics)) }
                 }
             }
         }
@@ -715,7 +715,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         Text(if (metricsAvailable) "Load: ${m.load1} · ${m.load5} · ${m.load15}" else "Current load unavailable", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         m.cpuTempC?.let {
                             Text(
-                                "Temp: ${formatTemperature(it, measurementSystem)}",
+                                stringResource(R.string.temp, formatTemperature(it, measurementSystem)),
                                 fontSize = 12.sp,
                                 color = if (it >= 80f) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -733,7 +733,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 )
                 if (m.perCoreCpu.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text("PER-CORE (${m.perCoreCpu.size})", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.per_core, m.perCoreCpu.size), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(4.dp))
                     m.perCoreCpu.forEachIndexed { i, v ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 1.dp)) {
@@ -832,7 +832,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(stringResource(R.string.network), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("TCP: ${m.tcpConnections}", fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.tcp, m.tcpConnections), fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -853,7 +853,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                             )
                         }
                         Text(
-                            "total ↓${RemoteParsers.humanBytes(iface.rxBytes)} ↑${RemoteParsers.humanBytes(iface.txBytes)}",
+                            stringResource(R.string.total, RemoteParsers.humanBytes(iface.rxBytes), RemoteParsers.humanBytes(iface.txBytes)),
                             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -913,7 +913,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         )
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text("${history.size} data points over the last 7 days", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.data_points_over_the_last_7, history.size), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -946,7 +946,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.height(10.dp))
-                Text("Reading the process list…", fontSize = 12.sp)
+                Text(stringResource(R.string.reading_the_process_list), fontSize = 12.sp)
             }
         } else if (viewModel.processesLoading) {
             LinearProgressIndicator(
@@ -970,7 +970,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                     label = { Text(stringResource(R.string.mem)) }
                 )
             }
-            Text("${simProcesses.size} Procs", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.procs, simProcesses.size), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         if (!viewModel.processesLoading && simProcesses.isEmpty()) {
@@ -978,7 +978,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
             // an idle machine; "no processes" would be a confident false statement about the host.
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text(
-                    "The process list came back empty — this host may not support the command, or its output was not understood.",
+                    stringResource(R.string.the_process_list_came_back_empty),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -1012,7 +1012,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     OmniTag(proc.state, color = if (proc.state == "R") OmniColors.green else OmniColors.cyan)
                                 }
                                 Text(
-                                    "PID ${proc.pid} · ${proc.owner}" + (if (proc.uptime.isNotBlank()) " · up ${proc.uptime}" else ""),
+                                    stringResource(R.string.pid, proc.pid, proc.owner) + (if (proc.uptime.isNotBlank()) " · up ${proc.uptime}" else ""),
                                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -1031,7 +1031,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
 
                         if (isExpanded) {
                             androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            Text("Virtual Memory Size (VMS): ${proc.vms}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.virtual_memory_size_vms, proc.vms), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1087,7 +1087,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
         if (viewModel.servicesUnsupported && simServices.isEmpty() && !viewModel.servicesLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    "This host runs neither systemd nor OpenRC, so its services cannot be listed.",
+                    stringResource(R.string.this_host_runs_neither_systemd_nor),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

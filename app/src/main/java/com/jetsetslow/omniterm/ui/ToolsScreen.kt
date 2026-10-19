@@ -336,7 +336,7 @@ fun AlertPopupHeader(
         Column(Modifier.weight(1f)) {
             Text(stringResource(R.string.active_alerts), style = MaterialTheme.typography.titleMedium)
             Text(
-                "$activeCount firing · $mutedCount muted",
+                stringResource(R.string.firing_muted, activeCount, mutedCount),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = OmniTextSize.Meta,
             )
@@ -434,15 +434,13 @@ fun AlertPopupIncidentCard(
                 )
             }
             Text(
-                "${server?.name ?: "Server"} · current " +
-                    "${alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)} · " +
-                    "threshold ${alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem)}",
+                stringResource(R.string.current_threshold, server?.name ?: "Server", alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem)),
                 fontSize = OmniTextSize.Meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (muted) {
                 Text(
-                    "Muted until ${formatShortDateTime(alert.mutedUntil)}",
+                    stringResource(R.string.muted_until, formatShortDateTime(alert.mutedUntil)),
                     fontSize = OmniTextSize.Tag,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -483,9 +481,7 @@ internal fun AlertNotificationBlockedNote(alertsEnabled: Boolean, notificationsA
     if (!alertsEnabled || notificationsAllowed) return
     OmniCard(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), leftAccent = OmniColors.amber) {
         Text(
-            "Notifications are blocked for OmniTerm. Rules still fire and incidents are still " +
-                "recorded, but you will only see them in here. Allow notifications in system " +
-                "settings to be told while the app is closed.",
+            stringResource(R.string.notifications_are_blocked_for_omniterm_rules),
             fontSize = 11.sp,
             color = OmniColors.amber,
             modifier = Modifier.testTag("alerts.notificationWarning"),
@@ -576,8 +572,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         )
                     }
                     Text(
-                        "Rules are checked on each metrics refresh while OmniTerm is open. Alerts will not " +
-                            "fire in the background or when the app is closed — keep the app running to monitor.",
+                        stringResource(R.string.rules_are_checked_on_each_metrics),
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -606,7 +601,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             val mutedAlerts = alerts.filter { it.mutedUntil >= now }
 
             PrimaryTabRow(selectedTabIndex = activeTab) {
-                Tab(selected = activeTab == 0, onClick = { viewModel.activeAlertsTab = 0 }) { Text("Active (${visibleAlerts.size})", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+                Tab(selected = activeTab == 0, onClick = { viewModel.activeAlertsTab = 0 }) { Text(stringResource(R.string.active, visibleAlerts.size), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
                 Tab(selected = activeTab == 1, onClick = { viewModel.activeAlertsTab = 1 }) { Text(stringResource(R.string.rules), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
                 Tab(selected = activeTab == 2, onClick = { viewModel.activeAlertsTab = 2 }) { Text(stringResource(R.string.history), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             }
@@ -643,12 +638,11 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        "Threshold: ${alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem)} · " +
-                                            "Current: ${alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)}",
+                                        stringResource(R.string.threshold_current, alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)),
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    Text("Server: ${srv?.name ?: "server"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(stringResource(R.string.server, srv?.name ?: "server"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                         if (!alert.acknowledged) {
@@ -675,8 +669,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                             Text(stringResource(R.string.muted), color = OmniColors.purple, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                         }
-                                        Text("Server: ${srv?.name ?: "server"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text("Until ${formatShortDateTime(alert.mutedUntil)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(stringResource(R.string.server_2, srv?.name ?: "server"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(stringResource(R.string.until, formatShortDateTime(alert.mutedUntil)), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                             TextButton(onClick = { viewModel.unmuteAlert(alert.id) }) { Text(stringResource(R.string.unmute)) }
                                         }
@@ -687,7 +681,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         if (acknowledgedAlerts.isNotEmpty()) {
                             item {
                                 Text(
-                                    "${acknowledgedAlerts.size} acknowledged incident(s) hidden until recovery.",
+                                    stringResource(R.string.acknowledged_incident_s_hidden_until_recovery, acknowledgedAlerts.size),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -708,8 +702,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(stringResource(R.string.default_alert_rules), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     Text(
-                                        "CPU/memory/disk 90%, latency 250ms, temperature " +
-                                            "${formatTemperature(80f, measurementSystem)}. Created as editable All Hosts rules.",
+                                        stringResource(R.string.cpu_memory_disk_90_latency_250ms, formatTemperature(80f, measurementSystem)),
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -752,9 +745,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     Text(r.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: "host"
                                     Text(
-                                        "$targetName · Threshold > " +
-                                            "${alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem)} " +
-                                            "for ${r.triggerWindow}",
+                                        stringResource(R.string.threshold_for, targetName, alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem), r.triggerWindow),
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -811,14 +802,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         Text(item.status.uppercase(), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        "Current ${alertMetricDisplay(item.metricName, item.currentValue, measurementSystem)} · " +
-                                            "threshold ${alertMetricDisplay(item.metricName, item.thresholdValue, measurementSystem)} · " +
+                                        stringResource(R.string.current_threshold_2, alertMetricDisplay(item.metricName, item.currentValue, measurementSystem), alertMetricDisplay(item.metricName, item.thresholdValue, measurementSystem)) +
                                             item.severity,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Text(
-                                        "Triggered ${formatShortDateTime(item.triggeredTime)} · recorded ${formatShortDateTime(item.historyTime)}",
+                                        stringResource(R.string.triggered_recorded, formatShortDateTime(item.triggeredTime), formatShortDateTime(item.historyTime)),
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -906,8 +896,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     // just never evaluates — say so rather than let it look silently broken.
                     if (metricSelect == "Temperature") {
                         Text(
-                            "Only triggers on hosts that report a CPU temperature. Hosts without a " +
-                                "thermal sensor (many VMs and containers) never evaluate this rule.",
+                            stringResource(R.string.only_triggers_on_hosts_that_report),
                             fontSize = 11.sp,
                             color = OmniColors.amber,
                         )
@@ -915,7 +904,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     OutlinedTextField(
                         value = threshInput,
                         onValueChange = { threshInput = it },
-                        label = { Text("Threshold value (${alertMetricUnit(metricSelect, measurementSystem)})") },
+                        label = { Text(stringResource(R.string.threshold_value, alertMetricUnit(metricSelect, measurementSystem))) },
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         isError = thresholdError != null,
@@ -1499,7 +1488,7 @@ private fun ScannedHostCard(
                 )
                 if (host.openPorts.isNotEmpty()) {
                     Text(
-                        "Open ports: ${host.openPorts.joinToString(", ")}",
+                        stringResource(R.string.open_ports, host.openPorts.joinToString(", ")),
                         fontSize = 11.sp, fontFamily = OmniFonts.mono, color = OmniColors.green,
                     )
                 }
@@ -1546,7 +1535,7 @@ private fun ScannedHostActionsSheet(
             Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState())) {
                 if (savedMatch != null) {
                     Text(
-                        "Already saved as \"${savedMatch.name}\".",
+                        stringResource(R.string.already_saved_as, savedMatch.name),
                         fontSize = 12.sp,
                         color = OmniColors.cyan,
                         modifier = Modifier.padding(bottom = 8.dp),
@@ -1892,7 +1881,7 @@ private fun PortScanTab(viewModel: AppViewModel) {
                             modifier = Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Port $port", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.port_2, port), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
                             Text(status, color = if (status.contains("Open")) Color(0xFF10B981) else Color.Gray, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -2238,7 +2227,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(profile.profileName, fontWeight = FontWeight.Bold)
-                                Text("User: ${profile.username} · Auth: ${profile.authType}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.user_auth, profile.username, profile.authType), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Row {
                                 IconButton(modifier = Modifier.testTag("profile.edit.${profile.id}"), onClick = { editProfile = profile }) {
@@ -2266,7 +2255,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(key.alias, fontWeight = FontWeight.Bold)
-                                Text("Crypto: ${key.keyType} · Fingerprint: ${key.fingerprint}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.crypto_fingerprint, key.keyType, key.fingerprint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Row {
                                 IconButton(onClick = { editKey = key }) {
@@ -2468,9 +2457,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
                 ) {
                     Text(
-                        "Only the private key is required — the type (RSA, OpenSSH, ed25519, ECDSA…) " +
-                            "is detected automatically and the public key is derived from it. Add the " +
-                            "public key only if you want to store it too.",
+                        stringResource(R.string.only_the_private_key_is_required),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2561,7 +2548,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
-                        Text("Key profile — bound to key '${profile.keyAlias ?: "?"}'.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.key_profile_bound_to_key, profile.keyAlias ?: "?"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     saveError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("profile.save.error")) }
                 }
@@ -2623,8 +2610,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 ) {
                     OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.key_alias_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Text(
-                        "Renaming updates every host and profile that uses this key. Leave the key " +
-                            "fields blank to keep the current key pair; paste a new private key to replace it.",
+                        stringResource(R.string.renaming_updates_every_host_and_profile),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2674,7 +2660,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         val copyToClipboard = rememberClipboardCopy()
         AlertDialog(
             onDismissRequest = { generatedKeyResult = null },
-            title = { Text("Generated Key: $alias") },
+            title = { Text(stringResource(R.string.generated_key, alias)) },
             text = {
                 Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.warning_private_key_is_shown_only), color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -2688,9 +2674,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
                     Text(stringResource(R.string.install_on_your_server), fontWeight = FontWeight.Bold)
                     Text(
-                        "The server only accepts this key after the PUBLIC key is added to " +
-                            "~/.ssh/authorized_keys for the user you log in as. While password login " +
-                            "still works, the easiest way is to run this in any terminal on this host:",
+                        stringResource(R.string.the_server_only_accepts_this_key),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2722,7 +2706,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 private fun BackupSelectionFeedback(viewModel: AppViewModel) {
     if (viewModel.backupSelectionSaving) {
         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Text("Remembering backup selection…", fontSize = 11.sp)
+        Text(stringResource(R.string.remembering_backup_selection), fontSize = 11.sp)
     }
     viewModel.backupSelectionError?.let {
         Text(it, color = OmniColors.red, fontSize = 11.sp)
@@ -2784,13 +2768,12 @@ fun BackupToolView(viewModel: AppViewModel) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(stringResource(R.string.omniterm_app_backup), fontWeight = FontWeight.Bold)
                     Text(
-                        "Exports OmniTerm's own configuration — saved hosts, keys, scripts and settings. " +
-                            "It does NOT back up any files or data on your servers.",
+                        stringResource(R.string.exports_omniterm_s_own_configuration_saved),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "Last backup: ${if (viewModel.lastBackupExportTime <= 0L) "Never" else formatDateTime(viewModel.lastBackupExportTime)}",
+                        stringResource(R.string.last_backup, if (viewModel.lastBackupExportTime <= 0L) "Never" else formatDateTime(viewModel.lastBackupExportTime)),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -3163,7 +3146,7 @@ internal fun BackupReadProgressDialog(decrypting: Boolean) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(16.dp))
-                Text("This may take a little while. Please wait.")
+                Text(stringResource(R.string.this_may_take_a_little_while))
             }
         },
         confirmButton = {},
@@ -3257,7 +3240,7 @@ private fun BackupHostSelectionList(
         Text(stringResource(R.string.hosts_to_restore), fontWeight = FontWeight.Bold, fontSize = 12.sp)
         if (maxSelected != Int.MAX_VALUE) {
             Text(
-                "Free Play Store restore is limited to $effectiveMax host${if (effectiveMax == 1) "" else "s"}.",
+                stringResource(R.string.free_play_store_restore_is_limited, effectiveMax, if (effectiveMax == 1) "" else "s"),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -3534,10 +3517,9 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             TextButton(onClick = { showPinDialog = true }) { Text(stringResource(R.string.change_pin)) }
 
                             Spacer(Modifier.height(8.dp))
-                            Text("Lock when returning after", fontSize = 13.sp)
+                            Text(stringResource(R.string.lock_when_returning_after), fontSize = 13.sp)
                             Text(
-                                "The countdown starts once OmniTerm is no longer visible. Rotation " +
-                                    "doesn't start it; a full process restart always locks.",
+                                stringResource(R.string.the_countdown_starts_once_omniterm_is),
                                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(Modifier.height(6.dp))
@@ -3564,7 +3546,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                         draftCustomLockUnit = updated.customUnit
                                         draftCustomLockSelected = updated.customSelected
                                     },
-                                    label = { Text("Custom", fontSize = 12.sp) },
+                                    label = { Text(stringResource(R.string.custom), fontSize = 12.sp) },
                                 )
                             }
                             if (draftCustomLockSelected) {
@@ -3581,11 +3563,11 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                             draftCustomLockValue = updated.customValue
                                             draftAppLockTimeout = updated.timeoutMs
                                         },
-                                        label = { Text("Custom duration") },
+                                        label = { Text(stringResource(R.string.custom_duration)) },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         isError = customAppLockTimeout == null,
                                         supportingText = if (customAppLockTimeout == null) {
-                                            { Text("Choose a duration up to 24 hours") }
+                                            { Text(stringResource(R.string.choose_a_duration_up_to_24)) }
                                         } else {
                                             null
                                         },
@@ -3644,9 +3626,9 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text("Hide sensitive info")
+                                Text(stringResource(R.string.hide_sensitive_info))
                                 Text(
-                                    "Replaces IPs/hostnames with host names across the app — safe for screenshots and screen shares.",
+                                    stringResource(R.string.replaces_ips_hostnames_with_host_names),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3669,9 +3651,9 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Measurement system")
+                                Text(stringResource(R.string.measurement_system))
                                 Text(
-                                    "Applies to temperatures and other physical measurements throughout the app.",
+                                    stringResource(R.string.applies_to_temperatures_and_other_physical),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3682,14 +3664,14 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                     onClick = {
                                         draftMeasurementSystem = MeasurementSystem.Metric.settingValue
                                     },
-                                    label = { Text("Metric") },
+                                    label = { Text(stringResource(R.string.metric)) },
                                 )
                                 FilterChip(
                                     selected = draftMeasurementSystem == MeasurementSystem.Imperial.settingValue,
                                     onClick = {
                                         draftMeasurementSystem = MeasurementSystem.Imperial.settingValue
                                     },
-                                    label = { Text("Imperial") },
+                                    label = { Text(stringResource(R.string.imperial)) },
                                 )
                             }
                         }
@@ -3714,9 +3696,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(stringResource(R.string.low_battery_saver))
                                 Text(
-                                    "Below the threshold (unplugged): turn off keep-screen-on, pause " +
-                                        "auto-refresh, and park tmux terminals resumably. Resumes on " +
-                                        "charge, recovery, or pull-to-refresh.",
+                                    stringResource(R.string.below_the_threshold_unplugged_turn_off),
                                     fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -3724,7 +3704,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         }
                         if (draftBatterySaver) {
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text("Engage below: $draftBatterySaverPct%", fontSize = 12.sp)
+                            Text(stringResource(R.string.engage_below, draftBatterySaverPct), fontSize = 12.sp)
                             @OptIn(ExperimentalLayoutApi::class)
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(10, 15, 20, 30).forEach { pct ->
@@ -3811,8 +3791,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(stringResource(R.string.editor_syntax_highlighting), fontWeight = FontWeight.Bold)
                         Text(
-                            "Max file size to colourise in the code editor (SFTP files, Compose YAML). " +
-                                "Lower it if editing large files feels slow; \"Off\" disables highlighting.",
+                            stringResource(R.string.max_file_size_to_colourise_in),
                             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -3874,7 +3853,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.amber) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         SettingsCardHeader("Metrics Data Pruning", "Pruning metric history logs prevents database overflow.", OmniColors.amber)
-                        Text("Retention Window: $draftRetention days")
+                        Text(stringResource(R.string.retention_window_days, draftRetention))
                         Slider(
                             value = draftRetention.toFloat(),
                             onValueChange = { draftRetention = it.toInt() },
@@ -3887,7 +3866,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         SettingsCardHeader("Terminal", "Persistent terminal display preferences.", OmniColors.purple)
-                        Text("Font size: ${draftTerminalFontSize}sp", fontSize = 12.sp)
+                        Text(stringResource(R.string.font_size_sp, draftTerminalFontSize), fontSize = 12.sp)
                         Slider(
                             value = draftTerminalFontSize.toFloat(),
                             onValueChange = { draftTerminalFontSize = it.toInt() },
@@ -3911,7 +3890,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                 )
                             }
                         }
-                        Text("Scrollback: ${draftTerminalScrollbackLimit / 1000}k lines", fontSize = 12.sp)
+                        Text(stringResource(R.string.scrollback_k_lines, draftTerminalScrollbackLimit / 1000), fontSize = 12.sp)
                         Slider(
                             value = draftTerminalScrollbackLimit.toFloat(),
                             onValueChange = { draftTerminalScrollbackLimit = it.toInt() },
@@ -3931,9 +3910,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(stringResource(R.string.smart_swipe_input))
                                 Text(
-                                    "Lets gesture keyboards correct each swiped word before it's sent. " +
-                                        "Turn off to disable swipe-typing and accept strict, literal " +
-                                        "keystrokes like a password field (no autocorrect or suggestions).",
+                                    stringResource(R.string.lets_gesture_keyboards_correct_each_swiped),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3948,11 +3925,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(stringResource(R.string.tmux_control_mode_experimental))
                                 Text(
-                                    "Persistent sessions attach with tmux's control protocol " +
-                                        "(what iTerm2 uses): every output byte is streamed, so " +
-                                        "scroll history is always complete — nothing is skipped " +
-                                        "while you're not watching. Split panes made inside tmux " +
-                                        "aren't rendered. Applies to newly opened sessions.",
+                                    stringResource(R.string.persistent_sessions_attach_with_tmux_s),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3967,9 +3940,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(stringResource(R.string.tap_to_open_links))
                                 Text(
-                                    "Detect URLs in terminal output (including lines wrapped across " +
-                                        "rows) and open them on tap. Best-effort pattern matching — " +
-                                        "turn off if taps misfire on unusual output.",
+                                    stringResource(R.string.detect_urls_in_terminal_output_including),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3984,9 +3955,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(stringResource(R.string.open_links_in_app))
                                 Text(
-                                    "Tapped links open in an in-app browser tab (back returns " +
-                                        "straight to the terminal). Turn off to hand links to your " +
-                                        "external browser app instead.",
+                                    stringResource(R.string.tapped_links_open_in_an_in),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -4003,7 +3972,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.red) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         SettingsCardHeader("Alert History", "Keep the newest acknowledged, muted, and resolved incidents per host.", OmniColors.red)
-                        Text("History entries per host: $draftAlertHistoryLimit")
+                        Text(stringResource(R.string.history_entries_per_host, draftAlertHistoryLimit))
                         Slider(
                             value = draftAlertHistoryLimit.toFloat(),
                             onValueChange = { draftAlertHistoryLimit = it.toInt() },
@@ -4226,19 +4195,19 @@ fun AboutToolView(viewModel: AppViewModel) {
             Text(stringResource(R.string.omniterm_terminal_console), fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
             // Real version from the build — use this to confirm which APK is actually installed.
             Text(
-                "Version ${com.jetsetslow.omniterm.BuildConfig.VERSION_NAME}",
+                stringResource(R.string.version, com.jetsetslow.omniterm.BuildConfig.VERSION_NAME),
                 fontSize = 12.sp,
                 fontFamily = OmniFonts.mono,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "Build ${com.jetsetslow.omniterm.BuildConfig.VERSION_CODE}",
+                stringResource(R.string.build, com.jetsetslow.omniterm.BuildConfig.VERSION_CODE),
                 fontSize = 11.sp,
                 fontFamily = OmniFonts.mono,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             )
             Text(
-                "${com.jetsetslow.omniterm.BuildConfig.DISTRIBUTION_NAME} build. Source available for noncommercial use under the PolyForm Noncommercial License 1.0.0. OmniTerm connects directly to your hosts and keeps SSH keys and credentials on-device. There is no OmniTerm account or usage telemetry. " +
+                stringResource(R.string.build_source_available_for_noncommercial_use, com.jetsetslow.omniterm.BuildConfig.DISTRIBUTION_NAME) +
                     if (com.jetsetslow.omniterm.BuildConfig.FLAVOR == "playStore") {
                         "Play Store builds may contact Google for billing, consent, ads, and in-app review."
                     } else {
@@ -4364,7 +4333,7 @@ private fun CrashHistoryCard() {
                 )
             } else {
                 Text(
-                    "${entries.size} recorded. Release traces are obfuscated — keep the version line so it can be decoded.",
+                    stringResource(R.string.recorded_release_traces_are_obfuscated_keep, entries.size),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -4618,8 +4587,7 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(stringResource(R.string.health_scoring), fontWeight = FontWeight.Bold)
             Text(
-                "Score starts at 100; each metric subtracts points when it reaches a tier " +
-                    "(warn / high / critical). Edit the thresholds and the points each deducts.",
+                stringResource(R.string.score_starts_at_100_each_metric),
                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
@@ -4632,7 +4600,7 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
 
             @Composable
             fun block(name: String, unit: String, f: TierFields, e: TierErrors) {
-                Text("$name · threshold ($unit) then penalty", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(stringResource(R.string.threshold_then_penalty, name, unit), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ScoreField("warn ≥", f.warn, error = e.warn ?: e.order) { f.warn = it }
                     ScoreField("high ≥", f.high, error = e.high ?: e.order) { f.high = it }
@@ -4758,8 +4726,8 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
                                 Text(record.type, color = OmniColors.cyan, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text("Value: ${record.value}", fontSize = 13.sp, fontFamily = OmniFonts.mono)
-                            Text("TTL: ${record.ttl}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.value, record.value), fontSize = 13.sp, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.ttl, record.ttl), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -4890,7 +4858,7 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
                     }
                     viewModel.speedTestLatencyMs?.let { lat ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("$lat ms", fontSize = 14.sp, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.ms, lat), fontSize = 14.sp, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold)
                             Text(stringResource(R.string.time_to_first_byte), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
@@ -4975,7 +4943,7 @@ private fun TunnelsTab(viewModel: AppViewModel) {
                                         fontFamily = OmniFonts.mono,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    Text("via $srvName", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(stringResource(R.string.via, srvName), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 if (busy) {
                                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)

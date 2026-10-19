@@ -323,13 +323,13 @@ fun HealthBreakdownDialog(viewModel: AppViewModel, server: ServerEntity, onDismi
     val breakdown = viewModel.healthBreakdown(server)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Health score · ${server.name}") },
+        title = { Text(stringResource(R.string.health_score, server.name)) },
         text = {
             Column(Modifier.heightIn(max = 360.dp).verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(if (breakdown.score < 0) "Health unavailable" else "Score: ${breakdown.score} / 100", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
                 HorizontalDivider()
                 when {
-                    breakdown.score < 0 -> Text("Waiting for verified CPU, memory and disk metrics. Refresh to retry.")
+                    breakdown.score < 0 -> Text(stringResource(R.string.waiting_for_verified_cpu_memory_and))
                     breakdown.offline ->
                         Text(stringResource(R.string.host_is_offline_or_unreachable_score), color = Color.Red, fontSize = 14.sp)
                     breakdown.healthy ->
@@ -636,18 +636,15 @@ fun TmuxInstallDialog(viewModel: AppViewModel) {
     val output = viewModel.tmuxInstallOutput
     AlertDialog(
         onDismissRequest = { if (!installing) viewModel.dismissTmuxInstallPrompt() },
-        title = { Text("Install tmux on ${srv.name}?") },
+        title = { Text(stringResource(R.string.install_tmux_on, srv.name)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "This host is set to use persistent sessions, but tmux isn't installed. tmux lets " +
-                        "sessions survive network drops and keeps long-running commands going after a " +
-                        "reconnect.",
+                    stringResource(R.string.this_host_is_set_to_use),
                     fontSize = 13.sp,
                 )
                 Text(
-                    "Install runs the appropriate package-manager command on this host (using your sudo password if set). " +
-                        "Connecting without tmux opens a normal, non-resumable shell.",
+                    stringResource(R.string.install_runs_the_appropriate_package_manager),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -692,8 +689,7 @@ fun OfflineConnectDialog(viewModel: AppViewModel) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "${HostDisplay.name(srv)} (${HostDisplay.host(srv)}:${srv.port}) didn't answer on its SSH port at the last " +
-                        "check, so it looks offline.",
+                    stringResource(R.string.didn_t_answer_on_its_ssh, HostDisplay.name(srv), HostDisplay.host(srv), srv.port),
                     fontSize = 13.sp,
                 )
                 Text(stringResource(R.string.the_status_may_be_out_of),
@@ -1039,10 +1035,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     title = { Text(stringResource(R.string.battery_saver_available)) },
                     text = {
                         Text(
-                            "Battery reached ${viewModel.batterySaverEngagedAtPct}% (threshold " +
-                                "${viewModel.batterySaverThresholdPct}%). OmniTerm can release keep-screen-on, " +
-                                "pause auto-refresh, and park persistent tmux terminals. Nothing will change " +
-                                "unless you choose Start saving."
+                            stringResource(R.string.battery_reached_threshold_omniterm_can_release, viewModel.batterySaverEngagedAtPct, viewModel.batterySaverThresholdPct)
                         )
                     },
                     confirmButton = {
@@ -1066,14 +1059,14 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         Column(Modifier.verticalScrollWithIndicators(rememberScrollState())) {
                             if (viewModel.isLeavingTerminalSessions) {
                                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                                Text("Saving resumable sessions… Please wait.")
+                                Text(stringResource(R.string.saving_resumable_sessions_please_wait))
                             }
                             viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         }
                     },
                     confirmButton = {
                         if (!viewModel.isLeavingTerminalSessions) {
-                            TextButton(onClick = { viewModel.dismissTerminalLeaveError() }) { Text("Close") }
+                            TextButton(onClick = { viewModel.dismissTerminalLeaveError() }) { Text(stringResource(R.string.close)) }
                         }
                     },
                 )
@@ -1146,7 +1139,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         )
                             if (viewModel.isLeavingTerminalSessions) {
                                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                                Text("Saving resumable sessions… Please wait.")
+                                Text(stringResource(R.string.saving_resumable_sessions_please_wait))
                             }
                             viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         }
@@ -1719,7 +1712,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "${viewModel.selectedServerIdsForBulk.size} servers selected", fontWeight = FontWeight.Medium)
+                        Text(text = stringResource(R.string.servers_selected, viewModel.selectedServerIdsForBulk.size), fontWeight = FontWeight.Medium)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { viewModel.selectAllServers() }) { Text(stringResource(R.string.select_all)) }
                             Button(
@@ -1930,7 +1923,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                 Icon(Icons.Filled.Warning, contentDescription = null, tint = OmniColors.red, modifier = Modifier.size(16.dp))
                                                 Spacer(Modifier.width(6.dp))
                                                 Text(
-                                                    "Online · ${sshFailureSummary(server.authError)}",
+                                                    stringResource(R.string.online, sshFailureSummary(server.authError)),
                                                     color = OmniColors.red, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                                                 )
                                                 Spacer(Modifier.weight(1f))
@@ -2211,7 +2204,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                 title = { Text(stringResource(R.string.assign_group)) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("${viewModel.selectedServerIdsForBulk.size} selected server(s) will be moved to this group.")
+                        Text(stringResource(R.string.selected_server_s_will_be_moved, viewModel.selectedServerIdsForBulk.size))
                         Box {
                             OutlinedTextField(
                                 value = bulkGroupName,
@@ -2683,7 +2676,7 @@ fun AddServerSheet(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Column {
                                                 Text(profile.profileName)
-                                                Text("User: ${profile.username}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(stringResource(R.string.user, profile.username), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     }
@@ -2753,9 +2746,7 @@ fun AddServerSheet(
                             Column {
                                 Text(stringResource(R.string.persistent_session_tmux))
                                 Text(
-                                    "Runs shells inside tmux so a dropped connection reconnects and " +
-                                        "long-running commands keep going. Requires tmux on the host — " +
-                                        "you'll be offered to install it on first connect.",
+                                    stringResource(R.string.runs_shells_inside_tmux_so_a),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -2766,8 +2757,7 @@ fun AddServerSheet(
                             Column {
                                 Text(stringResource(R.string.forward_ssh_agent_ssh_a))
                                 Text(
-                                    "Lets onward SSH hops from this host authenticate with the key you " +
-                                        "connect with, without copying it to the server. Only enable for hosts you trust.",
+                                    stringResource(R.string.lets_onward_ssh_hops_from_this),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -2899,7 +2889,7 @@ fun AddServerSheet(
                     if (savingServer) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
-                        Text("Saving server…")
+                        Text(stringResource(R.string.saving_server))
                     } else Text(if (serverToEdit != null) "Update Server" else "Save Server")
                 }
             }

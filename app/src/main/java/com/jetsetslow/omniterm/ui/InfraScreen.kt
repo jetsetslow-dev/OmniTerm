@@ -65,7 +65,7 @@ fun InfraScreen(viewModel: AppViewModel) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Containers · ${srv.name}", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+            Text(stringResource(R.string.containers, srv.name), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
             IconButton(onClick = { viewModel.loadDocker() }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Reload")
             }
@@ -370,7 +370,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(
-                                    "${stack.services.size} service(s) · ${stack.running}/${stack.total} containers",
+                                    stringResource(R.string.service_s_containers, stack.services.size, stack.running, stack.total),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -528,7 +528,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "This will stop and remove the containers for ${stack.name}. Volumes are not removed unless the compose file does so.",
+                        stringResource(R.string.this_will_stop_and_remove_the, stack.name),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(
@@ -565,7 +565,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
         val replicasError = countError(replicas, min = 0, max = 999)
         AlertDialog(
             onDismissRequest = { scaleTarget = null },
-            title = { Text("Scale ${target.service.name}") },
+            title = { Text(stringResource(R.string.scale_2, target.service.name)) },
             text = {
                 OutlinedTextField(
                     value = replicas,
@@ -601,7 +601,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     portsTarget?.let { stack ->
         AlertDialog(
             onDismissRequest = { portsTarget = null },
-            title = { Text("${stack.name} ports") },
+            title = { Text(stringResource(R.string.ports, stack.name)) },
             text = {
                 if (stack.portDetails.isEmpty()) {
                     Text(stringResource(R.string.no_published_ports_were_reported_for), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -689,7 +689,7 @@ private fun ContainerActionConfirmHost(controller: ConfirmController) {
                 Text(request.confirmLabel, color = OmniColors.red)
             }
         },
-        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -715,13 +715,13 @@ private fun StackServiceRow(
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(service.name, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Text("${service.running}/${service.total} running", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                Text(stringResource(R.string.running_3, service.running, service.total), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
             }
         }
         service.containers.forEach { c ->
             Column(Modifier.fillMaxWidth().padding(start = 15.dp)) {
                 Text("${c.name} · ${c.status}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
-                Text("Ports: ${c.ports}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
+                Text(stringResource(R.string.ports_2, c.ports), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     for ((action, label) in listOf("start" to "Start", "stop" to "Stop", "restart" to "Restart", "pause" to "Pause", "unpause" to "Unpause", "remove" to "Remove")) {
                         OmniButton(label, onClick = { onContainerAction(c, action) }, small = true,
@@ -843,7 +843,7 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("${img.repository}:${img.tag}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("ID: ${img.id}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.id, img.id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(img.size, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = OmniColors.cyan)
@@ -945,7 +945,7 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(vol.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Driver: ${vol.driver}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.driver, vol.driver), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                         if (vol.size.isNotBlank()) {
                             Text(vol.size, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
@@ -1021,7 +1021,7 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(net.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Driver: ${net.driver}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.driver_2, net.driver), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                         OmniTag(label = net.driver, color = when (net.driver) {
                             "bridge" -> OmniColors.cyan
@@ -1034,13 +1034,13 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                     if (net.subnet.isNotBlank() || net.gateway.isNotBlank()) {
                         Spacer(Modifier.height(4.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            if (net.subnet.isNotBlank()) Text("Subnet: ${net.subnet}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
-                            if (net.gateway.isNotBlank()) Text("GW: ${net.gateway}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            if (net.subnet.isNotBlank()) Text(stringResource(R.string.subnet, net.subnet), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            if (net.gateway.isNotBlank()) Text(stringResource(R.string.gw, net.gateway), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                     }
                     if (net.containerCount > 0) {
                         Spacer(Modifier.height(2.dp))
-                        Text("${net.containerCount} container${if (net.containerCount != 1) "s" else ""}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.container, net.containerCount, if (net.containerCount != 1) "s" else ""), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.height(4.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

@@ -692,7 +692,7 @@ fun HostPickerDialog(
                     }
                 }
                 if (filtered.isEmpty()) {
-                    Text("No hosts match “$query”.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_hosts_match, query), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },

@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm.ui.widget
 
 import android.appwidget.AppWidgetManager
+import androidx.compose.ui.res.stringResource
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -84,7 +85,7 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
                 Scaffold(
                     topBar = {
                         TopAppBar(
-                            title = { Text("Select Servers for Widget") },
+                            title = { Text(stringResource(R.string.select_servers_for_widget)) },
                             actions = {
                                 TextButton(onClick = {
                                     if (!saving) {

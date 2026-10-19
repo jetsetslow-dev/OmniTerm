@@ -107,8 +107,8 @@ fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(stringResource(R.string.fleet_2), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, letterSpacing = 1.sp)
-                Text("Avg Score: ${if (avgScore < 0) "—" else avgScore}", fontSize = 12.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold)
-                Text("$online / $total Online", fontSize = 12.sp, color = if (critical > 0) OmniColors.red else OmniColors.green)
+                Text(stringResource(R.string.avg_score, if (avgScore < 0) "—" else avgScore), fontSize = 12.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.online_2, online, total), fontSize = 12.sp, color = if (critical > 0) OmniColors.red else OmniColors.green)
             }
             RefreshCountdown(viewModel.lastTelemetryStartMs, viewModel.telemetryIntervalMs, size = 16.dp, color = OmniColors.green)
         }
@@ -333,7 +333,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.broadcast_controls), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
-                    "$selectedTargetCount target(s) · ${if (viewModel.broadcastCommandText.isBlank()) "no command" else viewModel.broadcastCommandText}",
+                    stringResource(R.string.target_s, selectedTargetCount, if (viewModel.broadcastCommandText.isBlank()) "no command" else viewModel.broadcastCommandText),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -356,7 +356,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             OutlinedTextField(
                 value = viewModel.broadcastCommandText,
                 onValueChange = { viewModel.broadcastCommandText = it },
-                label = { Text("Command") },
+                label = { Text(stringResource(R.string.command)) },
                 placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
                 prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
                 textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
@@ -366,7 +366,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 colors = omniTextFieldColors()
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Command presets", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -390,7 +390,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 ) {
                     Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Save command")
+                    Text(stringResource(R.string.save_command))
                 }
             }
 
@@ -812,7 +812,7 @@ fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 color = OmniColors.cyan,
             )
             if (viewModel.fleetLogs.isNotEmpty()) {
-                Text("${viewModel.fleetLogs.size} entries", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.entries, viewModel.fleetLogs.size), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         val logs = viewModel.fleetLogs
