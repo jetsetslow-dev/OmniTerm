@@ -14,6 +14,15 @@ fun FlavorAdBanner(modifier: Modifier = Modifier) {
 }
 
 /**
+ * Open-source flavor: no ads, so there is no ad consent to revisit and no "Ad privacy choices"
+ * button. Renders nothing.
+ */
+@Composable
+fun FlavorAdPrivacyButton(modifier: Modifier = Modifier) {
+    // Intentionally empty — the source-available build ships no advertising.
+}
+
+/**
  * Open-source flavor: there is no ads SDK and no access to the device advertising ID, by design.
  * Returning a fixed string keeps the diagnostics layout identical across flavors without ever
  * touching an advertising identifier in this build.

@@ -474,6 +474,29 @@ fun AlertPopupIncidentCard(
     }
 }
 
+/**
+ * Says that alerts are on but cannot reach the notification shade. Renders nothing otherwise, so the
+ * normal Alerts screen is unchanged.
+ */
+@Composable
+internal fun AlertNotificationBlockedNote(alertsEnabled: Boolean, notificationsAllowed: Boolean) {
+    if (!alertsEnabled || notificationsAllowed) return
+    OmniCard(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), leftAccent = OmniColors.amber) {
+        Text(
+            "Notifications are blocked for OmniTerm. Rules still fire and incidents are still " +
+                "recorded, but you will only see them in here. Allow notifications in system " +
+                "settings to be told while the app is closed.",
+            fontSize = 11.sp,
+            color = OmniColors.amber,
+            modifier = Modifier.testTag("alerts.notificationWarning"),
+        )
+    }
+}
+
+/** Whether a fired alert can reach the notification shade (app-level switch and, on 13+, the permission). */
+internal fun alertNotificationsAllowed(context: android.content.Context): Boolean =
+    androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+
 @Composable
 fun AlertsToolView(viewModel: AppViewModel) {
     val confirm = rememberConfirm()
@@ -487,6 +510,23 @@ fun AlertsToolView(viewModel: AppViewModel) {
     val measurementSystem = viewModel.measurementSystem
     var showCreateRuleDialog by remember { mutableStateOf(false) }
     var editRule by remember { mutableStateOf<AlertRuleEntity?>(null) }
+    // Rules still fire with notifications blocked, but nothing reaches the shade — a working feature
+    // the user cannot see. Re-read on every resume so returning from system settings updates it.
+    val context = LocalContext.current
+    var notificationsAllowed by remember { mutableStateOf(alertNotificationsAllowed(context)) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                notificationsAllowed = alertNotificationsAllowed(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { notificationsAllowed = alertNotificationsAllowed(context) }
     // A mute can expire without a database emission (for example while the host is offline), so a
     // lightweight minute tick keeps the Active/Muted partition honest even with no telemetry.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -523,7 +563,16 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         }
                         Switch(
                             checked = viewModel.alertsEnabled,
-                            onCheckedChange = { viewModel.saveAlertsEnabled(it) },
+                            onCheckedChange = { enabled ->
+                                viewModel.saveAlertsEnabled(enabled)
+                                // Asked when alerts are turned on, so the system prompt arrives with
+                                // the context that explains it. Turning alerts off asks nothing.
+                                if (enabled && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+                                    !alertNotificationsAllowed(context)
+                                ) {
+                                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            },
                         )
                     }
                     Text(
@@ -533,6 +582,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     )
                 }
             }
+
+            AlertNotificationBlockedNote(viewModel.alertsEnabled, notificationsAllowed)
 
             viewModel.manualRefreshError?.let { message ->
                 Row(
@@ -2387,6 +2438,9 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var importAlias by remember { mutableStateOf("") }
         var importedPrivateKey by remember { mutableStateOf("") }
         var importedPublicKey by remember { mutableStateOf("") }
+        // Shown inside the dialog: the screen's feedback line sits behind it, so a failed import
+        // otherwise looked like a Save button that did nothing.
+        var importError by remember { mutableStateOf<String?>(null) }
         val context = LocalContext.current
         var pickTarget by remember { mutableStateOf("private") }
         val keyFileLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -2455,16 +2509,24 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(R.string.load_public_key_pub_from_file))
                     }
+                    importError?.let { message ->
+                        Text(
+                            message,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("authKeys.import.error"),
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     enabled = importAlias.isNotBlank() && importedPrivateKey.isNotBlank(),
                     onClick = {
+                        importError = null
                         viewModel.addSshKey(importAlias, "", importedPrivateKey, importedPublicKey) { ok, msg ->
                             authFeedbackOk = ok
                             authFeedback = msg
-                            if (ok) showImportKeyDialog = false
+                            if (ok) showImportKeyDialog = false else importError = msg
                         }
                     }
                 ) {
@@ -4260,6 +4322,8 @@ fun AboutToolView(viewModel: AppViewModel) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(R.string.copy_diagnostics))
                     }
+                    // Play Store builds only: revisit ad consent. The open-source flavor renders nothing.
+                    FlavorAdPrivacyButton()
                     if (diagFeedback.isNotEmpty()) {
                         Text(diagFeedback, color = OmniColors.green, fontSize = 12.sp)
                     }
