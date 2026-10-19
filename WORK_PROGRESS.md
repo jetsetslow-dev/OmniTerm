@@ -1,5 +1,13 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 19: Alerts permission sync, dependency updates and an Actions allowlist guard — local/runtime complete
+
+- Kotlin now has the three Flutter-only additions (merged to main in #122): the blocked-notifications note on Alerts, "Ad privacy choices" on About in Play Store builds only, and key import errors inside the dialog. Flutter's "SSH tunnels are not available in this build" note has no Kotlin counterpart because every Kotlin build has forwarding.
+- Flutter's Alerts note now matches Kotlin's rule: shown whenever alerts are on and notifications are blocked. Flutter used to learn the permission only when alerts were switched on in the same session, so after a restart a blocked user saw nothing. It now reads the real state (Android's `areNotificationsEnabled`, as Kotlin does) on start and on every resume.
+- Dependabot #121 and #118, closed as superseded by #122, are applied here too: CodeQL 4.39.0, setup-java 6.1.0 (including the Flutter workflows still on 6.0.0), Scorecard 2.5.0, and Gradle 9.8.1 for both the root and `flutter_app/android` wrappers (checksums match Gradle's published SHA-256).
+- `scripts/check-actions-allowlist.py`, run by `local-pr-check.sh`: a third-party action outside the repository's Actions allowlist makes GitHub refuse to start the workflow, so no check run exists and a required check silently never reports. That is how the Scorecard bump blocked #122. The check fails on the previous allowlist and passes on the current one.
+- Validation: `./scripts/local-pr-check.sh --full` passed (2,940 Flutter tests, seven optional skips; API 35 instrumentation 24 passes, 42 opt-in assumptions unexecuted). The Flutter core device profile passed at 420 dpi with zero skips and no unexpected warnings. A first device run failed because a Kotlin connected-test run overlapped it on the same emulator; the exclusive rerun passed.
+
 ## October 18: live-host screens against Kotlin — local/runtime complete
 
 - Compared Servers, Monitor, Fleet and Term with a live fixture host against the Kotlin reference captures. Fleet matches. Three gaps found and fixed:
