@@ -5,6 +5,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/network/network_probe.dart';
 import 'package:omniterm/domain/host_display.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/servers/servers_screen.dart';
 import 'package:omniterm/ui/theme/colors.dart';
@@ -88,6 +89,8 @@ void main() {
           ChangeNotifierProvider<ServersViewModel>.value(value: vm),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: Scaffold(body: ServersScreen(hostProbe: hostProbe)),
         ),
@@ -168,10 +171,17 @@ void main() {
     expect(find.text('web-prod'), findsOneWidget, reason: 'an unselected host must survive');
   });
 
-  testWidgets('an empty fleet shows the "no servers yet" state', (tester) async {
+  testWidgets('an empty fleet shows Kotlin\'s first-run checklist and Add Host Server', (
+    tester,
+  ) async {
     await pump(tester);
     expect(find.byKey(const ValueKey('servers.empty')), findsOneWidget);
-    expect(find.text('No servers yet'), findsOneWidget);
+    expect(find.text('Connect your first server'), findsOneWidget);
+    expect(find.textContaining('sudo apt install openssh-server'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('servers.empty.add')));
+    await tester.pumpAndSettle();
+    expect(find.text('Add Linux Remote Host'), findsOneWidget);
   });
 
   for (final filtered in [false, true]) {
@@ -196,7 +206,7 @@ void main() {
       tester.view.viewInsets = FakeViewPadding(bottom: originalHeight - 110);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      final message = find.text(filtered ? 'No hosts match your filter' : 'No servers yet');
+      final message = find.text(filtered ? 'No servers found' : 'Connect your first server');
       await tester.ensureVisible(message);
       await tester.pumpAndSettle();
       expect(message.hitTestable(), findsOneWidget);
@@ -289,8 +299,8 @@ void main() {
     await tester.enterText(find.byKey(const ValueKey('servers.search')), 'zzzz');
     await tester.pumpAndSettle();
 
-    expect(find.text('No hosts match your filter'), findsOneWidget);
-    expect(find.text('No servers yet'), findsNothing);
+    expect(find.text('No servers found'), findsOneWidget);
+    expect(find.text('Connect your first server'), findsNothing);
   });
 
   testWidgets('the clear button appears only with text and resets the filter', (tester) async {

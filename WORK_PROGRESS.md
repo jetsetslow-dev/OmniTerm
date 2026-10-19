@@ -1,5 +1,23 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 20: Quick connect availability, empty screens, dotfiles and cleartext policy — local/runtime complete
+
+- Quick connect follows Kotlin's rule on the free Play Store build: every entry point is absent rather than shown and refused. Flutter answered the button with a "Quick Connect Requires Premium" sheet, which Kotlin never shows; the sheet is gone and the entries follow licence changes live. Kotlin's own leftover button, shown there and doing nothing, is fixed in #123.
+- With no saved hosts the terminal says Kotlin's "Add a server first." and offers "Quick connect (don't save)", the only way out of that screen. Its text now follows the theme's muted colour instead of a fixed dark-theme grey.
+- The empty host list is Kotlin's: the first-run checklist, "No servers found" for a filter that matches nothing, and an Add Host Server button that respects the free-build limit.
+- SFTP lists dotfiles by default, as Kotlin always has (Kotlin gains the toggle in #123). Hiding them also drops them from the selection, so a bulk delete or move never acts on files out of sight.
+- Flutter now carries Kotlin's network security config. Android blocks plain HTTP by default for this target SDK and Dart's HttpClient obeys that, so the existing "Use HTTPS" switch for WebDAV could not actually reach an HTTP share; cleartext is permitted for that choice in both apps, with the form's warning, and the speed test still requires HTTPS.
+- SFTP rows and actions are Kotlin's. Tapping a file opens Kotlin's options dialog rather than the editor, and ⋮ opens the same dialog instead of a short popup. The rows read "Folder|File · size · date" with Kotlin's icons, weights and selected-row accent, and while selecting, a tap on a folder selects it as in Kotlin. The dialog brings Kotlin's actions Flutter lacked:
+  - **Open with Device App:** downloads into a private cache directory exposed only through a new FileProvider, then opens the system chooser. Files over 256 MB are sent to Download to Device instead, using Kotlin's messages.
+  - **Copy path:** copies the absolute path and confirms it.
+  - **Single-entry Copy and Cut.**
+  - **Bookmark Directory:** adds the folder and never removes it.
+
+  The delete, extract and replace confirmations use Kotlin's wording.
+- The parity audit compares Kotlin's escaped quotes with Dart's plain ones, which cleared ten more Flutter strings that were already identical. Baseline: 343 known differences.
+- Controls: the locked-build tests fail when Quick connect is always available. The selection test fails when hiding keeps hidden rows selected. The SFTP tests fail when a tap opens the editor, when Bookmark Directory toggles, or when the 256 MB limit is removed.
+- Validation: `./scripts/local-pr-check.sh --full` passed (2,966 Flutter tests, seven optional skips; API 35 instrumentation 24 passes, 42 opt-in assumptions unexecuted). The Flutter core device profile passed at 420 dpi (10 suites, 27 tests, zero skips). On the API 35 emulator against the repository fixture host: the empty host list showed the checklist and its Add Host Server button opened the wizard; the empty terminal offered Quick connect; the host listing showed dotfiles; a file tap opened the options dialog with Kotlin's nine actions; Open with Device App showed the system chooser and HTML Viewer opened the file with no permission denial; and Copy file path reported `/config/.bash_history`.
+
 ## October 19: Kotlin's add-host wizard and Quick connect dialog, and labels from strings.xml — local/runtime complete
 
 - Flutter's text now comes from Kotlin's `strings.xml`: `scripts/generate-flutter-strings.py` writes `lib/l10n/app_en.arb` (566 strings, `%1$s` placeholders become ICU arguments) and the official `gen-l10n` builds `AppLocalizations` from it on `flutter pub get`. `--check` fails the local gate and Flutter PR Check when the ARB is stale. Screens move to `AppLocalizations` as each one is brought into line.

@@ -14,6 +14,7 @@ import '../../data/ssh/ssh_transport.dart';
 import '../../domain/endpoint_bookmark.dart';
 import '../../domain/file_edit.dart';
 import '../../domain/image_preview.dart';
+import '../../platform/device_file_opener.dart';
 import '../../platform/device_file_store.dart';
 import '../../platform/long_operation_notifications.dart';
 import '../../domain/remote_path.dart';
@@ -121,9 +122,13 @@ class SftpViewModel extends ChangeNotifier {
     this.shareClientFor,
     this.transport,
     this.operationNotifications,
+    this.fileOpener,
   }) {
     _app.addListener(_onAppChanged);
   }
+
+  /// Hands downloaded files to the device's own apps; null where the platform has no such bridge.
+  final DeviceFileOpener? fileOpener;
 
   final AppState _app;
   final LongOperationNotifications? operationNotifications;
@@ -505,14 +510,17 @@ class SftpViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool _showHidden = false;
+  bool _showHidden = true;
 
-  /// Whether dotfiles are listed. Off by default, matching every file manager.
+  /// Whether dotfiles are listed. On by default, as in Kotlin, and for this session only.
   bool get showHidden => _showHidden;
 
   set showHidden(bool value) {
     if (_showHidden == value) return;
     _showHidden = value;
+    // A selected dotfile that is hidden would stay selected out of sight, so the next bulk delete
+    // or move would act on something the user cannot see.
+    if (!value) _selected.removeWhere((name) => name.startsWith('.'));
     notifyListeners();
   }
 
@@ -1195,6 +1203,23 @@ class SftpViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// Kotlin's single-entry Copy / Cut from the file options dialog: stages just [entry].
+  void stageEntry(SftpFile entry, {required bool move}) {
+    _selected
+      ..clear()
+      ..add(entry.name);
+    stageSelected(move: move);
+  }
+
+  /// Kotlin's "Copy … path": the status line confirms what went to the clipboard.
+  void notePathCopied(String path) {
+    _status = 'Path copied: $path';
+    _safeNotify();
+  }
+
+  /// The absolute path of [entry] in the folder being browsed.
+  String pathOf(SftpFile entry) => joinPath(_path, entry.name);
+
   void clearClipboard() {
     if (_clipboard == null) return;
     _clipboard = null;
@@ -1794,6 +1819,14 @@ class SftpViewModel extends ChangeNotifier {
     await loadAllBookmarks();
   }
 
+  /// Kotlin's "Bookmark Directory": adds [entry] to this endpoint's bookmarks, never removes it.
+  Future<void> bookmarkDirectory(SftpFile entry) async {
+    final path = normalisePath(pathOf(entry));
+    if (!_bookmarks.contains(path)) await toggleBookmark(path);
+    _status = 'Bookmarked ${entry.name}';
+    _safeNotify();
+  }
+
   /// Jumps to [bookmark] on the endpoint already being browsed, switching to the browser tab.
   Future<void> openBookmark(String bookmark) async {
     if (!hasBrowseTarget) return;
@@ -2068,6 +2101,79 @@ class SftpViewModel extends ChangeNotifier {
       return null;
     }
     return staged.path;
+  }
+
+  // ── open with device app ────────────────────────────────────────────────────
+
+  /// Kotlin's `openWithMaxBytes`: anything larger goes through Download to Device instead.
+  static const openWithMaxBytes = 256 * 1024 * 1024;
+
+  bool _openWithBusy = false;
+
+  /// True while a file is being fetched for the device's apps; the option is disabled meanwhile.
+  bool get openWithBusy => _openWithBusy;
+
+  /// True where a downloaded file can be offered to the device's own apps (Android).
+  bool get canOpenWithDevice => fileOpener != null;
+
+  /// Kotlin's `openRemoteFileWithDevice`: fetch [entry] into the private preview cache, then let
+  /// the device's photo, video or PDF app open it. Progress and outcome go to [status], as in
+  /// Kotlin; the fetch is not a transfer the user asked to keep, so it is not logged as one.
+  Future<void> openWithDevice(SftpFile entry) async {
+    final opener = fileOpener;
+    if (opener == null || _openWithBusy) return;
+    if (entry.size > openWithMaxBytes) {
+      _status = 'Too large to open here (${humanBytes(entry.size)}) — use Download to Device.';
+      _safeNotify();
+      return;
+    }
+    final client = await _client;
+    if (client == null) {
+      _error = _unavailable(browsedServer, 'File downloads are unavailable in this build.');
+      _safeNotify();
+      return;
+    }
+    final base = entry.name.split('/').last.split(r'\').last;
+    final name = base.isEmpty ? 'file' : base;
+    _openWithBusy = true;
+    _safeNotify();
+    try {
+      final directory = await opener.previewDirectory();
+      if (directory == null) {
+        _status = 'Open failed: this device cannot hand files to other apps.';
+        return;
+      }
+      final staged = File('$directory/$name');
+      final sink = staged.openWrite();
+      try {
+        await client.downloadTo(
+          joinPath(_path, entry.name),
+          sink,
+          onProgress: (done, total) {
+            final denominator = total > 0 ? total : entry.size;
+            if (denominator > 0) {
+              _status = 'Preparing $name… ${done * 100 ~/ denominator}%';
+              _safeNotify();
+            }
+          },
+        );
+      } finally {
+        await sink.close();
+      }
+      final dot = entry.name.lastIndexOf('.');
+      _status = switch (await opener.open(staged.path)) {
+        DeviceOpenOutcome.opened => 'Opened $name',
+        DeviceOpenOutcome.noApp =>
+          'No app on this device can open ${dot < 0 ? entry.name : entry.name.substring(dot + 1)} '
+              'files.',
+        DeviceOpenOutcome.failed => 'Open failed: the device did not accept the file.',
+      };
+    } catch (e) {
+      _status = 'Open failed: $e';
+    } finally {
+      _openWithBusy = false;
+      _safeNotify();
+    }
   }
 
   // ── image preview ───────────────────────────────────────────────────────────

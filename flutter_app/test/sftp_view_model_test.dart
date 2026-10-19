@@ -1,8 +1,9 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/platform/device_file_opener.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_commands.dart';
@@ -262,19 +263,28 @@ void main() {
     },
   );
 
-  Future<SftpViewModel> boot({RemoteFsClient? client, SshTransport? shell}) async {
+  Future<SftpViewModel> boot({
+    RemoteFsClient? client,
+    SshTransport? shell,
+    DeviceFileOpener? fileOpener,
+  }) async {
     await app.start();
     await Future<void>.delayed(Duration.zero);
     return SftpViewModel(
       app,
       fsClientFor: client == null ? null : (_) async => client,
       transport: shell,
+      fileOpener: fileOpener,
     );
   }
 
-  Future<SftpViewModel> booted(FakeFsClient client, {SshTransport? shell}) async {
+  Future<SftpViewModel> booted(
+    FakeFsClient client, {
+    SshTransport? shell,
+    DeviceFileOpener? fileOpener,
+  }) async {
     await repo.insertServer(server(name: 'nas'));
-    final vm = await boot(client: client, shell: shell);
+    final vm = await boot(client: client, shell: shell, fileOpener: fileOpener);
     await Future<void>.delayed(Duration.zero);
     await vm.start();
     return vm;
@@ -405,12 +415,24 @@ void main() {
       expect(client.closeCalls, 1);
     });
 
-    test('hidden files are filtered until asked for', () async {
+    test('hidden files are listed until hidden, as in Kotlin', () async {
       final vm = await booted(homeTree());
 
-      expect(vm.visibleEntries.map((e) => e.name), isNot(contains('.hidden')));
-      vm.showHidden = true;
       expect(vm.visibleEntries.map((e) => e.name), contains('.hidden'));
+      vm.showHidden = false;
+      expect(vm.visibleEntries.map((e) => e.name), isNot(contains('.hidden')));
+      vm.dispose();
+    });
+
+    test('hiding dotfiles drops them from the selection', () async {
+      // Otherwise a bulk delete or move would act on a file the user can no longer see.
+      final vm = await booted(homeTree());
+      vm.toggleSelected('.hidden');
+      vm.toggleSelected('notes.txt');
+
+      vm.showHidden = false;
+
+      expect(vm.selectedNames, {'notes.txt'});
       vm.dispose();
     });
 
@@ -527,6 +549,7 @@ void main() {
       vm.toggleSelected('notes.txt');
       expect(vm.hasSelection, isFalse);
 
+      vm.showHidden = false;
       vm.selectAllVisible();
       expect(vm.selectedNames, {
         'docs',
@@ -2485,4 +2508,70 @@ void main() {
       vm.dispose();
     });
   });
+
+  /// Kotlin's "Open with Device App" (`openRemoteFileWithDevice`): the file is fetched into the
+  /// private preview directory and handed to the device's own apps, with Kotlin's messages.
+  group('open with device app', () {
+    test('fetches the file into the preview directory and opens it', () async {
+      final opener = _FakeOpener(Directory.systemTemp.createTempSync('omniterm-preview-').path);
+      final vm = await booted(homeTree(), fileOpener: opener);
+
+      await vm.openWithDevice(entry('notes.txt', size: 120));
+
+      expect(opener.opened, ['${opener.directory}/notes.txt']);
+      expect(File(opener.opened.single).existsSync(), isTrue);
+      expect(vm.status, 'Opened notes.txt');
+      expect(vm.openWithBusy, isFalse);
+      expect(vm.transfers, isEmpty, reason: 'a preview fetch is not a transfer the user asked for');
+      vm.dispose();
+    });
+
+    test('a file over 256 MB is sent to Download to Device instead', () async {
+      final opener = _FakeOpener(Directory.systemTemp.createTempSync('omniterm-preview-').path);
+      final vm = await booted(homeTree(), fileOpener: opener);
+
+      await vm.openWithDevice(entry('disk.img', size: 300 * 1024 * 1024));
+
+      expect(opener.opened, isEmpty);
+      expect(vm.status, startsWith('Too large to open here ('));
+      expect(vm.status, endsWith(') — use Download to Device.'));
+      vm.dispose();
+    });
+
+    test('no app for the type is reported, not an error', () async {
+      final opener = _FakeOpener(
+        Directory.systemTemp.createTempSync('omniterm-preview-').path,
+        outcome: DeviceOpenOutcome.noApp,
+      );
+      final vm = await booted(homeTree(), fileOpener: opener);
+
+      await vm.openWithDevice(entry('notes.txt', size: 120));
+
+      expect(vm.status, 'No app on this device can open txt files.');
+      vm.dispose();
+    });
+
+    test('is not offered where the platform has no bridge', () async {
+      final vm = await booted(homeTree());
+      expect(vm.canOpenWithDevice, isFalse);
+      vm.dispose();
+    });
+  });
+}
+
+class _FakeOpener extends DeviceFileOpener {
+  _FakeOpener(this.directory, {this.outcome = DeviceOpenOutcome.opened});
+
+  final String directory;
+  final DeviceOpenOutcome outcome;
+  final List<String> opened = [];
+
+  @override
+  Future<String?> previewDirectory() async => directory;
+
+  @override
+  Future<DeviceOpenOutcome> open(String path) async {
+    opened.add(path);
+    return outcome;
+  }
 }

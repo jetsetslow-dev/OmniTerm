@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../data/remote_commands.dart';
 import '../../../data/remote_models.dart';
@@ -8,6 +11,7 @@ import '../../../domain/endpoint_bookmark.dart';
 import '../../../domain/image_preview.dart';
 import '../../../domain/remote_path.dart';
 import '../../../domain/sftp_sort.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import 'package:provider/provider.dart';
@@ -1217,6 +1221,8 @@ Future<void> _confirmDelete(BuildContext context, SftpViewModel vm, List<SftpFil
   if (confirmed ?? false) await vm.deleteEntries(entries);
 }
 
+/// One row of the listing, Kotlin's (`ui/SftpScreen.kt`): tap opens a folder or a file's options,
+/// long-press selects, and while a selection exists a tap joins it, as in every multi-select list.
 class _EntryRow extends StatelessWidget {
   const _EntryRow({required this.vm, required this.entry});
 
@@ -1227,37 +1233,33 @@ class _EntryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final selected = vm.selectedNames.contains(entry.name);
+    final selectionMode = vm.hasSelection;
+    final kind = entry.isDirectory ? 'Folder' : 'File';
 
     return OmniCard(
       key: ValueKey('sftp.entry.${entry.name}'),
-      // Tap opens; long-press selects. Tapping used to toggle selection, which made it identical
-      // to long-press and left no gesture that *opened* anything — so a file could be browsed to
-      // and never looked at. Once a selection exists, tap joins it, because that is what every
-      // other multi-select list does.
-      onTap: () => entry.isDirectory
-          ? vm.open(entry)
-          : vm.hasSelection
+      leftAccent: selected ? OmniColors.cyan : null,
+      onTap: () => selectionMode
           ? vm.toggleSelected(entry.name)
-          // An image goes to the viewer, not the text editor. The editor would decode the bytes as
-          // UTF-8 and offer to save them back, which is the one action guaranteed to corrupt it.
-          : isImageFile(entry.name)
-          ? vm.openImagePreview(entry)
-          : openFileEditor(context, vm, entry),
+          : entry.isDirectory
+          ? vm.open(entry)
+          : _showFileOptions(context, vm, entry),
       onLongPress: () => vm.toggleSelected(entry.name),
       child: Row(
         children: [
-          if (vm.hasSelection)
-            Checkbox(
+          if (selectionMode) ...[
+            Icon(
+              selected ? Icons.check_box : Icons.check_box_outline_blank,
               key: ValueKey('sftp.entry.${entry.name}.check'),
-              value: selected,
-              onChanged: (_) => vm.toggleSelected(entry.name),
+              color: selected ? OmniColors.cyan : scheme.onSurfaceVariant,
             ),
+            const SizedBox(width: 8),
+          ],
           Icon(
-            entry.isDirectory ? Icons.folder : Icons.insert_drive_file_outlined,
-            size: 18,
-            color: entry.isDirectory ? OmniColors.cyan : scheme.onSurfaceVariant,
+            entry.isDirectory ? Icons.folder : Icons.insert_drive_file,
+            color: entry.isDirectory ? OmniColors.amber : scheme.onSurfaceVariant,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1265,62 +1267,206 @@ class _EntryRow extends StatelessWidget {
                 Text(
                   entry.name,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
+                  style: composeBody(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: OmniFonts.mono,
+                  ),
                 ),
                 Text(
-                  [
-                    // A directory's size is its inode's, not its contents' — showing it would be a
-                    // number that means nothing.
-                    if (!entry.isDirectory) formatBytes(entry.size),
-                    if (entry.modDate.isNotEmpty) entry.modDate,
-                  ].join(' · '),
-                  style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+                  '$kind · ${formatBytes(entry.size)} · ${entry.modDate}',
+                  style: composeBody(fontSize: 11, color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
           ),
-          PopupMenuButton<String>(
-            key: ValueKey('sftp.entry.${entry.name}.menu'),
-            // Every item below mutates or transfers, so the whole menu closes while one is running,
-            // matching the per-item `!shareOpRunning` gates in Compose (ui/SftpScreen.kt:1118-1139).
-            enabled: !vm.loading,
-            onSelected: (action) => _handle(context, action),
-            itemBuilder: (_) => [
-              // Only for a directory, and only where there is a shell to run `du` on: a file
-              // already shows its real size, and a network share has nothing to ask.
-              if (entry.isDirectory && vm.canMeasureSize)
-                const PopupMenuItem(value: 'size', child: Text('Measure size')),
-              if (!entry.isDirectory && vm.canArchive && SftpViewModel.isArchiveFile(entry.name))
-                const PopupMenuItem(value: 'extract', child: Text('Extract here')),
-              if (vm.canArchive)
-                const PopupMenuItem(value: 'compress', child: Text('Compress to tar.gz')),
-              if (!entry.isDirectory)
-                const PopupMenuItem(value: 'download', child: Text('Download to device')),
-              const PopupMenuItem(value: 'rename', child: Text('Rename')),
-              const PopupMenuItem(value: 'delete', child: Text('Delete')),
-            ],
-          ),
+          if (!selectionMode)
+            IconButton(
+              key: ValueKey('sftp.entry.${entry.name}.menu'),
+              tooltip: 'File options',
+              icon: const Icon(Icons.more_vert),
+              onPressed: () => _showFileOptions(context, vm, entry),
+            ),
         ],
       ),
     );
   }
+}
 
-  Future<void> _handle(BuildContext context, String action) async {
-    switch (action) {
-      case 'size':
-        await _measureSize(context, vm, entry);
-      case 'extract':
-        await _extractArchive(context, vm, entry);
-      case 'compress':
-        await _createArchive(context, vm, 'tar.gz', only: entry);
-      case 'download':
-        await _downloadToDevice(context, vm, entry);
-      case 'rename':
-        await _promptRename(context, vm, entry);
-      case 'delete':
-        await _confirmDelete(context, vm, [entry]);
-    }
-  }
+/// Kotlin's file options dialog: one dialog for every action on a single entry, in Kotlin's order.
+/// Host-only actions (they run a shell command) are left out while a network share is browsed.
+Future<void> _showFileOptions(BuildContext context, SftpViewModel vm, SftpFile entry) async {
+  final l10n = AppLocalizations.of(context);
+  Widget option(
+    String key,
+    IconData icon,
+    String label,
+    Future<void> Function() action, {
+    bool enabled = true,
+    Color? color,
+  }) => Builder(
+    builder: (dialogContext) => TextButton(
+      key: ValueKey('sftp.options.$key'),
+      onPressed: enabled
+          ? () {
+              Navigator.of(dialogContext).pop();
+              unawaited(action());
+            }
+          : null,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(label, style: TextStyle(color: color)),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: const ValueKey('sftp.options.dialog'),
+      title: Text(entry.name, style: const TextStyle(fontFamily: OmniFonts.mono)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 8,
+          children: [
+            if (!entry.isDirectory) ...[
+              if (isImageFile(entry.name))
+                option('viewImage', Icons.image, l10n.viewImage2, () => vm.openImagePreview(entry)),
+              if (vm.canOpenWithDevice)
+                option(
+                  'openWith',
+                  Icons.open_in_new,
+                  l10n.openWithDeviceApp2,
+                  () => vm.openWithDevice(entry),
+                  enabled: !vm.openWithBusy,
+                ),
+              option(
+                'download',
+                Icons.download,
+                l10n.downloadToDevice2,
+                () => _downloadToDevice(context, vm, entry),
+              ),
+              option(
+                'edit',
+                Icons.edit_note,
+                l10n.editTextFileConfiguration,
+                () => openFileEditor(context, vm, entry),
+              ),
+              if (vm.canArchive && SftpViewModel.isArchiveFile(entry.name))
+                option(
+                  'extract',
+                  Icons.unarchive,
+                  l10n.extractHere,
+                  () => _extractArchive(context, vm, entry),
+                ),
+            ] else ...[
+              if (vm.canBookmark)
+                option(
+                  'bookmark',
+                  Icons.bookmark_add,
+                  l10n.bookmarkDirectory,
+                  () => vm.bookmarkDirectory(entry),
+                ),
+              // A listing shows a folder's index size, not what is inside it.
+              if (vm.canMeasureSize)
+                option(
+                  'measure',
+                  Icons.straighten,
+                  'Measure size',
+                  () => _measureSize(context, vm, entry),
+                ),
+            ],
+            option(
+              'rename',
+              Icons.drive_file_rename_outline,
+              l10n.renameNode,
+              () => _promptRename(context, vm, entry),
+            ),
+            if (vm.canArchive)
+              option(
+                'compress',
+                Icons.archive,
+                l10n.compressToTarGz,
+                () => _createArchive(context, vm, 'tar.gz', only: entry),
+              ),
+            option(
+              'copyPath',
+              Icons.content_copy,
+              'Copy ${entry.isDirectory ? 'folder' : 'file'} path',
+              () async {
+                final path = vm.pathOf(entry);
+                await Clipboard.setData(ClipboardData(text: path));
+                vm.notePathCopied(path);
+              },
+            ),
+            option(
+              'copy',
+              Icons.file_copy,
+              l10n.copy,
+              () async => vm.stageEntry(entry, move: false),
+            ),
+            option(
+              'cut',
+              Icons.content_cut,
+              l10n.cut,
+              () async => vm.stageEntry(entry, move: true),
+            ),
+            option(
+              'delete',
+              Icons.delete,
+              l10n.deleteNode,
+              () => _confirmDeleteOne(context, vm, entry),
+              color: const Color(0xFFFF0000),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('sftp.options.dismiss'),
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: Text(l10n.dismiss),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Kotlin's single-entry delete confirmation from the options dialog.
+Future<void> _confirmDeleteOne(BuildContext context, SftpViewModel vm, SftpFile entry) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: const ValueKey('sftp.deleteOne.dialog'),
+      title: Text('Delete ${entry.name}?'),
+      content: Text(
+        entry.isDirectory
+            ? 'Permanently delete this directory and its contents from the remote host? This '
+                  'cannot be undone.'
+            : 'Permanently delete this file from the remote host? This cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: Text(AppLocalizations.of(dialogContext).cancel),
+        ),
+        TextButton(
+          key: const ValueKey('sftp.deleteOne.confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Delete', style: TextStyle(color: OmniColors.red)),
+        ),
+      ],
+    ),
+  );
+  if (confirmed ?? false) await vm.deleteEntries([entry]);
 }
 
 /// Picks a file on the device and uploads it into the current folder.
@@ -1458,8 +1604,9 @@ Future<void> _createArchive(
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('sftp.archive.replaceDialog'),
         title: Text('Replace "$target"?'),
-        content: const Text(
-          'A file with that name already exists and will be overwritten. This cannot be undone.',
+        content: Text(
+          'A file named "$target" already exists in this folder and will be overwritten. This '
+          'cannot be undone.',
         ),
         actions: [
           TextButton(
@@ -1486,8 +1633,8 @@ Future<void> _extractArchive(BuildContext context, SftpViewModel vm, SftpFile en
       key: const ValueKey('sftp.extract.dialog'),
       title: const Text('Extract here?'),
       content: Text(
-        'Unpacks "${entry.name}" into this folder. Existing files with the same names will be '
-        'overwritten. This cannot be undone.',
+        'Unpacks "${entry.name}" into this folder. Existing files with the same names as entries '
+        'in the archive will be overwritten. This cannot be undone.',
       ),
       actions: [
         TextButton(
@@ -1497,7 +1644,7 @@ Future<void> _extractArchive(BuildContext context, SftpViewModel vm, SftpFile en
         TextButton(
           key: const ValueKey('sftp.extract.confirm'),
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Extract'),
+          child: const Text('Extract', style: TextStyle(color: OmniColors.red)),
         ),
       ],
     ),

@@ -52,6 +52,7 @@ class MainActivity : FlutterFragmentActivity() {
         DeviceInfoBridge.register(flutterEngine, this)
         SensitiveClipboardBridge.register(flutterEngine, this)
         CustomTabsBridge.register(flutterEngine, this)
+        DeviceFileOpenerBridge.register(flutterEngine, this)
         // Explicit exit. With the engine retained, finishing the Activity no longer ends the
         // isolate, so "Terminate & Exit" has to ask for that directly.
         AppExitBridge.register(flutterEngine, this)

@@ -201,57 +201,15 @@ class _ShellScreenState extends State<ShellScreen> {
 ///
 /// The host key still goes through the usual trust prompt. A connection being temporary is not a
 /// reason to skip the one check that tells you whether the machine is the one you meant.
-Future<void> _quickConnect(
-  BuildContext context,
-  ShellViewModel vm, {
-  LicenseController? licenseController,
-}) async {
-  if (licenseController != null &&
-      licenseController.state.value.enabled &&
-      !licenseController.state.value.unlocked) {
-    await showModalBottomSheet<void>(
-      context: context,
-      // Scroll-controlled because a sheet is otherwise capped at half the available height: on a
-      // small phone in landscape at 200% text that is ~180px, and this content needs far more.
-      // The clipped part is the bottom, which is where the buttons are. Parity defects 112-115
-      // are the same failure in dialogs.
-      isScrollControlled: true,
-      builder: (ctx) => Container(
-        key: const ValueKey('shell.quickConnectEntitlementSheet'),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(Icons.lock, size: 48, color: OmniColors.amber),
-            const SizedBox(height: 16),
-            Text(
-              'Quick Connect Requires Premium',
-              style: Theme.of(ctx).textTheme.titleMedium?.copyWith(color: OmniColors.textPrimary),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Upgrade to OmniTerm Premium to use Quick Connect for one-off sessions.',
-              style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(color: OmniColors.textSecondary),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              key: const ValueKey('shell.quickConnectUpgradeButton'),
-              onPressed: () {
-                Navigator.pop(ctx);
-                licenseController.launchPurchase();
-              },
-              child: Text(licenseController.state.value.productPrice ?? 'Upgrade to Premium'),
-            ),
-          ],
-        ),
-      ),
-    );
-    return;
-  }
+/// Kotlin's `isQuickConnectAvailable`: Quick connect is an Unlock OmniTerm feature on the free Play
+/// Store build, where every host has to go through the saved list. There every entry point is
+/// absent rather than shown and refused.
+bool _quickConnectAvailable(LicenseController? licenseController) {
+  final state = licenseController?.state.value;
+  return state == null || !state.enabled || state.unlocked;
+}
 
+Future<void> _quickConnect(BuildContext context, ShellViewModel vm) async {
   final keyAliases = await vm.savedKeyAliases();
   final profiles = await vm.savedProfiles();
   if (!context.mounted) return;
@@ -726,10 +684,24 @@ class _ConnectPane extends StatelessWidget {
             // The two are different problems with different fixes, so they get different sentences.
             // "No hosts" is solved by adding one; "none online" is solved from the Hosts tab, which
             // is also the only place that warns before forcing SSH to a host believed to be down.
-            ? 'Add a host first.'
+            ? 'Add a server first.'
             : 'No online hosts. To SSH into an offline host anyway, use its connect button on the '
                   'Hosts tab.',
         error: vm.error,
+        // With no saved hosts this is the only way out of this screen, so it is offered here and
+        // not only from the header, which needs a selected host. Absent on the free build.
+        action: _IfQuickConnectAvailable(
+          licenseController: licenseController,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: OutlinedButton.icon(
+              key: const ValueKey('shell.empty.quickConnect'),
+              onPressed: vm.canConnect ? () => _quickConnect(context, vm) : null,
+              icon: const Icon(Icons.flash_on, size: 18),
+              label: const Text("Quick connect (don't save)"),
+            ),
+          ),
+        ),
       );
     }
 
@@ -875,11 +847,31 @@ Future<void> _confirmForget(BuildContext context, ShellViewModel vm, PersistentS
   if (confirmed ?? false) await vm.forgetResumable(row);
 }
 
+/// Shows [child] only while Quick connect is available, following licence changes.
+class _IfQuickConnectAvailable extends StatelessWidget {
+  const _IfQuickConnectAvailable({required this.licenseController, required this.child});
+
+  final LicenseController? licenseController;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = licenseController;
+    if (controller == null) return child;
+    return ValueListenableBuilder<LicenseState>(
+      valueListenable: controller.state,
+      builder: (context, _, _) =>
+          _quickConnectAvailable(controller) ? child : const SizedBox.shrink(),
+    );
+  }
+}
+
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({super.key, required this.message, this.error});
+  const _EmptyState({super.key, required this.message, this.error, this.action});
 
   final String message;
   final String? error;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -891,12 +883,14 @@ class _EmptyState extends StatelessWidget {
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            // Kotlin's text names no size, so it takes the screen's bodyLarge (16sp on 24sp lines),
+            // in the shell chrome's muted colour for the current theme.
+            style: composeBody(
               fontFamily: OmniFonts.mono,
-              fontSize: 13,
-              color: Color(0xFF7C8AA5),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
+          ?action,
           if (error != null) ...[
             const SizedBox(height: 16),
             Text(
@@ -1060,15 +1054,18 @@ class _ConnectPrompt extends StatelessWidget {
                     ],
                   ),
                 ),
-              const SizedBox(height: 10),
-              TextButton(
-                key: const ValueKey('shell.quickConnect'),
-                onPressed: vm.canConnect
-                    ? () => _quickConnect(context, vm, licenseController: licenseController)
-                    : null,
-                child: const Text(
-                  'Quick connect to another host…',
-                  style: TextStyle(fontSize: 12, color: OmniColors.cyan),
+              _IfQuickConnectAvailable(
+                licenseController: licenseController,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: TextButton(
+                    key: const ValueKey('shell.quickConnect'),
+                    onPressed: vm.canConnect ? () => _quickConnect(context, vm) : null,
+                    child: const Text(
+                      'Quick connect to another host…',
+                      style: TextStyle(fontSize: 12, color: OmniColors.cyan),
+                    ),
+                  ),
                 ),
               ),
               if (!vm.canConnect)
@@ -1512,9 +1509,7 @@ class _TerminalOpenButton extends StatelessWidget {
             style: const TextStyle(fontFamily: OmniFonts.mono),
           ),
         ),
-        if (licenseController == null ||
-            !licenseController!.state.value.enabled ||
-            licenseController!.state.value.unlocked)
+        if (_quickConnectAvailable(licenseController))
           const PopupMenuItem<String>(
             value: 'quick',
             child: Text(
@@ -1533,7 +1528,7 @@ class _TerminalOpenButton extends StatelessWidget {
     } else if (choice == 'new') {
       if (vm.server != null) await vm.connect(vm.server!);
     } else if (choice == 'quick') {
-      await _quickConnect(context, vm, licenseController: licenseController);
+      await _quickConnect(context, vm);
     }
   }
 

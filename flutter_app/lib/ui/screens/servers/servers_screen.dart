@@ -6,6 +6,7 @@ import '../../../data/remote_models.dart';
 import '../../../domain/host_display.dart';
 import '../../../domain/external_ui_requests.dart';
 import '../../../domain/measurement_units.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../../platform/distribution.dart';
 import '../../../platform/license_controller.dart';
 import '../../../platform/shortcut_helper.dart';
@@ -105,7 +106,11 @@ class ServersScreen extends StatelessWidget {
           if (vm.isMultiSelectMode) _BulkActions(vm: vm),
           Expanded(
             child: filtered.isEmpty
-                ? _EmptyState(hasServers: vm.servers.isNotEmpty)
+                ? _EmptyState(
+                    hasServers: vm.servers.isNotEmpty,
+                    atLimit: atLimit,
+                    onAdd: () => openServerForm(context, vm, mode: ServerFormMode.add),
+                  )
                 : ListView.builder(
                     key: const ValueKey('servers.list'),
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1111,29 +1116,71 @@ class _StatusDot extends StatelessWidget {
   }
 }
 
+/// Kotlin's empty host list (`ServersScreen` in `ui/AppUi.kt`): a first-run checklist when there
+/// are no hosts at all, "No servers found" when a filter matches none, and Add Host Server either
+/// way. The two cases differ because the same blank screen for both leaves the user thinking their
+/// fleet vanished.
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.hasServers});
+  const _EmptyState({required this.hasServers, required this.onAdd, required this.atLimit});
 
-  /// Distinguishes "you have no hosts" from "your filter matched none" — the same blank screen for
-  /// both leaves the user thinking their fleet vanished.
   final bool hasServers;
+  final VoidCallback? onAdd;
+  final bool atLimit;
+
+  static const _firstRunSteps = [
+    '1.  An SSH server must be running on it (on most Linux: sudo apt install openssh-server)',
+    '2.  Find its IP address or hostname (e.g. 192.168.1.50)',
+    '3.  Have your username and password — or an SSH key — ready',
+    "4.  On first connect, OmniTerm shows the server's key fingerprint so you can verify it",
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context);
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
     return Center(
       key: const ValueKey('servers.empty'),
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(hasServers ? Icons.search_off : Icons.dns, size: 40, color: OmniColors.textMuted),
-            const SizedBox(height: 12),
-            Text(
-              hasServers ? 'No hosts match your filter' : 'No servers yet',
-              style: TextStyle(color: scheme.onSurfaceVariant),
+            const Icon(Icons.dns, size: 64, color: Color(0xFFCCCCCC)),
+            const SizedBox(height: 8),
+            if (hasServers)
+              Text(l10n.noServersFound, style: composeBody(color: muted))
+            else ...[
+              // True first run: what a beginner needs before tapping Add.
+              Text(l10n.connectYourFirstServer, style: composeBody(fontWeight: FontWeight.bold)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(32, 8, 32, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final step in _firstRunSteps)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Text(step, style: composeBody(fontSize: 12, color: muted)),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: FilledButton(
+                key: const ValueKey('servers.empty.add'),
+                onPressed: atLimit ? null : onAdd,
+                child: Text(l10n.addHostServer),
+              ),
             ),
+            if (atLimit)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: Text(
+                  l10n.freePlayStoreBuildIsLimited,
+                  style: composeBody(fontSize: 12, color: muted),
+                ),
+              ),
           ],
         ),
       ),

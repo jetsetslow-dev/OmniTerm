@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider paths. Only remote files streamed to cache so the device's own viewer apps (photos,
+  video player, PDF reader) can open them via ACTION_VIEW; emptied on each new preview. No other
+  app data is reachable through the provider.
+-->
+<paths>
+    <cache-path
+        name="remote-previews"
+        path="remote-previews/" />
+</paths>

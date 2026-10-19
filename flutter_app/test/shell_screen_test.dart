@@ -935,7 +935,7 @@ void main() {
       await pump(tester);
 
       expect(find.byKey(const ValueKey('shell.empty')), findsOneWidget);
-      expect(find.text('Add a host first.'), findsOneWidget);
+      expect(find.text('Add a server first.'), findsOneWidget);
       await finish(tester);
     });
 

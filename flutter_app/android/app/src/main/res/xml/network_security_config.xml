@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Kotlin's policy (app/src/main/res/xml/network_security_config.xml). Cleartext is permitted
+         because a WebDAV share may be set to plain HTTP: the user turns "Use HTTPS" off for that
+         share and the form warns that the password then travels in clear text. Android cannot
+         scope this to hosts the user picks at runtime, and Dart's HttpClient refuses plain HTTP
+         whenever the platform policy does. Every other HTTP request the app makes is HTTPS. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

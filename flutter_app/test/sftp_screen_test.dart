@@ -2,10 +2,13 @@ import 'dart:async';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_models.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
+import 'package:omniterm/platform/device_file_opener.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/navigation.dart';
 import 'package:omniterm/ui/screens/sftp/sftp_screen.dart';
@@ -86,12 +89,18 @@ void main() {
     SshTransport? transport,
     Size size = const Size(800, 600),
     double textScale = 1,
+    DeviceFileOpener? fileOpener,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await app.start();
-    vm = SftpViewModel(app, fsClientFor: (_) async => client, transport: transport);
+    vm = SftpViewModel(
+      app,
+      fsClientFor: (_) async => client,
+      transport: transport,
+      fileOpener: fileOpener,
+    );
     // Sudo mode re-authenticates before switching on, so the lock is in scope as it is in the app.
     nav = NavigationController();
     lock = AppLockController(repo);
@@ -111,6 +120,8 @@ void main() {
           ChangeNotifierProvider<NavigationController>.value(value: nav),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: MediaQuery(
             data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
@@ -124,6 +135,29 @@ void main() {
 
   Future<void> goToFiles(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey('sftp.tab.files')));
+    await tester.pumpAndSettle();
+  }
+
+  /// Kotlin's file options dialog, opened from a row's ⋮ button.
+  Future<void> openOptions(WidgetTester tester, String name) async {
+    final menu = find.byKey(ValueKey('sftp.entry.$name.menu'));
+    // Rows are built lazily; on a small screen at large text the row may not exist yet.
+    await tester.dragUntilVisible(
+      menu,
+      find.byKey(const ValueKey('sftp.list')),
+      const Offset(0, -80),
+    );
+    await tester.ensureVisible(menu);
+    await tester.pumpAndSettle();
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> tapOption(WidgetTester tester, String name, String option) async {
+    await openOptions(tester, name);
+    final item = find.byKey(ValueKey('sftp.options.$option'));
+    await tester.ensureVisible(item);
+    await tester.tap(item);
     await tester.pumpAndSettle();
   }
 
@@ -241,15 +275,15 @@ void main() {
     }
   });
 
-  testWidgets('dotfiles are hidden until the toggle is used', (tester) async {
+  testWidgets('dotfiles are listed until the toggle hides them, as in Kotlin', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, client: homeTree());
     await goToFiles(tester);
 
-    expect(find.text('.hidden'), findsNothing);
+    expect(find.text('.hidden'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('sftp.toggleHidden')));
     await tester.pumpAndSettle();
-    expect(find.text('.hidden'), findsOneWidget);
+    expect(find.text('.hidden'), findsNothing);
     vm.dispose();
   });
 
@@ -335,14 +369,13 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('a folder shows no size, a file does', (tester) async {
-    // A directory's reported size is its inode's, not its contents'.
+  testWidgets('rows read "Folder|File · size · date", as in Kotlin', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, client: homeTree());
     await goToFiles(tester);
 
-    expect(find.text('120 B · 2026-08-01'), findsOneWidget);
-    expect(find.text('2026-08-01'), findsOneWidget, reason: 'the folder row shows only the date');
+    expect(find.text('File · 120 B · 2026-08-01'), findsOneWidget);
+    expect(find.textContaining('Folder · '), findsOneWidget);
     vm.dispose();
   });
 
@@ -362,28 +395,23 @@ void main() {
   });
 
   group('destructive actions', () {
-    testWidgets('deleting asks first and warns about folder contents', (tester) async {
+    // Kotlin's single-entry delete, from the file options dialog: it names the entry and says
+    // whether a folder's contents go with it.
+    testWidgets('deleting a folder asks first and warns about its contents', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       final client = homeTree();
       await pump(tester, client: client);
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.docs.menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete'));
-      await tester.pumpAndSettle();
-
-      // Singular: one folder is "inside it", not "inside them". Spotted on a device.
-      expect(find.textContaining('1 folder and everything inside it.'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('sftp.delete.cancel')));
+      await tapOption(tester, 'docs', 'delete');
+      expect(find.text('Delete docs?'), findsOneWidget);
+      expect(find.textContaining('this directory and its contents'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(client.deleted, isEmpty, reason: 'cancelling must delete nothing');
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.docs.menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('sftp.delete.confirm')));
+      await tapOption(tester, 'docs', 'delete');
+      await tester.tap(find.byKey(const ValueKey('sftp.deleteOne.confirm')));
       await tester.pumpAndSettle();
       expect(client.deleted, ['/home/root/docs']);
       vm.dispose();
@@ -394,14 +422,14 @@ void main() {
       await pump(tester, client: homeTree());
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt.menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete'));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'delete');
 
-      expect(find.textContaining('everything inside'), findsNothing);
-      expect(find.textContaining('cannot be recovered'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('sftp.delete.cancel')));
+      expect(find.textContaining('its contents'), findsNothing);
+      expect(
+        find.text('Permanently delete this file from the remote host? This cannot be undone.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       vm.dispose();
     });
@@ -447,10 +475,7 @@ void main() {
       await pump(tester, client: client);
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt.menu')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Rename'));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'rename');
       await tester.enterText(find.byKey(const ValueKey('sftp.rename.name')), 'todo.txt');
       await tester.tap(find.byKey(const ValueKey('sftp.rename.confirm')));
       await tester.pumpAndSettle();
@@ -470,7 +495,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('sftp.selectAll')));
       await tester.pumpAndSettle();
 
-      expect(vm.selectedEntries.map((e) => e.name), ['docs', 'notes.txt']);
+      // Dotfiles are listed by default, as in Kotlin, so they are visible rows too.
+      expect(vm.selectedEntries.map((e) => e.name).toSet(), {'.hidden', 'docs', 'notes.txt'});
       vm.dispose();
     });
 
@@ -493,6 +519,8 @@ void main() {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
       await goToFiles(tester);
+      await tester.tap(find.byKey(const ValueKey('sftp.toggleHidden')));
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('sftp.selectAll')));
       await tester.pumpAndSettle();
@@ -832,8 +860,7 @@ void main() {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: editableTree(), size: const Size(360, 720), textScale: 2);
       await goToFiles(tester);
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
 
       expect(tester.takeException(), isNull);
       expect(find.byKey(const ValueKey('fileEditor.text')), findsOneWidget);
@@ -851,8 +878,7 @@ void main() {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: editableTree(), transport: _StubShell());
       await goToFiles(tester);
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
 
       final save = tester.widget<FilledButton>(find.byKey(const ValueKey('fileEditor.save')));
       expect((save.child! as Text).data, 'Save');
@@ -869,8 +895,7 @@ void main() {
       vm.sudoMode = true;
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
 
       final mode = tester.widget<Text>(find.byKey(const ValueKey('fileEditor.mode')));
       expect(mode.data, contains('sudo'));
@@ -897,8 +922,7 @@ void main() {
       await pump(tester, client: editableTree());
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
 
       expect(find.byKey(const ValueKey('fileEditor.text')), findsOneWidget);
       expect(find.textContaining('Read-only'), findsOneWidget);
@@ -928,8 +952,7 @@ void main() {
     /// Opens the editor on notes.txt, arms it, and types [text] into it.
     Future<void> openAndEdit(WidgetTester tester, String text) async {
       await goToFiles(tester);
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('fileEditor.text')), text);
@@ -967,8 +990,7 @@ void main() {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: editableTree(), transport: _StubShell());
       await goToFiles(tester);
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
 
       await pressBack(tester);
       expect(find.byKey(const ValueKey('fileEditor.discard.dialog')), findsNothing);
@@ -1001,8 +1023,7 @@ void main() {
       await pump(tester, client: editableTree());
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
 
@@ -1022,8 +1043,7 @@ void main() {
       await pump(tester, client: client);
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
 
@@ -1053,8 +1073,7 @@ void main() {
       await pump(tester, client: editableTree());
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-      await tester.pumpAndSettle();
+      await tapOption(tester, 'notes.txt', 'edit');
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('fileEditor.text')), 'changed\n');
@@ -1129,10 +1148,9 @@ void main() {
       await pump(tester, client: homeTree());
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt.menu')));
-      await tester.pumpAndSettle();
+      await openOptions(tester, 'notes.txt');
 
-      expect(find.text('Download to device'), findsOneWidget);
+      expect(find.byKey(const ValueKey('sftp.options.download')), findsOneWidget);
     });
 
     testWidgets('a directory does not', (tester) async {
@@ -1141,10 +1159,9 @@ void main() {
       await pump(tester, client: homeTree());
       await goToFiles(tester);
 
-      await tester.tap(find.byKey(const ValueKey('sftp.entry.docs.menu')));
-      await tester.pumpAndSettle();
+      await openOptions(tester, 'docs');
 
-      expect(find.text('Download to device'), findsNothing);
+      expect(find.byKey(const ValueKey('sftp.options.download')), findsNothing);
     });
   });
 
@@ -1265,6 +1282,154 @@ void main() {
 
       expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsNothing);
       expect(vm.sudoMode, isFalse);
+    });
+  });
+
+  /// Kotlin's rows and file options dialog (`ui/SftpScreen.kt`). Flutter opened the editor on a
+  /// tap and kept a short popup menu, so Kotlin's Copy path, single-entry Copy/Cut, Bookmark
+  /// Directory and Open with Device App had no Flutter counterpart.
+  group('file options, as in Kotlin', () {
+    testWidgets('tapping a file opens its options, not the editor', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree());
+      await goToFiles(tester);
+
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('sftp.options.dialog')), findsOneWidget);
+      expect(find.byKey(const ValueKey('fileEditor.text')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('sftp.options.dismiss')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('a file lists Kotlin\'s actions in Kotlin\'s order and words', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree(), fileOpener: const DeviceFileOpener());
+      await goToFiles(tester);
+      await openOptions(tester, 'notes.txt');
+
+      final keys = tester
+          .widgetList<TextButton>(
+            find.descendant(
+              of: find.byKey(const ValueKey('sftp.options.dialog')),
+              matching: find.byType(TextButton),
+            ),
+          )
+          .map((b) => (b.key as ValueKey<String>?)?.value)
+          .toList();
+      expect(keys, [
+        'sftp.options.openWith',
+        'sftp.options.download',
+        'sftp.options.edit',
+        'sftp.options.rename',
+        'sftp.options.copyPath',
+        'sftp.options.copy',
+        'sftp.options.cut',
+        'sftp.options.delete',
+        'sftp.options.dismiss',
+      ]);
+      for (final label in [
+        'Open with Device App',
+        'Download to Device',
+        'Edit Text File Configuration',
+        'Rename node',
+        'Copy file path',
+        'Copy',
+        'Cut',
+        'Delete node',
+        'Dismiss',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+      vm.dispose();
+    });
+
+    testWidgets('a folder offers Bookmark Directory and its own path', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree());
+      await goToFiles(tester);
+      await openOptions(tester, 'docs');
+
+      expect(find.text('Bookmark Directory'), findsOneWidget);
+      expect(find.text('Copy folder path'), findsOneWidget);
+      expect(find.byKey(const ValueKey('sftp.options.edit')), findsNothing);
+      vm.dispose();
+    });
+
+    testWidgets('Copy path puts the absolute path on the clipboard and says so', (tester) async {
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (
+        call,
+      ) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String?;
+        }
+        return null;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree());
+      await goToFiles(tester);
+
+      await tapOption(tester, 'notes.txt', 'copyPath');
+
+      expect(copied, '/home/root/notes.txt');
+      expect(vm.status, 'Path copied: /home/root/notes.txt');
+      vm.dispose();
+    });
+
+    testWidgets('Copy stages just that entry', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree());
+      await goToFiles(tester);
+      await tester.longPress(find.byKey(const ValueKey('sftp.entry.docs')));
+      await tester.pumpAndSettle();
+      vm.clearSelection();
+      await tester.pumpAndSettle();
+
+      await tapOption(tester, 'notes.txt', 'copy');
+
+      expect(vm.hasClipboard, isTrue);
+      expect(vm.clipboardSummary, contains('1'));
+      expect(vm.hasSelection, isFalse);
+      vm.dispose();
+    });
+
+    testWidgets('Bookmark Directory adds and never removes', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree());
+      await goToFiles(tester);
+
+      await tapOption(tester, 'docs', 'bookmark');
+      await tapOption(tester, 'docs', 'bookmark');
+
+      expect(vm.bookmarks.where((b) => b == '/home/root/docs'), hasLength(1));
+      expect(vm.status, 'Bookmarked docs');
+      vm.dispose();
+    });
+
+    testWidgets('while selecting, tapping a folder selects it instead of opening it', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree());
+      await goToFiles(tester);
+      await tester.longPress(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.docs')));
+      await tester.pumpAndSettle();
+
+      expect(vm.selectedNames, {'notes.txt', 'docs'});
+      expect(vm.path, '/home/root');
+      vm.dispose();
     });
   });
 }

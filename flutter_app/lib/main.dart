@@ -30,6 +30,7 @@ import 'platform/battery_saver_controller.dart';
 import 'platform/battery_saver_notifications.dart';
 import 'domain/startup_recovery.dart';
 import 'platform/crash_log.dart';
+import 'platform/device_file_opener.dart';
 import 'platform/distribution.dart';
 import 'platform/home_widget_sync.dart';
 import 'platform/external_launch.dart';
@@ -378,6 +379,7 @@ class OmniTermApp extends StatelessWidget {
             // A shell, for the questions SFTP itself cannot answer — currently `du`.
             transport: context.read<SshTransport>(),
             operationNotifications: context.read<LongOperationNotifications>(),
+            fileOpener: Platform.isAndroid ? const DeviceFileOpener() : null,
           ),
           update: (_, app, previous) => previous!,
         ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/license_controller.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/shell/shell_screen.dart';
@@ -63,41 +64,79 @@ void main() {
     await db.close();
   });
 
-  group('Quick Connect Entitlement Gate', () {
-    testWidgets('shows entitlement sheet when billing enabled and unlocked is false', (
-      tester,
-    ) async {
-      await repo.insertServer(testServer(name: 'nas'));
-      await app.start();
-      vm = ShellViewModel(app, transport: transport);
-
-      final licenseController = MockTestLicenseController(
-        const LicenseState(enabled: true, loading: false, unlocked: false, productPrice: '\$4.99'),
-      );
-
-      await tester.pumpWidget(
-        MultiProvider(
-          providers: [
-            ChangeNotifierProvider<AppState>.value(value: app),
-            ChangeNotifierProvider<ShellViewModel>.value(value: vm),
-          ],
-          child: MaterialApp(
-            theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-            home: Scaffold(body: ShellScreen(licenseController: licenseController)),
-          ),
+  Future<MockTestLicenseController> pump(
+    WidgetTester tester, {
+    required bool unlocked,
+    bool withHost = true,
+  }) async {
+    if (withHost) await repo.insertServer(testServer(name: 'nas'));
+    await app.start();
+    vm = ShellViewModel(app, transport: transport);
+    final licenseController = MockTestLicenseController(
+      LicenseState(enabled: true, loading: false, unlocked: unlocked, productPrice: '\$4.99'),
+    );
+    addTearDown(licenseController.dispose);
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppState>.value(value: app),
+          ChangeNotifierProvider<ShellViewModel>.value(value: vm),
+        ],
+        child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+          home: Scaffold(body: ShellScreen(licenseController: licenseController)),
         ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    return licenseController;
+  }
+
+  // Kotlin's rule (`isQuickConnectAvailable`): on the free Play Store build every Quick connect
+  // entry is absent rather than shown and refused, because there every host goes through the saved
+  // list. Flutter used to show the button and answer it with an upgrade sheet.
+  group('Quick connect on the free Play Store build', () {
+    testWidgets('the connect prompt offers no Quick connect while locked', (tester) async {
+      await pump(tester, unlocked: false);
+
+      expect(find.byKey(const ValueKey('shell.connect.card')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.quickConnect')), findsNothing);
+      expect(find.text('Quick Connect Requires Premium'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('the no-hosts screen offers no Quick connect while locked', (tester) async {
+      await pump(tester, unlocked: false, withHost: false);
+
+      expect(find.text('Add a server first.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.empty.quickConnect')), findsNothing);
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('unlocking brings the entries back without a restart', (tester) async {
+      final license = await pump(tester, unlocked: false, withHost: false);
+
+      (license.state as ValueNotifier<LicenseState>).value = const LicenseState(
+        enabled: true,
+        loading: false,
+        unlocked: true,
       );
       await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shell.empty.quickConnect')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shell.empty.quickConnect')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shell.quick.dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shell.quick.close')));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('an unlocked build offers it on the connect prompt', (tester) async {
+      await pump(tester, unlocked: true);
 
       expect(find.byKey(const ValueKey('shell.quickConnect')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('shell.quickConnect')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('shell.quickConnectEntitlementSheet')), findsOneWidget);
-      expect(find.text('Quick Connect Requires Premium'), findsOneWidget);
-      expect(find.byKey(const ValueKey('shell.quickConnectUpgradeButton')), findsOneWidget);
-
-      licenseController.dispose();
       await tester.pump(const Duration(milliseconds: 10));
     });
   });

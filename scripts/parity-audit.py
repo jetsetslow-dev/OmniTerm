@@ -85,7 +85,9 @@ def corpus(paths) -> str:
     text = "\n".join(p.read_text(errors="ignore") for p in paths)
     text = re.sub(r"'\s*\n\s*'", "", text)            # Dart 'a ' 'b'
     text = re.sub(r'"\s*\+\s*\n?\s*"', "", text)      # Kotlin "a " + "b"
-    return re.sub(r"\s+", " ", html.unescape(text).replace("\\'", "'")).lower()
+    # Unescaped quotes: Kotlin writes `\"$name\"` where Dart writes `"$name"`.
+    text = html.unescape(text).replace("\\'", "'").replace('\\"', '"')
+    return re.sub(r"\s+", " ", text).lower()
 
 
 def kotlin_files():
