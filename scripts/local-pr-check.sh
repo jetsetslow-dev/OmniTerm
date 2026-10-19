@@ -59,6 +59,11 @@ git diff --check
 # workflow: no check run exists, every visible check stays green and a required check never reports.
 # Local-only by necessity — CI's token cannot read that setting — so it warns when it cannot ask.
 python3 ./scripts/check-actions-allowlist.py
+# Kotlin is the reference app; the Flutter port must not drift from it. Fails on any Kotlin/Flutter
+# label, option, settings-key or text-style difference that is not already in the baseline.
+if [[ -d "$ROOT/flutter_app" ]]; then
+  python3 ./scripts/parity-audit.py
+fi
 ./scripts/test-release-version.sh
 ./scripts/test-release-engine.sh
 ./scripts/test-change-detectors.sh
