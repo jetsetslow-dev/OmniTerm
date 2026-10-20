@@ -38,16 +38,12 @@ class WebDavFsClient(
     private val anonymous: Boolean,
 ) : RemoteFsClient {
 
-    init {
-        require(https) {
-            "Cleartext HTTP WebDAV is disabled. Edit this share to use HTTPS or use SFTP instead."
-        }
-    }
-
+    // Plain HTTP is the user's explicit choice per share (the share form warns that the password
+    // then travels in clear text); it is never inferred from the port.
     private val base: HttpUrl = HttpUrl.Builder()
-        .scheme("https")
+        .scheme(if (https) "https" else "http")
         .host(host)
-        .port(if (port > 0) port else 443)
+        .port(if (port > 0) port else if (https) 443 else 80)
         .build()
 
     private val http = OkHttpClient.Builder()

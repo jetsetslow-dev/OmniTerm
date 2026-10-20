@@ -399,7 +399,7 @@ fun OmniAppBar(
         IconButton(onClick = onToggleKeepScreenOn) {
             Icon(
                 Icons.Filled.Lightbulb,
-                contentDescription = if (keepScreenOn) "Disable keep screen on" else "Enable keep screen on",
+                contentDescription = if (keepScreenOn) stringResource(R.string.disable_keep_screen_on) else stringResource(R.string.enable_keep_screen_on),
                 tint = if (keepScreenOn) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -582,7 +582,7 @@ fun HostPickerField(
         }
         Icon(
             Icons.Filled.ArrowDropDown,
-            contentDescription = "Choose hosts",
+            contentDescription = stringResource(R.string.choose_hosts),
             tint = OmniColors.cyan,
         )
     }
@@ -692,7 +692,7 @@ fun HostPickerDialog(
                     }
                 }
                 if (filtered.isEmpty()) {
-                    Text("No hosts match “$query”.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_hosts_match, query), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
@@ -772,7 +772,7 @@ fun OmniPasswordField(
             IconButton(onClick = { visible = !visible }) {
                 Icon(
                     if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                    contentDescription = if (visible) "Hide password" else "Show password",
+                    contentDescription = if (visible) stringResource(R.string.hide_password) else stringResource(R.string.show_password),
                 )
             }
         },

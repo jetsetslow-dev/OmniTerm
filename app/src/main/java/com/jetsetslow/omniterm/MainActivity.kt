@@ -306,7 +306,7 @@ class MainActivity : AppCompatActivity() {
       // No browser available — hand the user the link so they can still file it elsewhere.
       val clipboard = getSystemService(android.content.ClipboardManager::class.java)
       clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OmniTerm issue link", uri.toString()))
-      android.widget.Toast.makeText(this, "No browser found — issue link copied to clipboard.", android.widget.Toast.LENGTH_LONG).show()
+      android.widget.Toast.makeText(this, this.getString(R.string.no_browser_found_issue_link_copied), android.widget.Toast.LENGTH_LONG).show()
     }
   }
 
@@ -346,7 +346,7 @@ class MainActivity : AppCompatActivity() {
         }
         startActivity(Intent.createChooser(send, "Share crash report"))
       }.onFailure {
-        android.widget.Toast.makeText(this, "Couldn't share the report: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+        android.widget.Toast.makeText(this, this.getString(R.string.couldn_t_share_the_report, e.message), android.widget.Toast.LENGTH_LONG).show()
       }
     }
   }
@@ -400,7 +400,7 @@ class MainActivity : AppCompatActivity() {
         val clipboard = getSystemService(android.content.ClipboardManager::class.java)
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OmniTerm crash report", report))
         // Android 13+ shows its own copy confirmation; on older versions this is the only feedback.
-        android.widget.Toast.makeText(this@MainActivity, "Crash report copied to clipboard.", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this@MainActivity, this@MainActivity.getString(R.string.crash_report_copied_to_clipboard), android.widget.Toast.LENGTH_SHORT).show()
       }
     })
     content.addView(buttonRow)

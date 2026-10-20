@@ -65,9 +65,9 @@ fun InfraScreen(viewModel: AppViewModel) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Containers · ${srv.name}", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+            Text(stringResource(R.string.containers, srv.name), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
             IconButton(onClick = { viewModel.loadDocker() }) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Reload")
+                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.reload))
             }
         }
         PrimaryScrollableTabRow(
@@ -276,7 +276,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         Text(msg, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                     }
                     IconButton(onClick = { copyToClipboard(msg) }) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy error", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_error), modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -317,7 +317,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
                         if (canCompose) {
-                            OmniButton(label = "Edit in Builder", color = OmniColors.purple, modifier = Modifier.fillMaxWidth(), onClick = {
+                            OmniButton(label = stringResource(R.string.edit_in_builder), color = OmniColors.purple, modifier = Modifier.fillMaxWidth(), onClick = {
                                 scope.launch { openStackInBuilder(stack.name, stack.workingDir, stack.configFiles, stack.runtime) }
                             })
                         }
@@ -366,18 +366,18 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     if (servicesExpanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = if (servicesExpanded) "Collapse containers" else "Expand containers",
+                                    contentDescription = if (servicesExpanded) stringResource(R.string.collapse_containers) else stringResource(R.string.expand_containers),
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(
-                                    "${stack.services.size} service(s) · ${stack.running}/${stack.total} containers",
+                                    stringResource(R.string.service_s_containers, stack.services.size, stack.running, stack.total),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             Text(
-                                if (servicesExpanded) "Hide" else "Show",
+                                if (servicesExpanded) stringResource(R.string.hide) else stringResource(R.string.show),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -404,8 +404,8 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                         val verb = action.replaceFirstChar { it.uppercase() }
                                         containerConfirm.ask(
                                             "$verb ${container.name}?",
-                                            if (action == "remove") "Stop and remove only this container. Other replicas, volumes and the Compose file are kept."
-                                            else "$verb only this container. Other containers in this service and stack are kept.",
+                                            if (action == "remove") containerConfirm.str(R.string.stop_and_remove_only_this_container)
+                                            else containerConfirm.str(R.string.only_this_container_other_containers_in, verb),
                                             confirmLabel = verb,
                                         ) { viewModel.dockerAction(container.id, action, stack.runtime, expectedServerId = hostId) }
                                     },
@@ -425,17 +425,17 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                     onRestart = {
                                         val hostId = viewModel.selectedServer?.id
                                         confirm.ask(
-                                            "Restart ${service.name}?",
-                                            "Restart all ${service.total} current containers for this service in ${stack.name}?",
-                                            confirmLabel = "Restart",
+                                            confirm.str(R.string.restart_2, service.name),
+                                            confirm.str(R.string.restart_all_current_containers_for_this, service.total, stack.name),
+                                            confirmLabel = confirm.str(R.string.restart),
                                         ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRestart", runtime = stack.runtime, expectedServerId = hostId) }
                                     },
                                     onStop = {
                                         val hostId = viewModel.selectedServer?.id
                                         confirm.ask(
-                                            "Stop ${service.name}?",
-                                            "Stop all ${service.total} current containers for this service in ${stack.name}?",
-                                            confirmLabel = "Stop",
+                                            confirm.str(R.string.stop_2, service.name),
+                                            confirm.str(R.string.stop_all_current_containers_for_this, service.total, stack.name),
+                                            confirmLabel = confirm.str(R.string.stop),
                                         ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceStop", runtime = stack.runtime, expectedServerId = hostId) }
                                     },
                                     onShell = { viewModel.openDockerExecShell(service.containerId, stack.runtime) },
@@ -443,9 +443,9 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                     onRemove = {
                                         val hostId = viewModel.selectedServer?.id
                                         confirm.ask(
-                                            "Remove ${service.name}?",
-                                            "Stop and remove all ${service.total} current containers for this service in ${stack.name}. Volumes and its Compose definition are kept.",
-                                            confirmLabel = "Remove",
+                                            confirm.str(R.string.remove_2, service.name),
+                                            confirm.str(R.string.stop_and_remove_all_current_containers, service.total, stack.name),
+                                            confirmLabel = confirm.str(R.string.remove),
                                         ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRemove", runtime = stack.runtime, expectedServerId = hostId) }
                                     },
                                   )
@@ -495,22 +495,22 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                        OmniButton(label = "UP -D", color = OmniColors.green, modifier = Modifier.fillMaxWidth(), onClick = {
+                        OmniButton(label = stringResource(R.string.up_d), color = OmniColors.green, modifier = Modifier.fillMaxWidth(), onClick = {
                             confirm.ask(
-                                "Bring ${stack.project} up?",
-                                "Run compose up -d from ${stack.workingDir}? Containers and networks are recreated from the compose file.",
-                                confirmLabel = "UP -D",
+                                confirm.str(R.string.bring_up, stack.project),
+                                confirm.str(R.string.run_compose_up_d_from_containers, stack.workingDir),
+                                confirmLabel = confirm.str(R.string.up_d),
                             ) { viewModel.bringUpDownedStack(stack) }
                         })
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                            OmniButton(label = "Edit in Builder", color = OmniColors.purple, modifier = Modifier.weight(1f), onClick = {
+                            OmniButton(label = stringResource(R.string.edit_in_builder), color = OmniColors.purple, modifier = Modifier.weight(1f), onClick = {
                                 scope.launch { openStackInBuilder(stack.project, stack.workingDir, stack.configFiles, stack.runtime) }
                             })
-                            OmniButton(label = "Forget", color = OmniColors.red, modifier = Modifier.weight(1f), onClick = {
+                            OmniButton(label = stringResource(R.string.forget), color = OmniColors.red, modifier = Modifier.weight(1f), onClick = {
                                 confirm.ask(
-                                    "Forget ${stack.project}?",
-                                    "Remove this stack from OmniTerm's list only. Nothing on the host is touched — the compose file stays where it is.",
-                                    confirmLabel = "Forget",
+                                    confirm.str(R.string.forget_2, stack.project),
+                                    confirm.str(R.string.remove_this_stack_from_omniterm_s),
+                                    confirmLabel = confirm.str(R.string.forget),
                                 ) { viewModel.forgetDownedStack(stack) }
                             })
                         }
@@ -528,7 +528,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "This will stop and remove the containers for ${stack.name}. Volumes are not removed unless the compose file does so.",
+                        stringResource(R.string.this_will_stop_and_remove_the, stack.name),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(
@@ -565,7 +565,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
         val replicasError = countError(replicas, min = 0, max = 999)
         AlertDialog(
             onDismissRequest = { scaleTarget = null },
-            title = { Text("Scale ${target.service.name}") },
+            title = { Text(stringResource(R.string.scale_2, target.service.name)) },
             text = {
                 OutlinedTextField(
                     value = replicas,
@@ -601,7 +601,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     portsTarget?.let { stack ->
         AlertDialog(
             onDismissRequest = { portsTarget = null },
-            title = { Text("${stack.name} ports") },
+            title = { Text(stringResource(R.string.ports, stack.name)) },
             text = {
                 if (stack.portDetails.isEmpty()) {
                     Text(stringResource(R.string.no_published_ports_were_reported_for), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -689,7 +689,7 @@ private fun ContainerActionConfirmHost(controller: ConfirmController) {
                 Text(request.confirmLabel, color = OmniColors.red)
             }
         },
-        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -715,35 +715,35 @@ private fun StackServiceRow(
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(service.name, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Text("${service.running}/${service.total} running", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                Text(stringResource(R.string.running_3, service.running, service.total), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
             }
         }
         service.containers.forEach { c ->
             Column(Modifier.fillMaxWidth().padding(start = 15.dp)) {
                 Text("${c.name} · ${c.status}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
-                Text("Ports: ${c.ports}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
+                Text(stringResource(R.string.ports_2, c.ports), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     for ((action, label) in listOf("start" to "Start", "stop" to "Stop", "restart" to "Restart", "pause" to "Pause", "unpause" to "Unpause", "remove" to "Remove")) {
                         OmniButton(label, onClick = { onContainerAction(c, action) }, small = true,
                             modifier = Modifier.testTag("infra.container.$runtime.${c.id}.$action"),
                             color = if (action in listOf("stop", "remove")) OmniColors.red else OmniColors.amber)
                     }
-                    OmniButton("Logs", onClick = { onContainerLogs(c) }, color = OmniColors.cyan, small = true)
-                    OmniButton("Follow", onClick = { onContainerFollow(c) }, color = OmniColors.cyan, small = true)
-                    OmniButton("Shell", onClick = { onContainerShell(c) }, color = OmniColors.purple, small = true)
+                    OmniButton(stringResource(R.string.logs), onClick = { onContainerLogs(c) }, color = OmniColors.cyan, small = true)
+                    OmniButton(stringResource(R.string.follow), onClick = { onContainerFollow(c) }, color = OmniColors.cyan, small = true)
+                    OmniButton(stringResource(R.string.shell), onClick = { onContainerShell(c) }, color = OmniColors.purple, small = true)
                 }
             }
         }
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (canCompose) {
-                OmniButton("Service logs", onClick = { onLogs(false) }, color = OmniColors.cyan, small = true)
-                OmniButton("FOLLOW SERVICE", onClick = { onLogs(true) }, color = OmniColors.cyan, small = true)
-                OmniButton("Scale", onClick = onScale, color = OmniColors.green, small = true)
+                OmniButton(stringResource(R.string.service_logs), onClick = { onLogs(false) }, color = OmniColors.cyan, small = true)
+                OmniButton(stringResource(R.string.follow_service), onClick = { onLogs(true) }, color = OmniColors.cyan, small = true)
+                OmniButton(stringResource(R.string.scale), onClick = onScale, color = OmniColors.green, small = true)
             }
-            OmniButton("Restart all", onClick = onRestart, color = OmniColors.amber, small = true)
-            OmniButton("SHELL", onClick = onShell, color = OmniColors.purple, small = true)
-            OmniButton("Stop all", onClick = onStop, color = OmniColors.red, small = true)
-            OmniButton("Remove all", onClick = onRemove, color = OmniColors.red, small = true)
+            OmniButton(stringResource(R.string.restart_all), onClick = onRestart, color = OmniColors.amber, small = true)
+            OmniButton(stringResource(R.string.shell_2), onClick = onShell, color = OmniColors.purple, small = true)
+            OmniButton(stringResource(R.string.stop_all), onClick = onStop, color = OmniColors.red, small = true)
+            OmniButton(stringResource(R.string.remove_all), onClick = onRemove, color = OmniColors.red, small = true)
         }
     }
 }
@@ -790,13 +790,13 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedIds = setOf() }) {
-                    Text(if (isSelectionMode) "Cancel Selection" else "Multi-Select")
+                    Text(if (isSelectionMode) stringResource(R.string.cancel_selection) else stringResource(R.string.multi_select_2))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (isSelectionMode && selectedIds.isNotEmpty()) {
                         Button(
                             onClick = {
-                                confirm.ask("Remove Images?", "Permanently remove ${selectedIds.size} images?", confirmLabel = "Remove") {
+                                confirm.ask(confirm.str(R.string.remove_images), confirm.str(R.string.permanently_remove_images, selectedIds.size), confirmLabel = confirm.str(R.string.remove)) {
                                     selectedIds.forEach { key ->
                                         images.firstOrNull { imageKey(it) == key }?.let {
                                             viewModel.dockerImageAction(it.id, "remove", it.runtime)
@@ -812,9 +812,9 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                     Button(
                         onClick = {
                             confirm.ask(
-                                "Prune Unused Images?",
-                                "Remove ALL images not currently used by a container (docker image prune -a). This may reclaim significant disk space and cannot be undone.",
-                                confirmLabel = "Prune",
+                                confirm.str(R.string.prune_unused_images),
+                                confirm.str(R.string.remove_all_images_not_currently_used),
+                                confirmLabel = confirm.str(R.string.prune),
                             ) { viewModel.dockerPruneImages() }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
@@ -843,11 +843,11 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("${img.repository}:${img.tag}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("ID: ${img.id}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.id, img.id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(img.size, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = OmniColors.cyan)
-                            Text(if (img.inUse) "In Use" else "Unused", fontSize = 10.sp, color = if (img.inUse) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                            Text(if (img.inUse) stringResource(R.string.in_use) else stringResource(R.string.unused), fontSize = 10.sp, color = if (img.inUse) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -862,9 +862,9 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                             RuntimeTag(img.runtime)
                         }
                         OmniButton(
-                            label = "Remove",
+                            label = stringResource(R.string.remove),
                             onClick = {
-                                confirm.ask("Remove Image?", "Permanently remove image ${img.repository}:${img.tag}?", confirmLabel = "Remove") {
+                                confirm.ask(confirm.str(R.string.remove_image), confirm.str(R.string.permanently_remove_image, img.repository, img.tag), confirmLabel = confirm.str(R.string.remove)) {
                                     viewModel.dockerImageAction(img.id, "remove", img.runtime)
                                 }
                             },
@@ -892,13 +892,13 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedIds = setOf() }) {
-                    Text(if (isSelectionMode) "Cancel Selection" else "Multi-Select")
+                    Text(if (isSelectionMode) stringResource(R.string.cancel_selection) else stringResource(R.string.multi_select_2))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (isSelectionMode && selectedIds.isNotEmpty()) {
                         Button(
                             onClick = {
-                                confirm.ask("Remove Volumes?", "Permanently remove ${selectedIds.size} volumes?", confirmLabel = "Remove") {
+                                confirm.ask(confirm.str(R.string.remove_volumes), confirm.str(R.string.permanently_remove_volumes, selectedIds.size), confirmLabel = confirm.str(R.string.remove)) {
                                     selectedIds.forEach { key ->
                                         volumes.firstOrNull { volumeKey(it) == key }?.let {
                                             viewModel.dockerVolumeAction(it.name, "remove", it.runtime)
@@ -914,9 +914,9 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                     Button(
                         onClick = {
                             confirm.ask(
-                                "Prune Unused Volumes?",
-                                "Remove ALL volumes not used by any container (volume prune). DATA WILL BE PERMANENTLY DELETED. This cannot be undone.",
-                                confirmLabel = "Prune",
+                                confirm.str(R.string.prune_unused_volumes),
+                                confirm.str(R.string.remove_all_volumes_not_used_by),
+                                confirmLabel = confirm.str(R.string.prune),
                             ) { viewModel.dockerPruneVolumes() }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
@@ -945,14 +945,14 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(vol.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Driver: ${vol.driver}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.driver, vol.driver), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                         if (vol.size.isNotBlank()) {
                             Text(vol.size, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
                         }
                         StatusDot(online = vol.inUse, color = OmniColors.green, size = 8.dp)
                         Spacer(Modifier.width(4.dp))
-                        Text(if (vol.inUse) "In Use" else "Unused", fontSize = 10.sp, color = if (vol.inUse) OmniColors.green else OmniColors.red, fontWeight = FontWeight.Bold)
+                        Text(if (vol.inUse) stringResource(R.string.in_use) else stringResource(R.string.unused), fontSize = 10.sp, color = if (vol.inUse) OmniColors.green else OmniColors.red, fontWeight = FontWeight.Bold)
                     }
                     if (vol.mountpoint.isNotBlank()) {
                         Spacer(Modifier.height(4.dp))
@@ -966,9 +966,9 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                     ) {
                         RuntimeTag(vol.runtime)
                         OmniButton(
-                            label = "Remove",
+                            label = stringResource(R.string.remove),
                             onClick = {
-                                confirm.ask("Remove Volume?", "Permanently remove volume ${vol.name}?", confirmLabel = "Remove") {
+                                confirm.ask(confirm.str(R.string.remove_volume), confirm.str(R.string.permanently_remove_volume, vol.name), confirmLabel = confirm.str(R.string.remove)) {
                                     viewModel.dockerVolumeAction(vol.name, "remove", vol.runtime)
                                 }
                             },
@@ -994,9 +994,9 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                 Button(
                     onClick = {
                         confirm.ask(
-                            "Prune Unused Networks?",
-                            "Remove all networks not used by any container (network prune). This cannot be undone.",
-                            confirmLabel = "Prune",
+                            confirm.str(R.string.prune_unused_networks),
+                            confirm.str(R.string.remove_all_networks_not_used_by),
+                            confirmLabel = confirm.str(R.string.prune),
                         ) { viewModel.dockerPruneNetworks() }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
@@ -1021,7 +1021,7 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(net.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Driver: ${net.driver}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.driver_2, net.driver), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                         OmniTag(label = net.driver, color = when (net.driver) {
                             "bridge" -> OmniColors.cyan
@@ -1034,13 +1034,13 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                     if (net.subnet.isNotBlank() || net.gateway.isNotBlank()) {
                         Spacer(Modifier.height(4.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            if (net.subnet.isNotBlank()) Text("Subnet: ${net.subnet}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
-                            if (net.gateway.isNotBlank()) Text("GW: ${net.gateway}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            if (net.subnet.isNotBlank()) Text(stringResource(R.string.subnet, net.subnet), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            if (net.gateway.isNotBlank()) Text(stringResource(R.string.gw, net.gateway), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
                         }
                     }
                     if (net.containerCount > 0) {
                         Spacer(Modifier.height(2.dp))
-                        Text("${net.containerCount} container${if (net.containerCount != 1) "s" else ""}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.container, net.containerCount, if (net.containerCount != 1) "s" else ""), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.height(4.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1051,9 +1051,9 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                         }
                         if (!isBuiltin) {
                             OmniButton(
-                                label = "Remove",
+                                label = stringResource(R.string.remove),
                                 onClick = {
-                                    confirm.ask("Remove Network?", "Permanently remove network ${net.name}?", confirmLabel = "Remove") {
+                                    confirm.ask(confirm.str(R.string.remove_network), confirm.str(R.string.permanently_remove_network, net.name), confirmLabel = confirm.str(R.string.remove)) {
                                         viewModel.dockerNetworkAction(net.id, "remove", net.runtime)
                                     }
                                 },

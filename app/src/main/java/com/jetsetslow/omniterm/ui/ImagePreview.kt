@@ -1,6 +1,8 @@
 package com.jetsetslow.omniterm.ui
 
 import androidx.activity.compose.BackHandler
+import com.jetsetslow.omniterm.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -65,7 +67,7 @@ fun ImagePreviewOverlay(preview: AppViewModel.RemoteImagePreview, onClose: () ->
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = "Close image preview")
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_image_preview))
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(

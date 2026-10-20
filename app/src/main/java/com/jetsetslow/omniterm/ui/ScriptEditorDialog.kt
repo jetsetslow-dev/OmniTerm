@@ -91,7 +91,7 @@ fun SharedScriptEditorDialog(
 
     fun attemptDismiss() {
         if (isDirty) {
-            confirm.ask("Discard changes?", "You have unsaved edits to this script. Discard them?", confirmLabel = "Discard") {
+            confirm.ask(confirm.str(R.string.discard_changes), confirm.str(R.string.you_have_unsaved_edits_to_this), confirmLabel = confirm.str(R.string.discard)) {
                 onDismiss()
             }
         } else {
@@ -220,7 +220,7 @@ fun SharedScriptEditorDialog(
                     )
                 },
             ) {
-                Text(if (existing != null) "Save changes" else "Save")
+                Text(if (existing != null) stringResource(R.string.save_changes_2) else stringResource(R.string.save))
             }
         },
         dismissButton = {

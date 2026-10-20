@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -61,6 +62,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
@@ -171,7 +173,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             // Manual reconnect for a dropped session whose auto-retry gave up.
                             if (!s.isConnected && !s.reconnecting) {
                                 IconButton(onClick = { viewModel.retrySession(s.id) }) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = "Reconnect", tint = OmniColors.cyan)
+                                    Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.reconnect), tint = OmniColors.cyan)
                                 }
                             }
                             IconButton(onClick = { viewModel.requestDisconnectSession(s.id) }) {
@@ -212,7 +214,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                     Text(stringResource(R.string.tap_to_reattach_tmux_session), fontSize = 12.sp, color = OmniColors.amber)
                                 }
                                 IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
-                                    Icon(Icons.Filled.Refresh, contentDescription = "Resume", tint = OmniColors.cyan)
+                                    Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.resume), tint = OmniColors.cyan)
                                 }
                             }
                         }
@@ -227,7 +229,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = OmniColors.cyan)
         ) {
-            Text("NEW SESSION → $targetName", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.new_session_2, targetName), fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -399,7 +401,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                     OutlinedButton(onClick = { viewModel.quickConnectSheetOpen = true }) {
                         Icon(Icons.Filled.FlashOn, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Quick connect (don't save)")
+                        Text(stringResource(R.string.quick_connect_don_t_save))
                     }
                 }
             }
@@ -425,7 +427,7 @@ fun ShellScreen(viewModel: AppViewModel) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(viewModel.terminalConnectionPhase, Modifier.weight(1f), color = OmniColors.cyan)
-                TextButton(onClick = { viewModel.cancelConnect() }) { Text("Cancel") }
+                TextButton(onClick = { viewModel.cancelConnect() }) { Text(stringResource(R.string.cancel)) }
             }
         }
         if (!viewModel.isTerminalConnecting) {
@@ -433,8 +435,8 @@ fun ShellScreen(viewModel: AppViewModel) {
                 Column(Modifier.fillMaxWidth().padding(8.dp)) {
                     Text(error, Modifier.fillMaxWidth().heightIn(max = 90.dp).verticalScrollWithIndicators(rememberScrollState()), color = OmniColors.red)
                     Row {
-                        TextButton(onClick = { viewModel.retryTerminalConnectError() }) { Text("Retry") }
-                        TextButton(onClick = { viewModel.dismissTerminalConnectError() }) { Text("Dismiss") }
+                        TextButton(onClick = { viewModel.retryTerminalConnectError() }) { Text(stringResource(R.string.retry)) }
+                        TextButton(onClick = { viewModel.dismissTerminalConnectError() }) { Text(stringResource(R.string.dismiss)) }
                     }
                 }
             }
@@ -475,13 +477,13 @@ fun ShellScreen(viewModel: AppViewModel) {
                         if (headerSession != null && headerSession.serverId != newServerId) {
                             val persistent = headerSession.persistent
                             confirm.ask(
-                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                title = if (persistent) confirm.str(R.string.leave_session_resumable) else confirm.str(R.string.send_session_to_background),
                                 message = if (persistent) {
                                     "OmniTerm will detach from this terminal while its tmux session keeps running on the host."
                                 } else {
                                     "OmniTerm will keep the SSH session active while you switch hosts. This may increase battery consumption."
                                 },
-                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
+                                confirmLabel = if (persistent) confirm.str(R.string.leave_resumable) else confirm.str(R.string.send_to_background),
                                 destructive = false,
                             ) {
                                 viewModel.leaveOrBackgroundSession(headerSession.id)
@@ -502,7 +504,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                     onOpenSplit = viewModel::openMultiSshForServers,
                     leadingContent = {
                         Text(
-                            if (viewModel.isMultiSsh) "P${viewModel.multiSshFocusedPane}" else "TERM",
+                            if (viewModel.isMultiSsh) "P${viewModel.multiSshFocusedPane}" else stringResource(R.string.term),
                             color = chrome.text,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
@@ -511,12 +513,12 @@ fun ShellScreen(viewModel: AppViewModel) {
                     },
                     trailingContent = {
                         Text(
-                            if (viewModel.isMultiSsh) "FOCUSED" else "CURRENT",
+                            if (viewModel.isMultiSsh) stringResource(R.string.focused) else stringResource(R.string.current),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             color = chrome.text,
                         )
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch host", tint = chrome.mutedText)
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.switch_host), tint = chrome.mutedText)
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -548,13 +550,13 @@ fun ShellScreen(viewModel: AppViewModel) {
                             modifier = Modifier.weight(1f),
                         ) {
                             confirm.ask(
-                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                title = if (persistent) confirm.str(R.string.leave_session_resumable) else confirm.str(R.string.send_session_to_background),
                                 message = if (persistent) {
                                     "OmniTerm will detach and close this local SSH connection. The tmux session and anything running inside it stay available to resume."
                                 } else {
                                     "OmniTerm will keep the SSH session active in the background. This may increase battery consumption."
                                 },
-                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
+                                confirmLabel = if (persistent) confirm.str(R.string.leave_resumable) else confirm.str(R.string.send_to_background),
                                 destructive = false,
                             ) {
                                 actionSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
@@ -659,8 +661,7 @@ fun ShellScreen(viewModel: AppViewModel) {
             title = { Text(stringResource(R.string.host_key_changed), color = MaterialTheme.colorScheme.error) },
             text = {
                 Text(
-                    "The SSH host key for ${HostDisplay.host(changedSrv)} has changed since you last connected.\n\n" +
-                    "This may indicate a man-in-the-middle attack. Only proceed if you know the server's key was legitimately regenerated.",
+                    stringResource(R.string.the_ssh_host_key_for_has, HostDisplay.host(changedSrv)),
                 )
             },
             confirmButton = {
@@ -700,7 +701,7 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
                 // security decision being asked of them.
                 Text(req.host, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
-                Text("Key type: ${req.keyType}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.key_type, req.keyType), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     req.fingerprint,
                     fontSize = 11.sp,
@@ -721,9 +722,7 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
                     else -> "ssh_host_*_key.pub"
                 }
                 Text(
-                    "How to verify: on the server's own screen (not over SSH), run:\n" +
-                        "ssh-keygen -lf /etc/ssh/$keyFile\n" +
-                        "and check it prints the same SHA256 fingerprint.",
+                    stringResource(R.string.how_to_verify_on_the_server, keyFile),
                     fontSize = 11.sp,
                     fontFamily = OmniFonts.mono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -855,7 +854,7 @@ private fun TerminalOpenPicker(
                     text = {
                         Column {
                             Text(
-                                if (viewModel.isMultiSsh) "PANE $focusedPane · ${session.serverName}" else "CURRENT · ${session.serverName}",
+                                if (viewModel.isMultiSsh) stringResource(R.string.pane, focusedPane, session.serverName) else stringResource(R.string.current_2, session.serverName),
                                 fontFamily = OmniFonts.mono,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -864,7 +863,7 @@ private fun TerminalOpenPicker(
                                 Text(displayTmuxSessionName(session.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                             }
                             Text(
-                                "Started ${formatSessionAge(session.startedAtMs, ageNowMs)} ago",
+                                stringResource(R.string.started_ago, formatSessionAge(session.startedAtMs, ageNowMs)),
                                 fontSize = 10.sp,
                                 color = scheme.onSurfaceVariant,
                             )
@@ -926,8 +925,7 @@ private fun TerminalOpenPicker(
                                 Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                                 Text(
-                                    "Started ${formatSessionAge(saved.createdAt, ageNowMs)} ago · " +
-                                        "backgrounded ${formatSessionAge(saved.backgroundedAt, ageNowMs)} ago",
+                                    stringResource(R.string.started_ago_backgrounded_ago, formatSessionAge(saved.createdAt, ageNowMs), formatSessionAge(saved.backgroundedAt, ageNowMs)),
                                     fontSize = 10.sp,
                                     color = scheme.onSurfaceVariant,
                                 )
@@ -945,7 +943,7 @@ private fun TerminalOpenPicker(
             DropdownMenuItem(
                 text = {
                     Text(
-                        "New session · ${viewModel.selectedServer?.name ?: "selected host"}",
+                        stringResource(R.string.new_session_3, viewModel.selectedServer?.name ?: "selected host"),
                         fontFamily = OmniFonts.mono,
                     )
                 },
@@ -962,7 +960,7 @@ private fun TerminalOpenPicker(
             // first, so the entry point is absent rather than shown-and-refused.
             if (viewModel.isQuickConnectAvailable) {
                 DropdownMenuItem(
-                    text = { Text("Quick connect (don't save)…", fontFamily = OmniFonts.mono) },
+                    text = { Text(stringResource(R.string.quick_connect_don_t_save_2), fontFamily = OmniFonts.mono) },
                     leadingIcon = { Icon(Icons.Filled.FlashOn, contentDescription = null) },
                     enabled = !viewModel.isTerminalConnecting,
                     onClick = {
@@ -975,6 +973,7 @@ private fun TerminalOpenPicker(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
     val chrome = shellChromePalette()
@@ -1042,9 +1041,36 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                     letterSpacing = 1.sp,
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            TextButton(onClick = { viewModel.quickConnectSheetOpen = true }) {
-                Text("Quick connect to another host…", fontSize = 12.sp, color = OmniColors.cyan)
+            // Only a persistent (tmux) session has a control mode to choose.
+            if (srv.persistentSession) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    Checkbox(
+                        checked = viewModel.attachInControlMode,
+                        onCheckedChange = { viewModel.attachInControlMode = it },
+                    )
+                    Text(stringResource(R.string.attach_in_control_mode), fontSize = 11.sp, color = chrome.text)
+                    Spacer(Modifier.width(4.dp))
+                    TooltipBox(
+                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                        tooltip = { PlainTooltip { Text(stringResource(R.string.control_mode_explanation)) } },
+                        state = rememberTooltipState(),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Info,
+                            contentDescription = stringResource(R.string.control_mode_explanation),
+                            tint = chrome.mutedText,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+            }
+            // Absent on the free build, like the other Quick connect entries: shown and refused
+            // would be a button that does nothing.
+            if (viewModel.isQuickConnectAvailable) {
+                Spacer(Modifier.height(10.dp))
+                TextButton(onClick = { viewModel.quickConnectSheetOpen = true }) {
+                    Text(stringResource(R.string.quick_connect_to_another_host), fontSize = 12.sp, color = OmniColors.cyan)
+                }
             }
         }
     }
@@ -1100,10 +1126,10 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
     if (showProxyHostPicker) {
         AlertDialog(
             onDismissRequest = { showProxyHostPicker = false },
-            title = { Text("Use a saved host as jump host") },
+            title = { Text(stringResource(R.string.use_a_saved_host_as_jump)) },
             text = {
                 if (servers.isEmpty()) {
-                    Text("No saved hosts to use as a jump host.")
+                    Text(stringResource(R.string.no_saved_hosts_to_use_as))
                 } else {
                     OverflowLazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                         items(servers) { candidate ->
@@ -1140,7 +1166,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
 
     AlertDialog(
         onDismissRequest = { dismiss() },
-        title = { Text("Quick connect") },
+        title = { Text(stringResource(R.string.quick_connect)) },
         text = {
             Column(
                 modifier = Modifier
@@ -1150,7 +1176,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "Connects without saving. Nothing here is written to your hosts list.",
+                    stringResource(R.string.connects_without_saving_nothing_here_is),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1166,7 +1192,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                     OutlinedTextField(
                         value = port,
                         onValueChange = { port = it },
-                        label = { Text("Port") },
+                        label = { Text(stringResource(R.string.port)) },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         isError = portIssue != null,
@@ -1178,18 +1204,18 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                 OutlinedTextField(
                     value = user,
                     onValueChange = { user = it },
-                    label = { Text("SSH username") },
+                    label = { Text(stringResource(R.string.ssh_username_2)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     enabled = authType != "profile",
                     supportingText = if (authType == "profile") {
-                        { Text("Taken from the credential profile", fontSize = 10.sp) }
+                        { Text(stringResource(R.string.taken_from_the_credential_profile), fontSize = 10.sp) }
                     } else {
                         null
                     },
                 )
 
-                Text("Authentication", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.authentication), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("password" to "Password", "key" to "SSH key", "profile" to "Profile")
                         .forEach { (key, label) ->
@@ -1212,7 +1238,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     )
                     "key" -> if (savedKeys.isEmpty()) {
-                        Text("No saved SSH keys. Add one under Tools › Auth Keys.", fontSize = 11.sp, color = OmniColors.red)
+                        Text(stringResource(R.string.no_saved_ssh_keys_add_one), fontSize = 11.sp, color = OmniColors.red)
                     } else {
                         OverflowLazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
                             items(savedKeys) { key ->
@@ -1231,7 +1257,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                         }
                     }
                     else -> if (savedProfiles.isEmpty()) {
-                        Text("No credential profiles saved.", fontSize = 11.sp, color = OmniColors.red)
+                        Text(stringResource(R.string.no_credential_profiles_saved), fontSize = 11.sp, color = OmniColors.red)
                     } else {
                         OverflowLazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
                             items(savedProfiles) { profile ->
@@ -1247,7 +1273,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                                     Column {
                                         Text(profile.profileName, fontSize = 13.sp)
                                         Text(
-                                            "User: ${profile.username}",
+                                            stringResource(R.string.user_2, profile.username),
                                             fontSize = 10.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -1259,7 +1285,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                 }
 
                 HorizontalDivider()
-                Text("Proxy / jump host", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.proxy_jump_host), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("none" to "None", "ssh" to "SSH jump", "http" to "HTTP", "socks5" to "SOCKS5")
                         .forEach { (key, label) ->
@@ -1274,7 +1300,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                 if (proxyType != "none") {
                     if (proxyType == "ssh" && servers.isNotEmpty()) {
                         TextButton(onClick = { showProxyHostPicker = true }) {
-                            Text("Use a saved host…", fontSize = 12.sp)
+                            Text(stringResource(R.string.use_a_saved_host), fontSize = 12.sp)
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1288,7 +1314,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                         OutlinedTextField(
                             value = proxyPort,
                             onValueChange = { proxyPort = it },
-                            label = { Text("Port") },
+                            label = { Text(stringResource(R.string.port)) },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             isError = proxyPortIssue != null,
@@ -1299,21 +1325,21 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                     OutlinedTextField(
                         value = proxyUser,
                         onValueChange = { proxyUser = it },
-                        label = { Text(if (proxyType == "ssh") "Jump user (optional)" else "Proxy user (optional)") },
+                        label = { Text(if (proxyType == "ssh") stringResource(R.string.jump_user_optional) else stringResource(R.string.proxy_user_optional)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
                     OutlinedTextField(
                         value = proxyPassword,
                         onValueChange = { proxyPassword = it },
-                        label = { Text(if (proxyType == "ssh") "Jump password (optional)" else "Proxy password (optional)") },
+                        label = { Text(if (proxyType == "ssh") stringResource(R.string.jump_password_optional) else stringResource(R.string.proxy_password_optional)) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     )
                     if (proxyType == "ssh" && savedKeys.isNotEmpty()) {
-                        Text("Jump host key (optional)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.jump_host_key_optional_2), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OverflowLazyColumn(modifier = Modifier.heightIn(max = 100.dp)) {
                             items(savedKeys) { key ->
                                 Row(
@@ -1369,7 +1395,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                         errorText = validationError
                     }
                 },
-            ) { Text("Connect") }
+            ) { Text(stringResource(R.string.connect)) }
         },
         dismissButton = { TextButton(onClick = { dismiss() }) { Text(stringResource(R.string.cancel)) } },
     )
@@ -1603,8 +1629,14 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
         MultiSshPanePicker(viewModel, paneIndex, session, compact = true)
         if (session != null) {
             Spacer(Modifier.width(2.dp))
+            // Resolved here: the semantics block below is not composable.
+            val leaveDescription = if (session.persistent) {
+                stringResource(R.string.leave_resumable_2, label)
+            } else {
+                stringResource(R.string.send_to_background_2, label)
+            }
             Text(
-                if (session.persistent) "LEAVE" else "BG",
+                if (session.persistent) stringResource(R.string.leave) else stringResource(R.string.bg),
                 color = chrome.mutedText,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
@@ -1617,7 +1649,7 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
                     .wrapContentHeight(Alignment.CenterVertically)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
                     .semantics {
-                        contentDescription = if (session.persistent) "Leave $label resumable" else "Send $label to background"
+                        contentDescription = leaveDescription
                     },
             )
             // Solid chip, not a bare glyph: the close affordance must read on every terminal
@@ -1704,7 +1736,7 @@ private fun MultiSshPanePicker(
                             Column {
                                 Text(candidateLabel, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(
-                                    if (candidate.isConnected) "Connected" else "Disconnected",
+                                    if (candidate.isConnected) stringResource(R.string.connected) else stringResource(R.string.disconnected),
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1741,8 +1773,7 @@ private fun MultiSshPanePicker(
                                 Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                                 Text(
-                                    "Started ${formatSessionAge(saved.createdAt, ageNowMs)} ago · " +
-                                        "backgrounded ${formatSessionAge(saved.backgroundedAt, ageNowMs)} ago",
+                                    stringResource(R.string.started_ago_backgrounded_ago_2, formatSessionAge(saved.createdAt, ageNowMs), formatSessionAge(saved.backgroundedAt, ageNowMs)),
                                     fontSize = 10.sp,
                                     color = scheme.onSurfaceVariant,
                                 )
@@ -1886,6 +1917,7 @@ private fun PaneTerminalContent(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val linkContext = LocalContext.current
+    val linkResources = LocalResources.current
     val linkToolbarColor = MaterialTheme.colorScheme.surface.toArgb()
     val measurer = rememberTextMeasurer()
     var showCopyOptions by remember { mutableStateOf(false) }
@@ -2116,7 +2148,7 @@ private fun PaneTerminalContent(
                                 if (url != null) {
                                     if (!openLink(linkContext, url, viewModel.linkOpenInApp, linkToolbarColor)) {
                                         android.widget.Toast.makeText(
-                                            linkContext, "No app on this device can open links", android.widget.Toast.LENGTH_SHORT
+                                            linkContext, linkResources.getString(R.string.no_app_on_this_device_can), android.widget.Toast.LENGTH_SHORT
                                         ).show()
                                     }
                                 } else if (isFocused && !viewModel.terminalReadOnly) {
@@ -2173,7 +2205,7 @@ private fun PaneTerminalContent(
                 ) {
                     Icon(
                         Icons.Filled.KeyboardDoubleArrowDown,
-                        contentDescription = "Jump to bottom",
+                        contentDescription = stringResource(R.string.jump_to_bottom),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp),
                     )
@@ -2465,7 +2497,7 @@ private fun PaneTerminalContent(
                     ) {
                         @Composable
                         fun PasteAction() {
-                            Text("Terminal input", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text(stringResource(R.string.terminal_input), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             Button(
                                 onClick = {
                                     val pasteTarget = viewModel.captureTerminalPasteTarget(currentSession)
@@ -2477,12 +2509,12 @@ private fun PaneTerminalContent(
                                     when (terminalClipboardPasteAction(text, viewModel.terminalReadOnly)) {
                                         TerminalClipboardPasteAction.EMPTY -> android.widget.Toast.makeText(
                                             linkContext,
-                                            "Clipboard has no text to paste",
+                                            linkResources.getString(R.string.clipboard_has_no_text_to_paste),
                                             android.widget.Toast.LENGTH_SHORT,
                                         ).show()
                                         TerminalClipboardPasteAction.BLOCKED_READ_ONLY -> android.widget.Toast.makeText(
                                             linkContext,
-                                            "Disable read-only mode before pasting",
+                                            linkResources.getString(R.string.disable_read_only_mode_before_pasting),
                                             android.widget.Toast.LENGTH_SHORT,
                                         ).show()
                                         TerminalClipboardPasteAction.CONFIRM -> {
@@ -2500,7 +2532,7 @@ private fun PaneTerminalContent(
                             ) {
                                 Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text(if (viewModel.terminalReadOnly) "Paste unavailable in read-only mode" else "Paste from clipboard")
+                                Text(if (viewModel.terminalReadOnly) stringResource(R.string.paste_unavailable_in_read_only_mode) else stringResource(R.string.paste_from_clipboard))
                             }
                         }
                         @Composable
@@ -2512,7 +2544,7 @@ private fun PaneTerminalContent(
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 Text(
-                                    "Use this when an incognito keyboard does not expose clipboard history.",
+                                    stringResource(R.string.use_this_when_an_incognito_keyboard),
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -2523,14 +2555,14 @@ private fun PaneTerminalContent(
                                 // menu after toggling so the user can adjust both without re-opening it.
                                 Text(stringResource(R.string.this_session), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                                 TerminalToggleRow(
-                                    title = "Swipe-typing",
+                                    title = stringResource(R.string.swipe_typing),
                                     subtitle = if (viewModel.smartSwipeInput) "On — text streams as you swipe/autocorrect"
                                         else "Off — each keystroke is sent immediately",
                                     checked = viewModel.smartSwipeInput,
                                     onCheckedChange = { viewModel.toggleSmartSwipeRuntime() },
                                 )
                                 TerminalToggleRow(
-                                    title = "Keep screen on",
+                                    title = stringResource(R.string.keep_screen_on_2),
                                     subtitle = if (viewModel.isKeepScreenOnEnabled) "On — screen stays awake in this session"
                                         else "Off — screen may sleep normally",
                                     checked = viewModel.isKeepScreenOnEnabled,
@@ -2566,9 +2598,9 @@ private fun PaneTerminalContent(
                                 onClick = {
                                     showCopyOptions = false
                                     confirm.ask(
-                                        "Clear scrollback?",
-                                        "Clear the current terminal scrollback buffer? This removes buffered terminal output from this session.",
-                                        confirmLabel = "Clear",
+                                        confirm.str(R.string.clear_scrollback_2),
+                                        confirm.str(R.string.clear_the_current_terminal_scrollback_buffer),
+                                        confirmLabel = confirm.str(R.string.clear),
                                     ) {
                                         viewModel.clearTerminalScrollbackFor(currentSession)
                                     }
@@ -2636,7 +2668,7 @@ private fun PaneTerminalContent(
                 }
                 AlertDialog(
                     onDismissRequest = { dismissFeedback() },
-                    title = { Text("Terminal paste") },
+                    title = { Text(stringResource(R.string.terminal_paste)) },
                     text = {
                         Column(
                             Modifier.heightIn(max = 160.dp).verticalScrollWithIndicators(rememberScrollState()),
@@ -2648,7 +2680,7 @@ private fun PaneTerminalContent(
                     },
                     confirmButton = {
                         TextButton(onClick = { dismissFeedback() }) {
-                            Text(if (feedback.busy) "Hide progress" else "OK")
+                            Text(if (feedback.busy) stringResource(R.string.hide_progress) else stringResource(R.string.ok))
                         }
                     },
                 )
@@ -2662,7 +2694,7 @@ private fun PaneTerminalContent(
             }
             AlertDialog(
                 onDismissRequest = { cancelPaste() },
-                title = { Text("Paste ${pending.text.length} characters?") },
+                title = { Text(stringResource(R.string.paste_characters, pending.text.length)) },
                 text = { Text(stringResource(R.string.you_re_about_to_paste_a)) },
                 confirmButton = {
                     TextButton(onClick = {
@@ -2678,6 +2710,7 @@ private fun PaneTerminalContent(
 
         copyDialogTitle?.let { title ->
             val context = LocalContext.current
+            val resources = LocalResources.current
             fun dismiss() {
                 copyDialogTitle = null
                 copyDialogText = ""
@@ -2719,7 +2752,7 @@ private fun PaneTerminalContent(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(if (title == "Full buffer") "Show visible screen" else "Show full buffer")
+                            Text(if (title == "Full buffer") stringResource(R.string.show_visible_screen) else stringResource(R.string.show_full_buffer))
                         }
                         // Must be a theme surface, not a fixed dark token: with the light or
                         // high-contrast-light app theme, onSurface is near-black and a fixed
@@ -2784,7 +2817,7 @@ private fun PaneTerminalContent(
                                         android.content.ClipData.newPlainText("Terminal", copyDialogText)
                                     )
                                     // Android 13+ shows its own copy confirmation; toast covers older.
-                                    android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                    android.widget.Toast.makeText(context, resources.getString(R.string.copied_to_clipboard), android.widget.Toast.LENGTH_SHORT).show()
                                     dismiss()
                                 },
                                 enabled = copyDialogText.isNotBlank(),
@@ -2813,7 +2846,7 @@ private fun TerminalReadOnlyNavigationBar(viewModel: AppViewModel) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            "READ ONLY · drag to scroll",
+            stringResource(R.string.read_only_drag_to_scroll),
             color = chrome.mutedText,
             fontFamily = OmniFonts.mono,
             fontSize = 10.sp,
