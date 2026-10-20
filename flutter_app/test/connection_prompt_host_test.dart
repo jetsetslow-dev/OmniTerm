@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/ssh/dartssh_transport.dart' show SshHostKeyException;
+import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
@@ -78,6 +81,7 @@ void main() {
     bool probed = false,
     String status = 'online',
     bool persistent = true,
+    SshHostKeyTrust? trust,
   }) async {
     // `runAsync` because these touch a real drift database. `testWidgets` installs a fake clock, and
     // a future that resolves off a real timer never completes under it — the test simply hangs.
@@ -86,7 +90,7 @@ void main() {
       await app.start();
       await Future<void>.delayed(Duration.zero);
     });
-    vm = ShellViewModel(app, transport: ssh, hasProbed: (_) => probed);
+    vm = ShellViewModel(app, transport: ssh, hasProbed: (_) => probed, hostKeyTrust: trust);
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -94,6 +98,8 @@ void main() {
           ChangeNotifierProvider<ShellViewModel>.value(value: vm),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: const ConnectionPromptHost(child: Scaffold(body: Text('the app'))),
         ),
@@ -264,6 +270,64 @@ void main() {
         isEmpty,
         reason: 'the probe costs a round trip to a host we already believe is down',
       );
+    });
+  });
+
+  /// Kotlin's "Host Key Changed" dialog. Flutter used to put a paragraph in the error area telling
+  /// the user to remove the pinned key under Tools and connect again.
+  group('a changed host key', () {
+    Future<SshHostKeyTrust> pinnedTrust(WidgetTester tester) async {
+      final store = InMemoryHostKeyStore();
+      await tester.runAsync(() => store.write('10.0.0.1|ssh-ed25519', 'SHA256:old'));
+      return SshHostKeyTrust(store);
+    }
+
+    testWidgets('asks the user, in Kotlin\'s words', (tester) async {
+      final trust = await pinnedTrust(tester);
+      await pump(tester, persistent: false, trust: trust);
+      ssh.failure = SshHostKeyException('changed', HostKeyVerdict.changed);
+
+      await tester.runAsync(() => vm.connect(vm.connectableServers.single));
+      await settle(tester);
+
+      expect(find.byKey(const ValueKey('hostKeyChanged.dialog')), findsOneWidget);
+      expect(find.text('Host Key Changed'), findsOneWidget);
+      expect(find.textContaining('has changed since you last connected'), findsOneWidget);
+      expect(find.text('Remove & Reconnect'), findsOneWidget);
+      expect(vm.error, isNull, reason: 'the dialog is the message');
+    });
+
+    testWidgets('Remove & Reconnect forgets the pinned key and connects again', (tester) async {
+      final trust = await pinnedTrust(tester);
+      await pump(tester, persistent: false, trust: trust);
+      ssh.failure = SshHostKeyException('changed', HostKeyVerdict.changed);
+      await tester.runAsync(() => vm.connect(vm.connectableServers.single));
+      await settle(tester);
+
+      ssh.failure = null;
+      await tester.tap(find.byKey(const ValueKey('hostKeyChanged.remove')));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await settle(tester);
+
+      expect(await tester.runAsync(() => trust.hasPinnedKey('10.0.0.1', 22)), isFalse);
+      expect(ssh.openedWith, hasLength(2), reason: 'one refused attempt, then the reconnect');
+      expect(find.byKey(const ValueKey('hostKeyChanged.dialog')), findsNothing);
+    });
+
+    testWidgets('Cancel keeps the pinned key and leaves nothing behind', (tester) async {
+      final trust = await pinnedTrust(tester);
+      await pump(tester, persistent: false, trust: trust);
+      ssh.failure = SshHostKeyException('changed', HostKeyVerdict.changed);
+      await tester.runAsync(() => vm.connect(vm.connectableServers.single));
+      await settle(tester);
+
+      await tester.tap(find.byKey(const ValueKey('hostKeyChanged.cancel')));
+      await settle(tester);
+
+      expect(await tester.runAsync(() => trust.hasPinnedKey('10.0.0.1', 22)), isTrue);
+      expect(find.byKey(const ValueKey('hostKeyChanged.dialog')), findsNothing);
+      expect(vm.hostKeyChangedServer, isNull);
+      expect(ssh.openedWith, hasLength(1));
     });
   });
 }

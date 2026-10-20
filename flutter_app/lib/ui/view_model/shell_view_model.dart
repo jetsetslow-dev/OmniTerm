@@ -78,6 +78,7 @@ class ShellViewModel extends ChangeNotifier {
     this.syncLiveSessionServers,
     this.recheckHost,
     this.shortcuts,
+    this.hostKeyTrust,
   }) {
     _smartSwipeInput = _app.preferences.smartSwipeInput;
     _lastPreferenceSmartSwipe = _smartSwipeInput;
@@ -1216,6 +1217,34 @@ class ShellViewModel extends ChangeNotifier {
   // action — a gate on one of those covers one of those.
 
   /// The host waiting on an "connect anyway?" decision, or null.
+  /// Drops pinned host keys for "Remove & Reconnect"; null where the app has no trust store.
+  final SshHostKeyTrust? hostKeyTrust;
+
+  Server? _hostKeyChangedServer;
+
+  /// A host whose SSH key no longer matches the pinned one, awaiting the user's decision (Kotlin's
+  /// "Host Key Changed" dialog).
+  Server? get hostKeyChangedServer => _hostKeyChangedServer;
+
+  void dismissHostKeyChanged() {
+    if (_hostKeyChangedServer == null) return;
+    _hostKeyChangedServer = null;
+    _failedConnectTarget = null;
+    _failedConnectRequest = null;
+    _safeNotify();
+  }
+
+  /// Kotlin's `removeTrustedKeyAndRetry`: forget the pinned key, then connect again, which shows
+  /// the new key's fingerprint for approval like any first connection.
+  Future<void> removeTrustedKeyAndRetry() async {
+    final server = _hostKeyChangedServer;
+    if (server == null) return;
+    _hostKeyChangedServer = null;
+    _safeNotify();
+    await hostKeyTrust?.removeHost(server.host, server.port);
+    await retryConnection();
+  }
+
   Server? get offlineConnectPromptServer => _offlineConnectPromptServer;
   Server? _offlineConnectPromptServer;
 
@@ -1688,16 +1717,14 @@ class ShellViewModel extends ChangeNotifier {
       if (generation == _connectGeneration) {
         _failedConnectTarget = server;
         _failedConnectRequest = request;
-        _error = switch (e.verdict) {
-          HostKeyVerdict.changed =>
-            'The host key for ${server.name} has CHANGED. This is what a machine-in-the-middle looks '
-                'like. If you rebuilt or replaced this server, remove its pinned key under '
-                'Tools › Auth & keys and connect again — otherwise do not.',
-          _ =>
-            'The host key for ${server.name} was not accepted, so the connection was refused. '
-                'Connect again to see the fingerprint prompt.',
-        };
-        _rememberPaneFailure(request, _error!);
+        if (e.verdict == HostKeyVerdict.changed) {
+          // Kotlin's "Host Key Changed" dialog: the decision is put to the user there, with
+          // "Remove & Reconnect" for a server that was legitimately rebuilt.
+          _hostKeyChangedServer = server;
+        } else {
+          _error = 'Host key rejected by user.';
+          _rememberPaneFailure(request, _error!);
+        }
       }
     } on SshConnectException catch (e) {
       if (generation == _connectGeneration) {

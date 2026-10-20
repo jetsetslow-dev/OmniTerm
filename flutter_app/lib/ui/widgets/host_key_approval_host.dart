@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../data/ssh/ssh_host_key_trust.dart';
-import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../../l10n/app_localizations.dart';
 
 /// The host-key approval prompt, ported from `HostKeyApprovalDialog` in `ui/ShellScreen.kt`.
 ///
@@ -123,16 +123,17 @@ class HostKeyApprovalDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final muted = TextStyle(fontSize: 12, color: scheme.onSurfaceVariant);
+    final l10n = AppLocalizations.of(context);
 
     return AlertDialog(
       key: const ValueKey('hostKey.dialog'),
-      title: const Text('Trust this server?'),
+      title: Text(l10n.trustThisServer),
       content: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('A new SSH host key was presented for:'),
+            Text(l10n.aNewSshHostKeyWas),
             const SizedBox(height: 8),
             SelectionArea(
               child: Text(
@@ -145,7 +146,7 @@ class HostKeyApprovalDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            Text('Key type: ${request.keyType}', style: muted),
+            Text(l10n.keyType(request.keyType), style: muted),
             const SizedBox(height: 4),
             SelectionArea(
               child: Text(
@@ -159,17 +160,11 @@ class HostKeyApprovalDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            Text(
-              'Verify this fingerprint matches the server before accepting. Accepting a key you '
-              'have not checked is how a machine-in-the-middle succeeds.',
-              style: muted,
-            ),
+            Text(l10n.verifyThisFingerprintMatchesTheServer, style: muted),
             const SizedBox(height: 10),
             SelectionArea(
               child: Text(
-                "How to verify: on the server's own screen (not over SSH), run:\n"
-                'ssh-keygen -lf /etc/ssh/${hostKeyFile(request.keyType)}\n'
-                'and check it prints the same SHA256 fingerprint.',
+                l10n.howToVerifyOnTheServer(hostKeyFile(request.keyType)),
                 key: const ValueKey('hostKey.howTo'),
                 style: TextStyle(
                   fontSize: 11,
@@ -187,12 +182,12 @@ class HostKeyApprovalDialog extends StatelessWidget {
         TextButton(
           key: const ValueKey('hostKey.reject'),
           onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Reject'),
+          child: Text(l10n.reject),
         ),
         TextButton(
           key: const ValueKey('hostKey.trust'),
           onPressed: () => Navigator.of(context).pop(true),
-          child: const Text('Trust & connect', style: TextStyle(color: OmniColors.amber)),
+          child: Text(l10n.trustConnect),
         ),
       ],
     );

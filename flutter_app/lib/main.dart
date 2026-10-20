@@ -431,6 +431,7 @@ class OmniTermApp extends StatelessWidget {
             syncLiveSessionServers: context.read<HostStatusProbe>().setLiveSessionServers,
             recheckHost: context.read<HostStatusProbe>().probeOne,
             shortcuts: context.read<ShortcutHelper>(),
+            hostKeyTrust: context.read<SshHostKeyTrust>(),
           ),
           update: (_, app, previous) => previous!,
         ),

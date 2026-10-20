@@ -1,5 +1,12 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 20: Kotlin's host-key prompts — local/runtime complete
+
+- The first-connect prompt uses Kotlin's text: "Trust This Server?", "Verify this fingerprint matches the server before trusting. Once trusted, it will be stored and checked on future connections.", and a plain "Trust & Connect" (it was amber). The host, fingerprint and command stay selectable; Kotlin gains that in #124.
+- A changed host key now raises Kotlin's "Host Key Changed" dialog, error-coloured, with "Remove & Reconnect" (forget the pinned key and connect again, which shows the new key's fingerprint for approval) or Cancel (the pin stays). Flutter used to put a paragraph in the error area telling the user to remove the key under Tools and connect again. A key the user rejects reads "Host key rejected by user.", as in Kotlin.
+- Controls: the dialog tests fail when a changed key falls back to the old error text.
+- Validation: `./scripts/local-pr-check.sh --full` passed (2,977 Flutter tests, seven optional skips; API 35 instrumentation 25 passes, 42 opt-in assumptions unexecuted). On API 35 the core profile (10 suites) and host profile passed, the latter approving the fixture's real host key through the reworded prompt, with no unexpected warnings. Parity baseline: 414 known differences.
+
 ## October 20: main (#123) merged in; Flutter text regenerated from Kotlin's resources — local/runtime complete
 
 - #123 moved about 700 Kotlin labels, confirmations and messages into `strings.xml`. Flutter's catalogue is regenerated from it (1,135 strings, was 566), so those texts are now available to Flutter screens as they are brought into line.

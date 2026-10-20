@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/app_database.dart';
 import '../../domain/host_display.dart';
+import '../../l10n/app_localizations.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 import '../view_model/shell_view_model.dart';
@@ -50,6 +53,7 @@ class _ConnectionPromptHostState extends State<ConnectionPromptHost> {
   _Prompt? get _pending {
     final shell = _shell;
     if (shell == null) return null;
+    if (shell.hostKeyChangedServer != null) return _Prompt.hostKeyChanged;
     if (shell.offlineConnectPromptServer != null) return _Prompt.offline;
     if (shell.tmuxPromptServer != null) return _Prompt.tmux;
     return null;
@@ -91,13 +95,14 @@ class _ConnectionPromptHostState extends State<ConnectionPromptHost> {
     // The user closed it without deciding — clear the pending host so a later connection can prompt
     // again rather than being swallowed by stale state.
     if (mounted && shell.tmuxPromptServer != null) shell.dismissTmuxPrompt();
+    if (mounted && shell.hostKeyChangedServer != null) shell.dismissHostKeyChanged();
   }
 
   @override
   Widget build(BuildContext context) => widget.child;
 }
 
-enum _Prompt { offline, tmux }
+enum _Prompt { hostKeyChanged, offline, tmux }
 
 class _ConnectionPromptDialog extends StatelessWidget {
   const _ConnectionPromptDialog({required this.shell});
@@ -109,6 +114,9 @@ class _ConnectionPromptDialog extends StatelessWidget {
     return ListenableBuilder(
       listenable: shell,
       builder: (context, _) {
+        final changed = shell.hostKeyChangedServer;
+        if (changed != null) return _hostKeyChangedDialog(context, changed);
+
         final offline = shell.offlineConnectPromptServer;
         if (offline != null) return _offlineDialog(context, offline);
 
@@ -187,6 +195,31 @@ class _ConnectionPromptDialog extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  /// Kotlin's "Host Key Changed" dialog (`ui/ShellScreen.kt`).
+  Widget _hostKeyChangedDialog(BuildContext context, Server server) {
+    final l10n = AppLocalizations.of(context);
+    final error = Theme.of(context).colorScheme.error;
+    return AlertDialog(
+      key: const ValueKey('hostKeyChanged.dialog'),
+      title: Text(l10n.hostKeyChanged, style: TextStyle(color: error)),
+      content: SingleChildScrollView(
+        child: Text(l10n.theSshHostKeyForHas(HostDisplay.instance.host(server))),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('hostKeyChanged.cancel'),
+          onPressed: shell.dismissHostKeyChanged,
+          child: Text(l10n.cancel),
+        ),
+        TextButton(
+          key: const ValueKey('hostKeyChanged.remove'),
+          onPressed: () => unawaited(shell.removeTrustedKeyAndRetry()),
+          child: Text(l10n.removeReconnect, style: TextStyle(color: error)),
+        ),
+      ],
     );
   }
 

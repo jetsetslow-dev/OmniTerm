@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/ssh/secure_host_key_store.dart';
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/widgets/host_key_approval_host.dart';
 
@@ -56,6 +57,8 @@ void main() {
       trust = SshHostKeyTrust(InMemoryHostKeyStore());
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: HostKeyApprovalHost(
             trust: trust,
@@ -65,6 +68,23 @@ void main() {
       );
       await tester.pumpAndSettle();
     }
+
+    testWidgets('the prompt uses Kotlin\'s wording', (tester) async {
+      await pump(tester);
+      final verdict = check(trust, host: 'nas', fingerprint: 'SHA256:abcdef');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Trust This Server?'), findsOneWidget);
+      expect(find.text('Trust & Connect'), findsOneWidget);
+      expect(
+        find.textContaining('before trusting. Once trusted, it will be stored'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('hostKey.reject')));
+      await tester.pumpAndSettle();
+      expect(await settled(tester, verdict), HostKeyVerdict.notIncluded);
+    });
 
     testWidgets('an unknown host raises a prompt showing the fingerprint', (tester) async {
       await pump(tester);
@@ -226,7 +246,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox.shrink())));
+      await tester.pumpWidget(
+        const MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SizedBox.shrink()),
+        ),
+      );
       await tester.pumpAndSettle();
 
       expect(await settled(tester, verdict), HostKeyVerdict.notIncluded);
@@ -261,7 +287,13 @@ void main() {
 
     testWidgets('with no prompt mounted an unknown host fails closed', (tester) async {
       // The default without this widget: unattended code paths must never auto-trust.
-      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox.shrink())));
+      await tester.pumpWidget(
+        const MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SizedBox.shrink()),
+        ),
+      );
       final bare = SshHostKeyTrust(InMemoryHostKeyStore());
 
       expect(
