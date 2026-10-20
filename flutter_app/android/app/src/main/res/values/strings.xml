@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OmniTerm</string>
+    <string name="shortcut_new_host_short">New host</string>
+    <string name="shortcut_new_host_long">Add a new SSH host</string>
+    <string name="shortcut_sftp_short">Files</string>
+    <string name="shortcut_sftp_long">Browse SFTP and network shares</string>
+    <string name="shortcut_network_short">Net tools</string>
+    <string name="shortcut_network_long">Ping, port scan and Wake-on-LAN</string>
+</resources>

@@ -1,0 +1,5 @@
+#!/bin/sh
+# The SSH account drives a rootful Podman engine inside a privileged disposable container. Keeping
+# the elevation in one fixture-only wrapper lets OmniTerm execute the same plain `podman` commands
+# it uses on a real host without granting anything on the developer machine.
+exec sudo /usr/bin/podman "$@"

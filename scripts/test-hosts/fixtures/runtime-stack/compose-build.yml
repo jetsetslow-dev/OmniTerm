@@ -1,0 +1,6 @@
+services:
+  custom-build:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: omniterm-test-custom-build:local
