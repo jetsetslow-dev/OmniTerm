@@ -165,6 +165,7 @@ fun CodeEditor(
                 matchCount = matches.size,
                 currentIndex = currentMatchIndex,
                 error = regexError,
+                readOnly = readOnly,
                 onNext = { selectMatch(currentMatchIndex + 1) },
                 onPrev = { selectMatch(currentMatchIndex - 1) },
                 onReplace = { replaceCurrent() },
@@ -561,6 +562,7 @@ private fun FindReplaceBar(
     matchCount: Int,
     currentIndex: Int,
     error: String?,
+    readOnly: Boolean,
     onNext: () -> Unit,
     onPrev: () -> Unit,
     onReplace: () -> Unit,
@@ -592,8 +594,10 @@ private fun FindReplaceBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             EditorInput(replacement, onReplacement, "Replace with", Modifier.weight(1f))
             Spacer(Modifier.width(6.dp))
-            TextButton(onClick = onReplace, enabled = matchCount > 0) { Text(stringResource(R.string.replace), fontSize = 12.sp) }
-            TextButton(onClick = onReplaceAll, enabled = matchCount > 0) { Text(stringResource(R.string.all), fontSize = 12.sp) }
+            // Shown in a read-only editor too, but disabled there: these do nothing when the text
+            // cannot change, and an enabled button that does nothing reads as broken.
+            TextButton(onClick = onReplace, enabled = !readOnly && matchCount > 0) { Text(stringResource(R.string.replace), fontSize = 12.sp) }
+            TextButton(onClick = onReplaceAll, enabled = !readOnly && matchCount > 0) { Text(stringResource(R.string.all), fontSize = 12.sp) }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(selected = caseSensitive, onClick = { onCase(!caseSensitive) }, label = { Text(stringResource(R.string.aa), fontSize = 11.sp) })
