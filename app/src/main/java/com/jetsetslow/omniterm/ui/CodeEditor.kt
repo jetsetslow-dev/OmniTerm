@@ -519,14 +519,14 @@ private fun EditorToolbar(
         IconButton(onClick = onToggleFind, enabled = enabled) {
             Icon(
                 if (showFind) Icons.Filled.Close else Icons.Filled.Search,
-                contentDescription = if (showFind) "Hide find" else "Find / replace",
+                contentDescription = if (showFind) stringResource(R.string.hide_find) else stringResource(R.string.find_replace),
                 tint = if (showFind) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         IconButton(onClick = onToggleWrap, enabled = enabled) {
             Icon(
                 Icons.AutoMirrored.Filled.WrapText,
-                contentDescription = if (wrap) "Word wrap: on" else "Word wrap: off",
+                contentDescription = if (wrap) stringResource(R.string.word_wrap_on) else stringResource(R.string.word_wrap_off),
                 tint = if (wrap) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

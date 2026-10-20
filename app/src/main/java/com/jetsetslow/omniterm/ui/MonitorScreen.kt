@@ -153,7 +153,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
     fun confirmAndRun(title: String, command: String) {
         val danger = commandDangerHits(command)
         confirm.ask(
-            title = "Run on ${srv.name}?",
+            title = confirm.str(R.string.run_on, srv.name),
             message = buildString {
                 appendLine("$ $command")
                 appendLine()
@@ -164,7 +164,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                     append("⚠ This command looks destructive (${danger.joinToString(", ")}).")
                 }
             },
-            confirmLabel = "Run",
+            confirmLabel = confirm.str(R.string.run),
             destructive = danger.isNotEmpty(),
         ) { viewModel.runStreamingAction(title, command) }
     }
@@ -368,9 +368,9 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                                         onEdit = { if (line.editable) editorTarget = line },
                                         onDelete = {
                                             confirm.ask(
-                                                "Delete cron entry?",
-                                                "Delete this crontab entry for ${HostDisplay.userAtHost(srv)}? This rewrites the remote user's crontab.",
-                                                confirmLabel = "Delete",
+                                                confirm.str(R.string.delete_cron_entry_2),
+                                                confirm.str(R.string.delete_this_crontab_entry_for_this, HostDisplay.userAtHost(srv)),
+                                                confirmLabel = confirm.str(R.string.delete),
                                             ) {
                                                 val next = cronLines.filterNot { it.index == line.index }.joinToString("\n") { it.raw }
                                                 viewModel.saveCron(next)
@@ -1041,9 +1041,9 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     label = stringResource(R.string.kill_15),
                                     onClick = {
                                         confirm.ask(
-                                            "Send SIGTERM?",
-                                            "Gracefully terminate PID ${proc.pid} (${proc.name}) with kill -15?",
-                                            confirmLabel = "Kill -15",
+                                            confirm.str(R.string.send_sigterm),
+                                            confirm.str(R.string.gracefully_terminate_pid_with_kill_15, proc.pid, proc.name),
+                                            confirmLabel = confirm.str(R.string.kill_15_2),
                                         ) {
                                             viewModel.killProcess(proc.pid, 15)
                                             viewModel.expandedProcessPid = null
@@ -1056,9 +1056,9 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     label = stringResource(R.string.kill_9),
                                     onClick = {
                                         confirm.ask(
-                                            "Force kill (SIGKILL)?",
-                                            "Forcibly kill PID ${proc.pid} (${proc.name}) with kill -9? Unsaved work in that process is lost.",
-                                            confirmLabel = "Kill -9",
+                                            confirm.str(R.string.force_kill_sigkill),
+                                            confirm.str(R.string.forcibly_kill_pid_with_kill_9, proc.pid, proc.name),
+                                            confirmLabel = confirm.str(R.string.kill_9_2),
                                         ) {
                                             viewModel.killProcess(proc.pid, 9)
                                             viewModel.expandedProcessPid = null
@@ -1160,9 +1160,9 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 label = stringResource(R.string.restart),
                                 onClick = {
                                     confirm.ask(
-                                        "Restart ${svc.name}?",
-                                        "Run systemctl restart on ${svc.name}? The service will briefly stop and start again.",
-                                        confirmLabel = "Restart",
+                                        confirm.str(R.string.restart_3, svc.name),
+                                        confirm.str(R.string.run_systemctl_restart_on_the_service, svc.name),
+                                        confirmLabel = confirm.str(R.string.restart),
                                     ) { viewModel.runServiceCommand(svc.name, "restart") }
                                 },
                                 color = OmniColors.cyan,
@@ -1173,9 +1173,9 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     label = stringResource(R.string.stop),
                                     onClick = {
                                         confirm.ask(
-                                            "Stop ${svc.name}?",
-                                            "Run systemctl stop on ${svc.name}? It will remain down until started again.",
-                                            confirmLabel = "Stop",
+                                            confirm.str(R.string.stop_3, svc.name),
+                                            confirm.str(R.string.run_systemctl_stop_on_it_will, svc.name),
+                                            confirmLabel = confirm.str(R.string.stop),
                                         ) { viewModel.runServiceCommand(svc.name, "stop") }
                                     },
                                     color = OmniColors.red,
@@ -1193,7 +1193,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 OmniButton(
                                     label = stringResource(R.string.disable),
                                     onClick = {
-                                        confirm.ask("Disable ${svc.name}?", "Stop ${svc.name} from starting at boot.", confirmLabel = "Disable") {
+                                        confirm.ask(confirm.str(R.string.disable_2, svc.name), confirm.str(R.string.stop_from_starting_at_boot, svc.name), confirmLabel = confirm.str(R.string.disable)) {
                                             viewModel.runServiceCommand(svc.name, "disable")
                                         }
                                     },

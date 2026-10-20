@@ -476,13 +476,13 @@ fun ShellScreen(viewModel: AppViewModel) {
                         if (headerSession != null && headerSession.serverId != newServerId) {
                             val persistent = headerSession.persistent
                             confirm.ask(
-                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                title = if (persistent) confirm.str(R.string.leave_session_resumable) else confirm.str(R.string.send_session_to_background),
                                 message = if (persistent) {
                                     "OmniTerm will detach from this terminal while its tmux session keeps running on the host."
                                 } else {
                                     "OmniTerm will keep the SSH session active while you switch hosts. This may increase battery consumption."
                                 },
-                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
+                                confirmLabel = if (persistent) confirm.str(R.string.leave_resumable) else confirm.str(R.string.send_to_background),
                                 destructive = false,
                             ) {
                                 viewModel.leaveOrBackgroundSession(headerSession.id)
@@ -549,13 +549,13 @@ fun ShellScreen(viewModel: AppViewModel) {
                             modifier = Modifier.weight(1f),
                         ) {
                             confirm.ask(
-                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                title = if (persistent) confirm.str(R.string.leave_session_resumable) else confirm.str(R.string.send_session_to_background),
                                 message = if (persistent) {
                                     "OmniTerm will detach and close this local SSH connection. The tmux session and anything running inside it stay available to resume."
                                 } else {
                                     "OmniTerm will keep the SSH session active in the background. This may increase battery consumption."
                                 },
-                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
+                                confirmLabel = if (persistent) confirm.str(R.string.leave_resumable) else confirm.str(R.string.send_to_background),
                                 destructive = false,
                             ) {
                                 actionSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
@@ -1604,6 +1604,12 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
         MultiSshPanePicker(viewModel, paneIndex, session, compact = true)
         if (session != null) {
             Spacer(Modifier.width(2.dp))
+            // Resolved here: the semantics block below is not composable.
+            val leaveDescription = if (session.persistent) {
+                stringResource(R.string.leave_resumable_2, label)
+            } else {
+                stringResource(R.string.send_to_background_2, label)
+            }
             Text(
                 if (session.persistent) stringResource(R.string.leave) else stringResource(R.string.bg),
                 color = chrome.mutedText,
@@ -1618,7 +1624,7 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
                     .wrapContentHeight(Alignment.CenterVertically)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
                     .semantics {
-                        contentDescription = if (session.persistent) "Leave $label resumable" else "Send $label to background"
+                        contentDescription = leaveDescription
                     },
             )
             // Solid chip, not a bare glyph: the close affordance must read on every terminal
@@ -2567,9 +2573,9 @@ private fun PaneTerminalContent(
                                 onClick = {
                                     showCopyOptions = false
                                     confirm.ask(
-                                        "Clear scrollback?",
-                                        "Clear the current terminal scrollback buffer? This removes buffered terminal output from this session.",
-                                        confirmLabel = "Clear",
+                                        confirm.str(R.string.clear_scrollback_2),
+                                        confirm.str(R.string.clear_the_current_terminal_scrollback_buffer),
+                                        confirmLabel = confirm.str(R.string.clear),
                                     ) {
                                         viewModel.clearTerminalScrollbackFor(currentSession)
                                     }

@@ -1,5 +1,7 @@
 package com.jetsetslow.omniterm.ui
 
+import androidx.annotation.StringRes
+import android.content.res.Resources
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import androidx.activity.compose.BackHandler
@@ -368,6 +370,18 @@ class ConfirmController {
     var pending by mutableStateOf<ConfirmRequest?>(null)
         private set
 
+    /**
+     * The screen's current resources, refreshed by [rememberConfirm] on every composition so a
+     * locale or configuration change is followed. `ask` is called from click handlers, where
+     * `stringResource` is not available, so its text is resolved through [str].
+     */
+    internal var resources: Resources? = null
+
+    /** A string resource for an `ask` call; formatted like [Resources.getString]. */
+    fun str(@StringRes id: Int, vararg args: Any): String =
+        checkNotNull(resources) { "ConfirmController.str needs a controller from rememberConfirm()" }
+            .getString(id, *args)
+
     fun ask(
         title: String,
         message: String,
@@ -393,7 +407,10 @@ class ConfirmController {
 }
 
 @Composable
-fun rememberConfirm(): ConfirmController = remember { ConfirmController() }
+fun rememberConfirm(): ConfirmController {
+    val resources = LocalResources.current
+    return remember { ConfirmController() }.also { it.resources = resources }
+}
 
 /** Renders the queued confirmation dialog (if any). Place once per screen. */
 @Composable
@@ -2180,9 +2197,9 @@ fun ServersMainView(viewModel: AppViewModel) {
                             onClick = {
                                 selectedForActionSheet = null
                                 confirm.ask(
-                                    "Delete ${srv.name}?",
-                                    "Remove this host connection (and its saved credentials) from OmniTerm? This does not affect the remote machine, but cannot be undone here.",
-                                    confirmLabel = "Delete",
+                                    confirm.str(R.string.delete_2, srv.name),
+                                    confirm.str(R.string.remove_this_host_connection_and_its),
+                                    confirmLabel = confirm.str(R.string.delete),
                                 ) { viewModel.deleteServer(srv) }
                             }
                         ) {

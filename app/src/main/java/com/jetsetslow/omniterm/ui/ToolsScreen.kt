@@ -713,18 +713,18 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     onCheckedChange = { on ->
                                         if (on) {
                                             confirm.ask(
-                                                "Enable default rules?",
-                                                "This creates editable All Hosts alert rules for CPU, memory, disk, latency, and temperature, resetting any earlier edits to them.",
-                                                confirmLabel = "Enable",
+                                                confirm.str(R.string.enable_default_rules),
+                                                confirm.str(R.string.this_creates_editable_all_hosts_alert),
+                                                confirmLabel = confirm.str(R.string.enable),
                                                 destructive = false,
                                             ) {
                                                 viewModel.toggleAlertPresets(true)
                                             }
                                         } else {
                                             confirm.ask(
-                                                "Disable default rules?",
-                                                "This removes the default CPU/memory/disk/latency/temperature All Hosts rules, including any edits to them. Custom rules you added are kept.",
-                                                confirmLabel = "Disable",
+                                                confirm.str(R.string.disable_default_rules),
+                                                confirm.str(R.string.this_removes_the_default_cpu_memory),
+                                                confirmLabel = confirm.str(R.string.disable),
                                             ) {
                                                 viewModel.toggleAlertPresets(false)
                                             }
@@ -759,7 +759,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         Icon(Icons.Filled.Edit, null, tint = OmniColors.cyan)
                                     }
                                     IconButton(onClick = {
-                                        confirm.ask("Delete rule?", "Delete the ${r.metricName} alert rule for ${srv?.name ?: "this host"}?", confirmLabel = "Delete") {
+                                        confirm.ask(confirm.str(R.string.delete_rule), confirm.str(R.string.delete_the_alert_rule_for, r.metricName, srv?.name ?: "this host"), confirmLabel = confirm.str(R.string.delete)) {
                                             viewModel.deleteAlertRule(r)
                                         }
                                     }) {
@@ -780,7 +780,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         item {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                 TextButton(onClick = {
-                                    confirm.ask("Clear history?", "Delete all alert history?", confirmLabel = "Clear") {
+                                    confirm.ask(confirm.str(R.string.clear_history_3), confirm.str(R.string.delete_all_alert_history), confirmLabel = confirm.str(R.string.clear)) {
                                         viewModel.clearAlertHistory()
                                     }
                                 }) { Text(stringResource(R.string.clear_history)) }
@@ -1037,18 +1037,18 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                                 onCheckedChange = { on ->
                                     if (on) {
                                         confirm.ask(
-                                            "Enable preset scripts?",
-                                            "This adds curated quick scripts for common homelab platforms, resetting any earlier edits to them. You can edit or delete them afterwards.",
-                                            confirmLabel = "Enable",
+                                            confirm.str(R.string.enable_preset_scripts),
+                                            confirm.str(R.string.this_adds_curated_quick_scripts_for),
+                                            confirmLabel = confirm.str(R.string.enable),
                                             destructive = false,
                                         ) {
                                             viewModel.toggleHomelabPresets(true)
                                         }
                                     } else {
                                         confirm.ask(
-                                            "Disable preset scripts?",
-                                            "This removes the curated preset scripts, including any edits to them. Your own scripts are kept.",
-                                            confirmLabel = "Disable",
+                                            confirm.str(R.string.disable_preset_scripts),
+                                            confirm.str(R.string.this_removes_the_curated_preset_scripts),
+                                            confirmLabel = confirm.str(R.string.disable),
                                         ) {
                                             viewModel.toggleHomelabPresets(false)
                                         }
@@ -1076,18 +1076,18 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                                 onCheckedChange = { on ->
                                     if (on) {
                                         confirm.ask(
-                                            "Enable fleet defaults?",
-                                            "This adds built-in fleet broadcast commands, resetting any earlier edits to them. You can edit or delete them afterwards.",
-                                            confirmLabel = "Enable",
+                                            confirm.str(R.string.enable_fleet_defaults),
+                                            confirm.str(R.string.this_adds_built_in_fleet_broadcast),
+                                            confirmLabel = confirm.str(R.string.enable),
                                             destructive = false,
                                         ) {
                                             viewModel.toggleFleetPresets(true)
                                         }
                                     } else {
                                         confirm.ask(
-                                            "Disable fleet defaults?",
-                                            "This removes the built-in fleet commands, including edits to those defaults. Your own commands are kept.",
-                                            confirmLabel = "Disable",
+                                            confirm.str(R.string.disable_fleet_defaults),
+                                            confirm.str(R.string.this_removes_the_built_in_fleet),
+                                            confirmLabel = confirm.str(R.string.disable),
                                         ) {
                                             viewModel.toggleFleetPresets(false)
                                         }
@@ -1143,7 +1143,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                                         }
                                         IconButton(
                                             onClick = {
-                                                confirm.ask("Delete script?", "Delete quick script \"${s.name}\"?", confirmLabel = "Delete") {
+                                                confirm.ask(confirm.str(R.string.delete_script), confirm.str(R.string.delete_quick_script, s.name), confirmLabel = confirm.str(R.string.delete)) {
                                                     viewModel.deleteQuickScript(s)
                                                 }
                                             },
@@ -1976,9 +1976,9 @@ private fun WolTab(viewModel: AppViewModel) {
                                 enabled = !viewModel.wolSendRunning,
                                 onClick = {
                                     confirm.ask(
-                                        "Send wake packet?",
-                                        "Send a Wake-on-LAN magic packet to \"${target.name}\" (${target.macAddress})?",
-                                        confirmLabel = "Wake",
+                                        confirm.str(R.string.send_wake_packet),
+                                        confirm.str(R.string.send_a_wake_on_lan_magic, target.name, target.macAddress),
+                                        confirmLabel = confirm.str(R.string.wake),
                                     ) {
                                         viewModel.triggerWol(target) { sent ->
                                             android.widget.Toast.makeText(
@@ -2004,9 +2004,9 @@ private fun WolTab(viewModel: AppViewModel) {
                             IconButton(
                                 onClick = {
                                     confirm.ask(
-                                        "Delete WOL target?",
-                                        "Delete \"${target.name}\" from Wake-on-LAN targets?",
-                                        confirmLabel = "Delete",
+                                        confirm.str(R.string.delete_wol_target_2),
+                                        confirm.str(R.string.delete_from_wake_on_lan_targets, target.name),
+                                        confirmLabel = confirm.str(R.string.delete),
                                     ) { viewModel.deleteWolTarget(target) }
                                 }
                             ) {
@@ -2235,7 +2235,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                     Icon(Icons.Filled.Edit, "Edit profile", tint = OmniColors.cyan)
                                 }
                                 IconButton(onClick = {
-                                    confirm.ask("Delete profile?", "Delete credential profile \"${profile.profileName}\"? Hosts using it will lose these credentials.", confirmLabel = "Delete") {
+                                    confirm.ask(confirm.str(R.string.delete_profile), confirm.str(R.string.delete_credential_profile_hosts_using_it, profile.profileName), confirmLabel = confirm.str(R.string.delete)) {
                                         viewModel.deleteProfile(profile)
                                     }
                                 }) {
@@ -2263,7 +2263,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                     Icon(Icons.Filled.Edit, "Edit key", tint = OmniColors.purple)
                                 }
                                 IconButton(onClick = {
-                                    confirm.ask("Delete key?", "Delete SSH key \"${key.alias}\" from OmniTerm? Hosts relying on it will no longer authenticate.", confirmLabel = "Delete") {
+                                    confirm.ask(confirm.str(R.string.delete_key), confirm.str(R.string.delete_ssh_key_from_omniterm_hosts, key.alias), confirmLabel = confirm.str(R.string.delete)) {
                                         viewModel.deleteKey(key)
                                     }
                                 }) {
@@ -2291,7 +2291,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                             Text("${kh.keyType} · ${kh.fingerprint}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                                         }
                                         IconButton(onClick = {
-                                            confirm.ask("Remove trusted key?", "Remove the trusted SSH host key for ${HostDisplay.sensitive(kh.host)}? The next connection will prompt you to verify and pin the key again.", confirmLabel = "Remove") {
+                                            confirm.ask(confirm.str(R.string.remove_trusted_key), confirm.str(R.string.remove_the_trusted_ssh_host_key, HostDisplay.sensitive(kh.host)), confirmLabel = confirm.str(R.string.remove)) {
                                                 viewModel.removeKnownHost(kh.host)
                                             }
                                         }) {
@@ -3113,9 +3113,9 @@ fun BackupToolView(viewModel: AppViewModel) {
                                 restoreHosts = emptyList()
                                 selectedRestoreHostIds = emptySet()
                                 confirm.ask(
-                                    "Restore selected data?",
-                                    "Restoring selected sections will add matching backup contents into OmniTerm. This cannot be undone.",
-                                    confirmLabel = "Restore",
+                                    confirm.str(R.string.restore_selected_data),
+                                    confirm.str(R.string.restoring_selected_sections_will_add_matching),
+                                    confirmLabel = confirm.str(R.string.restore),
                                     onCancel = { cancelRestore() },
                                 ) {
                                     viewModel.restoreEncryptedBackup(content, pwd, selection, selectedHostIds) { ok, msg ->
@@ -4027,10 +4027,9 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         val save = { if (viewModel.savedPin == null) applyDrafts() else showSaveAuth = true }
                         if (disablingAppLock) {
                             confirm.ask(
-                                "Turn off App Lock?",
-                                "This deletes your saved PIN and disables biometric unlock. " +
-                                    "You'll need to set a new PIN to turn App Lock back on.",
-                                confirmLabel = "Turn off",
+                                confirm.str(R.string.turn_off_app_lock),
+                                confirm.str(R.string.this_deletes_your_saved_pin_and),
+                                confirmLabel = confirm.str(R.string.turn_off),
                             ) { save() }
                         } else {
                             save()
@@ -4375,7 +4374,7 @@ private fun CrashHistoryCard() {
                             }
                             Icon(
                                 if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                contentDescription = if (expanded) "Collapse" else "Expand",
+                                contentDescription = if (expanded) stringResource(R.string.collapse) else stringResource(R.string.expand),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -4627,9 +4626,9 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(enabled = scoringError == null, onClick = {
                     confirm.ask(
-                        "Save scoring config?",
-                        "Replace the current health-scoring thresholds and penalties? Health scores for all hosts will be recalculated with the new values.",
-                        confirmLabel = "Save",
+                        confirm.str(R.string.save_scoring_config),
+                        confirm.str(R.string.replace_the_current_health_scoring_thresholds),
+                        confirmLabel = confirm.str(R.string.save),
                         destructive = false,
                     ) {
                         viewModel.saveHealthConfig(
@@ -4644,9 +4643,9 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
                 }) { Text(stringResource(R.string.save_scoring)) }
                 OutlinedButton(onClick = {
                     confirm.ask(
-                        "Reset to defaults?",
-                        "Discard your custom health-scoring thresholds and penalties and restore the built-in defaults? This cannot be undone.",
-                        confirmLabel = "Reset",
+                        confirm.str(R.string.reset_to_defaults),
+                        confirm.str(R.string.discard_your_custom_health_scoring_thresholds),
+                        confirmLabel = confirm.str(R.string.reset),
                     ) { viewModel.resetHealthConfig(); resetKey++ }
                 }) { Text(stringResource(R.string.reset_defaults)) }
             }
@@ -4960,7 +4959,7 @@ private fun TunnelsTab(viewModel: AppViewModel) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth()) {
                                 TextButton(onClick = { editing = pf; showEditor = true }, enabled = !active) { Text(stringResource(R.string.edit)) }
                                 TextButton(onClick = {
-                                    confirm.ask("Delete \"${pf.name}\"?", "Remove this saved tunnel? If it's running it will be stopped.", confirmLabel = "Delete") {
+                                    confirm.ask(confirm.str(R.string.delete_6, pf.name), confirm.str(R.string.remove_this_saved_tunnel_if_it), confirmLabel = confirm.str(R.string.delete)) {
                                         viewModel.deletePortForward(pf)
                                     }
                                 }) { Text(stringResource(R.string.delete), color = OmniColors.red) }

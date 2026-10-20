@@ -307,7 +307,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         if (targets.isEmpty()) return
         val danger = fleetCommandDangerWarning(cmd)
         confirm.ask(
-            title = "Run on ${targets.size} host${if (targets.size == 1) "" else "s"}?",
+            title = confirm.str(R.string.run_on_host, targets.size, if (targets.size == 1) "" else "s"),
             message = buildString {
                 appendLine("$ $cmd")
                 appendLine()
@@ -317,7 +317,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     append("⚠ $danger")
                 }
             }.trimEnd(),
-            confirmLabel = "Run",
+            confirmLabel = confirm.str(R.string.run),
             destructive = danger != null,
         ) {
             viewModel.runFleetBroadcast(cmd, targets.map { it.id })
@@ -343,7 +343,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             IconButton(onClick = { controlsExpanded = !controlsExpanded }) {
                 Icon(
                     if (controlsExpanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (controlsExpanded) "Collapse controls" else "Expand controls",
+                    contentDescription = if (controlsExpanded) stringResource(R.string.collapse_controls) else stringResource(R.string.expand_controls),
                 )
             }
         }
@@ -457,7 +457,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                 Icon(
                                     if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = if (expanded) "Collapse output" else "Expand output",
+                                    contentDescription = if (expanded) stringResource(R.string.collapse_output) else stringResource(R.string.expand_output),
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(item.serverName, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.primary)

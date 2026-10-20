@@ -1236,9 +1236,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
     fun attemptClearOrExit(exitBuilder: Boolean) {
         if (isDirty()) {
             confirm.ask(
-                "Discard changes?",
-                "You have unsaved changes to this stack. Discard them?",
-                confirmLabel = "Discard"
+                confirm.str(R.string.discard_changes),
+                confirm.str(R.string.you_have_unsaved_changes_to_this),
+                confirmLabel = confirm.str(R.string.discard)
             ) { clearDraft(exitBuilder) }
         } else {
             clearDraft(exitBuilder)
@@ -1353,9 +1353,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                     }
                                     i == 0 && rawMode && composeRawEditsDiffer(rawText, draft, parsedBaseline) -> {
                                         confirm.ask(
-                                            "Leave Raw YAML?",
-                                            "Raw YAML edits are not applied to the visual form. Switch back and ignore those raw edits for deploy?",
-                                            confirmLabel = "Switch",
+                                            confirm.str(R.string.leave_raw_yaml),
+                                            confirm.str(R.string.raw_yaml_edits_are_not_applied),
+                                            confirmLabel = confirm.str(R.string.switch_label),
                                         ) {
                                             rawMode = false
                                             viewModel.rememberComposeRawState(seedKey, rawText, false)
@@ -1453,7 +1453,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 ) {
                     Icon(
                         if (previewExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (previewExpanded) "Collapse preview" else "Expand preview",
+                        contentDescription = if (previewExpanded) stringResource(R.string.collapse_preview) else stringResource(R.string.expand_preview),
                         tint = OmniColors.cyan,
                     )
                     Spacer(Modifier.width(6.dp))
@@ -1551,9 +1551,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                         "~/${draft.projectName.ifBlank { "stack" }}/$fileName"
                     }
                     confirm.ask(
-                        if (isExisting) "Deploy changes?" else "Deploy stack?",
-                            "Target file: $composeFilePath\n\nIt's validated first; the current file is backed up, and if the deploy fails the previous file is restored automatically.",
-                        confirmLabel = "Deploy",
+                        if (isExisting) confirm.str(R.string.deploy_changes) else confirm.str(R.string.deploy_stack),
+                            confirm.str(R.string.target_file_it_s_validated_first, composeFilePath),
+                        confirmLabel = confirm.str(R.string.deploy),
                     ) {
                         deploying = true
                         result = null
