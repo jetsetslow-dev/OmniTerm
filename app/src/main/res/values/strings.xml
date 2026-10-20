@@ -1135,4 +1135,6 @@
     <string name="reset">"Reset"</string>
     <string name="delete_6">"Delete \"%1$s\"?"</string>
     <string name="remove_this_saved_tunnel_if_it">"Remove this saved tunnel? If it's running it will be stopped."</string>
+    <string name="attach_in_control_mode">"Attach in control mode"</string>
+    <string name="control_mode_explanation">"tmux sends every byte as an event instead of redrawing, so fast output cannot be lost. This app draws one pane: splits made inside tmux will not all be visible."</string>
 </resources>

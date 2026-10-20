@@ -1979,8 +1979,21 @@ class AppViewModel @JvmOverloads constructor(
 
     fun saveTmuxControlMode(enabled: Boolean) {
         tmuxControlMode = enabled
+        attachInControlModeOverride = null
         viewModelScope.launch { repository.insertSetting("tmux_control_mode", enabled.toString()) }
     }
+
+    /**
+     * The connect card's "Attach in control mode" checkbox: a choice for the next persistent session
+     * opened here, not a saved setting. It starts at the Settings default and drops back to it when
+     * that default changes.
+     */
+    private var attachInControlModeOverride by mutableStateOf<Boolean?>(null)
+    var attachInControlMode: Boolean
+        get() = attachInControlModeOverride ?: tmuxControlMode
+        set(value) {
+            attachInControlModeOverride = value.takeIf { it != tmuxControlMode }
+        }
 
     // How tapped links open: true = in-app Chrome Custom Tab (page slides over the terminal, back
     // returns straight to it); false = hand off to the external browser app. Custom Tabs fall back
@@ -2297,6 +2310,7 @@ class AppViewModel @JvmOverloads constructor(
                     linkOpenInApp = it == "true"
                 }
                 list.find { it.key == "tmux_control_mode" }?.value?.let {
+                    if (tmuxControlMode != (it == "true")) attachInControlModeOverride = null
                     tmuxControlMode = it == "true"
                 }
                 alertHistoryLimit = list.find { it.key == "alert_history_limit" }?.value
@@ -5211,7 +5225,7 @@ class AppViewModel @JvmOverloads constructor(
                 // re-attaches the SAME session (and any running command keeps going server-side),
                 // and multiple persistent shells to one host don't collide on a shared name.
                 if (usePersistence) {
-                    shellSession.controlMode = tmuxControlMode
+                    shellSession.controlMode = attachInControlMode
                     // A regular tmux attach is itself an alternate-screen TUI, so capture its
                     // repaint history. Control mode feeds the pane application's raw bytes and
                     // must retain normal terminal semantics (vim/htop alt frames are not history).

@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -972,6 +973,7 @@ private fun TerminalOpenPicker(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
     val chrome = shellChromePalette()
@@ -1038,6 +1040,29 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
                 )
+            }
+            // Only a persistent (tmux) session has a control mode to choose.
+            if (srv.persistentSession) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    Checkbox(
+                        checked = viewModel.attachInControlMode,
+                        onCheckedChange = { viewModel.attachInControlMode = it },
+                    )
+                    Text(stringResource(R.string.attach_in_control_mode), fontSize = 11.sp, color = chrome.text)
+                    Spacer(Modifier.width(4.dp))
+                    TooltipBox(
+                        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                        tooltip = { PlainTooltip { Text(stringResource(R.string.control_mode_explanation)) } },
+                        state = rememberTooltipState(),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Info,
+                            contentDescription = stringResource(R.string.control_mode_explanation),
+                            tint = chrome.mutedText,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
             }
             // Absent on the free build, like the other Quick connect entries: shown and refused
             // would be a button that does nothing.
