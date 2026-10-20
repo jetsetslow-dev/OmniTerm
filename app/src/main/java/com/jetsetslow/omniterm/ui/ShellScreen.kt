@@ -698,16 +698,21 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
                 Text(stringResource(R.string.a_new_ssh_host_key_was))
                 // Deliberately NOT routed through HostDisplay: the user is authenticating this
                 // specific host against its fingerprint, so masking the identity would defeat the
-                // security decision being asked of them.
-                Text(req.host, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                // security decision being asked of them. Selectable, as in Flutter, so the host,
+                // fingerprint and command can be copied to compare them elsewhere.
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(req.host, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(stringResource(R.string.key_type, req.keyType), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    req.fingerprint,
-                    fontSize = 11.sp,
-                    fontFamily = OmniFonts.mono,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(
+                        req.fingerprint,
+                        fontSize = 11.sp,
+                        fontFamily = OmniFonts.mono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(stringResource(R.string.verify_this_fingerprint_matches_the_server),
                     fontSize = 12.sp,
@@ -721,12 +726,14 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
                     req.keyType.contains("rsa", ignoreCase = true) -> "ssh_host_rsa_key.pub"
                     else -> "ssh_host_*_key.pub"
                 }
-                Text(
-                    stringResource(R.string.how_to_verify_on_the_server, keyFile),
-                    fontSize = 11.sp,
-                    fontFamily = OmniFonts.mono,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(
+                        stringResource(R.string.how_to_verify_on_the_server, keyFile),
+                        fontSize = 11.sp,
+                        fontFamily = OmniFonts.mono,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
         confirmButton = {
