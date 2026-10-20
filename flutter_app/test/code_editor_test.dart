@@ -142,7 +142,7 @@ void main() {
     await tester.pump();
     await tester.enterText(find.byKey(const ValueKey('codeEditor.query')), 'foo');
     await tester.enterText(find.byKey(const ValueKey('codeEditor.replacement')), 'bar');
-    await tester.tap(find.text('All'));
+    await tester.tap(find.byKey(const ValueKey('codeEditor.replaceAll')));
     await tester.pump();
     expect(controller.text, 'bar bar bar');
 
@@ -187,9 +187,9 @@ void main() {
     expect(controller.text, 'keep that line');
   });
 
-  testWidgets('Replace ignores a hand-made selection even while matches exist', (tester) async {
-    // The button gate cannot cover this: the query matches, so Replace is live. Only the check
-    // inside _replaceCurrent keeps the user's own selection from being overwritten.
+  testWidgets('Replace rewrites the found match, never a hand-made selection', (tester) async {
+    // Kotlin's rule: Replace acts on the current match (the first at or after the cursor), so it
+    // can only ever rewrite text the search found, whatever the user has selected by hand.
     final controller = await pumpEditor(tester, text: 'keep this line');
     await tester.tap(find.byKey(const ValueKey('codeEditor.find')));
     await tester.pump();
@@ -199,23 +199,64 @@ void main() {
 
     controller.selection = const TextSelection(baseOffset: 0, extentOffset: 4);
     await tester.pump();
-
-    final replace = tester.widget<TextButton>(find.widgetWithText(TextButton, 'Replace'));
-    expect(replace.onPressed, isNotNull, reason: 'a match exists, so the button is live');
-    await tester.tap(find.widgetWithText(TextButton, 'Replace'));
+    await tester.tap(find.byKey(const ValueKey('codeEditor.replace')));
     await tester.pump();
 
+    expect(controller.text, 'keep that line', reason: '"keep" was selected but not found');
+  });
+
+  testWidgets('the match count reads current/total, as in Kotlin', (tester) async {
+    final controller = await pumpEditor(tester, text: 'a b a b a');
+    await tester.tap(find.byKey(const ValueKey('codeEditor.find')));
+    await tester.pump();
+    String count() =>
+        tester.widget<Text>(find.byKey(const ValueKey('codeEditor.matchCount'))).data!;
+    expect(count(), '');
+
+    await tester.enterText(find.byKey(const ValueKey('codeEditor.query')), 'a');
+    controller.selection = const TextSelection.collapsed(offset: 0);
+    await tester.pump();
+    expect(count(), '1/3');
+    await tester.tap(find.byKey(const ValueKey('codeEditor.next')));
+    await tester.pump();
+    expect(count(), '2/3');
+    await tester.tap(find.byKey(const ValueKey('codeEditor.previous')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('codeEditor.previous')));
+    await tester.pump();
+    expect(count(), '3/3', reason: 'previous wraps around');
+
+    await tester.enterText(find.byKey(const ValueKey('codeEditor.query')), 'zzz');
+    await tester.pump();
+    expect(count(), '0/0');
+  });
+
+  testWidgets('a read-only editor shows Replace but cannot use it', (tester) async {
+    final controller = await pumpEditor(tester, text: 'keep this line', readOnly: true);
+    await tester.tap(find.byKey(const ValueKey('codeEditor.find')));
+    await tester.pump();
+    await tester.enterText(find.byKey(const ValueKey('codeEditor.query')), 'this');
+    await tester.pump();
+
+    TextButton button(String key) => tester.widget<TextButton>(find.byKey(ValueKey(key)));
+    expect(button('codeEditor.replace').onPressed, isNull);
+    expect(button('codeEditor.replaceAll').onPressed, isNull);
     expect(controller.text, 'keep this line');
   });
 
   testWidgets('go-to-line moves the selection to the requested line start', (tester) async {
     final controller = await pumpEditor(tester, text: 'line1\nline2\nline3');
-    await tester.tap(find.byKey(const ValueKey('codeEditor.goToLine')));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('codeEditor.goToLine.value')), '3');
-    await tester.tap(find.text('Go'));
-    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('codeEditor.goToLine')), '3');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('codeEditor.goToLine.go')));
+    await tester.pump();
+    expect(controller.selection, const TextSelection.collapsed(offset: 12));
 
+    // Past the end: the start of the last line, not the end of the buffer.
+    await tester.enterText(find.byKey(const ValueKey('codeEditor.goToLine')), '99');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('codeEditor.goToLine.go')));
+    await tester.pump();
     expect(controller.selection, const TextSelection.collapsed(offset: 12));
   });
 

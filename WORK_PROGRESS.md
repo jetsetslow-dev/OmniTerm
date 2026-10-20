@@ -1,5 +1,12 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 20: Kotlin's terminal copy window and editor toolbar — local/runtime complete
+
+- A long press on the terminal opened the terminal options, and only "Visible screen" there led to the copy sheet. Kotlin's long press opens the copy window itself, on the visible screen. Flutter now does the same, with Kotlin's dialog: title with "Drag to select, or Copy all", Show full buffer / visible screen, wrapping selectable text, "No terminal text in this range." when empty, and Close | Copy all. Clearing the scrollback stays in the terminal options, as in Kotlin, and closing the window hands focus and the keyboard back unless the session is read-only.
+- The code editor's toolbar and find bar are Kotlin's: a find toggle and word wrap followed by an inline "Line" field and "Go" instead of a "Go to line" dialog; "Find", a current/total match count, previous/next/close; "Replace with", Replace and All; Aa and .* chips. Matching follows Kotlin: the current match is the first at or after the cursor, zero-width regex matches are skipped, Replace acts on the current match (never an arbitrary selection), and a line past the end goes to the start of the last line. In a read-only editor Replace and All are shown but disabled.
+- Controls: the copy-window tests fail when a long press opens the options again; the editor tests fail when Replace is enabled read-only or go-to-line jumps to the end of the buffer.
+- Validation: `./scripts/local-pr-check.sh --full` passed (2,973 Flutter tests, seven optional skips; API 35 instrumentation 24 passes, 42 opt-in assumptions unexecuted). On API 35 the core device profile passed (10 suites) and the host profile passed against the repository fixtures, including a long press on a live terminal opening the copy window and switching to the full buffer, plus both native terminal lifecycle tests, with no unexpected warnings. Parity baseline: 337 known differences.
+
 ## October 20: FTP binary mode and dropped connections — local/runtime complete
 
 - Flutter's FTP client never left ASCII mode, the FTP default, in which a server that honours it rewrites line endings and corrupts every binary file it sends or receives. Every connection now sends `TYPE I` after login and refuses a server that rejects it, as Kotlin's `setFileType(BINARY_FILE_TYPE)` does.

@@ -1,9 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../domain/code_highlighter.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
-import 'omni_components.dart';
 
 class HighlightEditingController extends TextEditingController {
   HighlightEditingController({super.text, required this.language, required this.maxChars});
@@ -122,6 +124,7 @@ class _CodeEditorState extends State<CodeEditor> {
   bool _regex = false;
   final _query = TextEditingController();
   final _replacement = TextEditingController();
+  final _goTo = TextEditingController();
   final _verticalScroll = ScrollController();
   final _horizontalScroll = ScrollController();
   String? _patternError;
@@ -130,59 +133,58 @@ class _CodeEditorState extends State<CodeEditor> {
   void dispose() {
     _query.dispose();
     _replacement.dispose();
+    _goTo.dispose();
     _verticalScroll.dispose();
     _horizontalScroll.dispose();
     super.dispose();
   }
 
-  List<RegExpMatch> get _matches {
+  /// Kotlin's `findMatches`: start/end pairs, with zero-width regex matches skipped.
+  List<(int, int)> get _matches {
+    _patternError = null;
     if (_query.text.isEmpty) return const [];
     try {
-      _patternError = null;
       final pattern = _regex ? _query.text : RegExp.escape(_query.text);
-      return RegExp(
-        pattern,
-        caseSensitive: _caseSensitive,
-      ).allMatches(widget.controller.text).toList();
+      return [
+        for (final match in RegExp(
+          pattern,
+          caseSensitive: _caseSensitive,
+        ).allMatches(widget.controller.text))
+          if (match.end > match.start) (match.start, match.end),
+      ];
     } on FormatException {
       _patternError = 'Invalid pattern';
       return const [];
     }
   }
 
-  void _selectMatch({required bool previous}) {
+  /// Kotlin's current match: the first one at or after the cursor, else the first.
+  int _currentIndex(List<(int, int)> matches) {
+    if (matches.isEmpty) return -1;
+    final selection = widget.controller.selection;
+    final cursor = selection.isValid ? math.min(selection.start, selection.end) : 0;
+    final index = matches.indexWhere((match) => match.$1 >= cursor);
+    return index < 0 ? 0 : index;
+  }
+
+  void _selectMatch(int index) {
     final matches = _matches;
     if (matches.isEmpty) return;
-    final cursor = widget.controller.selection.isValid ? widget.controller.selection.start : 0;
-    RegExpMatch match;
-    if (previous) {
-      match = matches.lastWhere((item) => item.end < cursor, orElse: () => matches.last);
-    } else {
-      match = matches.firstWhere((item) => item.start > cursor, orElse: () => matches.first);
-    }
-    widget.controller.selection = TextSelection(baseOffset: match.start, extentOffset: match.end);
+    final match = matches[(index % matches.length + matches.length) % matches.length];
+    widget.controller.selection = TextSelection(baseOffset: match.$1, extentOffset: match.$2);
     setState(() {});
   }
 
+  /// Replaces the current match: always one the search found, never an arbitrary selection.
   void _replaceCurrent() {
-    if (widget.readOnly) return;
-    final selection = widget.controller.selection;
-    if (!selection.isValid || selection.isCollapsed) return;
-    // Replace what the *search* found, not whatever happens to be selected. Without this, a query
-    // matching nothing plus an ordinary hand-made selection turned Replace into "delete my
-    // selection": the button was live, the selection was valid, and no match was ever consulted.
-    final selected = _matches.any(
-      (match) => match.start == selection.start && match.end == selection.end,
-    );
-    if (!selected) return;
-    final next = widget.controller.text.replaceRange(
-      selection.start,
-      selection.end,
-      _replacement.text,
-    );
+    final matches = _matches;
+    final index = _currentIndex(matches);
+    if (widget.readOnly || index < 0) return;
+    final (start, end) = matches[index];
+    final next = widget.controller.text.replaceRange(start, end, _replacement.text);
     widget.controller.value = TextEditingValue(
       text: next,
-      selection: TextSelection.collapsed(offset: selection.start + _replacement.text.length),
+      selection: TextSelection.collapsed(offset: start + _replacement.text.length),
     );
     widget.onChanged?.call(next);
     setState(() {});
@@ -196,50 +198,56 @@ class _CodeEditorState extends State<CodeEditor> {
         RegExp(pattern, caseSensitive: _caseSensitive),
         _replacement.text,
       );
-      widget.controller.value = TextEditingValue(
+      widget.controller.value = widget.controller.value.copyWith(
         text: next,
-        selection: TextSelection.collapsed(offset: next.length),
+        selection: TextSelection.collapsed(
+          offset: math.min(
+            widget.controller.selection.baseOffset.clamp(0, next.length),
+            next.length,
+          ),
+        ),
       );
       widget.onChanged?.call(next);
-      setState(() => _patternError = null);
+      setState(() {});
     } on FormatException {
       setState(() => _patternError = 'Invalid pattern');
     }
   }
 
-  Future<void> _goToLine() async {
-    var entered = '';
-    final line = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Go to line'),
-        content: TextField(
-          key: const ValueKey('codeEditor.goToLine.value'),
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          onChanged: (value) => entered = value,
-          decoration: omniInputDecoration(dialogContext, labelText: 'Line number'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, int.tryParse(entered)),
-            child: const Text('Go'),
-          ),
-        ],
-      ),
-    );
-    if (line == null || line < 1) return;
+  /// Kotlin's `goToLine`: the start of 1-based [line]; a line past the end goes to the start of the
+  /// last line rather than the end of the buffer.
+  void _goToLine(int line) {
+    final text = widget.controller.text;
     var offset = 0;
-    for (var current = 1; current < line; current++) {
-      final newline = widget.controller.text.indexOf('\n', offset);
-      if (newline < 0) {
-        offset = widget.controller.text.length;
-        break;
-      }
+    for (var current = 1; current < math.max(line, 1); current++) {
+      final newline = text.indexOf('\n', offset);
+      if (newline < 0) break;
       offset = newline + 1;
     }
     widget.controller.selection = TextSelection.collapsed(offset: offset);
+  }
+
+  Widget _findInput(String key, TextEditingController controller, String hint) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      color: scheme.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: TextField(
+        key: ValueKey(key),
+        controller: controller,
+        style: TextStyle(fontFamily: OmniFonts.mono, fontSize: 12, color: scheme.onSurface),
+        cursorColor: OmniColors.amber,
+        decoration: InputDecoration.collapsed(
+          hintText: hint,
+          hintStyle: TextStyle(
+            fontFamily: OmniFonts.mono,
+            fontSize: 12,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        onChanged: (_) => setState(() {}),
+      ),
+    );
   }
 
   @override
@@ -251,105 +259,155 @@ class _CodeEditorState extends State<CodeEditor> {
         ..maxChars = widget.maxHighlightChars.clamp(0, highlightMaxCharsCap)
         ..palette = HighlightPalette.forTheme(Theme.of(context));
     }
-    final count = _matches.length;
+    final scheme = Theme.of(context).colorScheme;
+    final matches = _matches;
+    final count = matches.length;
+    final current = _currentIndex(matches);
+    final enabled = widget.enabled;
     return Column(
       children: [
-        Row(
-          children: [
-            IconButton(
-              key: const ValueKey('codeEditor.find'),
-              tooltip: 'Find and replace',
-              onPressed: () => setState(() => _findVisible = !_findVisible),
-              icon: const Icon(Icons.find_replace, size: 20),
-            ),
-            IconButton(
-              key: const ValueKey('codeEditor.goToLine'),
-              tooltip: 'Go to line',
-              onPressed: _goToLine,
-              icon: const Icon(Icons.format_list_numbered, size: 20),
-            ),
-            IconButton(
-              key: const ValueKey('codeEditor.wrap'),
-              tooltip: _wrap ? 'Word wrap: on' : 'Word wrap: off',
-              onPressed: () => setState(() => _wrap = !_wrap),
-              color: _wrap ? OmniColors.cyan : null,
-              icon: const Icon(Icons.wrap_text, size: 20),
-            ),
-            const Spacer(),
-            Text(
-              '${controller.text.split('\n').length} lines',
-              style: const TextStyle(fontSize: 10),
-            ),
-          ],
+        // Kotlin's `EditorToolbar`.
+        Container(
+          color: scheme.surfaceContainer,
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          child: Row(
+            children: [
+              IconButton(
+                key: const ValueKey('codeEditor.find'),
+                tooltip: _findVisible ? 'Hide find' : 'Find / replace',
+                onPressed: enabled ? () => setState(() => _findVisible = !_findVisible) : null,
+                icon: Icon(
+                  _findVisible ? Icons.close : Icons.search,
+                  color: _findVisible ? OmniColors.cyan : scheme.onSurfaceVariant,
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('codeEditor.wrap'),
+                tooltip: _wrap ? 'Word wrap: on' : 'Word wrap: off',
+                onPressed: enabled ? () => setState(() => _wrap = !_wrap) : null,
+                icon: Icon(
+                  Icons.wrap_text,
+                  color: _wrap ? OmniColors.cyan : scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text('Line', style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+              const SizedBox(width: 4),
+              Container(
+                width: 56,
+                color: scheme.surface,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: TextField(
+                  key: const ValueKey('codeEditor.goToLine'),
+                  controller: _goTo,
+                  enabled: enabled,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(7),
+                  ],
+                  style: TextStyle(
+                    fontFamily: OmniFonts.mono,
+                    fontSize: 12,
+                    color: scheme.onSurface,
+                  ),
+                  cursorColor: OmniColors.amber,
+                  decoration: const InputDecoration.collapsed(hintText: ''),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              TextButton(
+                key: const ValueKey('codeEditor.goToLine.go'),
+                onPressed: enabled && _goTo.text.isNotEmpty
+                    ? () => _goToLine(int.parse(_goTo.text))
+                    : null,
+                child: const Text('Go', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
         ),
+        // Kotlin's `FindReplaceBar`.
         if (_findVisible)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+          Container(
+            color: scheme.surfaceContainerHigh,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             child: Column(
+              spacing: 6,
               children: [
                 Row(
                   children: [
-                    Expanded(
-                      child: TextField(
-                        key: const ValueKey('codeEditor.query'),
-                        controller: _query,
-                        decoration: omniInputDecoration(context, hintText: 'Find'),
-                        onChanged: (_) => setState(() {}),
+                    Expanded(child: _findInput('codeEditor.query', _query, 'Find')),
+                    const SizedBox(width: 6),
+                    Text(
+                      _query.text.isEmpty
+                          ? ''
+                          : count == 0
+                          ? '0/0'
+                          : '${current + 1}/$count',
+                      key: const ValueKey('codeEditor.matchCount'),
+                      style: TextStyle(
+                        fontFamily: OmniFonts.mono,
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
                     IconButton(
+                      key: const ValueKey('codeEditor.previous'),
                       tooltip: 'Previous match',
-                      onPressed: count > 0 ? () => _selectMatch(previous: true) : null,
-                      icon: const Icon(Icons.keyboard_arrow_up),
+                      onPressed: count > 0 ? () => _selectMatch(current - 1) : null,
+                      icon: const Icon(Icons.arrow_upward, size: 18),
                     ),
                     IconButton(
+                      key: const ValueKey('codeEditor.next'),
                       tooltip: 'Next match',
-                      onPressed: count > 0 ? () => _selectMatch(previous: false) : null,
-                      icon: const Icon(Icons.keyboard_arrow_down),
+                      onPressed: count > 0 ? () => _selectMatch(current + 1) : null,
+                      icon: const Icon(Icons.arrow_downward, size: 18),
                     ),
-                    Text('$count', style: const TextStyle(fontSize: 11)),
+                    IconButton(
+                      key: const ValueKey('codeEditor.closeFind'),
+                      tooltip: 'Close find',
+                      onPressed: () => setState(() => _findVisible = false),
+                      icon: const Icon(Icons.close),
+                    ),
                   ],
                 ),
-                if (!widget.readOnly)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          key: const ValueKey('codeEditor.replacement'),
-                          controller: _replacement,
-                          decoration: omniInputDecoration(context, hintText: 'Replace with'),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: count > 0 ? _replaceCurrent : null,
-                        child: const Text('Replace'),
-                      ),
-                      TextButton(
-                        onPressed: count > 0 ? _replaceAll : null,
-                        child: const Text('All'),
-                      ),
-                    ],
-                  ),
                 Row(
                   children: [
+                    Expanded(
+                      child: _findInput('codeEditor.replacement', _replacement, 'Replace with'),
+                    ),
+                    const SizedBox(width: 6),
+                    // Shown in read-only mode too, as in Kotlin, but disabled there: a button that
+                    // is enabled and does nothing is worse than one that says it cannot.
+                    TextButton(
+                      key: const ValueKey('codeEditor.replace'),
+                      onPressed: !widget.readOnly && count > 0 ? _replaceCurrent : null,
+                      child: const Text('Replace', style: TextStyle(fontSize: 12)),
+                    ),
+                    TextButton(
+                      key: const ValueKey('codeEditor.replaceAll'),
+                      onPressed: !widget.readOnly && count > 0 ? _replaceAll : null,
+                      child: const Text('All', style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ),
+                Row(
+                  spacing: 6,
+                  children: [
                     FilterChip(
-                      label: const Text('Aa'),
+                      label: const Text('Aa', style: TextStyle(fontSize: 11)),
                       selected: _caseSensitive,
                       onSelected: (value) => setState(() => _caseSensitive = value),
                     ),
-                    const SizedBox(width: 6),
                     FilterChip(
-                      label: const Text('.*'),
+                      label: const Text('.*', style: TextStyle(fontSize: 11)),
                       selected: _regex,
                       onSelected: (value) => setState(() => _regex = value),
                     ),
                     if (_patternError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Text(
-                          _patternError!,
-                          style: const TextStyle(color: OmniColors.red, fontSize: 11),
-                        ),
+                      Text(
+                        _patternError!,
+                        style: const TextStyle(color: OmniColors.red, fontSize: 11),
                       ),
                   ],
                 ),

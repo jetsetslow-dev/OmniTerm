@@ -550,10 +550,8 @@ Future<void> _exerciseTerminals(
                 'tail=${text.substring(text.length > 1600 ? text.length - 1600 : 0)}';
           },
         );
+        // Kotlin's long press opens the copy window itself, on the visible screen.
         await tester.longPress(find.byType(TerminalSurface).first);
-        await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.visible')));
-        expectTerminalOptionsReady(tester);
-        await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
         await _waitForPopup(tester, find.byKey(const ValueKey('transcript.toggleRange')));
         await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
         await _waitFor(
@@ -584,6 +582,7 @@ Future<void> _exerciseTerminals(
         // Exercise the runtime controls on the actual Android terminal, retaining saved defaults.
         await tester.tap(find.byKey(const ValueKey('shell.options')));
         await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.cancel')));
+        expectTerminalOptionsReady(tester);
         final optionsContext = tester.element(find.byKey(const ValueKey('shell.surface')).first);
         final shell = optionsContext.read<ShellState>();
         final savedSwipe = optionsContext.read<AppState>().preferences.smartSwipeInput;

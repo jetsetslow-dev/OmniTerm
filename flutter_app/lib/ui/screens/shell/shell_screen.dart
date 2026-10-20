@@ -22,6 +22,7 @@ import '../../view_model/shell_view_model.dart';
 import '../../widgets/terminal_key_bar.dart';
 import '../../widgets/terminal_surface.dart';
 import '../../widgets/terminal_options_dialog.dart';
+import '../../widgets/terminal_transcript_sheet.dart';
 import '../../widgets/host_selector_bar.dart';
 import '../../widgets/popup_scroll_behavior.dart';
 import '../../widgets/omni_components.dart';
@@ -1922,9 +1923,10 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                       focused: _imeFocus.hasFocus,
                       onGridChanged: widget.vm.rememberGrid,
                       onLongPressFocus: () => widget.vm.focusPane(session.id),
-                      onOpenOptions: () async {
-                        if (!session.readOnly) _imeFocus.requestFocus();
-                        await openTerminalOptions(context, widget.vm, session);
+                      // Kotlin's copy window hands focus and the keyboard back on dismiss, unless
+                      // the session is read-only.
+                      onOpenTranscript: () async {
+                        await openTerminalTranscript(context, session);
                         if (mounted &&
                             identical(widget.vm.current, session) &&
                             session.isOpen &&

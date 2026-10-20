@@ -1390,11 +1390,13 @@ void main() {
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
-      await tester.pumpAndSettle();
-      expect(find.byType(BottomSheet), findsOneWidget, reason: 'the copy sheet is open');
+      expect(
+        find.byKey(const ValueKey('transcript.title')),
+        findsOneWidget,
+        reason: 'the copy window is open',
+      );
 
-      Navigator.of(tester.element(find.byType(BottomSheet))).pop();
+      Navigator.of(tester.element(find.byKey(const ValueKey('transcript.title')))).pop();
       await tester.pumpAndSettle();
 
       expect(keyboardIsUp(tester), isTrue);
@@ -1408,9 +1410,7 @@ void main() {
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
-      await tester.pumpAndSettle();
-      Navigator.of(tester.element(find.byType(BottomSheet))).pop();
+      Navigator.of(tester.element(find.byKey(const ValueKey('transcript.title')))).pop();
       await tester.pumpAndSettle();
 
       expect(keyboardIsUp(tester), isFalse);
@@ -1674,8 +1674,6 @@ void main() {
         await tester.pumpAndSettle();
         await tester.longPress(find.byKey(const ValueKey('shell.surface')));
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
-        await tester.pumpAndSettle();
         String shown() =>
             tester.widget<SelectableText>(find.byKey(const ValueKey('transcript.text'))).data!;
         expect(shown(), contains('${own}_LINE_199'));
@@ -1704,8 +1702,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 30));
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
 
       final text = tester
@@ -1739,8 +1735,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 30));
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
 
       String shown() =>
@@ -1776,53 +1770,26 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('the scrollback can be cleared, after confirming', (tester) async {
-      // Defect 69. TerminalEmulator.clearScrollback() existed but its only caller was the DECSTR
-      // escape handler, so there was no way for a user to drop buffered output at all — and with a
-      // persistent tmux session, ending the session does not drop it either.
+    testWidgets('a long press opens Kotlin\'s copy window, not the terminal options', (
+      tester,
+    ) async {
+      // Kotlin's long press opens the copy window on the visible screen; clearing the scrollback
+      // lives in the terminal options (OPT), not here.
       await repo.insertServer(server(name: 'nas'));
       await pump(tester);
       await connect(tester);
 
-      for (var i = 0; i < 200; i++) {
-        transport.opened.single.emit('line $i\r\n');
-      }
-      await tester.pump(const Duration(milliseconds: 30));
-
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
-      await tester.pumpAndSettle();
 
-      String shown() =>
-          tester.widget<SelectableText>(find.byKey(const ValueKey('transcript.text'))).data!;
-      expect(shown(), contains('line 0'));
-
-      // Cancelling keeps the buffer: this is not recoverable, so it must not happen by mistake.
-      await tester.tap(find.byKey(const ValueKey('transcript.clearScrollback')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('transcript.clear.cancel')));
-      await tester.pumpAndSettle();
-      expect(shown(), contains('line 0'));
-
-      await tester.tap(find.byKey(const ValueKey('transcript.clearScrollback')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('transcript.clear.confirm')));
-      await tester.pumpAndSettle();
-
+      expect(find.byKey(const ValueKey('terminalOptions.visible')), findsNothing);
       expect(
-        shown(),
-        isNot(contains('line 0')),
-        reason: 'the scrollback is gone, even on the full-buffer range',
+        tester.widget<Text>(find.byKey(const ValueKey('transcript.title'))).data,
+        'Visible screen',
       );
-      expect(
-        shown(),
-        contains('line 199'),
-        reason: 'the live screen survives — only the scrollback is dropped',
-      );
-
+      expect(find.text('Drag to select, or Copy all'), findsOneWidget);
+      expect(find.text('Show full buffer'), findsOneWidget);
+      expect(find.byKey(const ValueKey('transcript.clearScrollback')), findsNothing);
       await tester.tap(find.byKey(const ValueKey('transcript.close')));
       await tester.pumpAndSettle();
       await finish(tester);
@@ -1840,8 +1807,6 @@ void main() {
       await tester.pump(const Duration(milliseconds: 30));
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
       await tester.pumpAndSettle();
@@ -1869,11 +1834,12 @@ void main() {
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
-      await tester.pumpAndSettle();
 
-      expect(find.text('Nothing has been printed yet.'), findsOneWidget);
-      final copy = tester.widget<IconButton>(find.byKey(const ValueKey('transcript.copyAll')));
+      // Kotlin's copy window wording, with Copy all disabled.
+      expect(find.text('No terminal text in this range.'), findsOneWidget);
+      final copy = tester.widget<ButtonStyleButton>(
+        find.byKey(const ValueKey('transcript.copyAll')),
+      );
       expect(copy.onPressed, isNull);
 
       await tester.tap(find.byKey(const ValueKey('transcript.close')));
@@ -2266,8 +2232,6 @@ void main() {
         matching: find.byKey(const ValueKey('shell.surface')),
       );
       await tester.longPress(inactiveSurface);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
 
       expect(vm.current!.id, other.id, reason: 'long press must focus the pane it acted on');

@@ -319,7 +319,7 @@ class TerminalSurface extends StatefulWidget {
     this.onTapCell,
     this.onScrolledBack,
     this.onLongPressFocus,
-    this.onOpenOptions,
+    this.onOpenTranscript,
     this.queryTuiActive,
     this.sendTuiPages,
   });
@@ -342,7 +342,7 @@ class TerminalSurface extends StatefulWidget {
 
   /// Focus the touched split pane before showing its transcript and copy actions.
   final VoidCallback? onLongPressFocus;
-  final VoidCallback? onOpenOptions;
+  final VoidCallback? onOpenTranscript;
 
   /// Asks whether the touched pane owns the alternate screen; regular tmux may need a side query.
   final Future<bool> Function()? queryTuiActive;
@@ -452,9 +452,11 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
                 ),
                 // A painted grid has nothing to select, which left copying output impossible. Long
                 // press opens the scrollback as selectable text instead — the Kotlin's answer too.
+                // Kotlin opens the copy window itself, on the visible screen; the terminal options
+                // are the header's OPT button.
                 onLongPress: () {
                   widget.onLongPressFocus?.call();
-                  final open = widget.onOpenOptions;
+                  final open = widget.onOpenTranscript;
                   if (open != null) {
                     open();
                   } else {
