@@ -39,8 +39,8 @@ class E2eRemoteFilesStressTest {
                 if (share.protocol.equals("WEBDAV", ignoreCase = true) &&
                     (!share.useHttps || share.port != WEB_DAV_TLS_PORT)
                 ) {
-                    // Upgrade profiles created by the earlier cleartext lab seed. Release code
-                    // intentionally refuses that insecure configuration before sending credentials.
+                    // Upgrade profiles created by the earlier cleartext lab seed: the lab's WebDAV
+                    // server listens on TLS only, so this suite exercises the HTTPS path.
                     share.copy(port = WEB_DAV_TLS_PORT, useHttps = true)
                         .also { repository.updateNetworkShare(it) }
                 } else {

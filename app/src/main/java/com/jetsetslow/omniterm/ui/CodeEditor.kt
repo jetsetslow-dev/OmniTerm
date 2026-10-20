@@ -251,7 +251,7 @@ private fun NativeLargeEditorBody(
                 onClick = { requestedWindowStart = (windowStart - LARGE_EDITOR_WINDOW_CHARS).coerceAtLeast(0) },
             ) { Text(stringResource(R.string.previous)) }
             Text(
-                "Chars ${windowStart + 1}–$windowEnd of ${field.text.length}",
+                stringResource(R.string.chars_of, windowStart + 1, windowEnd, field.text.length),
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -413,7 +413,7 @@ fun FullScreenCodeEditor(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = onClose) {
-                            Icon(Icons.Filled.Close, contentDescription = "Close editor")
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_editor))
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -519,14 +519,14 @@ private fun EditorToolbar(
         IconButton(onClick = onToggleFind, enabled = enabled) {
             Icon(
                 if (showFind) Icons.Filled.Close else Icons.Filled.Search,
-                contentDescription = if (showFind) "Hide find" else "Find / replace",
+                contentDescription = if (showFind) stringResource(R.string.hide_find) else stringResource(R.string.find_replace),
                 tint = if (showFind) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         IconButton(onClick = onToggleWrap, enabled = enabled) {
             Icon(
                 Icons.AutoMirrored.Filled.WrapText,
-                contentDescription = if (wrap) "Word wrap: on" else "Word wrap: off",
+                contentDescription = if (wrap) stringResource(R.string.word_wrap_on) else stringResource(R.string.word_wrap_off),
                 tint = if (wrap) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -580,13 +580,13 @@ private fun FindReplaceBar(
             val countLabel = if (query.isEmpty()) "" else if (matchCount == 0) "0/0" else "${currentIndex + 1}/$matchCount"
             Text(countLabel, fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
             IconButton(onClick = onPrev, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowUpward, contentDescription = "Previous match", modifier = Modifier.width(18.dp))
+                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.previous_match), modifier = Modifier.width(18.dp))
             }
             IconButton(onClick = onNext, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowDownward, contentDescription = "Next match", modifier = Modifier.width(18.dp))
+                Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.next_match), modifier = Modifier.width(18.dp))
             }
             IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "Close find")
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_find))
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {

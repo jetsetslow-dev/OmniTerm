@@ -1236,9 +1236,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
     fun attemptClearOrExit(exitBuilder: Boolean) {
         if (isDirty()) {
             confirm.ask(
-                "Discard changes?",
-                "You have unsaved changes to this stack. Discard them?",
-                confirmLabel = "Discard"
+                confirm.str(R.string.discard_changes),
+                confirm.str(R.string.you_have_unsaved_changes_to_this),
+                confirmLabel = confirm.str(R.string.discard)
             ) { clearDraft(exitBuilder) }
         } else {
             clearDraft(exitBuilder)
@@ -1284,7 +1284,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        if (ok) "Stack deployed" else "Deploy failed — stack left unchanged",
+                        if (ok) stringResource(R.string.stack_deployed) else stringResource(R.string.deploy_failed_stack_left_unchanged),
                         fontWeight = FontWeight.Bold,
                         color = if (ok) OmniColors.green else OmniColors.red,
                     )
@@ -1298,7 +1298,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 }
                 if (msg.isNotBlank()) {
                     IconButton(onClick = { copyToClipboard(msg) }) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy deploy output")
+                        Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_deploy_output))
                     }
                 }
                 TextButton(onClick = { result = null }) { Text(stringResource(R.string.dismiss)) }
@@ -1312,7 +1312,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text(stringResource(R.string.compose_builder), fontWeight = FontWeight.Bold, fontSize = 20.sp, color = OmniColors.cyan)
-                    Text(if (isExisting) "Editing existing stack" else "New stack", fontSize = 11.sp, color = OmniColors.textMuted)
+                    Text(if (isExisting) stringResource(R.string.editing_existing_stack) else stringResource(R.string.new_stack), fontSize = 11.sp, color = OmniColors.textMuted)
                 }
                 if (active != null) {
                     TextButton(onClick = { attemptClearOrExit(exitBuilder = false) }) { Text(stringResource(R.string.new_clear)) }
@@ -1353,9 +1353,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                     }
                                     i == 0 && rawMode && composeRawEditsDiffer(rawText, draft, parsedBaseline) -> {
                                         confirm.ask(
-                                            "Leave Raw YAML?",
-                                            "Raw YAML edits are not applied to the visual form. Switch back and ignore those raw edits for deploy?",
-                                            confirmLabel = "Switch",
+                                            confirm.str(R.string.leave_raw_yaml),
+                                            confirm.str(R.string.raw_yaml_edits_are_not_applied),
+                                            confirmLabel = confirm.str(R.string.switch_label),
                                         ) {
                                             rawMode = false
                                             viewModel.rememberComposeRawState(seedKey, rawText, false)
@@ -1397,7 +1397,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                     rawFullScreen = false
                                     fullScreenEditorHost.dismiss()
                                 },
-                                subtitle = "${rawText.count { it == '\n' } + 1} lines · ${rawText.length} chars",
+                                subtitle = stringResource(R.string.lines_chars, rawText.count { it == '\n' } + 1, rawText.length),
                                 dirty = false,
                                 canSave = true,
                                 saveLabel = "Done",
@@ -1407,7 +1407,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                             )
                         }
                     }) {
-                        Icon(Icons.Filled.Fullscreen, contentDescription = "Edit full screen", tint = OmniColors.cyan)
+                        Icon(Icons.Filled.Fullscreen, contentDescription = stringResource(R.string.edit_full_screen), tint = OmniColors.cyan)
                     }
                 }
                 CodeEditor(
@@ -1439,7 +1439,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text("${validationIssues.size} issue(s) before deploy", fontWeight = FontWeight.Bold, color = OmniColors.red)
+                            Text(stringResource(R.string.issue_s_before_deploy, validationIssues.size), fontWeight = FontWeight.Bold, color = OmniColors.red)
                             validationIssues.take(5).forEach {
                                 Text("• $it", fontSize = 11.sp, color = OmniColors.textPrimary)
                             }
@@ -1453,7 +1453,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 ) {
                     Icon(
                         if (previewExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (previewExpanded) "Collapse preview" else "Expand preview",
+                        contentDescription = if (previewExpanded) stringResource(R.string.collapse_preview) else stringResource(R.string.expand_preview),
                         tint = OmniColors.cyan,
                     )
                     Spacer(Modifier.width(6.dp))
@@ -1524,7 +1524,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 }
             } else if (isExisting && bothRuntimes && draft.runtime.isNotBlank()) {
                 Text(
-                    "Runtime: ${draft.runtime} (owned by this runtime; redeploys stay on it)",
+                    stringResource(R.string.runtime_owned_by_this_runtime_redeploys, draft.runtime),
                     fontSize = 11.sp, color = OmniColors.textMuted,
                 )
             }
@@ -1551,9 +1551,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                         "~/${draft.projectName.ifBlank { "stack" }}/$fileName"
                     }
                     confirm.ask(
-                        if (isExisting) "Deploy changes?" else "Deploy stack?",
-                            "Target file: $composeFilePath\n\nIt's validated first; the current file is backed up, and if the deploy fails the previous file is restored automatically.",
-                        confirmLabel = "Deploy",
+                        if (isExisting) confirm.str(R.string.deploy_changes) else confirm.str(R.string.deploy_stack),
+                            confirm.str(R.string.target_file_it_s_validated_first, composeFilePath),
+                        confirmLabel = confirm.str(R.string.deploy),
                     ) {
                         deploying = true
                         result = null
@@ -1676,7 +1676,7 @@ fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit
         }
         if (draft.services.size > LARGE_VISUAL_SERVICE_THRESHOLD) {
             Text(
-                "${draft.services.size} services · list is virtualized for responsive editing",
+                stringResource(R.string.services_list_is_virtualized_for_responsive, draft.services.size),
                 fontSize = 11.sp,
                 color = OmniColors.textMuted,
             )
@@ -1694,7 +1694,7 @@ fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit
                 }
                 item(key = "add-service") {
                     OmniButton(
-                        label = "Add service",
+                        label = stringResource(R.string.add_service),
                         color = OmniColors.green,
                         modifier = Modifier.fillMaxWidth(),
                         onClick = ::addSvc,
@@ -1711,7 +1711,7 @@ fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit
                 )
             }
             OmniButton(
-                label = "Add service",
+                label = stringResource(R.string.add_service),
                 color = OmniColors.green,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = ::addSvc,

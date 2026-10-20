@@ -1420,6 +1420,8 @@ class AppViewModel @JvmOverloads constructor(
 
     var services by mutableStateOf<List<SimService>>(emptyList()); private set
     var servicesLoading by mutableStateOf(false); private set
+    /** True when the host runs neither systemd nor OpenRC, so the tab can say why it is empty. */
+    var servicesUnsupported by mutableStateOf(false); private set
     var serviceActionFeedback by mutableStateOf<String?>(null)
 
     // A privileged action (reboot / service control) waiting on biometric/PIN confirmation before
@@ -1470,6 +1472,24 @@ class AppViewModel @JvmOverloads constructor(
     var sftpStatus by mutableStateOf<String?>(null)
     /** True while an edited file is being written + verified, so the editor can show a spinner. */
     var sftpSaving by mutableStateOf(false); private set
+
+    /**
+     * Whether dotfiles are listed. On by default, as before this toggle existed; for this session
+     * only, like the other listing toggles.
+     */
+    var showSftpHidden by mutableStateOf(true)
+        private set
+
+    fun toggleSftpHidden() {
+        showSftpHidden = !showSftpHidden
+        // Hiding a selected dotfile would leave it selected but out of sight, so a later bulk
+        // delete or move would act on something the user cannot see.
+        if (!showSftpHidden) sftpSelected.removeAll { it.startsWith(".") }
+    }
+
+    /** The rows the listing shows: [sftpEntries] without dotfiles when they are hidden. */
+    val sftpVisibleEntries: List<SftpFile>
+        get() = if (showSftpHidden) sftpEntries else sftpEntries.filterNot { it.name.startsWith(".") }
 
     /** When true, directory listings also compute the total size of each subfolder (via `du`). */
     var showSftpFolderSizes by mutableStateOf(false)
@@ -1562,8 +1582,8 @@ class AppViewModel @JvmOverloads constructor(
 
     // SPEED TEST MODULE — HTTP download throughput against a chosen URL. Self-contained (no SSH
     // host needed); complements the SSH-driven iperf option below.
-    // Named endpoints for the speed-test server dropdown. HTTPS only — the app disables cleartext
-    // traffic. The URL field stays editable, so any custom endpoint still works.
+    // Named endpoints for the speed-test server dropdown, all HTTPS. The URL field stays editable,
+    // so any custom endpoint still works.
     val speedTestServers: List<Pair<String, String>> = listOf(
         "Cloudflare — global anycast (50 MB)" to "https://speed.cloudflare.com/__down?bytes=52428800",
         "Cloudflare — global anycast (200 MB)" to "https://speed.cloudflare.com/__down?bytes=209715200",
@@ -1961,8 +1981,21 @@ class AppViewModel @JvmOverloads constructor(
 
     fun saveTmuxControlMode(enabled: Boolean) {
         tmuxControlMode = enabled
+        attachInControlModeOverride = null
         viewModelScope.launch { repository.insertSetting("tmux_control_mode", enabled.toString()) }
     }
+
+    /**
+     * The connect card's "Attach in control mode" checkbox: a choice for the next persistent session
+     * opened here, not a saved setting. It starts at the Settings default and drops back to it when
+     * that default changes.
+     */
+    private var attachInControlModeOverride by mutableStateOf<Boolean?>(null)
+    var attachInControlMode: Boolean
+        get() = attachInControlModeOverride ?: tmuxControlMode
+        set(value) {
+            attachInControlModeOverride = value.takeIf { it != tmuxControlMode }
+        }
 
     // How tapped links open: true = in-app Chrome Custom Tab (page slides over the terminal, back
     // returns straight to it); false = hand off to the external browser app. Custom Tabs fall back
@@ -2283,6 +2316,7 @@ class AppViewModel @JvmOverloads constructor(
                     linkOpenInApp = it == "true"
                 }
                 list.find { it.key == "tmux_control_mode" }?.value?.let {
+                    if (tmuxControlMode != (it == "true")) attachInControlModeOverride = null
                     tmuxControlMode = it == "true"
                 }
                 alertHistoryLimit = list.find { it.key == "alert_history_limit" }?.value
@@ -5197,7 +5231,7 @@ class AppViewModel @JvmOverloads constructor(
                 // re-attaches the SAME session (and any running command keeps going server-side),
                 // and multiple persistent shells to one host don't collide on a shared name.
                 if (usePersistence) {
-                    shellSession.controlMode = tmuxControlMode
+                    shellSession.controlMode = attachInControlMode
                     // A regular tmux attach is itself an alternate-screen TUI, so capture its
                     // repaint history. Control mode feeds the pane application's raw bytes and
                     // must retain normal terminal semantics (vim/htop alt frames are not history).
@@ -6819,7 +6853,7 @@ class AppViewModel @JvmOverloads constructor(
             } catch (error: Exception) {
                 android.widget.Toast.makeText(
                     context,
-                    "Session is still open, but background protection could not start: " +
+                    context.getString(R.string.session_is_still_open_but_background) +
                         (error.message ?: "Android refused the service"),
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
@@ -7513,14 +7547,17 @@ class AppViewModel @JvmOverloads constructor(
         servicesJob = viewModelScope.launch {
             servicesLoading = true
             try {
-                val parsed = RemoteParsers.parseServices(executeSshCommand(srv, RemoteCommands.SERVICES))
+                val output = executeSshCommand(srv, RemoteCommands.SERVICES)
+                val parsed = RemoteParsers.parseServices(output)
                 if (srv.id != selectedServerId) return@launch
                 services = parsed
+                servicesUnsupported = output.contains("---NOSYSTEMD---")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (srv.id == selectedServerId) {
                     services = emptyList()
+                    servicesUnsupported = false
                 }
             } finally {
                 if (servicesJob == coroutineContext[Job]) servicesLoading = false
@@ -10016,6 +10053,38 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** The folder "Measure size" last measured and its result; the dialog shows it until dismissed. */
+    var sftpMeasuredFolder by mutableStateOf<Pair<String, RemoteParsers.FolderSize>?>(null)
+
+    /**
+     * Measures one folder with `du`. A listing shows a folder's index size ("4.0 KB" for a folder
+     * holding 80 GB), so this answers the question people open a file browser to ask. Host only: a
+     * network share has no shell to run it on.
+     */
+    fun measureSftpFolderSize(file: SftpFile) {
+        val srv = selectedServer ?: return
+        viewModelScope.launch {
+            val operationId = "measure-${UUID.randomUUID()}"
+            LongOperationNotifications.start(getApplication(), operationId, "Measuring ${file.name}")
+            var succeeded = false
+            sftpError = null
+            try {
+                val out = executeSshCommand(srv, RemoteCommands.folderSize(joinPath(sftpPath, file.name)))
+                val size = RemoteParsers.parseFolderSize(out)
+                if (size == null) {
+                    // No number at all: the path is gone, or the host has no `du`. Saying so beats
+                    // reporting zero, which would read as "this folder is empty".
+                    sftpError = "Could not measure \"${file.name}\" — the host refused or has no `du`."
+                    return@launch
+                }
+                sftpMeasuredFolder = file.name to size
+                succeeded = true
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { sftpError = "Could not measure \"${file.name}\": ${e.message}" }
+            finally { LongOperationNotifications.finish(getApplication(), operationId, succeeded) }
+        }
+    }
+
     /** True for filenames the in-app extractor understands (zip / tar variants / 7z / rar). */
     fun isArchiveFile(name: String): Boolean {
         val l = name.lowercase()
@@ -10091,7 +10160,9 @@ class AppViewModel @JvmOverloads constructor(
 
     fun sftpSelectAll() {
         sftpSelected.clear()
-        sftpSelected.addAll(sftpEntries.map { it.name })
+        // Visible rows only: with dotfiles hidden, selecting rows the user cannot see would let a
+        // bulk delete or move act on them unseen.
+        sftpSelected.addAll(sftpVisibleEntries.map { it.name })
     }
 
     fun sftpClearSelection() = sftpSelected.clear()
@@ -11196,6 +11267,9 @@ class AppViewModel @JvmOverloads constructor(
         if (isSpeedTestRunning) return
         val url = speedTestUrl.trim()
         if (url.isBlank()) { speedTestError = "Enter a download URL."; return }
+        // HTTPS only, checked here: the network policy permits cleartext for WebDAV shares the
+        // user sets to plain HTTP, so it no longer refuses an http:// speed-test URL on its own.
+        speedTestUrlError(url)?.let { speedTestError = it; return }
         speedTestJob?.cancel()
         isSpeedTestRunning = true
         speedTestError = null
@@ -13280,4 +13354,14 @@ internal fun parseDnsResponse(data: ByteArray, length: Int): List<DnsRecord> {
         records.add(DnsRecord("Error", "ERR", "Parse error: ${e.message}", 0))
     }
     return records
+}
+
+/** Why [url] cannot be used for the download speed test, or null. HTTPS only, as in Flutter. */
+internal fun speedTestUrlError(url: String): String? {
+    val parsed = runCatching { java.net.URI(url) }.getOrNull()
+    return if (parsed == null || !parsed.scheme.equals("https", ignoreCase = true) || parsed.host.isNullOrEmpty()) {
+        "Enter a valid HTTPS download URL."
+    } else {
+        null
+    }
 }

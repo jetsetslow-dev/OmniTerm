@@ -107,8 +107,8 @@ fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(stringResource(R.string.fleet_2), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, letterSpacing = 1.sp)
-                Text("Avg Score: ${if (avgScore < 0) "—" else avgScore}", fontSize = 12.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold)
-                Text("$online / $total Online", fontSize = 12.sp, color = if (critical > 0) OmniColors.red else OmniColors.green)
+                Text(stringResource(R.string.avg_score, if (avgScore < 0) "—" else avgScore), fontSize = 12.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.online_2, online, total), fontSize = 12.sp, color = if (critical > 0) OmniColors.red else OmniColors.green)
             }
             RefreshCountdown(viewModel.lastTelemetryStartMs, viewModel.telemetryIntervalMs, size = 16.dp, color = OmniColors.green)
         }
@@ -133,10 +133,10 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 val critical = srvList.count { it.status == "online" && viewModel.currentHealthScore(it) in 0..49 }
                 val avgScore = srvList.map { viewModel.currentHealthScore(it) }.filter { it >= 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: -1
 
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$total", label = "Hosts") }
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = "Online", color = OmniColors.green) }
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$critical", label = "Critical", color = if (critical > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant) }
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = if (avgScore < 0) "—" else "$avgScore", label = "Avg Score", color = OmniColors.cyan) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$total", label = stringResource(R.string.hosts)) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = stringResource(R.string.online_3), color = OmniColors.green) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$critical", label = stringResource(R.string.critical), color = if (critical > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = if (avgScore < 0) "—" else "$avgScore", label = stringResource(R.string.avg_score_2), color = OmniColors.cyan) }
             }
         }
 
@@ -177,7 +177,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                             points = viewModel.fetchCachedSparkline(s.id),
                             timestamps = viewModel.fetchCachedSparklineTimestamps(s.id),
                             color = accentColor,
-                            label = "CPU",
+                            label = stringResource(R.string.cpu_2),
                             unit = "%",
                         )
 
@@ -307,7 +307,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         if (targets.isEmpty()) return
         val danger = fleetCommandDangerWarning(cmd)
         confirm.ask(
-            title = "Run on ${targets.size} host${if (targets.size == 1) "" else "s"}?",
+            title = confirm.str(R.string.run_on_host, targets.size, if (targets.size == 1) "" else "s"),
             message = buildString {
                 appendLine("$ $cmd")
                 appendLine()
@@ -317,7 +317,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     append("⚠ $danger")
                 }
             }.trimEnd(),
-            confirmLabel = "Run",
+            confirmLabel = confirm.str(R.string.run),
             destructive = danger != null,
         ) {
             viewModel.runFleetBroadcast(cmd, targets.map { it.id })
@@ -333,7 +333,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.broadcast_controls), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
-                    "$selectedTargetCount target(s) · ${if (viewModel.broadcastCommandText.isBlank()) "no command" else viewModel.broadcastCommandText}",
+                    stringResource(R.string.target_s, selectedTargetCount, if (viewModel.broadcastCommandText.isBlank()) "no command" else viewModel.broadcastCommandText),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -343,7 +343,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             IconButton(onClick = { controlsExpanded = !controlsExpanded }) {
                 Icon(
                     if (controlsExpanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (controlsExpanded) "Collapse controls" else "Expand controls",
+                    contentDescription = if (controlsExpanded) stringResource(R.string.collapse_controls) else stringResource(R.string.expand_controls),
                 )
             }
         }
@@ -356,7 +356,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             OutlinedTextField(
                 value = viewModel.broadcastCommandText,
                 onValueChange = { viewModel.broadcastCommandText = it },
-                label = { Text("Command") },
+                label = { Text(stringResource(R.string.command)) },
                 placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
                 prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
                 textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
@@ -366,7 +366,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 colors = omniTextFieldColors()
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Command presets", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -390,7 +390,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 ) {
                     Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Save command")
+                    Text(stringResource(R.string.save_command))
                 }
             }
 
@@ -457,7 +457,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                 Icon(
                                     if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = if (expanded) "Collapse output" else "Expand output",
+                                    contentDescription = if (expanded) stringResource(R.string.collapse_output) else stringResource(R.string.expand_output),
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(item.serverName, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.primary)
@@ -525,7 +525,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     )
                     if (filteredPresets.isEmpty()) {
                         Text(
-                            if (commandPresets.isEmpty()) "No fleet presets saved yet." else "No presets match your search.",
+                            if (commandPresets.isEmpty()) stringResource(R.string.no_fleet_presets_saved_yet) else stringResource(R.string.no_presets_match_your_search),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -569,7 +569,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     if (showPresetEditor) {
         SharedScriptEditorDialog(
             existing = null,
-            title = "Save script",
+            title = stringResource(R.string.save_script),
             initialCommand = viewModel.broadcastCommandText,
             initialCategory = "Fleet",
             defaultAvailableForQuick = false,
@@ -647,7 +647,7 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
             horizontalArrangement = Arrangement.End,
         ) {
             Text(
-                if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) "All Online" else "All Groups",
+                if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) stringResource(R.string.all_online) else stringResource(R.string.all_groups),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
@@ -677,7 +677,7 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
             // A dialog picker instead of a horizontal chip strip: with more than a few hosts the
             // strip hides most of the fleet offscreen, so selection state becomes invisible.
             HostPickerField(
-                label = "Target hosts",
+                label = stringResource(R.string.target_hosts),
                 servers = srvList,
                 selectedIds = viewModel.broadcastTargetServerIds.toSet(),
                 onToggle = { id ->
@@ -795,7 +795,7 @@ fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.select_hosts_then_tap_fetch_logs), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         HostPickerField(
-            label = "Log hosts",
+            label = stringResource(R.string.log_hosts),
             servers = srvList,
             selectedIds = viewModel.fleetLogSelectedServerIds.toSet(),
             onToggle = { viewModel.toggleFleetLogServer(it) },
@@ -812,7 +812,7 @@ fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 color = OmniColors.cyan,
             )
             if (viewModel.fleetLogs.isNotEmpty()) {
-                Text("${viewModel.fleetLogs.size} entries", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.entries, viewModel.fleetLogs.size), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         val logs = viewModel.fleetLogs

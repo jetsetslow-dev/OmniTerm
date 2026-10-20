@@ -232,9 +232,9 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                         },
                         onDelete = {
                             confirm.ask(
-                                "Delete \"${share.name}\"?",
-                                "Removes this saved share profile. Files on the share are not touched.",
-                                confirmLabel = "Delete",
+                                confirm.str(R.string.delete_3, share.name),
+                                confirm.str(R.string.removes_this_saved_share_profile_files),
+                                confirmLabel = confirm.str(R.string.delete),
                             ) { viewModel.deleteNetworkShare(share) }
                         },
                     )
@@ -314,7 +314,7 @@ private fun NetworkShareScanDialog(
                     } else {
                         Icon(Icons.Filled.Search, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(if (hits.isEmpty()) "Scan LAN shares" else "Rescan LAN shares", fontSize = 12.sp)
+                        Text(if (hits.isEmpty()) stringResource(R.string.scan_lan_shares) else stringResource(R.string.rescan_lan_shares), fontSize = 12.sp)
                     }
                 }
                 // Protocol noise filter: e.g. drop WebDAV on networks where every printer
@@ -388,7 +388,7 @@ private fun NetworkShareScanHitRow(
             }
         }
         TextButton(onClick = onClick) {
-            Text(if (hit.protocol in setOf("SMB", "SFTP")) "Configure" else "Save")
+            Text(if (hit.protocol in setOf("SMB", "SFTP")) stringResource(R.string.configure) else stringResource(R.string.save))
         }
     }
 }
@@ -459,18 +459,18 @@ private fun NetworkShareCard(
                     IconButton(onClick = onBrowse, enabled = browsable) {
                         Icon(
                             Icons.Filled.FolderOpen,
-                            contentDescription = if (browsable) "Browse files" else "Browsing not supported for ${share.protocol}",
+                            contentDescription = if (browsable) stringResource(R.string.browse_files) else stringResource(R.string.browsing_not_supported_for, share.protocol),
                             tint = if (browsable) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                         )
                     }
                     IconButton(onClick = onTest) {
-                        Icon(Icons.Filled.NetworkPing, contentDescription = "Test share")
+                        Icon(Icons.Filled.NetworkPing, contentDescription = stringResource(R.string.test_share))
                     }
                     IconButton(onClick = onEdit) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Edit share")
+                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit_share))
                     }
                     IconButton(onClick = onDelete) {
-                        Icon(Icons.Filled.Delete, contentDescription = "Delete share", tint = Color.Red)
+                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_share), tint = Color.Red)
                     }
                 }
             }
@@ -555,12 +555,12 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             .distinct()
         if (conflicts.isEmpty()) proceed()
         else confirm.ask(
-            "Overwrite existing file(s)?",
+            confirm.str(R.string.overwrite_existing_file_s),
             "Already in this folder and will be replaced: " +
                 conflicts.take(5).joinToString(", ") +
                 (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
                 ". This cannot be undone.",
-            confirmLabel = "Overwrite",
+            confirmLabel = confirm.str(R.string.overwrite),
         ) { proceed() }
     }
 
@@ -591,9 +591,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             title = { Text(stringResource(R.string.large_download_selection)) },
             text = {
                 Text(
-                    "You selected ${selectedShareFileNames.size} file(s), about ${formatBytes(selectedShareBytes)}. " +
-                        "This meets your configured large-transfer warning threshold. It downloads file-by-file into a folder without zipping. " +
-                        "For reliability on slow links, consider smaller batches.",
+                    stringResource(R.string.you_selected_file_s_about_this, selectedShareFileNames.size, formatBytes(selectedShareBytes)),
                     fontSize = 14.sp,
                 )
             },
@@ -615,9 +613,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             title = { Text(stringResource(R.string.large_upload_batch)) },
             text = {
                 Text(
-                    "You selected ${pendingLargeUploadUris.size} file(s). They will upload one at a time so failures are isolated. " +
-                        "This meets your configured large-transfer warning threshold. " +
-                        "For very large batches, smaller groups are easier to retry.",
+                    stringResource(R.string.you_selected_file_s_they_will, pendingLargeUploadUris.size),
                     fontSize = 14.sp,
                 )
             },
@@ -661,15 +657,15 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             // Selection toolbar: mirrors the SFTP Files tab (select-all, download, copy/cut, delete).
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { viewModel.shareClearSelection() }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Cancel selection")
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cancel_selection_2))
                 }
                 Text(
-                    "${viewModel.shareSelected.size} selected",
+                    stringResource(R.string.selected, viewModel.shareSelected.size),
                     fontFamily = OmniFonts.mono, fontSize = 14.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = { viewModel.shareSelectAll() }) {
-                    Icon(Icons.Filled.SelectAll, contentDescription = "Select all")
+                    Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all_2))
                 }
                 IconButton(
                     enabled = selectedShareFileNames.isNotEmpty() && !viewModel.shareTransferRunning,
@@ -680,30 +676,30 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                             downloadFolderLauncher.launch(null)
                         }
                     },
-                ) { Icon(Icons.Filled.Download, contentDescription = "Download selected files") }
+                ) { Icon(Icons.Filled.Download, contentDescription = stringResource(R.string.download_selected_files)) }
                 IconButton(onClick = { viewModel.shareClipSelection(move = false) }) {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = "Copy")
+                    Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy))
                 }
                 IconButton(onClick = { viewModel.shareClipSelection(move = true) }) {
-                    Icon(Icons.Filled.ContentCut, contentDescription = "Cut")
+                    Icon(Icons.Filled.ContentCut, contentDescription = stringResource(R.string.cut))
                 }
                 IconButton(
                     enabled = !viewModel.shareOpRunning,
                     onClick = {
                         val count = viewModel.shareSelected.size
                         confirm.ask(
-                            "Delete $count item(s)?",
-                            "Delete the selected items from the share? This cannot be undone.",
-                            confirmLabel = "Delete",
+                            confirm.str(R.string.delete_item_s, count),
+                            confirm.str(R.string.delete_the_selected_items_from_the),
+                            confirmLabel = confirm.str(R.string.delete),
                         ) { viewModel.shareDeleteSelected() }
                     },
-                ) { Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Color.Red) }
+                ) { Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete), tint = Color.Red) }
             }
         } else {
         // Header: back to the share list, identity, view/create/upload actions.
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { viewModel.closeShareBrowser() }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to share list")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back_to_share_list))
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(share.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -722,7 +718,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             }) {
                 Icon(
                     Icons.Filled.Search,
-                    contentDescription = if (viewModel.shareSearchActive) "Close search" else "Search",
+                    contentDescription = if (viewModel.shareSearchActive) stringResource(R.string.close_search) else stringResource(R.string.search),
                     tint = if (viewModel.shareSearchActive) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -731,7 +727,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                 IconButton(onClick = { sortMenuExpanded = true }) {
                     Icon(
                         Icons.AutoMirrored.Filled.Sort,
-                        contentDescription = "Sort",
+                        contentDescription = stringResource(R.string.sort),
                         tint = if (viewModel.shareSortOption != SftpSortOption.NameAsc) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -750,19 +746,19 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             IconButton(
                 onClick = { viewModel.loadShareDir(viewModel.sharePath.ifBlank { null }) },
                 enabled = !viewModel.shareLoading,
-            ) { Icon(Icons.Filled.Refresh, contentDescription = "Refresh") }
+            ) { Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh_2)) }
             IconButton(
                 enabled = viewModel.shareEntries.isNotEmpty(),
                 onClick = { viewModel.shareSelectAll() },
-            ) { Icon(Icons.Filled.SelectAll, contentDescription = "Select all") }
+            ) { Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all_2)) }
             IconButton(
                 onClick = { folderNameInput = ""; showCreateFolderDialog = true },
                 enabled = !viewModel.shareOpRunning && !viewModel.shareLoading,
-            ) { Icon(Icons.Filled.CreateNewFolder, contentDescription = "New folder") }
+            ) { Icon(Icons.Filled.CreateNewFolder, contentDescription = stringResource(R.string.new_folder)) }
             IconButton(
                 onClick = { uploadLauncher.launch(arrayOf("*/*")) },
                 enabled = !viewModel.shareTransferRunning,
-            ) { Icon(Icons.Filled.UploadFile, contentDescription = "Upload files from device") }
+            ) { Icon(Icons.Filled.UploadFile, contentDescription = stringResource(R.string.upload_files_from_device)) }
         }
 
         // Search bar — non-recursive filters the listing live; recursive walks the tree.
@@ -789,7 +785,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                         trailingIcon = {
                             if (viewModel.shareSearchQuery.isNotEmpty()) {
                                 IconButton(onClick = { viewModel.shareSearchQuery = "" }) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Clear query")
+                                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_query))
                                 }
                             }
                         },
@@ -819,7 +815,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                     }
                     if (viewModel.shareSearchTruncated) {
                         Text(
-                            "Showing first ${viewModel.shareSearchResults?.size ?: 0} matches — narrow the pattern.",
+                            stringResource(R.string.showing_first_matches_narrow_the_pattern, viewModel.shareSearchResults?.size ?: 0),
                             fontSize = 11.sp, color = OmniColors.amber,
                         )
                     }
@@ -831,7 +827,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
         // Path bar with Up navigation and the listing spinner.
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { viewModel.shareNavigateUp() }, enabled = !atRoot && !viewModel.shareLoading) {
-                Icon(Icons.Filled.ArrowUpward, contentDescription = "Up one folder")
+                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.up_one_folder))
             }
             Text(
                 viewModel.sharePath.ifBlank { "/" },
@@ -847,9 +843,9 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             IconButton(onClick = {
                 if (bookmarked) {
                     confirm.ask(
-                        "Remove bookmark?",
-                        "Remove the bookmark for \"$currentDir\"?",
-                        confirmLabel = "Remove",
+                        confirm.str(R.string.remove_bookmark),
+                        confirm.str(R.string.remove_the_bookmark_for, currentDir),
+                        confirmLabel = confirm.str(R.string.remove),
                     ) {
                         viewModel.removeShareBookmark(currentDir)
                         viewModel.shareStatus = "Bookmark removed"
@@ -860,7 +856,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             }) {
                 Icon(
                     if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
-                    contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark this folder",
+                    contentDescription = if (bookmarked) stringResource(R.string.remove_bookmark_2) else stringResource(R.string.bookmark_this_folder),
                     tint = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -918,7 +914,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             TransferAggregateBar(viewModel, endpointId = if (viewModel.crossPasteRunning) null else -share.id)
             viewModel.crossPasteProgress?.let { current ->
                 Text(
-                    "Copying: $current",
+                    stringResource(R.string.copying, current),
                     fontSize = 10.sp,
                     fontFamily = OmniFonts.mono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -953,14 +949,14 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator()
                         Spacer(Modifier.height(8.dp))
-                        Text("Searching $currentDir…", fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.searching, currentDir), fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
             showRecursiveResults && recursiveResults != null -> {
                 if (recursiveResults.isEmpty()) {
                     Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Text("No matches under $currentDir", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.no_matches_under, currentDir), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     OverflowLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -984,7 +980,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                                             fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 13.sp,
                                         )
                                         Text(
-                                            if (hit.isDirectory) "Folder · tap to open" else "File · tap to open its folder",
+                                            if (hit.isDirectory) stringResource(R.string.folder_tap_to_open) else stringResource(R.string.file_tap_to_open_its_folder),
                                             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
@@ -997,7 +993,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             showRecursiveResults -> {
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     Text(
-                        "Type a ${if (viewModel.shareSearchWildcard) "pattern" else "name"} and hit Search to scan under $currentDir",
+                        stringResource(R.string.type_a_and_hit_search_to, if (viewModel.shareSearchWildcard) "pattern" else "name", currentDir),
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp,
                     )
                 }
@@ -1010,7 +1006,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             viewModel.shareEntries.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     Text(
-                        if (viewModel.shareError != null) "Could not open this folder." else "Empty folder.",
+                        if (viewModel.shareError != null) stringResource(R.string.could_not_open_this_folder) else stringResource(R.string.empty_folder),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -1068,7 +1064,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                             }
                             if (!selectionMode) Box {
                                 IconButton(onClick = { menuForName = file.name }) {
-                                    Icon(Icons.Filled.MoreVert, contentDescription = "Actions for ${file.name}")
+                                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.actions_for, file.name))
                                 }
                                 OverflowDropdownMenu(
                                     expanded = menuForName == file.name,
@@ -1143,10 +1139,10 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                                         onClick = {
                                             menuForName = null
                                             confirm.ask(
-                                                "Delete \"${file.name}\"?",
-                                                if (file.isDirectory) "Deletes this folder on the share (must be empty on most servers). This cannot be undone."
-                                                else "Deletes this file on the share. This cannot be undone.",
-                                                confirmLabel = "Delete",
+                                                confirm.str(R.string.delete_4, file.name),
+                                                if (file.isDirectory) confirm.str(R.string.deletes_this_folder_on_the_share)
+                                                else confirm.str(R.string.deletes_this_file_on_the_share),
+                                                confirmLabel = confirm.str(R.string.delete),
                                             ) { viewModel.shareDelete(file) }
                                         },
                                     )
@@ -1188,7 +1184,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
     renameTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Rename \"${target.name}\"") },
+            title = { Text(stringResource(R.string.rename_2, target.name)) },
             text = {
                 OutlinedTextField(
                     value = renameInput,
@@ -1241,12 +1237,12 @@ private fun CrossClipboardBar(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            "${viewModel.crossClipboard.size} item(s) ready to ${if (viewModel.crossClipboardIsMove) "move" else "copy"}",
+                            stringResource(R.string.item_s_ready_to, viewModel.crossClipboard.size, if (viewModel.crossClipboardIsMove) "move" else "copy"),
                             fontSize = 12.sp,
                             fontFamily = OmniFonts.mono,
                         )
                         Text(
-                            "from ${viewModel.crossClipboard.map { it.sourceLabel }.distinct().joinToString(", ")}",
+                            stringResource(R.string.from, viewModel.crossClipboard.map { it.sourceLabel }.distinct().joinToString(", ")),
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1269,11 +1265,11 @@ private fun CrossClipboardBar(
                                     totalBytes >= viewModel.sftpLargeBatchBytesThreshold
                                 if (!large) { onPaste(); return }
                                 confirm.ask(
-                                    "Large paste",
+                                    confirm.str(R.string.large_paste),
                                     "You're pasting ${viewModel.crossClipboard.size} item(s), about ${formatBytes(totalBytes)}" +
                                         (if (hasFolders && viewModel.crossPasteRecurseFolders) " plus folder contents" else "") +
                                         ". This meets your configured large-transfer warning threshold; files stream one at a time through this device.",
-                                    confirmLabel = "Paste",
+                                    confirmLabel = confirm.str(R.string.paste),
                                     destructive = false,
                                 ) { onPaste() }
                             }
@@ -1283,12 +1279,12 @@ private fun CrossClipboardBar(
                                 .distinct()
                             if (conflicts.isEmpty()) pasteWithSizeGate()
                             else confirm.ask(
-                                "Overwrite existing item(s)?",
+                                confirm.str(R.string.overwrite_existing_item_s),
                                 "Already in this folder and will be replaced: " +
                                     conflicts.take(5).joinToString(", ") +
                                     (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
                                     ". This cannot be undone.",
-                                confirmLabel = "Overwrite",
+                                confirmLabel = confirm.str(R.string.overwrite),
                             ) { pasteWithSizeGate() }
                         }) {
                             Icon(Icons.Filled.ContentPaste, null)
@@ -1359,7 +1355,7 @@ private fun NetworkShareDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "Add network share" else "Edit network share") },
+        title = { Text(if (initial == null) stringResource(R.string.add_network_share) else stringResource(R.string.edit_network_share)) },
         text = {
             Column(
                 modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
@@ -1417,22 +1413,32 @@ private fun NetworkShareDialog(
                 }
                 OutlinedTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text(stringResource(R.string.share_path)) }, placeholder = { Text(stringResource(R.string.sharedfolder_or_exports_media)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
                 if (protocol == "WEBDAV") {
+                    // Explicit rather than inferred from the port: Basic auth over plain HTTP on a
+                    // nonstandard TLS port (Synology's 5006, say) would send the password unseen.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
+                            .clickable { useHttps = !useHttps }
                             .padding(vertical = 4.dp)
                     ) {
-                        Icon(Icons.Filled.Lock, contentDescription = null, tint = OmniColors.green)
-                        Spacer(Modifier.width(6.dp))
-                        Column {
-                            Text(stringResource(R.string.https_tls_required))
-                            Text(stringResource(R.string.cleartext_webdav_is_disabled_because_it),
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.use_https))
+                            Text(stringResource(R.string.use_https_not_inferred_from_port),
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        Spacer(Modifier.width(8.dp))
+                        Switch(checked = useHttps, onCheckedChange = null)
+                    }
+                    if (!useHttps && !anonymous) {
+                        Text(stringResource(R.string.webdav_without_https_sends_password),
+                            fontSize = 12.sp,
+                            color = OmniColors.amber,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
                 Row(
@@ -1487,7 +1493,7 @@ private fun NetworkShareDialog(
                         Text(stringResource(R.string.saving_will_create_a_reusable_credential), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = workgroup, onValueChange = { workgroup = it }, label = { Text(stringResource(R.string.workgroup_domain)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
                         OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text(stringResource(R.string.username)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
-                        OmniPasswordField(value = password, onValueChange = { password = it }, label = "Password", modifier = Modifier.fillMaxWidth())
+                        OmniPasswordField(value = password, onValueChange = { password = it }, label = stringResource(R.string.password), modifier = Modifier.fillMaxWidth())
                     }
                 }
                 OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text(stringResource(R.string.notes)) }, modifier = Modifier.fillMaxWidth(), minLines = 2, colors = omniTextFieldColors())
@@ -1517,7 +1523,7 @@ private fun NetworkShareDialog(
                         password = password,
                         authProfileId = authProfileId,
                         anonymous = anonymous,
-                        useHttps = protocol == "WEBDAV" || useHttps,
+                        useHttps = protocol == "WEBDAV" && useHttps,
                         notes = notes,
                         lastChecked = initial?.lastChecked ?: 0L,
                         lastStatus = initial?.lastStatus ?: "unknown",
@@ -1532,7 +1538,7 @@ private fun NetworkShareDialog(
 private fun shareUri(share: NetworkShareEntity): String {
     val scheme = when (share.protocol.uppercase(Locale.ROOT)) {
         "SMB" -> "smb"
-        "WEBDAV" -> "https"
+        "WEBDAV" -> if (share.useHttps) "https" else "http"
         else -> share.protocol.lowercase(Locale.ROOT)
     }
     val port = if (share.port > 0) ":${share.port}" else ""
@@ -1556,7 +1562,7 @@ private fun shareProtocolColor(protocol: String): Color = when (protocol.upperca
 @Composable
 fun SftpFilesTab(viewModel: AppViewModel) {
     val srv = viewModel.selectedServer ?: return
-    val filesList = viewModel.sftpEntries
+    val filesList = viewModel.sftpVisibleEntries
     val currentPath = viewModel.sftpPath.ifBlank { "~" }
     val selectionMode = viewModel.sftpSelectionMode
     val selectedRemoteFileNames = filesList
@@ -1592,8 +1598,8 @@ fun SftpFilesTab(viewModel: AppViewModel) {
         if (canBiometric) {
             BiometricCryptoGate.authenticate(
                 activity = activity,
-                title = "Authenticate for sudo mode",
-                subtitle = "Confirm to run SFTP operations as root",
+                title = activity.getString(R.string.authenticate_for_sudo_mode),
+                subtitle = activity.getString(R.string.confirm_to_run_sftp_operations_as),
                 onAuthenticated = {
                     viewModel.toggleSftpSudo()
                     pendingSudoAuth = false
@@ -1674,12 +1680,12 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 .distinct()
             if (conflicts.isEmpty()) proceed()
             else confirm.ask(
-                "Overwrite existing file(s)?",
+                confirm.str(R.string.overwrite_existing_file_s),
                 "Already in this folder and will be replaced: " +
                     conflicts.take(5).joinToString(", ") +
                     (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
                     ". This cannot be undone.",
-                confirmLabel = "Overwrite",
+                confirmLabel = confirm.str(R.string.overwrite),
             ) { proceed() }
         }
     }
@@ -1726,10 +1732,10 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 if (selectionMode) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                         IconButton(onClick = { viewModel.sftpClearSelection() }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Cancel selection")
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cancel_selection_2))
                         }
                         Text(
-                            "${viewModel.sftpSelected.size} selected",
+                            stringResource(R.string.selected_2, viewModel.sftpSelected.size),
                             fontFamily = OmniFonts.mono,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
@@ -1737,7 +1743,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     }
                     Row {
                         IconButton(onClick = { viewModel.sftpSelectAll() }) {
-                            Icon(Icons.Filled.SelectAll, contentDescription = "Select all")
+                            Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all_2))
                         }
                         IconButton(
                             enabled = selectedRemoteFileNames.isNotEmpty(),
@@ -1750,19 +1756,19 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 }
                             }
                         ) {
-                            Icon(Icons.Filled.Download, contentDescription = "Download selected files")
+                            Icon(Icons.Filled.Download, contentDescription = stringResource(R.string.download_selected_files))
                         }
                         IconButton(onClick = { viewModel.sftpClipSelection(move = false) }) {
-                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copy")
+                            Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy))
                         }
                         IconButton(onClick = { viewModel.sftpClipSelection(move = true) }) {
-                            Icon(Icons.Filled.ContentCut, contentDescription = "Cut")
+                            Icon(Icons.Filled.ContentCut, contentDescription = stringResource(R.string.cut))
                         }
                         // Compress selection → archive (format chosen from a small menu).
                         Box {
                             var archiveMenu by remember { mutableStateOf(false) }
                             IconButton(onClick = { archiveMenu = true }) {
-                                Icon(Icons.Filled.Archive, contentDescription = "Compress to archive")
+                                Icon(Icons.Filled.Archive, contentDescription = stringResource(R.string.compress_to_archive))
                             }
                             OverflowDropdownMenu(expanded = archiveMenu, onDismissRequest = { archiveMenu = false }) {
                                 listOf(
@@ -1783,10 +1789,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                                 viewModel.sftpArchiveSelection(fmt)
                                             } else {
                                                 confirm.ask(
-                                                    "Replace \"$target\"?",
-                                                    "A file named \"$target\" already exists in this folder and " +
-                                                        "will be overwritten. This cannot be undone.",
-                                                    confirmLabel = "Replace",
+                                                    confirm.str(R.string.replace_2, target),
+                                                    confirm.str(R.string.a_file_named_already_exists_in, target),
+                                                    confirmLabel = confirm.str(R.string.replace),
                                                 ) { viewModel.sftpArchiveSelection(fmt) }
                                             }
                                         },
@@ -1797,12 +1802,12 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         IconButton(onClick = {
                             val count = viewModel.sftpSelected.size
                             confirm.ask(
-                                "Delete $count item(s)?",
-                                "Permanently delete the selected items from the remote host? This cannot be undone.",
-                                confirmLabel = "Delete",
+                                confirm.str(R.string.delete_item_s_2, count),
+                                confirm.str(R.string.permanently_delete_the_selected_items_from),
+                                confirmLabel = confirm.str(R.string.delete),
                             ) { viewModel.sftpDeleteSelected() }
                         }) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Color.Red)
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete), tint = Color.Red)
                         }
                     }
                 } else {
@@ -1829,9 +1834,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                         RemoteCommands.resolveTypedPath(viewModel.sftpPath, pathInput)
                                             ?.let { viewModel.loadSftp(it) }
                                         editingPath = false
-                                    }) { Icon(Icons.Filled.Check, contentDescription = "Go to path", tint = OmniColors.cyan) }
+                                    }) { Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.go_to_path), tint = OmniColors.cyan) }
                                     IconButton(onClick = { editingPath = false }) {
-                                        Icon(Icons.Filled.Close, contentDescription = "Cancel path edit")
+                                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cancel_path_edit))
                                     }
                                 }
                             },
@@ -1870,7 +1875,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                     .horizontalScrollWithIndicators(pathScroll),
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Icon(Icons.Filled.Edit, contentDescription = "Edit path", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit_path), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                         }
                     }
 
@@ -1887,15 +1892,15 @@ fun SftpFilesTab(viewModel: AppViewModel) {
 
                         // ── Navigate ──
                         CompactSftpIconButton(onClick = { viewModel.sftpHome() }) {
-                            Icon(Icons.Filled.Home, contentDescription = "Go to home folder")
+                            Icon(Icons.Filled.Home, contentDescription = stringResource(R.string.go_to_home_folder))
                         }
                         if (viewModel.sftpPath.isNotEmpty() && viewModel.sftpPath != "/") {
                             CompactSftpIconButton(onClick = { viewModel.sftpUp() }) {
-                                Icon(Icons.Filled.ArrowUpward, contentDescription = "Go up")
+                                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.go_up))
                             }
                         }
                         CompactSftpIconButton(onClick = { viewModel.loadSftp(viewModel.sftpPath.ifBlank { null }) }) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Reload")
+                            Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.reload))
                         }
 
                         // ── View ──
@@ -1905,7 +1910,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         }) {
                             Icon(
                                 Icons.Filled.Search,
-                                contentDescription = if (viewModel.sftpSearchActive) "Close search" else "Search this directory",
+                                contentDescription = if (viewModel.sftpSearchActive) stringResource(R.string.close_search) else stringResource(R.string.search_this_directory),
                                 tint = if (viewModel.sftpSearchActive) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -1913,7 +1918,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             CompactSftpIconButton(onClick = { sortMenuExpanded = true }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.Sort,
-                                    contentDescription = "Sort files",
+                                    contentDescription = stringResource(R.string.sort_files),
                                     tint = if (viewModel.sftpSortOption != SftpSortOption.NameAsc) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -1937,33 +1942,42 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 }
                             }
                         }
+                        CompactSftpIconToggleButton(checked = viewModel.showSftpHidden, onCheckedChange = { viewModel.toggleSftpHidden() }) {
+                            Icon(
+                                if (viewModel.showSftpHidden) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                                contentDescription = stringResource(
+                                    if (viewModel.showSftpHidden) R.string.hide_dotfiles else R.string.show_dotfiles,
+                                ),
+                                tint = if (viewModel.showSftpHidden) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         CompactSftpIconToggleButton(checked = viewModel.showSftpFolderSizes, onCheckedChange = { viewModel.toggleSftpFolderSizes() }) {
                             Icon(
                                 Icons.Filled.Straighten,
-                                contentDescription = if (viewModel.showSftpFolderSizes) "Hide folder sizes" else "Show folder sizes",
+                                contentDescription = if (viewModel.showSftpFolderSizes) stringResource(R.string.hide_folder_sizes) else stringResource(R.string.show_folder_sizes),
                                 tint = if (viewModel.showSftpFolderSizes) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
 
                         // ── Create / transfer ──
                         CompactSftpIconButton(onClick = { showCreateFolderDialog = true }) {
-                            Icon(Icons.Filled.CreateNewFolder, contentDescription = "Create folder")
+                            Icon(Icons.Filled.CreateNewFolder, contentDescription = stringResource(R.string.create_folder))
                         }
                         CompactSftpIconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
-                            Icon(Icons.Filled.Upload, contentDescription = "Upload files")
+                            Icon(Icons.Filled.Upload, contentDescription = stringResource(R.string.upload_files))
                         }
                         CompactSftpIconButton(
-                            enabled = viewModel.sftpEntries.isNotEmpty(),
+                            enabled = viewModel.sftpVisibleEntries.isNotEmpty(),
                             onClick = { viewModel.sftpSelectAll() },
                         ) {
-                            Icon(Icons.Filled.SelectAll, contentDescription = "Select all")
+                            Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all_2))
                         }
 
                         // ── Modes ──
                         CompactSftpIconToggleButton(checked = viewModel.dualPaneEnabled, onCheckedChange = { viewModel.toggleDualPane() }) {
                             Icon(
                                 Icons.Filled.VerticalSplit,
-                                contentDescription = if (viewModel.dualPaneEnabled) "Close second pane" else "Open second pane",
+                                contentDescription = if (viewModel.dualPaneEnabled) stringResource(R.string.close_second_pane) else stringResource(R.string.open_second_pane),
                                 tint = if (viewModel.dualPaneEnabled) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -1978,7 +1992,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         }) {
                             Icon(
                                 Icons.Filled.AdminPanelSettings,
-                                contentDescription = if (viewModel.sftpSudo) "Sudo mode on" else "Sudo mode off",
+                                contentDescription = if (viewModel.sftpSudo) stringResource(R.string.sudo_mode_on) else stringResource(R.string.sudo_mode_off),
                                 tint = if (viewModel.sftpSudo) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -1990,9 +2004,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                     if (bookmarked) {
                                         val path = viewModel.sftpPath
                                         confirm.ask(
-                                            "Remove bookmark?",
-                                            "Remove the bookmark for \"$path\"?",
-                                            confirmLabel = "Remove",
+                                            confirm.str(R.string.remove_bookmark),
+                                            confirm.str(R.string.remove_the_bookmark_for_2, path),
+                                            confirmLabel = confirm.str(R.string.remove),
                                         ) {
                                             viewModel.removeSftpBookmark(path)
                                             viewModel.sftpStatus = "Bookmark removed"
@@ -2005,7 +2019,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             ) {
                                 Icon(
                                     if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
-                                    contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark this directory",
+                                    contentDescription = if (bookmarked) stringResource(R.string.remove_bookmark_2) else stringResource(R.string.bookmark_this_directory),
                                     tint = if (bookmarked) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -2040,7 +2054,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         trailingIcon = {
                             if (viewModel.sftpSearchQuery.isNotEmpty()) {
                                 IconButton(onClick = { viewModel.sftpSearchQuery = "" }) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Clear query")
+                                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_query))
                                 }
                             }
                         },
@@ -2076,7 +2090,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     }
                     if (viewModel.sftpSearchTruncated) {
                         Text(
-                            "Showing first ${viewModel.sftpSearchResults?.size ?: 0} matches — narrow the pattern for more precision.",
+                            stringResource(R.string.showing_first_matches_narrow_the_pattern_2, viewModel.sftpSearchResults?.size ?: 0),
                             fontSize = 11.sp,
                             color = OmniColors.amber,
                         )
@@ -2091,9 +2105,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 title = { Text(stringResource(R.string.large_download_selection)) },
                 text = {
                     Text(
-                        "You selected ${selectedRemoteFileNames.size} file(s), about ${formatBytes(selectedRemoteBytes)}. " +
-                            "This meets your configured large-transfer warning threshold. It downloads file-by-file into a folder without zipping. " +
-                            "For reliability on slow links, consider smaller batches.",
+                        stringResource(R.string.you_selected_file_s_about_this_2, selectedRemoteFileNames.size, formatBytes(selectedRemoteBytes)),
                         fontSize = 14.sp,
                     )
                 },
@@ -2115,9 +2127,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 title = { Text(stringResource(R.string.large_upload_batch)) },
                 text = {
                     Text(
-                        "You selected ${pendingLargeUploadUris.size} file(s). They will upload one at a time so failures are isolated. " +
-                            "This meets your configured large-transfer warning threshold. " +
-                            "For very large batches, smaller groups are easier to retry.",
+                        stringResource(R.string.you_selected_file_s_they_will_2, pendingLargeUploadUris.size),
                         fontSize = 14.sp,
                     )
                 },
@@ -2167,7 +2177,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "${viewModel.sftpClipboard.size} item(s) ready to ${if (viewModel.sftpClipboardIsMove) "move" else "copy"}",
+                            stringResource(R.string.item_s_ready_to_2, viewModel.sftpClipboard.size, if (viewModel.sftpClipboardIsMove) "move" else "copy"),
                             fontSize = 12.sp,
                             fontFamily = OmniFonts.mono,
                         )
@@ -2204,7 +2214,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
             TransferAggregateBar(viewModel, endpointId = if (viewModel.crossPasteRunning) null else srvId)
             viewModel.crossPasteProgress?.let { current ->
                 Text(
-                    "Copying: $current",
+                    stringResource(R.string.copying_2, current),
                     fontSize = 10.sp,
                     fontFamily = OmniFonts.mono,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2267,13 +2277,13 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Searching $currentPath…", fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.searching_2, currentPath), fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else if (showRecursiveResults && searchResults != null) {
             if (searchResults.isEmpty()) {
                 Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text("No matches under $currentPath", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_matches_under_2, currentPath), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 OverflowLazyColumn(
@@ -2309,7 +2319,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                         fontSize = 13.sp,
                                     )
                                     Text(
-                                        if (hit.isDirectory) "Folder · tap to open" else "File · tap to open its folder",
+                                        if (hit.isDirectory) stringResource(R.string.folder_tap_to_open) else stringResource(R.string.file_tap_to_open_its_folder),
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -2322,7 +2332,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
         } else if (showRecursiveResults) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text(
-                    "Type a ${if (viewModel.sftpSearchWildcard) "pattern" else "name"} and hit Search to scan under $currentPath",
+                    stringResource(R.string.type_a_and_hit_search_to_2, if (viewModel.sftpSearchWildcard) "pattern" else "name", currentPath),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp,
                 )
@@ -2398,7 +2408,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
 
                             if (!selectionMode) {
                                 IconButton(onClick = { selectedFileForOption = file }) {
-                                    Icon(Icons.Filled.MoreVert, contentDescription = "File options")
+                                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.file_options))
                                 }
                             }
                         }
@@ -2423,6 +2433,31 @@ fun SftpFilesTab(viewModel: AppViewModel) {
             SftpSecondPane(
                 viewModel, confirm,
                 modifier = if (columnHeightPx > 0f) Modifier.height(paneBHeight) else Modifier.weight(1f),
+            )
+        }
+
+        viewModel.sftpMeasuredFolder?.let { (name, size) ->
+            AlertDialog(
+                onDismissRequest = { viewModel.sftpMeasuredFolder = null },
+                title = { Text(name) },
+                text = {
+                    Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState())) {
+                        Text(stringResource(R.string.size_on_disk, size.size), fontFamily = OmniFonts.mono)
+                        if (!size.complete) {
+                            Spacer(Modifier.height(8.dp))
+                            // `du` that could not read part of the tree still prints a total; shown
+                            // alone it would be a confident wrong number about something larger.
+                            Text(
+                                stringResource(R.string.size_on_disk_partial),
+                                fontSize = 12.sp,
+                                color = OmniColors.amber,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.sftpMeasuredFolder = null }) { Text(stringResource(R.string.close)) }
+                },
             )
         }
 
@@ -2490,11 +2525,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                         // replaces same-named files. The archive's contents aren't
                                         // known without listing it, so warn about the risk itself.
                                         confirm.ask(
-                                            "Extract here?",
-                                            "Unpacks \"${file.name}\" into this folder. Existing files with " +
-                                                "the same names as entries in the archive will be overwritten. " +
-                                                "This cannot be undone.",
-                                            confirmLabel = "Extract",
+                                            confirm.str(R.string.extract_here_2),
+                                            confirm.str(R.string.unpacks_into_this_folder_existing_files, file.name),
+                                            confirmLabel = confirm.str(R.string.extract),
                                         ) { viewModel.sftpExtractArchive(file) }
                                     }
                                 ) {
@@ -2515,6 +2548,17 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 Icon(Icons.Filled.BookmarkAdd, null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(stringResource(R.string.bookmark_directory))
+                            }
+                            // A listing shows a folder's index size, not what is inside it.
+                            TextButton(
+                                onClick = {
+                                    selectedFileForOption = null
+                                    viewModel.measureSftpFolderSize(file)
+                                }
+                            ) {
+                                Icon(Icons.Filled.Straighten, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.measure_size))
                             }
                         }
                         TextButton(
@@ -2538,10 +2582,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                     viewModel.sftpArchiveSelection("tar.gz", only = file)
                                 } else {
                                     confirm.ask(
-                                        "Replace \"$target\"?",
-                                        "A file named \"$target\" already exists in this folder and will " +
-                                            "be overwritten. This cannot be undone.",
-                                        confirmLabel = "Replace",
+                                        confirm.str(R.string.replace_3, target),
+                                        confirm.str(R.string.a_file_named_already_exists_in_2, target),
+                                        confirmLabel = confirm.str(R.string.replace),
                                     ) { viewModel.sftpArchiveSelection("tar.gz", only = file) }
                                 }
                             }
@@ -2560,7 +2603,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.ContentCopy, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Copy ${if (file.isDirectory) "folder" else "file"} path")
+                            Text(stringResource(R.string.copy_path_2, if (file.isDirectory) "folder" else "file"))
                         }
                         TextButton(
                             onClick = {
@@ -2590,12 +2633,12 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             onClick = {
                                 selectedFileForOption = null
                                 confirm.ask(
-                                    "Delete ${file.name}?",
+                                    confirm.str(R.string.delete_5, file.name),
                                     if (file.isDirectory)
-                                        "Permanently delete this directory and its contents from the remote host? This cannot be undone."
+                                        confirm.str(R.string.permanently_delete_this_directory_and_its)
                                     else
-                                        "Permanently delete this file from the remote host? This cannot be undone.",
-                                    confirmLabel = "Delete",
+                                        confirm.str(R.string.permanently_delete_this_file_from_the),
+                                    confirmLabel = confirm.str(R.string.delete),
                                 ) { viewModel.sftpDelete(file) }
                             }
                         ) {
@@ -2739,9 +2782,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                     viewModel.sftpEntries.any { it.name == newName }
                                 if (!clobbers) viewModel.sftpRename(renameFile, newName)
                                 else confirm.ask(
-                                    "Overwrite \"$newName\"?",
-                                    "\"$newName\" already exists in this folder and will be replaced by the rename. This cannot be undone.",
-                                    confirmLabel = "Overwrite",
+                                    confirm.str(R.string.overwrite_2, newName),
+                                    confirm.str(R.string.already_exists_in_this_folder_and, newName),
+                                    confirmLabel = confirm.str(R.string.overwrite),
                                 ) { viewModel.sftpRename(renameFile, newName) }
                             }
                         }
@@ -2814,10 +2857,10 @@ private fun SftpSecondPane(viewModel: AppViewModel, confirm: ConfirmController, 
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { viewModel.paneBNavigateUp() }, enabled = viewModel.paneBPath.trim('/').isNotEmpty()) {
-                Icon(Icons.Filled.ArrowUpward, contentDescription = "Up one folder")
+                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.up_one_folder))
             }
             IconButton(onClick = { viewModel.loadPaneB(viewModel.paneBPath.ifBlank { null }) }) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh_2))
             }
         }
         Text(
@@ -2860,7 +2903,7 @@ private fun SftpSecondPane(viewModel: AppViewModel, confirm: ConfirmController, 
                         if (!file.isDirectory) Text(formatBytes(file.size), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Box {
                             IconButton(onClick = { menu = true }, modifier = Modifier.size(30.dp)) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = "Actions", modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.actions), modifier = Modifier.size(16.dp))
                             }
                             OverflowDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(
@@ -3024,7 +3067,7 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
                                 )
                                 if (item.status == SftpTransferStatus.InProgress) {
                                     IconButton(onClick = { viewModel.cancelSftpTransfer(item.id) }, modifier = Modifier.size(28.dp)) {
-                                        Icon(Icons.Filled.Close, contentDescription = "Cancel transfer", tint = OmniColors.amber, modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cancel_transfer), tint = OmniColors.amber, modifier = Modifier.size(16.dp))
                                     }
                                 }
                             }
@@ -3044,7 +3087,7 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
                             }
                             if (item.retryable) {
                                 Spacer(Modifier.height(8.dp))
-                                OmniButton("Retry", onClick = { viewModel.retrySftpTransfer(item) }, small = true, color = OmniColors.amber)
+                                OmniButton(stringResource(R.string.retry), onClick = { viewModel.retrySftpTransfer(item) }, small = true, color = OmniColors.amber)
                             }
                         }
                     }
@@ -3104,9 +3147,9 @@ fun SftpFileEditor(
     fun attemptDismiss() {
         if (dirty) {
             confirm.ask(
-                "Discard changes?",
-                "You have unsaved edits to ${file.name}. Discard them?",
-                confirmLabel = "Discard",
+                confirm.str(R.string.discard_changes),
+                confirm.str(R.string.you_have_unsaved_edits_to_discard, file.name),
+                confirmLabel = confirm.str(R.string.discard),
             ) { onDismiss() }
         } else onDismiss()
     }
@@ -3117,7 +3160,7 @@ fun SftpFileEditor(
         onValueChange = { buffer = it },
         onClose = { attemptDismiss() },
         onSave = { onSave(buffer) },
-        subtitle = "$lineCount lines · ${buffer.length} chars" +
+        subtitle = stringResource(R.string.lines_chars_2, lineCount, buffer.length) +
             (if (!editMode) " · read-only" else "") + (if (sudo) " · sudo" else ""),
         subtitleColor = if (sudo) OmniColors.red else null,
         dirty = dirty,
@@ -3133,7 +3176,7 @@ fun SftpFileEditor(
                 IconToggleButton(checked = editMode, onCheckedChange = { editMode = it }) {
                     Icon(
                         if (editMode) Icons.Filled.Edit else Icons.Filled.EditOff,
-                        contentDescription = if (editMode) "Edit mode: on" else "Edit mode: off (read-only)",
+                        contentDescription = if (editMode) stringResource(R.string.edit_mode_on) else stringResource(R.string.edit_mode_off_read_only),
                         tint = if (editMode) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -3141,7 +3184,7 @@ fun SftpFileEditor(
                     IconToggleButton(checked = sudo, onCheckedChange = { onToggleSudo() }) {
                         Icon(
                             Icons.Filled.AdminPanelSettings,
-                            contentDescription = if (sudo) "Save as root: on" else "Save as root: off",
+                            contentDescription = if (sudo) stringResource(R.string.save_as_root_on) else stringResource(R.string.save_as_root_off),
                             tint = if (sudo) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -3256,17 +3299,17 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                             )
                         }
                         IconButton(onClick = { editor = BookmarkEditorState(prefill = bmk, replacing = bmk) }) {
-                            Icon(Icons.Filled.Edit, contentDescription = "Edit bookmark", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit_bookmark), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = { editor = BookmarkEditorState(prefill = bmk, replacing = null) }) {
-                            Icon(Icons.Filled.ContentCopy, contentDescription = "Clone bookmark", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.clone_bookmark), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = {
-                            confirm.ask("Remove bookmark?", "Remove ${bmk.path} on ${bmk.endpointName}?", confirmLabel = "Remove") {
+                            confirm.ask(confirm.str(R.string.remove_bookmark), confirm.str(R.string.remove_on, bmk.path, bmk.endpointName), confirmLabel = confirm.str(R.string.remove)) {
                                 viewModel.removeEndpointBookmark(bmk)
                             }
                         }) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Delete bookmark", tint = Color.Red)
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_bookmark), tint = Color.Red)
                         }
                     }
                 }
@@ -3398,21 +3441,19 @@ fun PasteConflictDialog(viewModel: AppViewModel) {
 
     AlertDialog(
         onDismissRequest = { viewModel.cancelPasteConflicts() },
-        title = { Text("${conflicts.size} item(s) already exist") },
+        title = { Text(stringResource(R.string.item_s_already_exist, conflicts.size)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (viewModel.pasteConflictUnverified) {
                     // Never imply a comparison happened when it could not.
                     Text(
-                        "This host has no checksum tool (sha256sum/shasum/md5sum/cksum), so items " +
-                            "marked \"Not verified\" could NOT be compared by content. They may or " +
-                            "may not differ — matching sizes and dates do not prove files are the same.",
+                        stringResource(R.string.this_host_has_no_checksum_tool),
                         fontSize = 11.sp,
                         color = OmniColors.amber,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Apply to all:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.apply_to_all), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     ConflictAction.entries.forEach { act ->
                         TextButton(
                             onClick = { viewModel.setAllPasteConflictActions(act) },

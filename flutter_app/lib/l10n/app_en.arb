@@ -1,5 +1,23 @@
 {
   "@@locale": "en",
+  "aFileNamedAlreadyExistsIn": "A file named \"{a1}\" already exists in this folder and will be overwritten. This cannot be undone.",
+  "@aFileNamedAlreadyExistsIn": {
+    "description": "Android R.string.a_file_named_already_exists_in",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "aFileNamedAlreadyExistsIn2": "A file named \"{a1}\" already exists in this folder and will be overwritten. This cannot be undone.",
+  "@aFileNamedAlreadyExistsIn2": {
+    "description": "Android R.string.a_file_named_already_exists_in_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "aNewCredentialsProfileWillBe": "A new credentials profile will be built for this connection automatically.",
   "@aNewCredentialsProfileWillBe": {
     "description": "Android R.string.a_new_credentials_profile_will_be"
@@ -7,6 +25,10 @@
   "aNewSshHostKeyWas": "A new SSH host key was presented for:",
   "@aNewSshHostKeyWas": {
     "description": "Android R.string.a_new_ssh_host_key_was"
+  },
+  "aPasswordIsSavedNeverShown": "A password is saved (never shown here). Leave blank to keep it, or type to replace.",
+  "@aPasswordIsSavedNeverShown": {
+    "description": "Android R.string.a_password_is_saved_never_shown"
   },
   "aa": "Aa",
   "@aa": {
@@ -27,6 +49,41 @@
   "acknowledgeAll": "ACKNOWLEDGE ALL",
   "@acknowledgeAll": {
     "description": "Android R.string.acknowledge_all"
+  },
+  "acknowledged": "ACKNOWLEDGED",
+  "@acknowledged": {
+    "description": "Android R.string.acknowledged"
+  },
+  "acknowledgedIncidentSHiddenUntilRecovery": "{a1} acknowledged incident(s) hidden until recovery.",
+  "@acknowledgedIncidentSHiddenUntilRecovery": {
+    "description": "Android R.string.acknowledged_incident_s_hidden_until_recovery",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "actions": "Actions",
+  "@actions": {
+    "description": "Android R.string.actions"
+  },
+  "actionsFor": "Actions for {a1}",
+  "@actionsFor": {
+    "description": "Android R.string.actions_for",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "active": "Active ({a1})",
+  "@active": {
+    "description": "Android R.string.active",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "activeAlerts": "Active alerts",
   "@activeAlerts": {
@@ -52,21 +109,61 @@
   "@add": {
     "description": "Android R.string.add"
   },
+  "addAlertRuleTrigger": "Add Alert Rule Trigger",
+  "@addAlertRuleTrigger": {
+    "description": "Android R.string.add_alert_rule_trigger"
+  },
   "addAnSshHostFirst": "Add an SSH host first.",
   "@addAnSshHostFirst": {
     "description": "Android R.string.add_an_ssh_host_first"
+  },
+  "addAsOmnitermHost": "Add as OmniTerm host",
+  "@addAsOmnitermHost": {
+    "description": "Android R.string.add_as_omniterm_host"
+  },
+  "addAsWakeOnLanTarget": "Add as Wake-on-LAN target",
+  "@addAsWakeOnLanTarget": {
+    "description": "Android R.string.add_as_wake_on_lan_target"
   },
   "addAuthenticationSource": "Add Authentication Source",
   "@addAuthenticationSource": {
     "description": "Android R.string.add_authentication_source"
   },
+  "addConfiguration": "Add configuration",
+  "@addConfiguration": {
+    "description": "Android R.string.add_configuration"
+  },
+  "addCronSchedule": "Add cron schedule",
+  "@addCronSchedule": {
+    "description": "Android R.string.add_cron_schedule"
+  },
   "addHostServer": "Add Host Server",
   "@addHostServer": {
     "description": "Android R.string.add_host_server"
   },
+  "addLinuxRemoteHost": "Add Linux Remote Host",
+  "@addLinuxRemoteHost": {
+    "description": "Android R.string.add_linux_remote_host"
+  },
   "addNetwork": "Add network",
   "@addNetwork": {
     "description": "Android R.string.add_network"
+  },
+  "addNetworkShare": "Add network share",
+  "@addNetworkShare": {
+    "description": "Android R.string.add_network_share"
+  },
+  "addScript": "Add script",
+  "@addScript": {
+    "description": "Android R.string.add_script"
+  },
+  "addServer": "Add server",
+  "@addServer": {
+    "description": "Android R.string.add_server"
+  },
+  "addService": "Add service",
+  "@addService": {
+    "description": "Android R.string.add_service"
   },
   "addTarget": "Add target",
   "@addTarget": {
@@ -88,6 +185,10 @@
   "@alertRulesAndHistoryIncludeServers": {
     "description": "Android R.string.alert_rules_and_history_include_servers"
   },
+  "alertsCenter": "Alerts Center",
+  "@alertsCenter": {
+    "description": "Android R.string.alerts_center"
+  },
   "all": "All",
   "@all": {
     "description": "Android R.string.all"
@@ -96,13 +197,39 @@
   "@allFileOperationsWillRunAs": {
     "description": "Android R.string.all_file_operations_will_run_as"
   },
+  "allGroups": "All Groups",
+  "@allGroups": {
+    "description": "Android R.string.all_groups"
+  },
   "allMetricsWithinHealthyThresholdsNo": "All metrics within healthy thresholds. No deductions (start 100).",
   "@allMetricsWithinHealthyThresholdsNo": {
     "description": "Android R.string.all_metrics_within_healthy_thresholds_no"
   },
+  "allOnline": "All Online",
+  "@allOnline": {
+    "description": "Android R.string.all_online"
+  },
   "allowNearbyDevices": "Allow nearby devices",
   "@allowNearbyDevices": {
     "description": "Android R.string.allow_nearby_devices"
+  },
+  "alreadyExistsInThisFolderAnd": "\"{a1}\" already exists in this folder and will be replaced by the rename. This cannot be undone.",
+  "@alreadyExistsInThisFolderAnd": {
+    "description": "Android R.string.already_exists_in_this_folder_and",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "alreadySavedAs": "Already saved as \"{a1}\".",
+  "@alreadySavedAs": {
+    "description": "Android R.string.already_saved_as",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "alsoRemovesContainersForServicesNo": "Also removes containers for services no longer defined in the compose file. Use with care.",
   "@alsoRemovesContainersForServicesNo": {
@@ -124,13 +251,29 @@
   "@appliesToNewTerminalSessionsExisting": {
     "description": "Android R.string.applies_to_new_terminal_sessions_existing"
   },
+  "appliesToTemperaturesAndOtherPhysical": "Applies to temperatures and other physical measurements throughout the app.",
+  "@appliesToTemperaturesAndOtherPhysical": {
+    "description": "Android R.string.applies_to_temperatures_and_other_physical"
+  },
   "apply": "Apply",
   "@apply": {
     "description": "Android R.string.apply"
   },
+  "applyToAll": "Apply to all:",
+  "@applyToAll": {
+    "description": "Android R.string.apply_to_all"
+  },
   "assignGroup": "Assign Group",
   "@assignGroup": {
     "description": "Android R.string.assign_group"
+  },
+  "attachInControlMode": "Attach in control mode",
+  "@attachInControlMode": {
+    "description": "Android R.string.attach_in_control_mode"
+  },
+  "authKeysProfiles": "Auth Keys & Profiles",
+  "@authKeysProfiles": {
+    "description": "Android R.string.auth_keys_profiles"
   },
   "authenticate": "Authenticate",
   "@authenticate": {
@@ -140,9 +283,33 @@
   "@authenticateForSudo": {
     "description": "Android R.string.authenticate_for_sudo"
   },
+  "authenticateForSudoMode": "Authenticate for sudo mode",
+  "@authenticateForSudoMode": {
+    "description": "Android R.string.authenticate_for_sudo_mode"
+  },
+  "authenticateToContinue": "Authenticate to continue",
+  "@authenticateToContinue": {
+    "description": "Android R.string.authenticate_to_continue"
+  },
+  "authenticateToEnableBiometricUnlock": "Authenticate to enable biometric unlock",
+  "@authenticateToEnableBiometricUnlock": {
+    "description": "Android R.string.authenticate_to_enable_biometric_unlock"
+  },
   "authenticateToSave": "Authenticate to save",
   "@authenticateToSave": {
     "description": "Android R.string.authenticate_to_save"
+  },
+  "authenticateToSaveSettings": "Authenticate to save settings",
+  "@authenticateToSaveSettings": {
+    "description": "Android R.string.authenticate_to_save_settings"
+  },
+  "authenticated": "authenticated",
+  "@authenticated": {
+    "description": "Android R.string.authenticated"
+  },
+  "authentication": "Authentication",
+  "@authentication": {
+    "description": "Android R.string.authentication"
   },
   "autoRefreshInterval": "Auto-refresh interval",
   "@autoRefreshInterval": {
@@ -164,6 +331,31 @@
       }
     }
   },
+  "availableSections": "Available sections",
+  "@availableSections": {
+    "description": "Android R.string.available_sections"
+  },
+  "avgScore": "Avg Score: {a1}",
+  "@avgScore": {
+    "description": "Android R.string.avg_score",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "avgScore2": "Avg Score",
+  "@avgScore2": {
+    "description": "Android R.string.avg_score_2"
+  },
+  "back": "Back",
+  "@back": {
+    "description": "Android R.string.back"
+  },
+  "backToShareList": "Back to share list",
+  "@backToShareList": {
+    "description": "Android R.string.back_to_share_list"
+  },
   "backgroundSessions": "BACKGROUND SESSIONS",
   "@backgroundSessions": {
     "description": "Android R.string.background_sessions"
@@ -175,6 +367,18 @@
   "backupSections": "Backup sections",
   "@backupSections": {
     "description": "Android R.string.backup_sections"
+  },
+  "batteryReachedThresholdOmnitermCanRelease": "Battery reached {a1}% (threshold {a2}%). OmniTerm can release keep-screen-on, pause auto-refresh, and park persistent tmux terminals. Nothing will change unless you choose Start saving.",
+  "@batteryReachedThresholdOmnitermCanRelease": {
+    "description": "Android R.string.battery_reached_threshold_omniterm_can_release",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "batterySaverAvailable": "Battery saver available",
   "@batterySaverAvailable": {
@@ -188,6 +392,18 @@
   "@beginPrivateKey": {
     "description": "Android R.string.begin_private_key"
   },
+  "belowTheThresholdUnpluggedTurnOff": "Below the threshold (unplugged): turn off keep-screen-on, pause auto-refresh, and park tmux terminals resumably. Resumes on charge, recovery, or pull-to-refresh.",
+  "@belowTheThresholdUnpluggedTurnOff": {
+    "description": "Android R.string.below_the_threshold_unplugged_turn_off"
+  },
+  "bg": "BG",
+  "@bg": {
+    "description": "Android R.string.bg"
+  },
+  "bindHost": "Bind host",
+  "@bindHost": {
+    "description": "Android R.string.bind_host"
+  },
   "blankUsesPodmanComposeSDefault": "Blank uses Podman Compose's default pod_<project>.",
   "@blankUsesPodmanComposeSDefault": {
     "description": "Android R.string.blank_uses_podman_compose_s_default"
@@ -200,6 +416,14 @@
   "@bookmarkDirectory": {
     "description": "Android R.string.bookmark_directory"
   },
+  "bookmarkThisDirectory": "Bookmark this directory",
+  "@bookmarkThisDirectory": {
+    "description": "Android R.string.bookmark_this_directory"
+  },
+  "bookmarkThisFolder": "Bookmark this folder",
+  "@bookmarkThisFolder": {
+    "description": "Android R.string.bookmark_this_folder"
+  },
   "bookmarks": "Bookmarks",
   "@bookmarks": {
     "description": "Android R.string.bookmarks"
@@ -207,6 +431,15 @@
   "bridgeOverlayMacvlan": "bridge / overlay / macvlan",
   "@bridgeOverlayMacvlan": {
     "description": "Android R.string.bridge_overlay_macvlan"
+  },
+  "bringUp": "Bring {a1} up?",
+  "@bringUp": {
+    "description": "Android R.string.bring_up",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "broadcast": "Broadcast",
   "@broadcast": {
@@ -224,9 +457,40 @@
   "@broadcastTargets": {
     "description": "Android R.string.broadcast_targets"
   },
+  "browseFiles": "Browse files",
+  "@browseFiles": {
+    "description": "Android R.string.browse_files"
+  },
+  "browsingNotSupportedFor": "Browsing not supported for {a1}",
+  "@browsingNotSupportedFor": {
+    "description": "Android R.string.browsing_not_supported_for",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "build": "Build {a1}",
+  "@build": {
+    "description": "Android R.string.build",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "buildFromSourceForNoncommercialUse": "Build from source for noncommercial use, file issues, or contribute on GitHub.",
   "@buildFromSourceForNoncommercialUse": {
     "description": "Android R.string.build_from_source_for_noncommercial_use"
+  },
+  "buildSourceAvailableForNoncommercialUse": "{a1} build. Source available for noncommercial use under the PolyForm Noncommercial License 1.0.0. OmniTerm connects directly to your hosts and keeps SSH keys and credentials on-device. There is no OmniTerm account or usage telemetry. ",
+  "@buildSourceAvailableForNoncommercialUse": {
+    "description": "Android R.string.build_source_available_for_noncommercial_use",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "builder": "Builder",
   "@builder": {
@@ -240,6 +504,22 @@
   "@cancelAll": {
     "description": "Android R.string.cancel_all"
   },
+  "cancelPathEdit": "Cancel path edit",
+  "@cancelPathEdit": {
+    "description": "Android R.string.cancel_path_edit"
+  },
+  "cancelSelection": "Cancel Selection",
+  "@cancelSelection": {
+    "description": "Android R.string.cancel_selection"
+  },
+  "cancelSelection2": "Cancel selection",
+  "@cancelSelection2": {
+    "description": "Android R.string.cancel_selection_2"
+  },
+  "cancelTransfer": "Cancel transfer",
+  "@cancelTransfer": {
+    "description": "Android R.string.cancel_transfer"
+  },
   "categoryGroup": "Category / group",
   "@categoryGroup": {
     "description": "Android R.string.category_group"
@@ -252,9 +532,28 @@
   "@changePin": {
     "description": "Android R.string.change_pin"
   },
+  "charsOf": "Chars {a1}–{a2} of {a3}",
+  "@charsOf": {
+    "description": "Android R.string.chars_of",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      }
+    }
+  },
   "checkingHost": "Checking host…",
   "@checkingHost": {
     "description": "Android R.string.checking_host"
+  },
+  "chooseADurationUpTo24": "Choose a duration up to 24 hours",
+  "@chooseADurationUpTo24": {
+    "description": "Android R.string.choose_a_duration_up_to_24"
   },
   "chooseFleetScript": "Choose fleet script",
   "@chooseFleetScript": {
@@ -263,6 +562,10 @@
   "chooseHostToKeep": "Choose host to keep",
   "@chooseHostToKeep": {
     "description": "Android R.string.choose_host_to_keep"
+  },
+  "chooseHosts": "Choose hosts",
+  "@chooseHosts": {
+    "description": "Android R.string.choose_hosts"
   },
   "chooseLocation": "Choose location",
   "@chooseLocation": {
@@ -275,6 +578,10 @@
   "chooseTheTerminalTextRangeTo": "Choose the terminal text range to copy.",
   "@chooseTheTerminalTextRangeTo": {
     "description": "Android R.string.choose_the_terminal_text_range_to"
+  },
+  "chooseWhatToInclude": "Choose what to include",
+  "@chooseWhatToInclude": {
+    "description": "Android R.string.choose_what_to_include"
   },
   "chooseWhatToRestoreFromThis": "Choose what to restore from this backup.",
   "@chooseWhatToRestoreFromThis": {
@@ -296,6 +603,10 @@
   "@clearHistory2": {
     "description": "Android R.string.clear_history_2"
   },
+  "clearHistory3": "Clear history?",
+  "@clearHistory3": {
+    "description": "Android R.string.clear_history_3"
+  },
   "clearLogs": "Clear logs",
   "@clearLogs": {
     "description": "Android R.string.clear_logs"
@@ -304,25 +615,89 @@
   "@clearOutputs": {
     "description": "Android R.string.clear_outputs"
   },
+  "clearQuery": "Clear query",
+  "@clearQuery": {
+    "description": "Android R.string.clear_query"
+  },
   "clearScrollback": "Clear scrollback",
   "@clearScrollback": {
     "description": "Android R.string.clear_scrollback"
+  },
+  "clearScrollback2": "Clear scrollback?",
+  "@clearScrollback2": {
+    "description": "Android R.string.clear_scrollback_2"
+  },
+  "clearTheCurrentTerminalScrollbackBuffer": "Clear the current terminal scrollback buffer? This removes buffered terminal output from this session.",
+  "@clearTheCurrentTerminalScrollbackBuffer": {
+    "description": "Android R.string.clear_the_current_terminal_scrollback_buffer"
   },
   "clearTransferHistory": "Clear transfer history?",
   "@clearTransferHistory": {
     "description": "Android R.string.clear_transfer_history"
   },
-  "cleartextWebdavIsDisabledBecauseIt": "Cleartext WebDAV is disabled because it exposes credentials and file contents.",
-  "@cleartextWebdavIsDisabledBecauseIt": {
-    "description": "Android R.string.cleartext_webdav_is_disabled_because_it"
+  "clipboardHasNoTextToPaste": "Clipboard has no text to paste",
+  "@clipboardHasNoTextToPaste": {
+    "description": "Android R.string.clipboard_has_no_text_to_paste"
+  },
+  "cloneBookmark": "Clone bookmark",
+  "@cloneBookmark": {
+    "description": "Android R.string.clone_bookmark"
   },
   "close": "Close",
   "@close": {
     "description": "Android R.string.close"
   },
+  "closeAlertsPopup": "Close alerts popup",
+  "@closeAlertsPopup": {
+    "description": "Android R.string.close_alerts_popup"
+  },
+  "closeEditor": "Close editor",
+  "@closeEditor": {
+    "description": "Android R.string.close_editor"
+  },
+  "closeFind": "Close find",
+  "@closeFind": {
+    "description": "Android R.string.close_find"
+  },
+  "closeImagePreview": "Close image preview",
+  "@closeImagePreview": {
+    "description": "Android R.string.close_image_preview"
+  },
+  "closeSearch": "Close search",
+  "@closeSearch": {
+    "description": "Android R.string.close_search"
+  },
+  "closeSecondPane": "Close second pane",
+  "@closeSecondPane": {
+    "description": "Android R.string.close_second_pane"
+  },
+  "collapse": "Collapse",
+  "@collapse": {
+    "description": "Android R.string.collapse"
+  },
+  "collapseContainers": "Collapse containers",
+  "@collapseContainers": {
+    "description": "Android R.string.collapse_containers"
+  },
+  "collapseControls": "Collapse controls",
+  "@collapseControls": {
+    "description": "Android R.string.collapse_controls"
+  },
+  "collapseOutput": "Collapse output",
+  "@collapseOutput": {
+    "description": "Android R.string.collapse_output"
+  },
+  "collapsePreview": "Collapse preview",
+  "@collapsePreview": {
+    "description": "Android R.string.collapse_preview"
+  },
   "command": "Command",
   "@command": {
     "description": "Android R.string.command"
+  },
+  "commandPresets": "Command presets",
+  "@commandPresets": {
+    "description": "Android R.string.command_presets"
   },
   "commentOut": "Comment out",
   "@commentOut": {
@@ -340,17 +715,41 @@
   "@composeFile": {
     "description": "Android R.string.compose_file"
   },
+  "compressToArchive": "Compress to archive",
+  "@compressToArchive": {
+    "description": "Android R.string.compress_to_archive"
+  },
   "compressToTarGz": "Compress to .tar.gz",
   "@compressToTarGz": {
     "description": "Android R.string.compress_to_tar_gz"
+  },
+  "configure": "Configure",
+  "@configure": {
+    "description": "Android R.string.configure"
   },
   "configureSecurityPin": "Configure Security PIN",
   "@configureSecurityPin": {
     "description": "Android R.string.configure_security_pin"
   },
+  "configureWolPointer": "Configure WOL Pointer",
+  "@configureWolPointer": {
+    "description": "Android R.string.configure_wol_pointer"
+  },
   "confirm": "Confirm",
   "@confirm": {
     "description": "Android R.string.confirm"
+  },
+  "confirmItSYou": "Confirm it's you",
+  "@confirmItSYou": {
+    "description": "Android R.string.confirm_it_s_you"
+  },
+  "confirmToRunSftpOperationsAs": "Confirm to run SFTP operations as root",
+  "@confirmToRunSftpOperationsAs": {
+    "description": "Android R.string.confirm_to_run_sftp_operations_as"
+  },
+  "confirmToRunThePrivilegedAction": "Confirm to run the privileged action",
+  "@confirmToRunThePrivilegedAction": {
+    "description": "Android R.string.confirm_to_run_the_privileged_action"
   },
   "confirmToRunThisPrivilegedAction": "Confirm to run this privileged action with the stored sudo password.",
   "@confirmToRunThisPrivilegedAction": {
@@ -376,6 +775,10 @@
   "@connectYourFirstServer": {
     "description": "Android R.string.connect_your_first_server"
   },
+  "connected": "Connected",
+  "@connected": {
+    "description": "Android R.string.connected"
+  },
   "connection": "Connection",
   "@connection": {
     "description": "Android R.string.connection"
@@ -384,9 +787,42 @@
   "@connectionFailed": {
     "description": "Android R.string.connection_failed"
   },
+  "connectsWithoutSavingNothingHereIs": "Connects without saving. Nothing here is written to your hosts list.",
+  "@connectsWithoutSavingNothingHereIs": {
+    "description": "Android R.string.connects_without_saving_nothing_here_is"
+  },
+  "container": "{a1} container{a2}",
+  "@container": {
+    "description": "Android R.string.container",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "containers": "Containers · {a1}",
+  "@containers": {
+    "description": "Android R.string.containers",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "continueLabel": "Continue",
   "@continueLabel": {
     "description": "Android R.string.continue_label"
+  },
+  "controlModeExplanation": "tmux sends every byte as an event instead of redrawing, so fast output cannot be lost. This app draws one pane: splits made inside tmux will not all be visible.",
+  "@controlModeExplanation": {
+    "description": "Android R.string.control_mode_explanation"
+  },
+  "copiedToClipboard": "Copied to clipboard",
+  "@copiedToClipboard": {
+    "description": "Android R.string.copied_to_clipboard"
   },
   "copy": "Copy",
   "@copy": {
@@ -395,6 +831,10 @@
   "copyAll": "Copy all",
   "@copyAll": {
     "description": "Android R.string.copy_all"
+  },
+  "copyDeployOutput": "Copy deploy output",
+  "@copyDeployOutput": {
+    "description": "Android R.string.copy_deploy_output"
   },
   "copyDiagnostics": "Copy diagnostics",
   "@copyDiagnostics": {
@@ -416,6 +856,15 @@
   "@copyPath": {
     "description": "Android R.string.copy_path"
   },
+  "copyPath2": "Copy {a1} path",
+  "@copyPath2": {
+    "description": "Android R.string.copy_path_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "copyPrivateKey": "Copy Private Key",
   "@copyPrivateKey": {
     "description": "Android R.string.copy_private_key"
@@ -428,9 +877,62 @@
   "@copyTerminalText": {
     "description": "Android R.string.copy_terminal_text"
   },
+  "copying": "Copying: {a1}",
+  "@copying": {
+    "description": "Android R.string.copying",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "copying2": "Copying: {a1}",
+  "@copying2": {
+    "description": "Android R.string.copying_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "couldNotOpenThisFolder": "Could not open this folder.",
+  "@couldNotOpenThisFolder": {
+    "description": "Android R.string.could_not_open_this_folder"
+  },
   "couldNotQueryContainers": "Could not query containers",
   "@couldNotQueryContainers": {
     "description": "Android R.string.could_not_query_containers"
+  },
+  "couldNotReadFile": "Could not read file: {a1}",
+  "@couldNotReadFile": {
+    "description": "Android R.string.could_not_read_file",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "couldNotReadFile2": "Could not read file: {a1}",
+  "@couldNotReadFile2": {
+    "description": "Android R.string.could_not_read_file_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "couldNotSaveTheWidgetConfiguration": "Could not save the widget configuration.",
+  "@couldNotSaveTheWidgetConfiguration": {
+    "description": "Android R.string.could_not_save_the_widget_configuration"
+  },
+  "couldnTShareTheReport": "Couldn''t share the report: {a1}",
+  "@couldnTShareTheReport": {
+    "description": "Android R.string.couldn_t_share_the_report",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "cpu": "↓ CPU",
   "@cpu": {
@@ -440,6 +942,19 @@
   "@cpu2": {
     "description": "Android R.string.cpu_2"
   },
+  "cpuHourlyAvg": "CPU (hourly avg)",
+  "@cpuHourlyAvg": {
+    "description": "Android R.string.cpu_hourly_avg"
+  },
+  "cpuMemoryDisk90Latency250ms": "CPU/memory/disk 90%, latency 250ms, temperature {a1}. Created as editable All Hosts rules.",
+  "@cpuMemoryDisk90Latency250ms": {
+    "description": "Android R.string.cpu_memory_disk_90_latency_250ms",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "cpuRamDiskServicesLogsContainers": "CPU/RAM, disk, services, logs, containers, ports, and kernel presets for broadcast use.",
   "@cpuRamDiskServicesLogsContainers": {
     "description": "Android R.string.cpu_ram_disk_services_logs_containers"
@@ -448,6 +963,10 @@
   "@cpuUtilisation": {
     "description": "Android R.string.cpu_utilisation"
   },
+  "cpuUtilisation2": "CPU utilisation",
+  "@cpuUtilisation2": {
+    "description": "Android R.string.cpu_utilisation_2"
+  },
   "crashClearRetry": "Clear and try again",
   "@crashClearRetry": {
     "description": "Android R.string.crash_clear_retry"
@@ -455,6 +974,10 @@
   "crashCopy": "Copy report",
   "@crashCopy": {
     "description": "Android R.string.crash_copy"
+  },
+  "crashReportCopiedToClipboard": "Crash report copied to clipboard.",
+  "@crashReportCopiedToClipboard": {
+    "description": "Android R.string.crash_report_copied_to_clipboard"
   },
   "crashReportGithub": "Report on GitHub",
   "@crashReportGithub": {
@@ -480,6 +1003,10 @@
   "@createDirectory": {
     "description": "Android R.string.create_directory"
   },
+  "createFolder": "Create folder",
+  "@createFolder": {
+    "description": "Android R.string.create_folder"
+  },
   "created": "CREATED",
   "@created": {
     "description": "Android R.string.created"
@@ -496,9 +1023,81 @@
   "@credentials": {
     "description": "Android R.string.credentials"
   },
+  "critical": "Critical",
+  "@critical": {
+    "description": "Android R.string.critical"
+  },
+  "cryptoFingerprint": "Crypto: {a1} · Fingerprint: {a2}",
+  "@cryptoFingerprint": {
+    "description": "Android R.string.crypto_fingerprint",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "current": "CURRENT",
+  "@current": {
+    "description": "Android R.string.current"
+  },
+  "current2": "CURRENT · {a1}",
+  "@current2": {
+    "description": "Android R.string.current_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "currentLoadUnavailable": "Current load unavailable",
+  "@currentLoadUnavailable": {
+    "description": "Android R.string.current_load_unavailable"
+  },
+  "currentMemoryUnavailable": "Current memory unavailable",
+  "@currentMemoryUnavailable": {
+    "description": "Android R.string.current_memory_unavailable"
+  },
+  "currentThreshold": "{a1} · current {a2} · threshold {a3}",
+  "@currentThreshold": {
+    "description": "Android R.string.current_threshold",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      }
+    }
+  },
+  "currentThreshold2": "Current {a1} · threshold {a2} · ",
+  "@currentThreshold2": {
+    "description": "Android R.string.current_threshold_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "custom": "Custom",
+  "@custom": {
+    "description": "Android R.string.custom"
+  },
   "customCommand": "Custom command",
   "@customCommand": {
     "description": "Android R.string.custom_command"
+  },
+  "customDuration": "Custom duration",
+  "@customDuration": {
+    "description": "Android R.string.custom_duration"
   },
   "customName": "Custom name",
   "@customName": {
@@ -524,6 +1123,19 @@
   "@dashboard": {
     "description": "Android R.string.dashboard"
   },
+  "dataPointsOverTheLast7": "{a1} data points over the last 7 days",
+  "@dataPointsOverTheLast7": {
+    "description": "Android R.string.data_points_over_the_last_7",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "decryptingBackup": "Decrypting backup…",
+  "@decryptingBackup": {
+    "description": "Android R.string.decrypting_backup"
+  },
   "defaultAlertRules": "Default alert rules",
   "@defaultAlertRules": {
     "description": "Android R.string.default_alert_rules"
@@ -532,9 +1144,131 @@
   "@delete": {
     "description": "Android R.string.delete"
   },
+  "delete2": "Delete {a1}?",
+  "@delete2": {
+    "description": "Android R.string.delete_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "delete3": "Delete \"{a1}\"?",
+  "@delete3": {
+    "description": "Android R.string.delete_3",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "delete4": "Delete \"{a1}\"?",
+  "@delete4": {
+    "description": "Android R.string.delete_4",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "delete5": "Delete {a1}?",
+  "@delete5": {
+    "description": "Android R.string.delete_5",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "delete6": "Delete \"{a1}\"?",
+  "@delete6": {
+    "description": "Android R.string.delete_6",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteAllAlertHistory": "Delete all alert history?",
+  "@deleteAllAlertHistory": {
+    "description": "Android R.string.delete_all_alert_history"
+  },
+  "deleteBookmark": "Delete bookmark",
+  "@deleteBookmark": {
+    "description": "Android R.string.delete_bookmark"
+  },
+  "deleteCredentialProfileHostsUsingIt": "Delete credential profile \"{a1}\"? Hosts using it will lose these credentials.",
+  "@deleteCredentialProfileHostsUsingIt": {
+    "description": "Android R.string.delete_credential_profile_hosts_using_it",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteCronEntry": "Delete cron entry",
+  "@deleteCronEntry": {
+    "description": "Android R.string.delete_cron_entry"
+  },
+  "deleteCronEntry2": "Delete cron entry?",
+  "@deleteCronEntry2": {
+    "description": "Android R.string.delete_cron_entry_2"
+  },
+  "deleteFromWakeOnLanTargets": "Delete \"{a1}\" from Wake-on-LAN targets?",
+  "@deleteFromWakeOnLanTargets": {
+    "description": "Android R.string.delete_from_wake_on_lan_targets",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteItemS": "Delete {a1} item(s)?",
+  "@deleteItemS": {
+    "description": "Android R.string.delete_item_s",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteItemS2": "Delete {a1} item(s)?",
+  "@deleteItemS2": {
+    "description": "Android R.string.delete_item_s_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteKey": "Delete key?",
+  "@deleteKey": {
+    "description": "Android R.string.delete_key"
+  },
   "deleteNode": "Delete node",
   "@deleteNode": {
     "description": "Android R.string.delete_node"
+  },
+  "deleteProfile": "Delete profile?",
+  "@deleteProfile": {
+    "description": "Android R.string.delete_profile"
+  },
+  "deleteQuickScript": "Delete quick script \"{a1}\"?",
+  "@deleteQuickScript": {
+    "description": "Android R.string.delete_quick_script",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteRule": "Delete rule?",
+  "@deleteRule": {
+    "description": "Android R.string.delete_rule"
+  },
+  "deleteScript": "Delete script?",
+  "@deleteScript": {
+    "description": "Android R.string.delete_script"
   },
   "deleteSelected": "Delete Selected",
   "@deleteSelected": {
@@ -544,13 +1278,135 @@
   "@deleteServerHostConnection": {
     "description": "Android R.string.delete_server_host_connection"
   },
+  "deleteShare": "Delete share",
+  "@deleteShare": {
+    "description": "Android R.string.delete_share"
+  },
+  "deleteSshKeyFromOmnitermHosts": "Delete SSH key \"{a1}\" from OmniTerm? Hosts relying on it will no longer authenticate.",
+  "@deleteSshKeyFromOmnitermHosts": {
+    "description": "Android R.string.delete_ssh_key_from_omniterm_hosts",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteTheAlertRuleFor": "Delete the {a1} alert rule for {a2}?",
+  "@deleteTheAlertRuleFor": {
+    "description": "Android R.string.delete_the_alert_rule_for",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteTheSelectedItemsFromThe": "Delete the selected items from the share? This cannot be undone.",
+  "@deleteTheSelectedItemsFromThe": {
+    "description": "Android R.string.delete_the_selected_items_from_the"
+  },
+  "deleteThisCrontabEntryForThis": "Delete this crontab entry for {a1}? This rewrites the remote user''s crontab.",
+  "@deleteThisCrontabEntryForThis": {
+    "description": "Android R.string.delete_this_crontab_entry_for_this",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "deleteWolTarget": "Delete WOL target",
+  "@deleteWolTarget": {
+    "description": "Android R.string.delete_wol_target"
+  },
+  "deleteWolTarget2": "Delete WOL target?",
+  "@deleteWolTarget2": {
+    "description": "Android R.string.delete_wol_target_2"
+  },
+  "deletesThisFileOnTheShare": "Deletes this file on the share. This cannot be undone.",
+  "@deletesThisFileOnTheShare": {
+    "description": "Android R.string.deletes_this_file_on_the_share"
+  },
+  "deletesThisFolderOnTheShare": "Deletes this folder on the share (must be empty on most servers). This cannot be undone.",
+  "@deletesThisFolderOnTheShare": {
+    "description": "Android R.string.deletes_this_folder_on_the_share"
+  },
+  "deploy": "Deploy",
+  "@deploy": {
+    "description": "Android R.string.deploy"
+  },
+  "deployChanges": "Deploy changes?",
+  "@deployChanges": {
+    "description": "Android R.string.deploy_changes"
+  },
+  "deployFailedStackLeftUnchanged": "Deploy failed — stack left unchanged",
+  "@deployFailedStackLeftUnchanged": {
+    "description": "Android R.string.deploy_failed_stack_left_unchanged"
+  },
+  "deployStack": "Deploy stack?",
+  "@deployStack": {
+    "description": "Android R.string.deploy_stack"
+  },
   "destHost": "Dest host",
   "@destHost": {
     "description": "Android R.string.dest_host"
   },
+  "detectUrlsInTerminalOutputIncluding": "Detect URLs in terminal output (including lines wrapped across rows) and open them on tap. Best-effort pattern matching — turn off if taps misfire on unusual output.",
+  "@detectUrlsInTerminalOutputIncluding": {
+    "description": "Android R.string.detect_urls_in_terminal_output_including"
+  },
+  "didnTAnswerOnItsSsh": "{a1} ({a2}:{a3}) didn''t answer on its SSH port at the last check, so it looks offline.",
+  "@didnTAnswerOnItsSsh": {
+    "description": "Android R.string.didn_t_answer_on_its_ssh",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      }
+    }
+  },
   "directoryName": "Directory Name",
   "@directoryName": {
     "description": "Android R.string.directory_name"
+  },
+  "disable": "Disable",
+  "@disable": {
+    "description": "Android R.string.disable"
+  },
+  "disable2": "Disable {a1}?",
+  "@disable2": {
+    "description": "Android R.string.disable_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "disableDefaultRules": "Disable default rules?",
+  "@disableDefaultRules": {
+    "description": "Android R.string.disable_default_rules"
+  },
+  "disableFleetDefaults": "Disable fleet defaults?",
+  "@disableFleetDefaults": {
+    "description": "Android R.string.disable_fleet_defaults"
+  },
+  "disableKeepScreenOn": "Disable keep screen on",
+  "@disableKeepScreenOn": {
+    "description": "Android R.string.disable_keep_screen_on"
+  },
+  "disablePresetScripts": "Disable preset scripts?",
+  "@disablePresetScripts": {
+    "description": "Android R.string.disable_preset_scripts"
+  },
+  "disableReadOnlyModeBeforePasting": "Disable read-only mode before pasting",
+  "@disableReadOnlyModeBeforePasting": {
+    "description": "Android R.string.disable_read_only_mode_before_pasting"
   },
   "discard": "Discard",
   "@discard": {
@@ -559,6 +1415,14 @@
   "discardChanges": "Discard changes?",
   "@discardChanges": {
     "description": "Android R.string.discard_changes"
+  },
+  "discardYourCustomHealthScoringThresholds": "Discard your custom health-scoring thresholds and penalties and restore the built-in defaults? This cannot be undone.",
+  "@discardYourCustomHealthScoringThresholds": {
+    "description": "Android R.string.discard_your_custom_health_scoring_thresholds"
+  },
+  "disconnect": "Disconnect",
+  "@disconnect": {
+    "description": "Android R.string.disconnect"
   },
   "disconnectAll": "Disconnect all",
   "@disconnectAll": {
@@ -571,6 +1435,14 @@
   "disconnectAllSessions": "Disconnect all sessions?",
   "@disconnectAllSessions": {
     "description": "Android R.string.disconnect_all_sessions"
+  },
+  "disconnectSession": "Disconnect session?",
+  "@disconnectSession": {
+    "description": "Android R.string.disconnect_session"
+  },
+  "disconnected": "Disconnected",
+  "@disconnected": {
+    "description": "Android R.string.disconnected"
   },
   "diskMounts": "Disk Mounts",
   "@diskMounts": {
@@ -592,6 +1464,10 @@
   "@docker": {
     "description": "Android R.string.docker"
   },
+  "docker2": "DOCKER",
+  "@docker2": {
+    "description": "Android R.string.docker_2"
+  },
   "domainNameHostname": "Domain Name / Hostname",
   "@domainNameHostname": {
     "description": "Android R.string.domain_name_hostname"
@@ -611,6 +1487,10 @@
   "down": "DOWN",
   "@down": {
     "description": "Android R.string.down"
+  },
+  "downloadSelectedFiles": "Download selected files",
+  "@downloadSelectedFiles": {
+    "description": "Android R.string.download_selected_files"
   },
   "downloadToDevice": "Download to device",
   "@downloadToDevice": {
@@ -632,9 +1512,31 @@
   "@dragToSelectOrCopyAll": {
     "description": "Android R.string.drag_to_select_or_copy_all"
   },
+  "driver": "Driver: {a1}",
+  "@driver": {
+    "description": "Android R.string.driver",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "driver2": "Driver: {a1}",
+  "@driver2": {
+    "description": "Android R.string.driver_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "driverOptional": "Driver (optional)",
   "@driverOptional": {
     "description": "Android R.string.driver_optional"
+  },
+  "duplicateHost": "Duplicate Host",
+  "@duplicateHost": {
+    "description": "Android R.string.duplicate_host"
   },
   "duplicateHostBody": "Host {a1} already uses {a2}. A different SSH user, authentication method or port is a separate connection. A different display name alone is not.",
   "@duplicateHostBody": {
@@ -668,13 +1570,65 @@
   "@edit": {
     "description": "Android R.string.edit"
   },
+  "editAlertRule": "Edit Alert Rule",
+  "@editAlertRule": {
+    "description": "Android R.string.edit_alert_rule"
+  },
+  "editBookmark": "Edit bookmark",
+  "@editBookmark": {
+    "description": "Android R.string.edit_bookmark"
+  },
   "editCredentialProfile": "Edit Credential Profile",
   "@editCredentialProfile": {
     "description": "Android R.string.edit_credential_profile"
   },
+  "editCronEntry": "Edit cron entry",
+  "@editCronEntry": {
+    "description": "Android R.string.edit_cron_entry"
+  },
+  "editCronSchedule": "Edit cron schedule",
+  "@editCronSchedule": {
+    "description": "Android R.string.edit_cron_schedule"
+  },
+  "editFullScreen": "Edit full screen",
+  "@editFullScreen": {
+    "description": "Android R.string.edit_full_screen"
+  },
+  "editInBuilder": "Edit in Builder",
+  "@editInBuilder": {
+    "description": "Android R.string.edit_in_builder"
+  },
+  "editLinuxRemoteHost": "Edit Linux Remote Host",
+  "@editLinuxRemoteHost": {
+    "description": "Android R.string.edit_linux_remote_host"
+  },
+  "editModeOffReadOnly": "Edit mode: off (read-only)",
+  "@editModeOffReadOnly": {
+    "description": "Android R.string.edit_mode_off_read_only"
+  },
+  "editModeOn": "Edit mode: on",
+  "@editModeOn": {
+    "description": "Android R.string.edit_mode_on"
+  },
+  "editNetworkShare": "Edit network share",
+  "@editNetworkShare": {
+    "description": "Android R.string.edit_network_share"
+  },
+  "editPath": "Edit path",
+  "@editPath": {
+    "description": "Android R.string.edit_path"
+  },
+  "editScript": "Edit script",
+  "@editScript": {
+    "description": "Android R.string.edit_script"
+  },
   "editServerConfiguration": "Edit Server Configuration",
   "@editServerConfiguration": {
     "description": "Android R.string.edit_server_configuration"
+  },
+  "editShare": "Edit share",
+  "@editShare": {
+    "description": "Android R.string.edit_share"
   },
   "editSshKey": "Edit SSH Key",
   "@editSshKey": {
@@ -687,6 +1641,22 @@
   "editTextFileConfiguration": "Edit Text File Configuration",
   "@editTextFileConfiguration": {
     "description": "Android R.string.edit_text_file_configuration"
+  },
+  "editTunnel": "Edit tunnel",
+  "@editTunnel": {
+    "description": "Android R.string.edit_tunnel"
+  },
+  "editWolPointer": "Edit WOL Pointer",
+  "@editWolPointer": {
+    "description": "Android R.string.edit_wol_pointer"
+  },
+  "editWolTarget": "Edit WOL target",
+  "@editWolTarget": {
+    "description": "Android R.string.edit_wol_target"
+  },
+  "editingExistingStack": "Editing existing stack",
+  "@editingExistingStack": {
+    "description": "Android R.string.editing_existing_stack"
   },
   "editingTheFileDirectlyNothingIs": "Editing the file directly. Nothing is changed until you deploy, and the file is validated first.",
   "@editingTheFileDirectlyNothingIs": {
@@ -716,6 +1686,22 @@
   "@enable": {
     "description": "Android R.string.enable"
   },
+  "enableDefaultRules": "Enable default rules?",
+  "@enableDefaultRules": {
+    "description": "Android R.string.enable_default_rules"
+  },
+  "enableFleetDefaults": "Enable fleet defaults?",
+  "@enableFleetDefaults": {
+    "description": "Android R.string.enable_fleet_defaults"
+  },
+  "enableKeepScreenOn": "Enable keep screen on",
+  "@enableKeepScreenOn": {
+    "description": "Android R.string.enable_keep_screen_on"
+  },
+  "enablePresetScripts": "Enable preset scripts?",
+  "@enablePresetScripts": {
+    "description": "Android R.string.enable_preset_scripts"
+  },
   "enableSudoMode": "Enable sudo mode?",
   "@enableSudoMode": {
     "description": "Android R.string.enable_sudo_mode"
@@ -727,6 +1713,15 @@
   "encryptedBackup": "Encrypted Backup",
   "@encryptedBackup": {
     "description": "Android R.string.encrypted_backup"
+  },
+  "engageBelow": "Engage below: {a1}%",
+  "@engageBelow": {
+    "description": "Android R.string.engage_below",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "enterBashCommandScriptHere": "Enter bash command script here...",
   "@enterBashCommandScriptHere": {
@@ -748,6 +1743,15 @@
   "@enterYourAppPinToApply": {
     "description": "Android R.string.enter_your_app_pin_to_apply"
   },
+  "entries": "{a1} entries",
+  "@entries": {
+    "description": "Android R.string.entries",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "executionOutputs": "Execution outputs",
   "@executionOutputs": {
     "description": "Android R.string.execution_outputs"
@@ -760,17 +1764,73 @@
   "@exitingWillTerminateAllActiveBackground": {
     "description": "Android R.string.exiting_will_terminate_all_active_background"
   },
+  "expand": "Expand",
+  "@expand": {
+    "description": "Android R.string.expand"
+  },
+  "expandContainers": "Expand containers",
+  "@expandContainers": {
+    "description": "Android R.string.expand_containers"
+  },
+  "expandControls": "Expand controls",
+  "@expandControls": {
+    "description": "Android R.string.expand_controls"
+  },
+  "expandOutput": "Expand output",
+  "@expandOutput": {
+    "description": "Android R.string.expand_output"
+  },
+  "expandPreview": "Expand preview",
+  "@expandPreview": {
+    "description": "Android R.string.expand_preview"
+  },
   "exporting": "Exporting…",
   "@exporting": {
     "description": "Android R.string.exporting"
+  },
+  "exportsOmnitermSOwnConfigurationSaved": "Exports OmniTerm's own configuration — saved hosts, keys, scripts and settings. It does NOT back up any files or data on your servers.",
+  "@exportsOmnitermSOwnConfigurationSaved": {
+    "description": "Android R.string.exports_omniterm_s_own_configuration_saved"
   },
   "ext": "Ext",
   "@ext": {
     "description": "Android R.string.ext"
   },
+  "extract": "Extract",
+  "@extract": {
+    "description": "Android R.string.extract"
+  },
   "extractHere": "Extract here",
   "@extractHere": {
     "description": "Android R.string.extract_here"
+  },
+  "extractHere2": "Extract here?",
+  "@extractHere2": {
+    "description": "Android R.string.extract_here_2"
+  },
+  "fileOptions": "File options",
+  "@fileOptions": {
+    "description": "Android R.string.file_options"
+  },
+  "fileTapToOpenItsFolder": "File · tap to open its folder",
+  "@fileTapToOpenItsFolder": {
+    "description": "Android R.string.file_tap_to_open_its_folder"
+  },
+  "findReplace": "Find / replace",
+  "@findReplace": {
+    "description": "Android R.string.find_replace"
+  },
+  "firingMuted": "{a1} firing · {a2} muted",
+  "@firingMuted": {
+    "description": "Android R.string.firing_muted",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "fleet": "Fleet",
   "@fleet": {
@@ -788,9 +1848,63 @@
   "@fleetDefaultCommands": {
     "description": "Android R.string.fleet_default_commands"
   },
+  "focused": "FOCUSED",
+  "@focused": {
+    "description": "Android R.string.focused"
+  },
   "folderName": "Folder name",
   "@folderName": {
     "description": "Android R.string.folder_name"
+  },
+  "folderTapToOpen": "Folder · tap to open",
+  "@folderTapToOpen": {
+    "description": "Android R.string.folder_tap_to_open"
+  },
+  "follow": "Follow",
+  "@follow": {
+    "description": "Android R.string.follow"
+  },
+  "followService": "FOLLOW SERVICE",
+  "@followService": {
+    "description": "Android R.string.follow_service"
+  },
+  "fontSizeSp": "Font size: {a1}sp",
+  "@fontSizeSp": {
+    "description": "Android R.string.font_size_sp",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "forceKillSigkill": "Force kill (SIGKILL)?",
+  "@forceKillSigkill": {
+    "description": "Android R.string.force_kill_sigkill"
+  },
+  "forciblyKillPidWithKill9": "Forcibly kill PID {a1} ({a2}) with kill -9? Unsaved work in that process is lost.",
+  "@forciblyKillPidWithKill9": {
+    "description": "Android R.string.forcibly_kill_pid_with_kill_9",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "forget": "Forget",
+  "@forget": {
+    "description": "Android R.string.forget"
+  },
+  "forget2": "Forget {a1}?",
+  "@forget2": {
+    "description": "Android R.string.forget_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "forwardSshAgentSshA": "Forward SSH agent (ssh -A)",
   "@forwardSshAgentSshA": {
@@ -799,6 +1913,27 @@
   "freePlayStoreBuildIsLimited": "Free Play Store build is limited to 1 saved host. Unlock OmniTerm to add more.",
   "@freePlayStoreBuildIsLimited": {
     "description": "Android R.string.free_play_store_build_is_limited"
+  },
+  "freePlayStoreRestoreIsLimited": "Free Play Store restore is limited to {a1} host{a2}.",
+  "@freePlayStoreRestoreIsLimited": {
+    "description": "Android R.string.free_play_store_restore_is_limited",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "from": "from {a1}",
+  "@from": {
+    "description": "Android R.string.from",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "fromAComputerWithSshInstalled": "From a computer with ssh installed you can instead run: ssh-copy-id user@host",
   "@fromAComputerWithSshInstalled": {
@@ -828,13 +1963,54 @@
   "@generateSshKey": {
     "description": "Android R.string.generate_ssh_key"
   },
+  "generatedKey": "Generated Key: {a1}",
+  "@generatedKey": {
+    "description": "Android R.string.generated_key",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "generating": "Generating…",
   "@generating": {
     "description": "Android R.string.generating"
   },
+  "globalAlertsAreOff": "Global alerts are off.",
+  "@globalAlertsAreOff": {
+    "description": "Android R.string.global_alerts_are_off"
+  },
+  "globalAlertsAreOn": "Global alerts are on.",
+  "@globalAlertsAreOn": {
+    "description": "Android R.string.global_alerts_are_on"
+  },
   "go": "Go",
   "@go": {
     "description": "Android R.string.go"
+  },
+  "goToHomeFolder": "Go to home folder",
+  "@goToHomeFolder": {
+    "description": "Android R.string.go_to_home_folder"
+  },
+  "goToPath": "Go to path",
+  "@goToPath": {
+    "description": "Android R.string.go_to_path"
+  },
+  "goUp": "Go up",
+  "@goUp": {
+    "description": "Android R.string.go_up"
+  },
+  "gracefullyTerminatePidWithKill15": "Gracefully terminate PID {a1} ({a2}) with kill -15?",
+  "@gracefullyTerminatePidWithKill15": {
+    "description": "Android R.string.gracefully_terminate_pid_with_kill_15",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "grantPermissions": "Grant Permissions",
   "@grantPermissions": {
@@ -860,9 +2036,59 @@
   "@groups": {
     "description": "Android R.string.groups"
   },
+  "gw": "GW: {a1}",
+  "@gw": {
+    "description": "Android R.string.gw",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "healthScore": "Health score · {a1}",
+  "@healthScore": {
+    "description": "Android R.string.health_score",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "healthScoring": "Health scoring",
   "@healthScoring": {
     "description": "Android R.string.health_scoring"
+  },
+  "healthUnavailable": "Health unavailable",
+  "@healthUnavailable": {
+    "description": "Android R.string.health_unavailable"
+  },
+  "hide": "Hide",
+  "@hide": {
+    "description": "Android R.string.hide"
+  },
+  "hideDotfiles": "Hide dotfiles",
+  "@hideDotfiles": {
+    "description": "Android R.string.hide_dotfiles"
+  },
+  "hideFind": "Hide find",
+  "@hideFind": {
+    "description": "Android R.string.hide_find"
+  },
+  "hideFolderSizes": "Hide folder sizes",
+  "@hideFolderSizes": {
+    "description": "Android R.string.hide_folder_sizes"
+  },
+  "hidePassword": "Hide password",
+  "@hidePassword": {
+    "description": "Android R.string.hide_password"
+  },
+  "hideProgress": "Hide progress",
+  "@hideProgress": {
+    "description": "Android R.string.hide_progress"
+  },
+  "hideSensitiveInfo": "Hide sensitive info",
+  "@hideSensitiveInfo": {
+    "description": "Android R.string.hide_sensitive_info"
   },
   "hidesTerminalsAndCredentialsFromScreenshots": "Hides terminals and credentials from screenshots and the app switcher.",
   "@hidesTerminalsAndCredentialsFromScreenshots": {
@@ -875,6 +2101,15 @@
   "history": "History",
   "@history": {
     "description": "Android R.string.history"
+  },
+  "historyEntriesPerHost": "History entries per host: {a1}",
+  "@historyEntriesPerHost": {
+    "description": "Android R.string.history_entries_per_host",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "homelabPresetScripts": "Homelab preset scripts",
   "@homelabPresetScripts": {
@@ -912,6 +2147,10 @@
   "@hostnameOrIpAddress": {
     "description": "Android R.string.hostname_or_ip_address"
   },
+  "hosts": "Hosts",
+  "@hosts": {
+    "description": "Android R.string.hosts"
+  },
   "hostsToRestore": "Hosts to restore",
   "@hostsToRestore": {
     "description": "Android R.string.hosts_to_restore"
@@ -920,13 +2159,31 @@
   "@howOftenHostMetricsRefresh": {
     "description": "Android R.string.how_often_host_metrics_refresh"
   },
-  "httpsTlsRequired": "HTTPS (TLS) required",
-  "@httpsTlsRequired": {
-    "description": "Android R.string.https_tls_required"
+  "howToVerifyOnTheServer": "How to verify: on the server''s own screen (not over SSH), run:\nssh-keygen -lf /etc/ssh/{a1}\nand check it prints the same SHA256 fingerprint.",
+  "@howToVerifyOnTheServer": {
+    "description": "Android R.string.how_to_verify_on_the_server",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "id": "ID: {a1}",
+  "@id": {
+    "description": "Android R.string.id",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "images": "Images",
   "@images": {
     "description": "Android R.string.images"
+  },
+  "imperial": "Imperial",
+  "@imperial": {
+    "description": "Android R.string.imperial"
   },
   "importExistingSshKey": "Import existing SSH Key",
   "@importExistingSshKey": {
@@ -939,6 +2196,10 @@
   "inAppMonitoring": "In-app monitoring",
   "@inAppMonitoring": {
     "description": "Android R.string.in_app_monitoring"
+  },
+  "inUse": "In Use",
+  "@inUse": {
+    "description": "Android R.string.in_use"
   },
   "includeFoldersCopyTheirContentsRecursively": "Include folders (copy their contents recursively)",
   "@includeFoldersCopyTheirContentsRecursively": {
@@ -956,6 +2217,27 @@
   "@installOnYourServer": {
     "description": "Android R.string.install_on_your_server"
   },
+  "installRunsTheAppropriatePackageManager": "Install runs the appropriate package-manager command on this host (using your sudo password if set). Connecting without tmux opens a normal, non-resumable shell.",
+  "@installRunsTheAppropriatePackageManager": {
+    "description": "Android R.string.install_runs_the_appropriate_package_manager"
+  },
+  "installTmux": "Install tmux",
+  "@installTmux": {
+    "description": "Android R.string.install_tmux"
+  },
+  "installTmuxOn": "Install tmux on {a1}?",
+  "@installTmuxOn": {
+    "description": "Android R.string.install_tmux_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "installing": "Installing…",
+  "@installing": {
+    "description": "Android R.string.installing"
+  },
   "ipAddressHostname": "IP Address / Hostname",
   "@ipAddressHostname": {
     "description": "Android R.string.ip_address_hostname"
@@ -964,9 +2246,71 @@
   "@isDockerOrPodmanInstalledAnd": {
     "description": "Android R.string.is_docker_or_podman_installed_and"
   },
+  "issueSBeforeDeploy": "{a1} issue(s) before deploy",
+  "@issueSBeforeDeploy": {
+    "description": "Android R.string.issue_s_before_deploy",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "itemSAlreadyExist": "{a1} item(s) already exist",
+  "@itemSAlreadyExist": {
+    "description": "Android R.string.item_s_already_exist",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "itemSReadyTo": "{a1} item(s) ready to {a2}",
+  "@itemSReadyTo": {
+    "description": "Android R.string.item_s_ready_to",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "itemSReadyTo2": "{a1} item(s) ready to {a2}",
+  "@itemSReadyTo2": {
+    "description": "Android R.string.item_s_ready_to_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
   "jumpHostKeyOptional": "Jump host key (optional):",
   "@jumpHostKeyOptional": {
     "description": "Android R.string.jump_host_key_optional"
+  },
+  "jumpHostKeyOptional2": "Jump host key (optional)",
+  "@jumpHostKeyOptional2": {
+    "description": "Android R.string.jump_host_key_optional_2"
+  },
+  "jumpPasswordOptional": "Jump password (optional)",
+  "@jumpPasswordOptional": {
+    "description": "Android R.string.jump_password_optional"
+  },
+  "jumpToBottom": "Jump to bottom",
+  "@jumpToBottom": {
+    "description": "Android R.string.jump_to_bottom"
+  },
+  "jumpUserOptional": "Jump user (optional)",
+  "@jumpUserOptional": {
+    "description": "Android R.string.jump_user_optional"
+  },
+  "keep": "Keep",
+  "@keep": {
+    "description": "Android R.string.keep"
   },
   "keepAliveInterval": "Keep alive interval:",
   "@keepAliveInterval": {
@@ -983,6 +2327,10 @@
   "keepScreenOn": "Keep Screen On?",
   "@keepScreenOn": {
     "description": "Android R.string.keep_screen_on"
+  },
+  "keepScreenOn2": "Keep screen on",
+  "@keepScreenOn2": {
+    "description": "Android R.string.keep_screen_on_2"
   },
   "keepSelected": "Keep selected",
   "@keepSelected": {
@@ -1008,6 +2356,40 @@
   "@keyCustomName": {
     "description": "Android R.string.key_custom_name"
   },
+  "keyProfileBoundToKey": "Key profile — bound to key ''{a1}''.",
+  "@keyProfileBoundToKey": {
+    "description": "Android R.string.key_profile_bound_to_key",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "keyType": "Key type: {a1}",
+  "@keyType": {
+    "description": "Android R.string.key_type",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "kill15": "KILL -15",
+  "@kill15": {
+    "description": "Android R.string.kill_15"
+  },
+  "kill152": "Kill -15",
+  "@kill152": {
+    "description": "Android R.string.kill_15_2"
+  },
+  "kill9": "KILL -9",
+  "@kill9": {
+    "description": "Android R.string.kill_9"
+  },
+  "kill92": "Kill -9",
+  "@kill92": {
+    "description": "Android R.string.kill_9_2"
+  },
   "labelOptional": "Label (optional)",
   "@labelOptional": {
     "description": "Android R.string.label_optional"
@@ -1024,9 +2406,55 @@
   "@largeFileModeSyntaxColorsAnd": {
     "description": "Android R.string.large_file_mode_syntax_colors_and"
   },
+  "largePaste": "Large paste",
+  "@largePaste": {
+    "description": "Android R.string.large_paste"
+  },
   "largeUploadBatch": "Large upload batch",
   "@largeUploadBatch": {
     "description": "Android R.string.large_upload_batch"
+  },
+  "lastBackup": "Last backup: {a1}",
+  "@lastBackup": {
+    "description": "Android R.string.last_backup",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "leave": "LEAVE",
+  "@leave": {
+    "description": "Android R.string.leave"
+  },
+  "leaveRawYaml": "Leave Raw YAML?",
+  "@leaveRawYaml": {
+    "description": "Android R.string.leave_raw_yaml"
+  },
+  "leaveResumable": "Leave resumable",
+  "@leaveResumable": {
+    "description": "Android R.string.leave_resumable"
+  },
+  "leaveResumable2": "Leave {a1} resumable",
+  "@leaveResumable2": {
+    "description": "Android R.string.leave_resumable_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "leaveSessionResumable": "Leave Session Resumable?",
+  "@leaveSessionResumable": {
+    "description": "Android R.string.leave_session_resumable"
+  },
+  "letsGestureKeyboardsCorrectEachSwiped": "Lets gesture keyboards correct each swiped word before it's sent. Turn off to disable swipe-typing and accept strict, literal keystrokes like a password field (no autocorrect or suggestions).",
+  "@letsGestureKeyboardsCorrectEachSwiped": {
+    "description": "Android R.string.lets_gesture_keyboards_correct_each_swiped"
+  },
+  "letsOnwardSshHopsFromThis": "Lets onward SSH hops from this host authenticate with the key you connect with, without copying it to the server. Only enable for hosts you trust.",
+  "@letsOnwardSshHopsFromThis": {
+    "description": "Android R.string.lets_onward_ssh_hops_from_this"
   },
   "lightTheme": "Light Theme",
   "@lightTheme": {
@@ -1036,9 +2464,48 @@
   "@line": {
     "description": "Android R.string.line"
   },
+  "linesChars": "{a1} lines · {a2} chars",
+  "@linesChars": {
+    "description": "Android R.string.lines_chars",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "linesChars2": "{a1} lines · {a2} chars",
+  "@linesChars2": {
+    "description": "Android R.string.lines_chars_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
   "live": "LIVE",
   "@live": {
     "description": "Android R.string.live"
+  },
+  "load": "Load: {a1} · {a2} · {a3}",
+  "@load": {
+    "description": "Android R.string.load",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      }
+    }
   },
   "loadPrivateKeyFromFile": "Load private key from file",
   "@loadPrivateKeyFromFile": {
@@ -1047,6 +2514,10 @@
   "loadPublicKeyPubFromFile": "Load public key (.pub) from file",
   "@loadPublicKeyPubFromFile": {
     "description": "Android R.string.load_public_key_pub_from_file"
+  },
+  "loadSelectedHostsIntoPanes": "Load selected hosts into panes",
+  "@loadSelectedHostsIntoPanes": {
+    "description": "Android R.string.load_selected_hosts_into_panes"
   },
   "localLRemoteRAndDynamic": "Local (-L), remote (-R) and dynamic SOCKS (-D) forwards over a saved SSH host. Tunnels stay up until you stop them or leave the app.",
   "@localLRemoteRAndDynamic": {
@@ -1059,6 +2530,14 @@
   "localNetworkAccessExplanation": "Android requires permission before OmniTerm can connect directly to hosts on Wi‑Fi or Ethernet. This is used for SSH, files, monitoring, LAN discovery, tunnels, shares, and Wake-on-LAN. If you choose Not now, internet hosts remain available but nearby-device features may not work.",
   "@localNetworkAccessExplanation": {
     "description": "Android R.string.local_network_access_explanation"
+  },
+  "lockWhenReturningAfter": "Lock when returning after",
+  "@lockWhenReturningAfter": {
+    "description": "Android R.string.lock_when_returning_after"
+  },
+  "logHosts": "Log hosts",
+  "@logHosts": {
+    "description": "Android R.string.log_hosts"
   },
   "logs": "Logs",
   "@logs": {
@@ -1080,9 +2559,21 @@
   "@maintainActiveSshSftpSessionsWhen": {
     "description": "Android R.string.maintain_active_ssh_sftp_sessions_when"
   },
+  "maxFileSizeToColouriseIn": "Max file size to colourise in the code editor (SFTP files, Compose YAML). Lower it if editing large files feels slow; \"Off\" disables highlighting.",
+  "@maxFileSizeToColouriseIn": {
+    "description": "Android R.string.max_file_size_to_colourise_in"
+  },
   "mbps": "Mbps",
   "@mbps": {
     "description": "Android R.string.mbps"
+  },
+  "measureSize": "Measure size",
+  "@measureSize": {
+    "description": "Android R.string.measure_size"
+  },
+  "measurementSystem": "Measurement system",
+  "@measurementSystem": {
+    "description": "Android R.string.measurement_system"
   },
   "measuresThisDeviceSDownloadThroughput": "Measures this device's download throughput from a URL. Pick a test server near you (or one deliberately far away), or point the URL at your own server to test a specific link.",
   "@measuresThisDeviceSDownloadThroughput": {
@@ -1100,9 +2591,30 @@
   "@memoryOccupancy": {
     "description": "Android R.string.memory_occupancy"
   },
+  "metric": "Metric",
+  "@metric": {
+    "description": "Android R.string.metric"
+  },
   "monitorLiveMetrics": "Monitor Live Metrics",
   "@monitorLiveMetrics": {
     "description": "Android R.string.monitor_live_metrics"
+  },
+  "ms": "{a1} ms",
+  "@ms": {
+    "description": "Android R.string.ms",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "multiSelect": "Multi-select",
+  "@multiSelect": {
+    "description": "Android R.string.multi_select"
+  },
+  "multiSelect2": "Multi-Select",
+  "@multiSelect2": {
+    "description": "Android R.string.multi_select_2"
   },
   "mute1h": "MUTE 1H",
   "@mute1h": {
@@ -1115,6 +2627,15 @@
   "mutedIncidents": "Muted incidents",
   "@mutedIncidents": {
     "description": "Android R.string.muted_incidents"
+  },
+  "mutedUntil": "Muted until {a1}",
+  "@mutedUntil": {
+    "description": "Android R.string.muted_until",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "mydata": "mydata",
   "@mydata": {
@@ -1168,9 +2689,39 @@
   "@newSession": {
     "description": "Android R.string.new_session"
   },
+  "newSession2": "NEW SESSION → {a1}",
+  "@newSession2": {
+    "description": "Android R.string.new_session_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "newSession3": "New session · {a1}",
+  "@newSession3": {
+    "description": "Android R.string.new_session_3",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "newStack": "New stack",
+  "@newStack": {
+    "description": "Android R.string.new_stack"
+  },
+  "newTunnel": "New tunnel",
+  "@newTunnel": {
+    "description": "Android R.string.new_tunnel"
+  },
   "next": "Next",
   "@next": {
     "description": "Android R.string.next"
+  },
+  "nextMatch": "Next match",
+  "@nextMatch": {
+    "description": "Android R.string.next_match"
   },
   "noActiveAlertIncidents": "No active alert incidents.",
   "@noActiveAlertIncidents": {
@@ -1184,9 +2735,17 @@
   "@noAlertHistoryYet": {
     "description": "Android R.string.no_alert_history_yet"
   },
+  "noAppOnThisDeviceCan": "No app on this device can open links",
+  "@noAppOnThisDeviceCan": {
+    "description": "Android R.string.no_app_on_this_device_can"
+  },
   "noBookmarksYetStarAFolder": "No bookmarks yet. Star a folder in the SFTP or Shares browser to pin it here.",
   "@noBookmarksYetStarAFolder": {
     "description": "Android R.string.no_bookmarks_yet_star_a_folder"
+  },
+  "noBrowserFoundIssueLinkCopied": "No browser found — issue link copied to clipboard.",
+  "@noBrowserFoundIssueLinkCopied": {
+    "description": "Android R.string.no_browser_found_issue_link_copied"
   },
   "noComposeStacksFound": "No compose stacks found.",
   "@noComposeStacksFound": {
@@ -1200,9 +2759,35 @@
   "@noCrashesRecordedReportsAppearHere": {
     "description": "Android R.string.no_crashes_recorded_reports_appear_here"
   },
+  "noCredentialProfilesSaved": "No credential profiles saved.",
+  "@noCredentialProfilesSaved": {
+    "description": "Android R.string.no_credential_profiles_saved"
+  },
   "noCredentialsProfilesFoundGoTo": "No credentials profiles found. Go to Tools -> Auth to create one or enter a raw password.",
   "@noCredentialsProfilesFoundGoTo": {
     "description": "Android R.string.no_credentials_profiles_found_go_to"
+  },
+  "noCrontabEntriesFor": "No crontab entries for {a1}.",
+  "@noCrontabEntriesFor": {
+    "description": "Android R.string.no_crontab_entries_for",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "noFleetPresetsSavedYet": "No fleet presets saved yet.",
+  "@noFleetPresetsSavedYet": {
+    "description": "Android R.string.no_fleet_presets_saved_yet"
+  },
+  "noHostsMatch": "No hosts match “{a1}”.",
+  "@noHostsMatch": {
+    "description": "Android R.string.no_hosts_match",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "noHostsYetRunAScan": "No hosts yet — run a scan.",
   "@noHostsYetRunAScan": {
@@ -1220,6 +2805,24 @@
   "@noMatchesInThisFolder": {
     "description": "Android R.string.no_matches_in_this_folder"
   },
+  "noMatchesUnder": "No matches under {a1}",
+  "@noMatchesUnder": {
+    "description": "Android R.string.no_matches_under",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "noMatchesUnder2": "No matches under {a1}",
+  "@noMatchesUnder2": {
+    "description": "Android R.string.no_matches_under_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "noNetworkSharesSavedYet": "No network shares saved yet.",
   "@noNetworkSharesSavedYet": {
     "description": "Android R.string.no_network_shares_saved_yet"
@@ -1236,6 +2839,10 @@
   "@noOnlineHostsAvailableFleetDetails": {
     "description": "Android R.string.no_online_hosts_available_fleet_details"
   },
+  "noOnlineHostsAvailableRightNow": "No online hosts available right now.",
+  "@noOnlineHostsAvailableRightNow": {
+    "description": "Android R.string.no_online_hosts_available_right_now"
+  },
   "noOnlineHostsAvailableToMonitor": "No online hosts available to monitor. Offline hosts reappear after the next successful probe.",
   "@noOnlineHostsAvailableToMonitor": {
     "description": "Android R.string.no_online_hosts_available_to_monitor"
@@ -1243,6 +2850,10 @@
   "noOnlineSshHostsAvailableOffline": "No online SSH hosts available. Offline hosts reappear here after the next successful probe.",
   "@noOnlineSshHostsAvailableOffline": {
     "description": "Android R.string.no_online_ssh_hosts_available_offline"
+  },
+  "noPresetsMatchYourSearch": "No presets match your search.",
+  "@noPresetsMatchYourSearch": {
+    "description": "Android R.string.no_presets_match_your_search"
   },
   "noPublishedPortsWereReportedFor": "No published ports were reported for this stack.",
   "@noPublishedPortsWereReportedFor": {
@@ -1255,6 +2866,22 @@
   "noReadableLogSource": "This host exposes no readable log source (no journalctl, logread, or syslog file).",
   "@noReadableLogSource": {
     "description": "Android R.string.no_readable_log_source"
+  },
+  "noSavedHostsToUseAs": "No saved hosts to use as a jump host.",
+  "@noSavedHostsToUseAs": {
+    "description": "Android R.string.no_saved_hosts_to_use_as"
+  },
+  "noSavedSshKeysAddOne": "No saved SSH keys. Add one under Tools › Auth Keys.",
+  "@noSavedSshKeysAddOne": {
+    "description": "Android R.string.no_saved_ssh_keys_add_one"
+  },
+  "noSensitiveSectionsSelectedBackupWill": "No sensitive sections selected: backup will be plain JSON.",
+  "@noSensitiveSectionsSelectedBackupWill": {
+    "description": "Android R.string.no_sensitive_sections_selected_backup_will"
+  },
+  "noServerSelectedAddOrPick": "No server selected — add or pick one on the Hosts tab.",
+  "@noServerSelectedAddOrPick": {
+    "description": "Android R.string.no_server_selected_add_or_pick"
   },
   "noServersFound": "No servers found",
   "@noServersFound": {
@@ -1304,9 +2931,36 @@
   "@notificationAccessAndABatteryOptimization": {
     "description": "Android R.string.notification_access_and_a_battery_optimization"
   },
+  "notificationsAreBlockedForOmnitermRules": "Notifications are blocked for OmniTerm. Rules still fire and incidents are still recorded, but you will only see them in here. Allow notifications in system settings to be told while the app is closed.",
+  "@notificationsAreBlockedForOmnitermRules": {
+    "description": "Android R.string.notifications_are_blocked_for_omniterm_rules"
+  },
+  "ofOccupied": "{a1} of {a2} occupied ({a3}%)",
+  "@ofOccupied": {
+    "description": "Android R.string.of_occupied",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      }
+    }
+  },
+  "offline": "Offline",
+  "@offline": {
+    "description": "Android R.string.offline"
+  },
   "offlineUnreachable": "Offline · unreachable",
   "@offlineUnreachable": {
     "description": "Android R.string.offline_unreachable"
+  },
+  "ok": "OK",
+  "@ok": {
+    "description": "Android R.string.ok"
   },
   "omniterm": "OmniTerm",
   "@omniterm": {
@@ -1328,13 +2982,76 @@
   "@omnitermWillGenerateARealRsa": {
     "description": "Android R.string.omniterm_will_generate_a_real_rsa"
   },
+  "online": "Online · {a1}",
+  "@online": {
+    "description": "Android R.string.online",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "online2": "{a1} / {a2} Online",
+  "@online2": {
+    "description": "Android R.string.online_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "online3": "Online",
+  "@online3": {
+    "description": "Android R.string.online_3"
+  },
+  "onlineSshNotVerifiedYet": "online · ssh not verified yet",
+  "@onlineSshNotVerifiedYet": {
+    "description": "Android R.string.online_ssh_not_verified_yet"
+  },
+  "onlyThePrivateKeyIsRequired": "Only the private key is required — the type (RSA, OpenSSH, ed25519, ECDSA…) is detected automatically and the public key is derived from it. Add the public key only if you want to store it too.",
+  "@onlyThePrivateKeyIsRequired": {
+    "description": "Android R.string.only_the_private_key_is_required"
+  },
+  "onlyThisContainerOtherContainersIn": "{a1} only this container. Other containers in this service and stack are kept.",
+  "@onlyThisContainerOtherContainersIn": {
+    "description": "Android R.string.only_this_container_other_containers_in",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "onlyTriggersOnHostsThatReport": "Only triggers on hosts that report a CPU temperature. Hosts without a thermal sensor (many VMs and containers) never evaluate this rule.",
+  "@onlyTriggersOnHostsThatReport": {
+    "description": "Android R.string.only_triggers_on_hosts_that_report"
+  },
   "open": "OPEN ▾",
   "@open": {
     "description": "Android R.string.open"
   },
+  "openAlertsPopup": "Open alerts popup",
+  "@openAlertsPopup": {
+    "description": "Android R.string.open_alerts_popup"
+  },
   "openLinksInApp": "Open links in-app",
   "@openLinksInApp": {
     "description": "Android R.string.open_links_in_app"
+  },
+  "openPorts": "Open ports: {a1}",
+  "@openPorts": {
+    "description": "Android R.string.open_ports",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "openSecondPane": "Open second pane",
+  "@openSecondPane": {
+    "description": "Android R.string.open_second_pane"
   },
   "openTerminalConsole": "Open Terminal Console",
   "@openTerminalConsole": {
@@ -1348,29 +3065,165 @@
   "@openWithDeviceApp2": {
     "description": "Android R.string.open_with_device_app_2"
   },
+  "overwrite": "Overwrite",
+  "@overwrite": {
+    "description": "Android R.string.overwrite"
+  },
+  "overwrite2": "Overwrite \"{a1}\"?",
+  "@overwrite2": {
+    "description": "Android R.string.overwrite_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "overwriteExistingFileS": "Overwrite existing file(s)?",
+  "@overwriteExistingFileS": {
+    "description": "Android R.string.overwrite_existing_file_s"
+  },
+  "overwriteExistingItemS": "Overwrite existing item(s)?",
+  "@overwriteExistingItemS": {
+    "description": "Android R.string.overwrite_existing_item_s"
+  },
+  "pane": "PANE {a1} · {a2}",
+  "@pane": {
+    "description": "Android R.string.pane",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "passphraseMinChars": "Passphrase (min {a1} chars)",
+  "@passphraseMinChars": {
+    "description": "Android R.string.passphrase_min_chars",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "password": "Password",
   "@password": {
     "description": "Android R.string.password"
+  },
+  "passwordLeaveBlankToKeepCurrent": "Password (leave blank to keep current)",
+  "@passwordLeaveBlankToKeepCurrent": {
+    "description": "Android R.string.password_leave_blank_to_keep_current"
   },
   "paste": "Paste",
   "@paste": {
     "description": "Android R.string.paste"
   },
+  "pasteCharacters": "Paste {a1} characters?",
+  "@pasteCharacters": {
+    "description": "Android R.string.paste_characters",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "pasteFromClipboard": "Paste from clipboard",
+  "@pasteFromClipboard": {
+    "description": "Android R.string.paste_from_clipboard"
+  },
   "pasteHere": "Paste here",
   "@pasteHere": {
     "description": "Android R.string.paste_here"
+  },
+  "pasteUnavailableInReadOnlyMode": "Paste unavailable in read-only mode",
+  "@pasteUnavailableInReadOnlyMode": {
+    "description": "Android R.string.paste_unavailable_in_read_only_mode"
   },
   "path": "Path",
   "@path": {
     "description": "Android R.string.path"
   },
+  "perCore": "PER-CORE ({a1})",
+  "@perCore": {
+    "description": "Android R.string.per_core",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "perInterfaceRatesAppearAfterThe": "Per-interface rates appear after the next refresh.",
   "@perInterfaceRatesAppearAfterThe": {
     "description": "Android R.string.per_interface_rates_appear_after_the"
   },
+  "permanentlyDeleteTheSelectedItemsFrom": "Permanently delete the selected items from the remote host? This cannot be undone.",
+  "@permanentlyDeleteTheSelectedItemsFrom": {
+    "description": "Android R.string.permanently_delete_the_selected_items_from"
+  },
+  "permanentlyDeleteThisDirectoryAndIts": "Permanently delete this directory and its contents from the remote host? This cannot be undone.",
+  "@permanentlyDeleteThisDirectoryAndIts": {
+    "description": "Android R.string.permanently_delete_this_directory_and_its"
+  },
+  "permanentlyDeleteThisFileFromThe": "Permanently delete this file from the remote host? This cannot be undone.",
+  "@permanentlyDeleteThisFileFromThe": {
+    "description": "Android R.string.permanently_delete_this_file_from_the"
+  },
+  "permanentlyRemoveImage": "Permanently remove image {a1}:{a2}?",
+  "@permanentlyRemoveImage": {
+    "description": "Android R.string.permanently_remove_image",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "permanentlyRemoveImages": "Permanently remove {a1} images?",
+  "@permanentlyRemoveImages": {
+    "description": "Android R.string.permanently_remove_images",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "permanentlyRemoveNetwork": "Permanently remove network {a1}?",
+  "@permanentlyRemoveNetwork": {
+    "description": "Android R.string.permanently_remove_network",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "permanentlyRemoveVolume": "Permanently remove volume {a1}?",
+  "@permanentlyRemoveVolume": {
+    "description": "Android R.string.permanently_remove_volume",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "permanentlyRemoveVolumes": "Permanently remove {a1} volumes?",
+  "@permanentlyRemoveVolumes": {
+    "description": "Android R.string.permanently_remove_volumes",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "persistentSessionTmux": "Persistent session (tmux)",
   "@persistentSessionTmux": {
     "description": "Android R.string.persistent_session_tmux"
+  },
+  "persistentSessionsAttachWithTmuxS": "Persistent sessions attach with tmux's control protocol (what iTerm2 uses): every output byte is streamed, so scroll history is always complete — nothing is skipped while you're not watching. Split panes made inside tmux aren't rendered. Applies to newly opened sessions.",
+  "@persistentSessionsAttachWithTmuxS": {
+    "description": "Android R.string.persistent_sessions_attach_with_tmux_s"
   },
   "pick": "PICK ▾",
   "@pick": {
@@ -1388,9 +3241,25 @@
   "@pickAnExistingGroupOrType": {
     "description": "Android R.string.pick_an_existing_group_or_type"
   },
+  "pickExistingGroup": "Pick existing group",
+  "@pickExistingGroup": {
+    "description": "Android R.string.pick_existing_group"
+  },
   "pickLanHost": "Pick LAN host",
   "@pickLanHost": {
     "description": "Android R.string.pick_lan_host"
+  },
+  "pid": "PID {a1} · {a2}",
+  "@pid": {
+    "description": "Android R.string.pid",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "pin": "PIN",
   "@pin": {
@@ -1436,6 +3305,37 @@
   "@port": {
     "description": "Android R.string.port"
   },
+  "port2": "Port {a1}",
+  "@port2": {
+    "description": "Android R.string.port_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "portScan": "Port scan",
+  "@portScan": {
+    "description": "Android R.string.port_scan"
+  },
+  "ports": "{a1} ports",
+  "@ports": {
+    "description": "Android R.string.ports",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "ports2": "Ports: {a1}",
+  "@ports2": {
+    "description": "Android R.string.ports_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "portsListRangeCommaSplit": "Ports list range (comma-split)",
   "@portsListRangeCommaSplit": {
     "description": "Android R.string.ports_list_range_comma_split"
@@ -1444,13 +3344,30 @@
   "@presets": {
     "description": "Android R.string.presets"
   },
+  "pressBackAgainToExit": "Press back again to exit",
+  "@pressBackAgainToExit": {
+    "description": "Android R.string.press_back_again_to_exit"
+  },
   "preview": "Preview",
   "@preview": {
     "description": "Android R.string.preview"
   },
+  "preview2": "Preview: {a1}",
+  "@preview2": {
+    "description": "Android R.string.preview_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "previous": "Previous",
   "@previous": {
     "description": "Android R.string.previous"
+  },
+  "previousMatch": "Previous match",
+  "@previousMatch": {
+    "description": "Android R.string.previous_match"
   },
   "privacyPolicy": "Privacy Policy",
   "@privacyPolicy": {
@@ -1467,6 +3384,15 @@
   "probesSmb445Ftp21Sftp": "Probes SMB 445, FTP 21, SFTP 22, NFS 2049, WebDAV 80/443 — untick protocols to cut noise.",
   "@probesSmb445Ftp21Sftp": {
     "description": "Android R.string.probes_smb_445_ftp_21_sftp"
+  },
+  "procs": "{a1} Procs",
+  "@procs": {
+    "description": "Android R.string.procs",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "profile": "Profile",
   "@profile": {
@@ -1500,13 +3426,41 @@
   "@proxyHost": {
     "description": "Android R.string.proxy_host"
   },
+  "proxyJumpHost": "Proxy / jump host",
+  "@proxyJumpHost": {
+    "description": "Android R.string.proxy_jump_host"
+  },
+  "proxyPasswordOptional": "Proxy password (optional)",
+  "@proxyPasswordOptional": {
+    "description": "Android R.string.proxy_password_optional"
+  },
   "proxySshJump": "Proxy / SSH jump",
   "@proxySshJump": {
     "description": "Android R.string.proxy_ssh_jump"
   },
+  "proxyUserOptional": "Proxy user (optional)",
+  "@proxyUserOptional": {
+    "description": "Android R.string.proxy_user_optional"
+  },
+  "prune": "Prune",
+  "@prune": {
+    "description": "Android R.string.prune"
+  },
   "pruneUnused": "Prune Unused",
   "@pruneUnused": {
     "description": "Android R.string.prune_unused"
+  },
+  "pruneUnusedImages": "Prune Unused Images?",
+  "@pruneUnusedImages": {
+    "description": "Android R.string.prune_unused_images"
+  },
+  "pruneUnusedNetworks": "Prune Unused Networks?",
+  "@pruneUnusedNetworks": {
+    "description": "Android R.string.prune_unused_networks"
+  },
+  "pruneUnusedVolumes": "Prune Unused Volumes?",
+  "@pruneUnusedVolumes": {
+    "description": "Android R.string.prune_unused_volumes"
   },
   "publicKey": "Public Key",
   "@publicKey": {
@@ -1536,6 +3490,22 @@
   "@quickAccessBookmarksEveryHostAnd": {
     "description": "Android R.string.quick_access_bookmarks_every_host_and"
   },
+  "quickConnect": "Quick connect",
+  "@quickConnect": {
+    "description": "Android R.string.quick_connect"
+  },
+  "quickConnectDonTSave": "Quick connect (don't save)",
+  "@quickConnectDonTSave": {
+    "description": "Android R.string.quick_connect_don_t_save"
+  },
+  "quickConnectDonTSave2": "Quick connect (don't save)…",
+  "@quickConnectDonTSave2": {
+    "description": "Android R.string.quick_connect_don_t_save_2"
+  },
+  "quickConnectToAnotherHost": "Quick connect to another host…",
+  "@quickConnectToAnotherHost": {
+    "description": "Android R.string.quick_connect_to_another_host"
+  },
   "quickOs": "Quick OS",
   "@quickOs": {
     "description": "Android R.string.quick_os"
@@ -1548,9 +3518,59 @@
   "@quickSystem": {
     "description": "Android R.string.quick_system"
   },
+  "ramHourlyAvg": "RAM (hourly avg)",
+  "@ramHourlyAvg": {
+    "description": "Android R.string.ram_hourly_avg"
+  },
+  "ramUtilisation": "RAM utilisation",
+  "@ramUtilisation": {
+    "description": "Android R.string.ram_utilisation"
+  },
+  "rawYamlEditsAreNotApplied": "Raw YAML edits are not applied to the visual form. Switch back and ignore those raw edits for deploy?",
+  "@rawYamlEditsAreNotApplied": {
+    "description": "Android R.string.raw_yaml_edits_are_not_applied"
+  },
+  "readOnlyDragToScroll": "READ ONLY · drag to scroll",
+  "@readOnlyDragToScroll": {
+    "description": "Android R.string.read_only_drag_to_scroll"
+  },
+  "readingBackup": "Reading backup…",
+  "@readingBackup": {
+    "description": "Android R.string.reading_backup"
+  },
+  "readingTheProcessList": "Reading the process list…",
+  "@readingTheProcessList": {
+    "description": "Android R.string.reading_the_process_list"
+  },
   "reboot": "Reboot",
   "@reboot": {
     "description": "Android R.string.reboot"
+  },
+  "reboot2": "Reboot {a1}?",
+  "@reboot2": {
+    "description": "Android R.string.reboot_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "rebootHost": "Reboot host",
+  "@rebootHost": {
+    "description": "Android R.string.reboot_host"
+  },
+  "reconnect": "Reconnect",
+  "@reconnect": {
+    "description": "Android R.string.reconnect"
+  },
+  "recordedReleaseTracesAreObfuscatedKeep": "{a1} recorded. Release traces are obfuscated — keep the version line so it can be decoded.",
+  "@recordedReleaseTracesAreObfuscatedKeep": {
+    "description": "Android R.string.recorded_release_traces_are_obfuscated_keep",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "recursive": "Recursive",
   "@recursive": {
@@ -1560,6 +3580,10 @@
   "@refresh": {
     "description": "Android R.string.refresh"
   },
+  "refresh2": "Refresh",
+  "@refresh2": {
+    "description": "Android R.string.refresh_2"
+  },
   "reject": "Reject",
   "@reject": {
     "description": "Android R.string.reject"
@@ -1567,6 +3591,75 @@
   "reload": "Reload",
   "@reload": {
     "description": "Android R.string.reload"
+  },
+  "rememberingBackupSelection": "Remembering backup selection…",
+  "@rememberingBackupSelection": {
+    "description": "Android R.string.remembering_backup_selection"
+  },
+  "remoteBindHost": "Remote bind host",
+  "@remoteBindHost": {
+    "description": "Android R.string.remote_bind_host"
+  },
+  "remove": "Remove",
+  "@remove": {
+    "description": "Android R.string.remove"
+  },
+  "remove2": "Remove {a1}?",
+  "@remove2": {
+    "description": "Android R.string.remove_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "removeAll": "Remove all",
+  "@removeAll": {
+    "description": "Android R.string.remove_all"
+  },
+  "removeAllImagesNotCurrentlyUsed": "Remove ALL images not currently used by a container (docker image prune -a). This may reclaim significant disk space and cannot be undone.",
+  "@removeAllImagesNotCurrentlyUsed": {
+    "description": "Android R.string.remove_all_images_not_currently_used"
+  },
+  "removeAllNetworksNotUsedBy": "Remove all networks not used by any container (network prune). This cannot be undone.",
+  "@removeAllNetworksNotUsedBy": {
+    "description": "Android R.string.remove_all_networks_not_used_by"
+  },
+  "removeAllVolumesNotUsedBy": "Remove ALL volumes not used by any container (volume prune). DATA WILL BE PERMANENTLY DELETED. This cannot be undone.",
+  "@removeAllVolumesNotUsedBy": {
+    "description": "Android R.string.remove_all_volumes_not_used_by"
+  },
+  "removeBookmark": "Remove bookmark?",
+  "@removeBookmark": {
+    "description": "Android R.string.remove_bookmark"
+  },
+  "removeBookmark2": "Remove bookmark",
+  "@removeBookmark2": {
+    "description": "Android R.string.remove_bookmark_2"
+  },
+  "removeImage": "Remove Image?",
+  "@removeImage": {
+    "description": "Android R.string.remove_image"
+  },
+  "removeImages": "Remove Images?",
+  "@removeImages": {
+    "description": "Android R.string.remove_images"
+  },
+  "removeNetwork": "Remove Network?",
+  "@removeNetwork": {
+    "description": "Android R.string.remove_network"
+  },
+  "removeOn": "Remove {a1} on {a2}?",
+  "@removeOn": {
+    "description": "Android R.string.remove_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "removeOrphans": "--remove-orphans",
   "@removeOrphans": {
@@ -1576,9 +3669,73 @@
   "@removeReconnect": {
     "description": "Android R.string.remove_reconnect"
   },
+  "removeTheBookmarkFor": "Remove the bookmark for \"{a1}\"?",
+  "@removeTheBookmarkFor": {
+    "description": "Android R.string.remove_the_bookmark_for",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "removeTheBookmarkFor2": "Remove the bookmark for \"{a1}\"?",
+  "@removeTheBookmarkFor2": {
+    "description": "Android R.string.remove_the_bookmark_for_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "removeTheTrustedSshHostKey": "Remove the trusted SSH host key for {a1}? The next connection will prompt you to verify and pin the key again.",
+  "@removeTheTrustedSshHostKey": {
+    "description": "Android R.string.remove_the_trusted_ssh_host_key",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "removeThisHostConnectionAndIts": "Remove this host connection (and its saved credentials) from OmniTerm? This does not affect the remote machine, but cannot be undone here.",
+  "@removeThisHostConnectionAndIts": {
+    "description": "Android R.string.remove_this_host_connection_and_its"
+  },
+  "removeThisSavedTunnelIfIt": "Remove this saved tunnel? If it's running it will be stopped.",
+  "@removeThisSavedTunnelIfIt": {
+    "description": "Android R.string.remove_this_saved_tunnel_if_it"
+  },
+  "removeThisStackFromOmnitermS": "Remove this stack from OmniTerm's list only. Nothing on the host is touched — the compose file stays where it is.",
+  "@removeThisStackFromOmnitermS": {
+    "description": "Android R.string.remove_this_stack_from_omniterm_s"
+  },
+  "removeTrustedKey": "Remove trusted key?",
+  "@removeTrustedKey": {
+    "description": "Android R.string.remove_trusted_key"
+  },
+  "removeVolume": "Remove Volume?",
+  "@removeVolume": {
+    "description": "Android R.string.remove_volume"
+  },
+  "removeVolumes": "Remove Volumes?",
+  "@removeVolumes": {
+    "description": "Android R.string.remove_volumes"
+  },
+  "removesThisSavedShareProfileFiles": "Removes this saved share profile. Files on the share are not touched.",
+  "@removesThisSavedShareProfileFiles": {
+    "description": "Android R.string.removes_this_saved_share_profile_files"
+  },
   "rename": "Rename",
   "@rename": {
     "description": "Android R.string.rename"
+  },
+  "rename2": "Rename \"{a1}\"",
+  "@rename2": {
+    "description": "Android R.string.rename_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "renameFile": "Rename file",
   "@renameFile": {
@@ -1588,9 +3745,35 @@
   "@renameNode": {
     "description": "Android R.string.rename_node"
   },
+  "renamingUpdatesEveryHostAndProfile": "Renaming updates every host and profile that uses this key. Leave the key fields blank to keep the current key pair; paste a new private key to replace it.",
+  "@renamingUpdatesEveryHostAndProfile": {
+    "description": "Android R.string.renaming_updates_every_host_and_profile"
+  },
   "replace": "Replace",
   "@replace": {
     "description": "Android R.string.replace"
+  },
+  "replace2": "Replace \"{a1}\"?",
+  "@replace2": {
+    "description": "Android R.string.replace_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "replace3": "Replace \"{a1}\"?",
+  "@replace3": {
+    "description": "Android R.string.replace_3",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "replaceTheCurrentHealthScoringThresholds": "Replace the current health-scoring thresholds and penalties? Health scores for all hosts will be recalculated with the new values.",
+  "@replaceTheCurrentHealthScoringThresholds": {
+    "description": "Android R.string.replace_the_current_health_scoring_thresholds"
   },
   "replacementPrivateKeyOptional": "Replacement private key (optional)",
   "@replacementPrivateKeyOptional": {
@@ -1599,6 +3782,10 @@
   "replacementPublicKeyOptional": "Replacement public key (optional)",
   "@replacementPublicKeyOptional": {
     "description": "Android R.string.replacement_public_key_optional"
+  },
+  "replacesIpsHostnamesWithHostNames": "Replaces IPs/hostnames with host names across the app — safe for screenshots and screen shares.",
+  "@replacesIpsHostnamesWithHostNames": {
+    "description": "Android R.string.replaces_ips_hostnames_with_host_names"
   },
   "replicas": "Replicas",
   "@replicas": {
@@ -1612,9 +3799,67 @@
   "@requirePinToUnlock": {
     "description": "Android R.string.require_pin_to_unlock"
   },
+  "rescanLan": "Rescan LAN",
+  "@rescanLan": {
+    "description": "Android R.string.rescan_lan"
+  },
+  "rescanLanShares": "Rescan LAN shares",
+  "@rescanLanShares": {
+    "description": "Android R.string.rescan_lan_shares"
+  },
+  "rescanNetwork": "Rescan network",
+  "@rescanNetwork": {
+    "description": "Android R.string.rescan_network"
+  },
+  "reset": "Reset",
+  "@reset": {
+    "description": "Android R.string.reset"
+  },
   "resetDefaults": "Reset defaults",
   "@resetDefaults": {
     "description": "Android R.string.reset_defaults"
+  },
+  "resetToDefaults": "Reset to defaults?",
+  "@resetToDefaults": {
+    "description": "Android R.string.reset_to_defaults"
+  },
+  "restart": "Restart",
+  "@restart": {
+    "description": "Android R.string.restart"
+  },
+  "restart2": "Restart {a1}?",
+  "@restart2": {
+    "description": "Android R.string.restart_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "restart3": "Restart {a1}?",
+  "@restart3": {
+    "description": "Android R.string.restart_3",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "restartAll": "Restart all",
+  "@restartAll": {
+    "description": "Android R.string.restart_all"
+  },
+  "restartAllCurrentContainersForThis": "Restart all {a1} current containers for this service in {a2}?",
+  "@restartAllCurrentContainersForThis": {
+    "description": "Android R.string.restart_all_current_containers_for_this",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "restore": "Restore",
   "@restore": {
@@ -1624,17 +3869,46 @@
   "@restoreBackup": {
     "description": "Android R.string.restore_backup"
   },
+  "restoreBackup2": "Restore Backup",
+  "@restoreBackup2": {
+    "description": "Android R.string.restore_backup_2"
+  },
+  "restoreSelectedData": "Restore selected data?",
+  "@restoreSelectedData": {
+    "description": "Android R.string.restore_selected_data"
+  },
   "restoring": "Restoring…",
   "@restoring": {
     "description": "Android R.string.restoring"
+  },
+  "restoringSelectedSectionsWillAddMatching": "Restoring selected sections will add matching backup contents into OmniTerm. This cannot be undone.",
+  "@restoringSelectedSectionsWillAddMatching": {
+    "description": "Android R.string.restoring_selected_sections_will_add_matching"
   },
   "resumableTmux": "RESUMABLE TMUX",
   "@resumableTmux": {
     "description": "Android R.string.resumable_tmux"
   },
+  "resume": "Resume",
+  "@resume": {
+    "description": "Android R.string.resume"
+  },
+  "retentionWindowDays": "Retention Window: {a1} days",
+  "@retentionWindowDays": {
+    "description": "Android R.string.retention_window_days",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "retry": "Retry",
   "@retry": {
     "description": "Android R.string.retry"
+  },
+  "retryMetrics": "Retry metrics",
+  "@retryMetrics": {
+    "description": "Android R.string.retry_metrics"
   },
   "review": "Review",
   "@review": {
@@ -1652,6 +3926,10 @@
   "@rulesAndIncidentHistoryAreAvailable": {
     "description": "Android R.string.rules_and_incident_history_are_available"
   },
+  "rulesAreCheckedOnEachMetrics": "Rules are checked on each metrics refresh while OmniTerm is open. Alerts will not fire in the background or when the app is closed — keep the app running to monitor.",
+  "@rulesAreCheckedOnEachMetrics": {
+    "description": "Android R.string.rules_are_checked_on_each_metrics"
+  },
   "run": "Run",
   "@run": {
     "description": "Android R.string.run"
@@ -1660,9 +3938,57 @@
   "@runComposeDown": {
     "description": "Android R.string.run_compose_down"
   },
+  "runComposeUpDFromContainers": "Run compose up -d from {a1}? Containers and networks are recreated from the compose file.",
+  "@runComposeUpDFromContainers": {
+    "description": "Android R.string.run_compose_up_d_from_containers",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "runDnsQuery": "Run DNS Query",
   "@runDnsQuery": {
     "description": "Android R.string.run_dns_query"
+  },
+  "runOn": "Run on {a1}?",
+  "@runOn": {
+    "description": "Android R.string.run_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "runOnHost": "Run on {a1} host{a2}?",
+  "@runOnHost": {
+    "description": "Android R.string.run_on_host",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "runSystemctlRestartOnTheService": "Run systemctl restart on {a1}? The service will briefly stop and start again.",
+  "@runSystemctlRestartOnTheService": {
+    "description": "Android R.string.run_systemctl_restart_on_the_service",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "runSystemctlStopOnItWill": "Run systemctl stop on {a1}? It will remain down until started again.",
+  "@runSystemctlStopOnItWill": {
+    "description": "Android R.string.run_systemctl_stop_on_it_will",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "runWhoisQuery": "Run WHOIS Query",
   "@runWhoisQuery": {
@@ -1676,17 +4002,54 @@
   "@running2": {
     "description": "Android R.string.running_2"
   },
+  "running3": "{a1}/{a2} running",
+  "@running3": {
+    "description": "Android R.string.running_3",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "runsShellsInsideTmuxSoA": "Runs shells inside tmux so a dropped connection reconnects and long-running commands keep going. Requires tmux on the host — you'll be offered to install it on first connect.",
+  "@runsShellsInsideTmuxSoA": {
+    "description": "Android R.string.runs_shells_inside_tmux_so_a"
+  },
   "runtime": "Runtime",
   "@runtime": {
     "description": "Android R.string.runtime"
+  },
+  "runtimeOwnedByThisRuntimeRedeploys": "Runtime: {a1} (owned by this runtime; redeploys stay on it)",
+  "@runtimeOwnedByThisRuntimeRedeploys": {
+    "description": "Android R.string.runtime_owned_by_this_runtime_redeploys",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "save": "Save",
   "@save": {
     "description": "Android R.string.save"
   },
+  "saveAfterFailedCheck": "Save after failed check?",
+  "@saveAfterFailedCheck": {
+    "description": "Android R.string.save_after_failed_check"
+  },
   "saveAnyway": "Save anyway",
   "@saveAnyway": {
     "description": "Android R.string.save_anyway"
+  },
+  "saveAsRootOff": "Save as root: off",
+  "@saveAsRootOff": {
+    "description": "Android R.string.save_as_root_off"
+  },
+  "saveAsRootOn": "Save as root: on",
+  "@saveAsRootOn": {
+    "description": "Android R.string.save_as_root_on"
   },
   "saveChanges": "Save Changes",
   "@saveChanges": {
@@ -1695,6 +4058,10 @@
   "saveChanges2": "Save changes",
   "@saveChanges2": {
     "description": "Android R.string.save_changes_2"
+  },
+  "saveCommand": "Save command",
+  "@saveCommand": {
+    "description": "Android R.string.save_command"
   },
   "saveKey": "Save Key",
   "@saveKey": {
@@ -1712,9 +4079,29 @@
   "@saveScoring": {
     "description": "Android R.string.save_scoring"
   },
+  "saveScoringConfig": "Save scoring config?",
+  "@saveScoringConfig": {
+    "description": "Android R.string.save_scoring_config"
+  },
+  "saveScript": "Save script",
+  "@saveScript": {
+    "description": "Android R.string.save_script"
+  },
   "saveSecurelyToCredentialStore": "Save securely to Credential Store",
   "@saveSecurelyToCredentialStore": {
     "description": "Android R.string.save_securely_to_credential_store"
+  },
+  "saveServer": "Save Server",
+  "@saveServer": {
+    "description": "Android R.string.save_server"
+  },
+  "saveWithoutTesting": "Save without testing?",
+  "@saveWithoutTesting": {
+    "description": "Android R.string.save_without_testing"
+  },
+  "savedPasswordWillBeRemovedWhen": "Saved password will be removed when you save.",
+  "@savedPasswordWillBeRemovedWhen": {
+    "description": "Android R.string.saved_password_will_be_removed_when"
   },
   "savedPersistentSessions": "Saved persistent sessions",
   "@savedPersistentSessions": {
@@ -1732,6 +4119,18 @@
   "@saving": {
     "description": "Android R.string.saving"
   },
+  "savingResumableSessionsPleaseWait": "Saving resumable sessions… Please wait.",
+  "@savingResumableSessionsPleaseWait": {
+    "description": "Android R.string.saving_resumable_sessions_please_wait"
+  },
+  "savingServer": "Saving server…",
+  "@savingServer": {
+    "description": "Android R.string.saving_server"
+  },
+  "savingSessionRecovery": "Saving session recovery",
+  "@savingSessionRecovery": {
+    "description": "Android R.string.saving_session_recovery"
+  },
   "savingWillCreateAReusableCredential": "Saving will create a reusable credential profile in the Network Shares group.",
   "@savingWillCreateAReusableCredential": {
     "description": "Android R.string.saving_will_create_a_reusable_credential"
@@ -1740,17 +4139,38 @@
   "@scale": {
     "description": "Android R.string.scale"
   },
+  "scale2": "Scale {a1}",
+  "@scale2": {
+    "description": "Android R.string.scale_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "scalesTextAcrossAllScreens": "Scales text across all screens.",
   "@scalesTextAcrossAllScreens": {
     "description": "Android R.string.scales_text_across_all_screens"
+  },
+  "scanLan": "Scan LAN",
+  "@scanLan": {
+    "description": "Android R.string.scan_lan"
   },
   "scanLanForShares": "Scan LAN for shares",
   "@scanLanForShares": {
     "description": "Android R.string.scan_lan_for_shares"
   },
+  "scanLanShares": "Scan LAN shares",
+  "@scanLanShares": {
+    "description": "Android R.string.scan_lan_shares"
+  },
   "scanLanToAddATarget": "Scan LAN to add a target",
   "@scanLanToAddATarget": {
     "description": "Android R.string.scan_lan_to_add_a_target"
+  },
+  "scanNetwork": "Scan network",
+  "@scanNetwork": {
+    "description": "Android R.string.scan_network"
   },
   "scanningNetwork": "Scanning network…",
   "@scanningNetwork": {
@@ -1764,9 +4184,35 @@
   "@schedule": {
     "description": "Android R.string.schedule"
   },
+  "score100": "Score: {a1} / 100",
+  "@score100": {
+    "description": "Android R.string.score_100",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "scoreStartsAt100EachMetric": "Score starts at 100; each metric subtracts points when it reaches a tier (warn / high / critical). Edit the thresholds and the points each deducts.",
+  "@scoreStartsAt100EachMetric": {
+    "description": "Android R.string.score_starts_at_100_each_metric"
+  },
   "scriptName": "Script name",
   "@scriptName": {
     "description": "Android R.string.script_name"
+  },
+  "scripts": "Scripts",
+  "@scripts": {
+    "description": "Android R.string.scripts"
+  },
+  "scrollbackKLines": "Scrollback: {a1}k lines",
+  "@scrollbackKLines": {
+    "description": "Android R.string.scrollback_k_lines",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "search": "Search",
   "@search": {
@@ -1779,6 +4225,28 @@
   "searchPresets": "Search presets",
   "@searchPresets": {
     "description": "Android R.string.search_presets"
+  },
+  "searchThisDirectory": "Search this directory",
+  "@searchThisDirectory": {
+    "description": "Android R.string.search_this_directory"
+  },
+  "searching": "Searching {a1}…",
+  "@searching": {
+    "description": "Android R.string.searching",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "searching2": "Searching {a1}…",
+  "@searching2": {
+    "description": "Android R.string.searching_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "selectAServerFirst": "Select a server first.",
   "@selectAServerFirst": {
@@ -1808,6 +4276,78 @@
   "@selectMetricKey": {
     "description": "Android R.string.select_metric_key"
   },
+  "selectServersForWidget": "Select Servers for Widget",
+  "@selectServersForWidget": {
+    "description": "Android R.string.select_servers_for_widget"
+  },
+  "selectTwoHostsForThePanes": "Select two hosts for the panes",
+  "@selectTwoHostsForThePanes": {
+    "description": "Android R.string.select_two_hosts_for_the_panes"
+  },
+  "selected": "{a1} selected",
+  "@selected": {
+    "description": "Android R.string.selected",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "selected2": "{a1} selected",
+  "@selected2": {
+    "description": "Android R.string.selected_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "selectedServerSWillBeMoved": "{a1} selected server(s) will be moved to this group.",
+  "@selectedServerSWillBeMoved": {
+    "description": "Android R.string.selected_server_s_will_be_moved",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "sendAWakeOnLanMagic": "Send a Wake-on-LAN magic packet to \"{a1}\" ({a2})?",
+  "@sendAWakeOnLanMagic": {
+    "description": "Android R.string.send_a_wake_on_lan_magic",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "sendSessionToBackground": "Send Session to Background?",
+  "@sendSessionToBackground": {
+    "description": "Android R.string.send_session_to_background"
+  },
+  "sendSigterm": "Send SIGTERM?",
+  "@sendSigterm": {
+    "description": "Android R.string.send_sigterm"
+  },
+  "sendToBackground": "Send to background",
+  "@sendToBackground": {
+    "description": "Android R.string.send_to_background"
+  },
+  "sendToBackground2": "Send {a1} to background",
+  "@sendToBackground2": {
+    "description": "Android R.string.send_to_background_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "sendWakePacket": "Send wake packet?",
+  "@sendWakePacket": {
+    "description": "Android R.string.send_wake_packet"
+  },
   "sending": "Sending…",
   "@sending": {
     "description": "Android R.string.sending"
@@ -1816,9 +4356,31 @@
   "@sensitiveBackupSectionsRequireEncryptionCho": {
     "description": "Android R.string.sensitive_backup_sections_require_encryption_cho"
   },
+  "sensitiveSectionsSelectedBackupWillBe": "Sensitive sections selected: backup will be encrypted.",
+  "@sensitiveSectionsSelectedBackupWillBe": {
+    "description": "Android R.string.sensitive_sections_selected_backup_will_be"
+  },
   "sensitiveSelectingForcesAnEncryptedBackup": "* Sensitive — selecting forces an encrypted backup.",
   "@sensitiveSelectingForcesAnEncryptedBackup": {
     "description": "Android R.string.sensitive_selecting_forces_an_encrypted_backup"
+  },
+  "server": "Server: {a1}",
+  "@server": {
+    "description": "Android R.string.server",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "server2": "Server: {a1}",
+  "@server2": {
+    "description": "Android R.string.server_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "serverNotes": "Server Notes",
   "@serverNotes": {
@@ -1828,9 +4390,54 @@
   "@servers": {
     "description": "Android R.string.servers"
   },
+  "serversSelected": "{a1} servers selected",
+  "@serversSelected": {
+    "description": "Android R.string.servers_selected",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "serviceLogs": "Service logs",
+  "@serviceLogs": {
+    "description": "Android R.string.service_logs"
+  },
+  "serviceSContainers": "{a1} service(s) · {a2}/{a3} containers",
+  "@serviceSContainers": {
+    "description": "Android R.string.service_s_containers",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      }
+    }
+  },
+  "servicesListIsVirtualizedForResponsive": "{a1} services · list is virtualized for responsive editing",
+  "@servicesListIsVirtualizedForResponsive": {
+    "description": "Android R.string.services_list_is_virtualized_for_responsive",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "servicesSharePodmanPodNamespacesUsing": "Services share Podman pod namespaces using x-podman.in_pod.",
   "@servicesSharePodmanPodNamespacesUsing": {
     "description": "Android R.string.services_share_podman_pod_namespaces_using"
+  },
+  "sessionIsStillOpenButBackground": "Session is still open, but background protection could not start: ",
+  "@sessionIsStillOpenButBackground": {
+    "description": "Android R.string.session_is_still_open_but_background"
+  },
+  "sessionRecoveryNotSaved": "Session recovery not saved",
+  "@sessionRecoveryNotSaved": {
+    "description": "Android R.string.session_recovery_not_saved"
   },
   "sftp": "SFTP",
   "@sftp": {
@@ -1851,6 +4458,14 @@
   "shares": "Shares",
   "@shares": {
     "description": "Android R.string.shares"
+  },
+  "shell": "Shell",
+  "@shell": {
+    "description": "Android R.string.shell"
+  },
+  "shell2": "SHELL",
+  "@shell2": {
+    "description": "Android R.string.shell_2"
   },
   "shortcutHostMissing": "This host no longer exists.",
   "@shortcutHostMissing": {
@@ -1888,13 +4503,80 @@
   "@shortcutShareMissing": {
     "description": "Android R.string.shortcut_share_missing"
   },
+  "show_": "Show",
+  "@show_": {
+    "description": "Android R.string.show"
+  },
+  "showDotfiles": "Show dotfiles",
+  "@showDotfiles": {
+    "description": "Android R.string.show_dotfiles"
+  },
+  "showFolderSizes": "Show folder sizes",
+  "@showFolderSizes": {
+    "description": "Android R.string.show_folder_sizes"
+  },
+  "showFullBuffer": "Show full buffer",
+  "@showFullBuffer": {
+    "description": "Android R.string.show_full_buffer"
+  },
+  "showPassword": "Show password",
+  "@showPassword": {
+    "description": "Android R.string.show_password"
+  },
+  "showVisibleScreen": "Show visible screen",
+  "@showVisibleScreen": {
+    "description": "Android R.string.show_visible_screen"
+  },
+  "showingFirstMatchesNarrowThePattern": "Showing first {a1} matches — narrow the pattern.",
+  "@showingFirstMatchesNarrowThePattern": {
+    "description": "Android R.string.showing_first_matches_narrow_the_pattern",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "showingFirstMatchesNarrowThePattern2": "Showing first {a1} matches — narrow the pattern for more precision.",
+  "@showingFirstMatchesNarrowThePattern2": {
+    "description": "Android R.string.showing_first_matches_narrow_the_pattern_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "sizeOnDisk": "{a1} on disk",
+  "@sizeOnDisk": {
+    "description": "Android R.string.size_on_disk",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "sizeOnDiskPartial": "At least that much — some directories could not be read, so the real total is higher.",
+  "@sizeOnDiskPartial": {
+    "description": "Android R.string.size_on_disk_partial"
+  },
   "smartSwipeInput": "Smart swipe input",
   "@smartSwipeInput": {
     "description": "Android R.string.smart_swipe_input"
   },
+  "sort": "Sort",
+  "@sort": {
+    "description": "Android R.string.sort"
+  },
+  "sortFiles": "Sort files",
+  "@sortFiles": {
+    "description": "Android R.string.sort_files"
+  },
   "sourceCodeContributions": "Source code & contributions",
   "@sourceCodeContributions": {
     "description": "Android R.string.source_code_contributions"
+  },
+  "ssh": "SSH",
+  "@ssh": {
+    "description": "Android R.string.ssh"
   },
   "sshAnyway": "SSH anyway",
   "@sshAnyway": {
@@ -1911,6 +4593,10 @@
   "sshLeaveBlankToAutoDerive": "ssh-… (leave blank to auto-derive)",
   "@sshLeaveBlankToAutoDerive": {
     "description": "Android R.string.ssh_leave_blank_to_auto_derive"
+  },
+  "sshPassword": "SSH Password",
+  "@sshPassword": {
+    "description": "Android R.string.ssh_password"
   },
   "sshPort": "SSH Port",
   "@sshPort": {
@@ -1932,6 +4618,14 @@
   "@sshUsername": {
     "description": "Android R.string.ssh_username"
   },
+  "sshUsername2": "SSH username",
+  "@sshUsername2": {
+    "description": "Android R.string.ssh_username_2"
+  },
+  "stackDeployed": "Stack deployed",
+  "@stackDeployed": {
+    "description": "Android R.string.stack_deployed"
+  },
   "stackNameComposeNameKeyOptional": "Stack name (compose name: key, optional)",
   "@stackNameComposeNameKeyOptional": {
     "description": "Android R.string.stack_name_compose_name_key_optional"
@@ -1939,6 +4633,10 @@
   "stacks": "Stacks",
   "@stacks": {
     "description": "Android R.string.stacks"
+  },
+  "start": "Start",
+  "@start": {
+    "description": "Android R.string.start"
   },
   "startPing": "Start Ping",
   "@startPing": {
@@ -1960,6 +4658,39 @@
   "@startWhenOmnitermOpens": {
     "description": "Android R.string.start_when_omniterm_opens"
   },
+  "startedAgo": "Started {a1} ago",
+  "@startedAgo": {
+    "description": "Android R.string.started_ago",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "startedAgoBackgroundedAgo": "Started {a1} ago · backgrounded {a2} ago",
+  "@startedAgoBackgroundedAgo": {
+    "description": "Android R.string.started_ago_backgrounded_ago",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "startedAgoBackgroundedAgo2": "Started {a1} ago · backgrounded {a2} ago",
+  "@startedAgoBackgroundedAgo2": {
+    "description": "Android R.string.started_ago_backgrounded_ago_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
   "startingFrom100TheFollowingDeductions": "Starting from 100, the following deductions apply:",
   "@startingFrom100TheFollowingDeductions": {
     "description": "Android R.string.starting_from_100_the_following_deductions"
@@ -1971,6 +4702,65 @@
   "stop": "Stop",
   "@stop": {
     "description": "Android R.string.stop"
+  },
+  "stop2": "Stop {a1}?",
+  "@stop2": {
+    "description": "Android R.string.stop_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "stop3": "Stop {a1}?",
+  "@stop3": {
+    "description": "Android R.string.stop_3",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "stopAll": "Stop all",
+  "@stopAll": {
+    "description": "Android R.string.stop_all"
+  },
+  "stopAllCurrentContainersForThis": "Stop all {a1} current containers for this service in {a2}?",
+  "@stopAllCurrentContainersForThis": {
+    "description": "Android R.string.stop_all_current_containers_for_this",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "stopAndRemoveAllCurrentContainers": "Stop and remove all {a1} current containers for this service in {a2}. Volumes and its Compose definition are kept.",
+  "@stopAndRemoveAllCurrentContainers": {
+    "description": "Android R.string.stop_and_remove_all_current_containers",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "stopAndRemoveOnlyThisContainer": "Stop and remove only this container. Other replicas, volumes and the Compose file are kept.",
+  "@stopAndRemoveOnlyThisContainer": {
+    "description": "Android R.string.stop_and_remove_only_this_container"
+  },
+  "stopFromStartingAtBoot": "Stop {a1} from starting at boot.",
+  "@stopFromStartingAtBoot": {
+    "description": "Android R.string.stop_from_starting_at_boot",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "str0Containers": "0 containers",
   "@str0Containers": {
@@ -1988,6 +4778,15 @@
   "@strongerColorsAndBordersForBetter": {
     "description": "Android R.string.stronger_colors_and_borders_for_better"
   },
+  "subnet": "Subnet: {a1}",
+  "@subnet": {
+    "description": "Android R.string.subnet",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "subnetOrHost": "Subnet or host",
   "@subnetOrHost": {
     "description": "Android R.string.subnet_or_host"
@@ -1996,9 +4795,33 @@
   "@sudoModeEditsCopyMoveAnd": {
     "description": "Android R.string.sudo_mode_edits_copy_move_and"
   },
+  "sudoModeOff": "Sudo mode off",
+  "@sudoModeOff": {
+    "description": "Android R.string.sudo_mode_off"
+  },
+  "sudoModeOn": "Sudo mode on",
+  "@sudoModeOn": {
+    "description": "Android R.string.sudo_mode_on"
+  },
+  "sudoPasswordOptional": "Sudo password (optional)",
+  "@sudoPasswordOptional": {
+    "description": "Android R.string.sudo_password_optional"
+  },
   "sweepYourLocalNetworkAndGather": "Sweep your local network and gather as much detail as possible per host: hostname, MAC + vendor, and which common ports answer. Tap a host for actions — save it, ping, port scan, and more.",
   "@sweepYourLocalNetworkAndGather": {
     "description": "Android R.string.sweep_your_local_network_and_gather"
+  },
+  "swipeTyping": "Swipe-typing",
+  "@swipeTyping": {
+    "description": "Android R.string.swipe_typing"
+  },
+  "switchHost": "Switch host",
+  "@switchHost": {
+    "description": "Android R.string.switch_host"
+  },
+  "switchLabel": "Switch",
+  "@switchLabel": {
+    "description": "Android R.string.switch_label"
   },
   "systemDefault": "System Default",
   "@systemDefault": {
@@ -2007,6 +4830,10 @@
   "takenDownItsContainersAndNetworks": "Taken down — its containers and networks no longer exist. OmniTerm recorded this stack while it was up; the compose file stays on the host.",
   "@takenDownItsContainersAndNetworks": {
     "description": "Android R.string.taken_down_its_containers_and_networks"
+  },
+  "takenFromTheCredentialProfile": "Taken from the credential profile",
+  "@takenFromTheCredentialProfile": {
+    "description": "Android R.string.taken_from_the_credential_profile"
   },
   "tapASessionToResumeOr": "Tap a session to resume, or start a new one.",
   "@tapASessionToResumeOr": {
@@ -2024,13 +4851,88 @@
   "@tapToReattachTmuxSession": {
     "description": "Android R.string.tap_to_reattach_tmux_session"
   },
+  "tappedLinksOpenInAnIn": "Tapped links open in an in-app browser tab (back returns straight to the terminal). Turn off to hand links to your external browser app instead.",
+  "@tappedLinksOpenInAnIn": {
+    "description": "Android R.string.tapped_links_open_in_an_in"
+  },
+  "targetFileItSValidatedFirst": "Target file: {a1}\n\nIt''s validated first; the current file is backed up, and if the deploy fails the previous file is restored automatically.",
+  "@targetFileItSValidatedFirst": {
+    "description": "Android R.string.target_file_it_s_validated_first",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "targetHostIpScanPointer": "Target Host IP (Scan pointer)",
   "@targetHostIpScanPointer": {
     "description": "Android R.string.target_host_ip_scan_pointer"
   },
+  "targetHosts": "Target hosts",
+  "@targetHosts": {
+    "description": "Android R.string.target_hosts"
+  },
+  "targetS": "{a1} target(s) · {a2}",
+  "@targetS": {
+    "description": "Android R.string.target_s",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "tcp": "TCP: {a1}",
+  "@tcp": {
+    "description": "Android R.string.tcp",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "temp": "Temp: {a1}",
+  "@temp": {
+    "description": "Android R.string.temp",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "temp2": "TEMP",
+  "@temp2": {
+    "description": "Android R.string.temp_2"
+  },
+  "temperatureHourlyAvg": "Temperature (hourly avg)",
+  "@temperatureHourlyAvg": {
+    "description": "Android R.string.temperature_hourly_avg"
+  },
+  "term": "TERM",
+  "@term": {
+    "description": "Android R.string.term"
+  },
+  "terminalInput": "Terminal input",
+  "@terminalInput": {
+    "description": "Android R.string.terminal_input"
+  },
+  "terminalPaste": "Terminal paste",
+  "@terminalPaste": {
+    "description": "Android R.string.terminal_paste"
+  },
+  "terminate": "Terminate",
+  "@terminate": {
+    "description": "Android R.string.terminate"
+  },
   "terminateExit": "Terminate & Exit",
   "@terminateExit": {
     "description": "Android R.string.terminate_exit"
+  },
+  "terminateTmuxSession": "Terminate tmux session?",
+  "@terminateTmuxSession": {
+    "description": "Android R.string.terminate_tmux_session"
   },
   "testConnection": "Test Connection",
   "@testConnection": {
@@ -2040,13 +4942,38 @@
   "@testServer": {
     "description": "Android R.string.test_server"
   },
+  "testShare": "Test share",
+  "@testShare": {
+    "description": "Android R.string.test_share"
+  },
   "textSize": "Text size",
   "@textSize": {
     "description": "Android R.string.text_size"
   },
+  "theCountdownStartsOnceOmnitermIs": "The countdown starts once OmniTerm is no longer visible. Rotation doesn't start it; a full process restart always locks.",
+  "@theCountdownStartsOnceOmnitermIs": {
+    "description": "Android R.string.the_countdown_starts_once_omniterm_is"
+  },
   "theOtherPaneStaysConnected": "The other pane stays connected.",
   "@theOtherPaneStaysConnected": {
     "description": "Android R.string.the_other_pane_stays_connected"
+  },
+  "theProcessListCameBackEmpty": "The process list came back empty — this host may not support the command, or its output was not understood.",
+  "@theProcessListCameBackEmpty": {
+    "description": "Android R.string.the_process_list_came_back_empty"
+  },
+  "theServerOnlyAcceptsThisKey": "The server only accepts this key after the PUBLIC key is added to ~/.ssh/authorized_keys for the user you log in as. While password login still works, the easiest way is to run this in any terminal on this host:",
+  "@theServerOnlyAcceptsThisKey": {
+    "description": "Android R.string.the_server_only_accepts_this_key"
+  },
+  "theSshHostKeyForHas": "The SSH host key for {a1} has changed since you last connected.\n\nThis may indicate a man-in-the-middle attack. Only proceed if you know the server''s key was legitimately regenerated.",
+  "@theSshHostKeyForHas": {
+    "description": "Android R.string.the_ssh_host_key_for_has",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "theStatusMayBeOutOf": "The status may be out of date — connect anyway to try, or cancel and wait for it to come back online.",
   "@theStatusMayBeOutOf": {
@@ -2064,6 +4991,14 @@
   "@themeAppAppearance": {
     "description": "Android R.string.theme_app_appearance"
   },
+  "thisAddsBuiltInFleetBroadcast": "This adds built-in fleet broadcast commands, resetting any earlier edits to them. You can edit or delete them afterwards.",
+  "@thisAddsBuiltInFleetBroadcast": {
+    "description": "Android R.string.this_adds_built_in_fleet_broadcast"
+  },
+  "thisAddsCuratedQuickScriptsFor": "This adds curated quick scripts for common homelab platforms, resetting any earlier edits to them. You can edit or delete them afterwards.",
+  "@thisAddsCuratedQuickScriptsFor": {
+    "description": "Android R.string.this_adds_curated_quick_scripts_for"
+  },
   "thisClearsCompletedTransferRowsRunning": "This clears completed transfer rows. Running transfers cannot be cleared.",
   "@thisClearsCompletedTransferRowsRunning": {
     "description": "Android R.string.this_clears_completed_transfer_rows_running"
@@ -2072,9 +5007,111 @@
   "@thisClearsTheVisibleFleetBroadcast": {
     "description": "Android R.string.this_clears_the_visible_fleet_broadcast"
   },
+  "thisCreatesEditableAllHostsAlert": "This creates editable All Hosts alert rules for CPU, memory, disk, latency, and temperature, resetting any earlier edits to them.",
+  "@thisCreatesEditableAllHostsAlert": {
+    "description": "Android R.string.this_creates_editable_all_hosts_alert"
+  },
+  "thisDeletesYourSavedPinAnd": "This deletes your saved PIN and disables biometric unlock. You'll need to set a new PIN to turn App Lock back on.",
+  "@thisDeletesYourSavedPinAnd": {
+    "description": "Android R.string.this_deletes_your_saved_pin_and"
+  },
+  "thisHostHasNoChecksumTool": "This host has no checksum tool (sha256sum/shasum/md5sum/cksum), so items marked \"Not verified\" could NOT be compared by content. They may or may not differ — matching sizes and dates do not prove files are the same.",
+  "@thisHostHasNoChecksumTool": {
+    "description": "Android R.string.this_host_has_no_checksum_tool"
+  },
+  "thisHostIsSetToUse": "This host is set to use persistent sessions, but tmux isn't installed. tmux lets sessions survive network drops and keeps long-running commands going after a reconnect.",
+  "@thisHostIsSetToUse": {
+    "description": "Android R.string.this_host_is_set_to_use"
+  },
+  "thisHostRunsNeitherSystemdNor": "This host runs neither systemd nor OpenRC, so its services cannot be listed.",
+  "@thisHostRunsNeitherSystemdNor": {
+    "description": "Android R.string.this_host_runs_neither_systemd_nor"
+  },
+  "thisMayTakeALittleWhile": "This may take a little while. Please wait.",
+  "@thisMayTakeALittleWhile": {
+    "description": "Android R.string.this_may_take_a_little_while"
+  },
+  "thisRemovesTheBuiltInFleet": "This removes the built-in fleet commands, including edits to those defaults. Your own commands are kept.",
+  "@thisRemovesTheBuiltInFleet": {
+    "description": "Android R.string.this_removes_the_built_in_fleet"
+  },
+  "thisRemovesTheCuratedPresetScripts": "This removes the curated preset scripts, including any edits to them. Your own scripts are kept.",
+  "@thisRemovesTheCuratedPresetScripts": {
+    "description": "Android R.string.this_removes_the_curated_preset_scripts"
+  },
+  "thisRemovesTheDefaultCpuMemory": "This removes the default CPU/memory/disk/latency/temperature All Hosts rules, including any edits to them. Custom rules you added are kept.",
+  "@thisRemovesTheDefaultCpuMemory": {
+    "description": "Android R.string.this_removes_the_default_cpu_memory"
+  },
+  "thisRunsSudoRebootOnThe": "This runs `sudo reboot` on {a1}. The host will drop offline until it comes back up. Requires passwordless sudo for the SSH user.",
+  "@thisRunsSudoRebootOnThe": {
+    "description": "Android R.string.this_runs_sudo_reboot_on_the",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "thisSession": "This session",
   "@thisSession": {
     "description": "Android R.string.this_session"
+  },
+  "thisWillStopAndRemoveThe": "This will stop and remove the containers for {a1}. Volumes are not removed unless the compose file does so.",
+  "@thisWillStopAndRemoveThe": {
+    "description": "Android R.string.this_will_stop_and_remove_the",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "thresholdCurrent": "Threshold: {a1} · Current: {a2}",
+  "@thresholdCurrent": {
+    "description": "Android R.string.threshold_current",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "thresholdFor": "{a1} · Threshold > {a2} for {a3}",
+  "@thresholdFor": {
+    "description": "Android R.string.threshold_for",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      },
+      "a3": {
+        "type": "Object"
+      }
+    }
+  },
+  "thresholdThenPenalty": "{a1} · threshold ({a2}) then penalty",
+  "@thresholdThenPenalty": {
+    "description": "Android R.string.threshold_then_penalty",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "thresholdValue": "Threshold value ({a1})",
+  "@thresholdValue": {
+    "description": "Android R.string.threshold_value",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "thresholdsAndWeightsAreEditableIn": "Thresholds and weights are editable in Tools → Settings → Health scoring.",
   "@thresholdsAndWeightsAreEditableIn": {
@@ -2096,6 +5133,22 @@
   "@topLevelVolumes": {
     "description": "Android R.string.top_level_volumes"
   },
+  "total": "total ↓{a1} ↑{a2}",
+  "@total": {
+    "description": "Android R.string.total",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "total2": "Total",
+  "@total2": {
+    "description": "Android R.string.total_2"
+  },
   "tracesEachNetworkHopFromThis": "Traces each network hop from this device to the host. Uses the platform traceroute; if it isn't available, a clear message is shown.",
   "@tracesEachNetworkHopFromThis": {
     "description": "Android R.string.traces_each_network_hop_from_this"
@@ -2116,6 +5169,18 @@
   "@triggerWindowLabel": {
     "description": "Android R.string.trigger_window_label"
   },
+  "triggeredRecorded": "Triggered {a1} · recorded {a2}",
+  "@triggeredRecorded": {
+    "description": "Android R.string.triggered_recorded",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
   "trustConnect": "Trust & Connect",
   "@trustConnect": {
     "description": "Android R.string.trust_connect"
@@ -2124,9 +5189,50 @@
   "@trustThisServer": {
     "description": "Android R.string.trust_this_server"
   },
+  "ttl": "TTL: {a1}",
+  "@ttl": {
+    "description": "Android R.string.ttl",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "turnOff": "Turn off",
+  "@turnOff": {
+    "description": "Android R.string.turn_off"
+  },
+  "turnOffAppLock": "Turn off App Lock?",
+  "@turnOffAppLock": {
+    "description": "Android R.string.turn_off_app_lock"
+  },
   "type": "Type",
   "@type": {
     "description": "Android R.string.type"
+  },
+  "typeAAndHitSearchTo": "Type a {a1} and hit Search to scan under {a2}",
+  "@typeAAndHitSearchTo": {
+    "description": "Android R.string.type_a_and_hit_search_to",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "typeAAndHitSearchTo2": "Type a {a1} and hit Search to scan under {a2}",
+  "@typeAAndHitSearchTo2": {
+    "description": "Android R.string.type_a_and_hit_search_to_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "udpPort": "UDP port",
   "@udpPort": {
@@ -2136,6 +5242,10 @@
   "@unlock": {
     "description": "Android R.string.unlock"
   },
+  "unlockOmniterm": "Unlock OmniTerm",
+  "@unlockOmniterm": {
+    "description": "Android R.string.unlock_omniterm"
+  },
   "unlockWithBiometrics": "Unlock with biometrics",
   "@unlockWithBiometrics": {
     "description": "Android R.string.unlock_with_biometrics"
@@ -2144,9 +5254,71 @@
   "@unmute": {
     "description": "Android R.string.unmute"
   },
+  "unpacksIntoThisFolderExistingFiles": "Unpacks \"{a1}\" into this folder. Existing files with the same names as entries in the archive will be overwritten. This cannot be undone.",
+  "@unpacksIntoThisFolderExistingFiles": {
+    "description": "Android R.string.unpacks_into_this_folder_existing_files",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "until": "Until {a1}",
+  "@until": {
+    "description": "Android R.string.until",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "unused": "Unused",
+  "@unused": {
+    "description": "Android R.string.unused"
+  },
+  "upD": "UP -D",
+  "@upD": {
+    "description": "Android R.string.up_d"
+  },
+  "upOneFolder": "Up one folder",
+  "@upOneFolder": {
+    "description": "Android R.string.up_one_folder"
+  },
+  "updateServer": "Update Server",
+  "@updateServer": {
+    "description": "Android R.string.update_server"
+  },
+  "uploadFiles": "Upload files",
+  "@uploadFiles": {
+    "description": "Android R.string.upload_files"
+  },
+  "uploadFilesFromDevice": "Upload files from device",
+  "@uploadFilesFromDevice": {
+    "description": "Android R.string.upload_files_from_device"
+  },
+  "useASavedHost": "Use a saved host…",
+  "@useASavedHost": {
+    "description": "Android R.string.use_a_saved_host"
+  },
+  "useASavedHostAsJump": "Use a saved host as jump host",
+  "@useASavedHostAsJump": {
+    "description": "Android R.string.use_a_saved_host_as_jump"
+  },
   "useBiometrics": "Use biometrics",
   "@useBiometrics": {
     "description": "Android R.string.use_biometrics"
+  },
+  "useFingerprintToUnlock": "Use fingerprint to unlock",
+  "@useFingerprintToUnlock": {
+    "description": "Android R.string.use_fingerprint_to_unlock"
+  },
+  "useHttps": "Use HTTPS",
+  "@useHttps": {
+    "description": "Android R.string.use_https"
+  },
+  "useHttpsNotInferredFromPort": "Not inferred from the port — a nonstandard TLS port with this off sends the password in clear text.",
+  "@useHttpsNotInferredFromPort": {
+    "description": "Android R.string.use_https_not_inferred_from_port"
   },
   "useSshPayloadCompression": "Use SSH Payload compression",
   "@useSshPayloadCompression": {
@@ -2156,17 +5328,82 @@
   "@useSystemOrOverride": {
     "description": "Android R.string.use_system_or_override"
   },
+  "useThisWhenAnIncognitoKeyboard": "Use this when an incognito keyboard does not expose clipboard history.",
+  "@useThisWhenAnIncognitoKeyboard": {
+    "description": "Android R.string.use_this_when_an_incognito_keyboard"
+  },
   "useYourBiometricPromptToContinue": "Use your biometric prompt to continue.",
   "@useYourBiometricPromptToContinue": {
     "description": "Android R.string.use_your_biometric_prompt_to_continue"
+  },
+  "user": "User: {a1}",
+  "@user": {
+    "description": "Android R.string.user",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "user2": "User: {a1}",
+  "@user2": {
+    "description": "Android R.string.user_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "userAuth": "User: {a1} · Auth: {a2}",
+  "@userAuth": {
+    "description": "Android R.string.user_auth",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "username": "Username",
   "@username": {
     "description": "Android R.string.username"
   },
+  "value": "Value: {a1}",
+  "@value": {
+    "description": "Android R.string.value",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "verifyBiometrics": "Verify Biometrics",
+  "@verifyBiometrics": {
+    "description": "Android R.string.verify_biometrics"
+  },
   "verifyThisFingerprintMatchesTheServer": "Verify this fingerprint matches the server before trusting. Once trusted, it will be stored and checked on future connections.",
   "@verifyThisFingerprintMatchesTheServer": {
     "description": "Android R.string.verify_this_fingerprint_matches_the_server"
+  },
+  "version": "Version {a1}",
+  "@version": {
+    "description": "Android R.string.version",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "via": "via {a1}",
+  "@via": {
+    "description": "Android R.string.via",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "viewImage": "View image",
   "@viewImage": {
@@ -2180,6 +5417,15 @@
   "@viewOnGithub": {
     "description": "Android R.string.view_on_github"
   },
+  "virtualMemorySizeVms": "Virtual Memory Size (VMS): {a1}",
+  "@virtualMemorySizeVms": {
+    "description": "Android R.string.virtual_memory_size_vms",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "visibleScreen": "Visible screen",
   "@visibleScreen": {
     "description": "Android R.string.visible_screen"
@@ -2191,6 +5437,10 @@
   "volumes": "Volumes",
   "@volumes": {
     "description": "Android R.string.volumes"
+  },
+  "waitingForVerifiedCpuMemoryAnd": "Waiting for verified CPU, memory and disk metrics. Refresh to retry.",
+  "@waitingForVerifiedCpuMemoryAnd": {
+    "description": "Android R.string.waiting_for_verified_cpu_memory_and"
   },
   "wake": "Wake",
   "@wake": {
@@ -2207,6 +5457,10 @@
   "warningPrivateKeyIsShownOnly": "Warning: Private key is shown only once. Please copy it now if you need it.",
   "@warningPrivateKeyIsShownOnly": {
     "description": "Android R.string.warning_private_key_is_shown_only"
+  },
+  "webdavWithoutHttpsSendsPassword": "Without HTTPS, WebDAV sends the password in clear text on every request.",
+  "@webdavWithoutHttpsSendsPassword": {
+    "description": "Android R.string.webdav_without_https_sends_password"
   },
   "whatThisScriptDoesCaveatsEtc": "What this script does, caveats, etc.",
   "@whatThisScriptDoesCaveatsEtc": {
@@ -2303,9 +5557,34 @@
   "@wildcards": {
     "description": "Android R.string.wildcards"
   },
+  "wordWrapOff": "Word wrap: off",
+  "@wordWrapOff": {
+    "description": "Android R.string.word_wrap_off"
+  },
+  "wordWrapOn": "Word wrap: on",
+  "@wordWrapOn": {
+    "description": "Android R.string.word_wrap_on"
+  },
   "workgroupDomain": "Workgroup / domain",
   "@workgroupDomain": {
     "description": "Android R.string.workgroup_domain"
+  },
+  "youHaveUnsavedChangesToThis": "You have unsaved changes to this stack. Discard them?",
+  "@youHaveUnsavedChangesToThis": {
+    "description": "Android R.string.you_have_unsaved_changes_to_this"
+  },
+  "youHaveUnsavedEditsToDiscard": "You have unsaved edits to {a1}. Discard them?",
+  "@youHaveUnsavedEditsToDiscard": {
+    "description": "Android R.string.you_have_unsaved_edits_to_discard",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "youHaveUnsavedEditsToThis": "You have unsaved edits to this script. Discard them?",
+  "@youHaveUnsavedEditsToThis": {
+    "description": "Android R.string.you_have_unsaved_edits_to_this"
   },
   "youHaveUnsavedSettingsChangesLeave": "You have unsaved settings changes. Leave without saving them?",
   "@youHaveUnsavedSettingsChangesLeave": {
@@ -2314,5 +5593,47 @@
   "youReAboutToPasteA": "You're about to paste a large block of text into the terminal. Confirm to send it.",
   "@youReAboutToPasteA": {
     "description": "Android R.string.you_re_about_to_paste_a"
+  },
+  "youSelectedFileSAboutThis": "You selected {a1} file(s), about {a2}. This meets your configured large-transfer warning threshold. It downloads file-by-file into a folder without zipping. For reliability on slow links, consider smaller batches.",
+  "@youSelectedFileSAboutThis": {
+    "description": "Android R.string.you_selected_file_s_about_this",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "youSelectedFileSAboutThis2": "You selected {a1} file(s), about {a2}. This meets your configured large-transfer warning threshold. It downloads file-by-file into a folder without zipping. For reliability on slow links, consider smaller batches.",
+  "@youSelectedFileSAboutThis2": {
+    "description": "Android R.string.you_selected_file_s_about_this_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "youSelectedFileSTheyWill": "You selected {a1} file(s). They will upload one at a time so failures are isolated. This meets your configured large-transfer warning threshold. For very large batches, smaller groups are easier to retry.",
+  "@youSelectedFileSTheyWill": {
+    "description": "Android R.string.you_selected_file_s_they_will",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "youSelectedFileSTheyWill2": "You selected {a1} file(s). They will upload one at a time so failures are isolated. This meets your configured large-transfer warning threshold. For very large batches, smaller groups are easier to retry.",
+  "@youSelectedFileSTheyWill2": {
+    "description": "Android R.string.you_selected_file_s_they_will_2",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   }
 }

@@ -64,9 +64,11 @@ def kotlin_resources() -> dict:
         value = m.group(2).strip()
         if value.startswith('"') and value.endswith('"'):
             value = value[1:-1]
-        out[m.group(1)] = (
-            html.unescape(value).replace("\\'", "'").replace('\\"', '"').replace("\\n", "\n")
-        )
+        value = html.unescape(value).replace("\\'", "'").replace('\\"', '"').replace("\\n", "\n")
+        # A resource with placeholders is a format string, where a literal percent sign is "%%".
+        if re.search(r"%\d+\$[sd]", value):
+            value = value.replace("%%", "%")
+        out[m.group(1)] = value
     return out
 
 

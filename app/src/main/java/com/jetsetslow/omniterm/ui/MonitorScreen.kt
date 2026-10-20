@@ -21,6 +21,8 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -77,7 +79,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
             trailingContent = {
                 RefreshCountdown(viewModel.lastTelemetryStartMs, viewModel.telemetryIntervalMs, size = 28.dp, color = getServerColor(srv))
                 IconButton(onClick = { showRebootDialog = true }, enabled = srv.status == "online", modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.RestartAlt, contentDescription = "Reboot host", tint = OmniColors.red, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(R.string.reboot_host), tint = OmniColors.red, modifier = Modifier.size(18.dp))
                 }
             }
         )
@@ -85,8 +87,8 @@ fun MonitorScreen(viewModel: AppViewModel) {
         if (showRebootDialog) {
             AlertDialog(
                 onDismissRequest = { showRebootDialog = false },
-                title = { Text("Reboot ${srv.name}?") },
-                text = { Text("This runs `sudo reboot` on ${HostDisplay.host(srv)}. The host will drop offline until it comes back up. Requires passwordless sudo for the SSH user.") },
+                title = { Text(stringResource(R.string.reboot_2, srv.name)) },
+                text = { Text(stringResource(R.string.this_runs_sudo_reboot_on_the, HostDisplay.host(srv))) },
                 confirmButton = {
                     TextButton(onClick = {
                         showRebootDialog = false
@@ -151,7 +153,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
     fun confirmAndRun(title: String, command: String) {
         val danger = commandDangerHits(command)
         confirm.ask(
-            title = "Run on ${srv.name}?",
+            title = confirm.str(R.string.run_on, srv.name),
             message = buildString {
                 appendLine("$ $command")
                 appendLine()
@@ -162,7 +164,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                     append("⚠ This command looks destructive (${danger.joinToString(", ")}).")
                 }
             },
-            confirmLabel = "Run",
+            confirmLabel = confirm.str(R.string.run),
             destructive = danger.isNotEmpty(),
         ) { viewModel.runStreamingAction(title, command) }
     }
@@ -274,7 +276,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
     if (showSaveDialog) {
         SharedScriptEditorDialog(
             existing = null,
-            title = "Save script",
+            title = stringResource(R.string.save_script),
             initialCommand = customCommand,
             defaultAvailableForQuick = true,
             defaultAvailableForFleet = false,
@@ -357,7 +359,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                 else -> {
                     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.amber) {
                         if (cronLines.isEmpty()) {
-                            Text("No crontab entries for ${srv.username}.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            Text(stringResource(R.string.no_crontab_entries_for, srv.username), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 cronLines.forEach { line ->
@@ -366,9 +368,9 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                                         onEdit = { if (line.editable) editorTarget = line },
                                         onDelete = {
                                             confirm.ask(
-                                                "Delete cron entry?",
-                                                "Delete this crontab entry for ${HostDisplay.userAtHost(srv)}? This rewrites the remote user's crontab.",
-                                                confirmLabel = "Delete",
+                                                confirm.str(R.string.delete_cron_entry_2),
+                                                confirm.str(R.string.delete_this_crontab_entry_for_this, HostDisplay.userAtHost(srv)),
+                                                confirmLabel = confirm.str(R.string.delete),
                                             ) {
                                                 val next = cronLines.filterNot { it.index == line.index }.joinToString("\n") { it.raw }
                                                 viewModel.saveCron(next)
@@ -386,7 +388,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
 
     if (createNew) {
         CronScheduleDialog(
-            title = "Add cron schedule",
+            title = stringResource(R.string.add_cron_schedule),
             initial = null,
             onDismiss = { createNew = false },
             onSave = { line ->
@@ -399,7 +401,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
 
     editorTarget?.let { target ->
         CronScheduleDialog(
-            title = "Edit cron schedule",
+            title = stringResource(R.string.edit_cron_schedule),
             initial = target,
             onDismiss = { editorTarget = null },
             onSave = { line ->
@@ -459,10 +461,10 @@ private fun CronLineCard(line: CronLine, onEdit: () -> Unit, onDelete: () -> Uni
         }
         Row {
             IconButton(onClick = onEdit, enabled = line.editable, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Filled.Edit, contentDescription = "Edit cron entry", modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit_cron_entry), modifier = Modifier.size(18.dp))
             }
             IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete cron entry", tint = OmniColors.red, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_cron_entry), tint = OmniColors.red, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -524,7 +526,7 @@ private fun CronScheduleDialog(
                 CronPartField("Day", day, { day = it; preset = "custom" }, "1-31 or *")
                 CronPartField("Month", month, { month = it; preset = "custom" }, "1-12 or *")
                 CronPartField("Weekday", weekday, { weekday = it; preset = "custom" }, "0-7, Sunday=0/7")
-                Text("Preview: ${cronSummary(expression)}", fontSize = 12.sp, color = OmniColors.amber)
+                Text(stringResource(R.string.preview_2, cronSummary(expression)), fontSize = 12.sp, color = OmniColors.amber)
                 Text(expression, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = name,
@@ -700,7 +702,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 OmniCard(modifier = Modifier.fillMaxWidth()) {
                     if (viewModel.metricsLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text(viewModel.metricsErrorsById[srv.id] ?: "Waiting for verified CPU, memory and disk metrics.")
-                    TextButton(onClick = { viewModel.loadHostMetrics() }, enabled = !viewModel.metricsLoading) { Text("Retry metrics") }
+                    TextButton(onClick = { viewModel.loadHostMetrics() }, enabled = !viewModel.metricsLoading) { Text(stringResource(R.string.retry_metrics)) }
                 }
             }
         }
@@ -710,10 +712,10 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text(stringResource(R.string.cpu_utilisation), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(if (metricsAvailable) "Load: ${m.load1} · ${m.load5} · ${m.load15}" else "Current load unavailable", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (metricsAvailable) stringResource(R.string.load, m.load1, m.load5, m.load15) else stringResource(R.string.current_load_unavailable), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         m.cpuTempC?.let {
                             Text(
-                                "Temp: ${formatTemperature(it, measurementSystem)}",
+                                stringResource(R.string.temp, formatTemperature(it, measurementSystem)),
                                 fontSize = 12.sp,
                                 color = if (it >= 80f) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -726,12 +728,12 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                     points = spark,
                     timestamps = sparkTimes,
                     color = accent,
-                    label = "CPU utilisation",
+                    label = stringResource(R.string.cpu_utilisation_2),
                     unit = "%",
                 )
                 if (m.perCoreCpu.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text("PER-CORE (${m.perCoreCpu.size})", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.per_core, m.perCoreCpu.size), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(4.dp))
                     m.perCoreCpu.forEachIndexed { i, v ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 1.dp)) {
@@ -749,7 +751,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 Text(stringResource(R.string.memory_occupancy), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    if (metricsAvailable) "${RemoteParsers.humanBytes(m.memUsedBytes)} of ${RemoteParsers.humanBytes(m.memTotalBytes)} occupied (${m.memPercent.roundToInt()}%)" else "Current memory unavailable",
+                    if (metricsAvailable) stringResource(R.string.of_occupied, RemoteParsers.humanBytes(m.memUsedBytes), RemoteParsers.humanBytes(m.memTotalBytes), m.memPercent.roundToInt()) else stringResource(R.string.current_memory_unavailable),
                     fontSize = 14.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -759,7 +761,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                     points = ramSpark,
                     timestamps = sparkTimes,
                     color = OmniColors.amber,
-                    label = "RAM utilisation",
+                    label = stringResource(R.string.ram_utilisation),
                     unit = "%",
                 )
             }
@@ -830,7 +832,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(stringResource(R.string.network), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("TCP: ${m.tcpConnections}", fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.tcp, m.tcpConnections), fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -851,7 +853,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                             )
                         }
                         Text(
-                            "total ↓${RemoteParsers.humanBytes(iface.rxBytes)} ↑${RemoteParsers.humanBytes(iface.txBytes)}",
+                            stringResource(R.string.total, RemoteParsers.humanBytes(iface.rxBytes), RemoteParsers.humanBytes(iface.txBytes)),
                             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -882,7 +884,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         points = series.cpu.map { it.value },
                         timestamps = series.cpu.map { it.timestamp },
                         color = accent,
-                        label = "CPU (hourly avg)",
+                        label = stringResource(R.string.cpu_hourly_avg),
                         unit = "%",
                     )
                     Spacer(Modifier.height(12.dp))
@@ -890,7 +892,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         points = series.ram.map { it.value },
                         timestamps = series.ram.map { it.timestamp },
                         color = OmniColors.amber,
-                        label = "RAM (hourly avg)",
+                        label = stringResource(R.string.ram_hourly_avg),
                         unit = "%",
                     )
                     if (series.temperature.isNotEmpty()) {
@@ -902,7 +904,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                             points = displayedTemperatures,
                             timestamps = series.temperature.map { it.timestamp },
                             color = OmniColors.red,
-                            label = "Temperature (hourly avg)",
+                            label = stringResource(R.string.temperature_hourly_avg),
                             unit = temperatureUnit(measurementSystem),
                             maxY = maxOf(
                                 celsiusToDisplay(100f, measurementSystem),
@@ -911,7 +913,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         )
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text("${history.size} data points over the last 7 days", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.data_points_over_the_last_7, history.size), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -941,8 +943,10 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (viewModel.processesLoading && simProcesses.isEmpty()) {
-            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.height(10.dp))
+                Text(stringResource(R.string.reading_the_process_list), fontSize = 12.sp)
             }
         } else if (viewModel.processesLoading) {
             LinearProgressIndicator(
@@ -966,7 +970,21 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                     label = { Text(stringResource(R.string.mem)) }
                 )
             }
-            Text("${simProcesses.size} Procs", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.procs, simProcesses.size), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        if (!viewModel.processesLoading && simProcesses.isEmpty()) {
+            // Every host runs *something*, so an empty list after a read is the parse failing, not
+            // an idle machine; "no processes" would be a confident false statement about the host.
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    stringResource(R.string.the_process_list_came_back_empty),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("monitor.processes.empty"),
+                )
+            }
         }
 
         OverflowLazyColumn(
@@ -994,7 +1012,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     OmniTag(proc.state, color = if (proc.state == "R") OmniColors.green else OmniColors.cyan)
                                 }
                                 Text(
-                                    "PID ${proc.pid} · ${proc.owner}" + (if (proc.uptime.isNotBlank()) " · up ${proc.uptime}" else ""),
+                                    stringResource(R.string.pid, proc.pid, proc.owner) + (if (proc.uptime.isNotBlank()) " · up ${proc.uptime}" else ""),
                                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -1013,19 +1031,19 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
 
                         if (isExpanded) {
                             androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            Text("Virtual Memory Size (VMS): ${proc.vms}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.virtual_memory_size_vms, proc.vms), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
                             ) {
                                 OmniButton(
-                                    label = "KILL -15",
+                                    label = stringResource(R.string.kill_15),
                                     onClick = {
                                         confirm.ask(
-                                            "Send SIGTERM?",
-                                            "Gracefully terminate PID ${proc.pid} (${proc.name}) with kill -15?",
-                                            confirmLabel = "Kill -15",
+                                            confirm.str(R.string.send_sigterm),
+                                            confirm.str(R.string.gracefully_terminate_pid_with_kill_15, proc.pid, proc.name),
+                                            confirmLabel = confirm.str(R.string.kill_15_2),
                                         ) {
                                             viewModel.killProcess(proc.pid, 15)
                                             viewModel.expandedProcessPid = null
@@ -1035,12 +1053,12 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     small = true
                                 )
                                 OmniButton(
-                                    label = "KILL -9",
+                                    label = stringResource(R.string.kill_9),
                                     onClick = {
                                         confirm.ask(
-                                            "Force kill (SIGKILL)?",
-                                            "Forcibly kill PID ${proc.pid} (${proc.name}) with kill -9? Unsaved work in that process is lost.",
-                                            confirmLabel = "Kill -9",
+                                            confirm.str(R.string.force_kill_sigkill),
+                                            confirm.str(R.string.forcibly_kill_pid_with_kill_9, proc.pid, proc.name),
+                                            confirmLabel = confirm.str(R.string.kill_9_2),
                                         ) {
                                             viewModel.killProcess(proc.pid, 9)
                                             viewModel.expandedProcessPid = null
@@ -1066,6 +1084,18 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
     ConfirmHost(confirm)
 
     Column(modifier = Modifier.fillMaxSize()) {
+        if (viewModel.servicesUnsupported && simServices.isEmpty() && !viewModel.servicesLoading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    stringResource(R.string.this_host_runs_neither_systemd_nor),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("monitor.services.unsupported"),
+                )
+            }
+            return@Column
+        }
         if (viewModel.servicesLoading && simServices.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -1084,7 +1114,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                 ) {
                     Text(it, fontSize = 14.sp)
                     IconButton(onClick = { viewModel.serviceActionFeedback = null }) {
-                        Icon(Icons.Filled.Close, contentDescription = "Dismiss")
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss))
                     }
                 }
             }
@@ -1127,12 +1157,12 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
                         ) {
                             OmniButton(
-                                label = "Restart",
+                                label = stringResource(R.string.restart),
                                 onClick = {
                                     confirm.ask(
-                                        "Restart ${svc.name}?",
-                                        "Run systemctl restart on ${svc.name}? The service will briefly stop and start again.",
-                                        confirmLabel = "Restart",
+                                        confirm.str(R.string.restart_3, svc.name),
+                                        confirm.str(R.string.run_systemctl_restart_on_the_service, svc.name),
+                                        confirmLabel = confirm.str(R.string.restart),
                                     ) { viewModel.runServiceCommand(svc.name, "restart") }
                                 },
                                 color = OmniColors.cyan,
@@ -1140,12 +1170,12 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             )
                             if (svc.status == "running") {
                                 OmniButton(
-                                    label = "Stop",
+                                    label = stringResource(R.string.stop),
                                     onClick = {
                                         confirm.ask(
-                                            "Stop ${svc.name}?",
-                                            "Run systemctl stop on ${svc.name}? It will remain down until started again.",
-                                            confirmLabel = "Stop",
+                                            confirm.str(R.string.stop_3, svc.name),
+                                            confirm.str(R.string.run_systemctl_stop_on_it_will, svc.name),
+                                            confirmLabel = confirm.str(R.string.stop),
                                         ) { viewModel.runServiceCommand(svc.name, "stop") }
                                     },
                                     color = OmniColors.red,
@@ -1153,7 +1183,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 )
                             } else {
                                 OmniButton(
-                                    label = "Start",
+                                    label = stringResource(R.string.start),
                                     onClick = { viewModel.runServiceCommand(svc.name, "start") },
                                     color = OmniColors.green,
                                     small = true
@@ -1161,9 +1191,9 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             }
                             if (svc.enabled) {
                                 OmniButton(
-                                    label = "Disable",
+                                    label = stringResource(R.string.disable),
                                     onClick = {
-                                        confirm.ask("Disable ${svc.name}?", "Stop ${svc.name} from starting at boot.", confirmLabel = "Disable") {
+                                        confirm.ask(confirm.str(R.string.disable_2, svc.name), confirm.str(R.string.stop_from_starting_at_boot, svc.name), confirmLabel = confirm.str(R.string.disable)) {
                                             viewModel.runServiceCommand(svc.name, "disable")
                                         }
                                     },
@@ -1171,7 +1201,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 )
                             } else {
                                 OmniButton(
-                                    label = "Enable",
+                                    label = stringResource(R.string.enable),
                                     onClick = { viewModel.runServiceCommand(svc.name, "enable") },
                                     color = OmniColors.purple, small = true
                                 )

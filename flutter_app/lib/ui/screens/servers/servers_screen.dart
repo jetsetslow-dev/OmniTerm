@@ -433,7 +433,13 @@ class _BulkActions extends StatelessWidget {
     ),
     child: Row(
       children: [
-        Expanded(child: Text('${vm.selectedServerIdsForBulk.length} servers selected')),
+        Expanded(
+          child: Text(
+            AppLocalizations.of(context).serversSelected(vm.selectedServerIdsForBulk.length),
+            // Kotlin: FontWeight.Medium.
+            style: composeBody(fontWeight: FontWeight.w500),
+          ),
+        ),
         TextButton(
           key: const ValueKey('servers.bulk.selectAll'),
           onPressed: vm.selectAllServers,

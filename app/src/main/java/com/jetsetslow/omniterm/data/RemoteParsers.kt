@@ -633,6 +633,12 @@ object RemoteCommands {
             "else echo '7-Zip is not installed on the host' >&2; false; fi"
 
     /**
+     * The on-disk size of one folder, staying on its filesystem. stderr is folded in so a partial
+     * total (a subfolder the login cannot read) can be told apart from a complete one.
+     */
+    fun folderSize(path: String): String = "du -shx -- ${shellQuote(path)} 2>&1"
+
+    /**
      * Extract [archiveName] (in [dir]) into a subfolder of the same name (minus extension) so a
      * messy archive can't scatter files across the current folder. Auto-detects by extension.
      * zip/tar variants use tools present on virtually every host; .7z and .rar depend on optional
@@ -1120,6 +1126,32 @@ object RemoteCommands {
 
 /** Pure parsers — deterministic, no I/O — so they can be unit-tested with captured output. */
 object RemoteParsers {
+
+    /**
+     * What [RemoteCommands.folderSize] reported. [complete] is false when `du` could not read part
+     * of the tree, so [size] is a floor: as an unprivileged user `du -shx /root` prints a warning,
+     * prints `4.0K` and exits non-zero, and `4.0K` alone would be a confident wrong answer.
+     */
+    data class FolderSize(val size: String, val complete: Boolean)
+
+    /**
+     * The size `du` printed, or null when the output carries none. The size comes from the last
+     * `SIZE<tab>PATH` line, because a permission error adds warning lines as well.
+     */
+    fun parseFolderSize(output: String): FolderSize? {
+        var size: String? = null
+        var complete = true
+        val sizeLine = Regex("""^\s*([0-9][0-9.,]*[KMGTPE]?)\s+\S""")
+        output.lineSequence().forEach { line ->
+            val match = sizeLine.find(line)
+            if (match != null) {
+                size = match.groupValues[1]
+            } else if (line.isNotBlank()) {
+                complete = false
+            }
+        }
+        return size?.let { FolderSize(it, complete) }
+    }
 
     /** Output of [RemoteCommands.DOCKER_RUNTIMES]: one runtime name per line, anything else ignored. */
     fun parseRuntimeList(output: String): Set<String> =

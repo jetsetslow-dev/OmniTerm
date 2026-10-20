@@ -1,5 +1,14 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 20: main (#123) merged in; Flutter text regenerated from Kotlin's resources — local/runtime complete
+
+- #123 moved about 700 Kotlin labels, confirmations and messages into `strings.xml`. Flutter's catalogue is regenerated from it (1,135 strings, was 566), so those texts are now available to Flutter screens as they are brought into line.
+- With them in resources, the parity audit sees Kotlin text it could not see while it was inline in confirmations and conditional labels: 90 Kotlin-only differences, real ones that predate this merge. They are recorded in the baseline (420 known) to be worked off screen by screen, not allowlisted.
+- The audit reads a percent sign in a Kotlin format resource (`%%`) as `%`, which matched one alert-preset text; "N servers selected" now uses Kotlin's medium weight.
+- Conflicts: `docs/E2E_STRESS_TEST_PROGRESS.md` stays removed on this branch (docs here are the public site only); `scripts/local-pr-check.sh` keeps the parity and string-freshness checks.
+- Until this merge was pushed, #92 conflicted with main, and GitHub ran none of its pull-request workflows on `cb54be2`: only the push-triggered secret scan. That head was never tested by CI on its own; the merge carries it.
+- Validation: `./scripts/local-pr-check.sh --full` passed on the merged tree (2,973 Flutter tests, seven optional skips; API 35 instrumentation 25 passes, 42 opt-in assumptions unexecuted). On API 35 the Flutter core profile (10 suites) and host profile (Docker, Podman, SFTP, SMB, FTP, WebDAV and both native terminal tests) passed with no unexpected warnings.
+
 ## October 20: Kotlin's terminal copy window and editor toolbar — local/runtime complete
 
 - A long press on the terminal opened the terminal options, and only "Visible screen" there led to the copy sheet. Kotlin's long press opens the copy window itself, on the visible screen. Flutter now does the same, with Kotlin's dialog: title with "Drag to select, or Copy all", Show full buffer / visible screen, wrapping selectable text, "No terminal text in this range." when empty, and Close | Copy all. Clearing the scrollback stays in the terminal options, as in Kotlin, and closing the window hands focus and the keyboard back unless the session is read-only.
