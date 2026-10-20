@@ -1,5 +1,13 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 20: FTP binary mode and dropped connections — local/runtime complete
+
+- Flutter's FTP client never left ASCII mode, the FTP default, in which a server that honours it rewrites line endings and corrupts every binary file it sends or receives. Every connection now sends `TYPE I` after login and refuses a server that rejects it, as Kotlin's `setFileType(BINARY_FILE_TYPE)` does.
+- A control connection the server had dropped stayed marked as connected for good, so after an idle timeout (vsftpd's is five minutes) every action on the share failed until it was reopened. The connection is now probed with NOOP before reuse and discarded on any failure. Only a dead transport is retried once, on a fresh connection, as in Kotlin.
+- Downloads and uploads run on a connection of their own, closed afterwards and never retried. Previously a long transfer held the one control channel, so every listing waited behind it.
+- Tests run against a small in-process FTP server, so ftpconnect's real command sequence is exercised. Controls: the binary, redial and separate-transfer tests each fail when their fix is removed.
+- Validation: `./scripts/local-pr-check.sh --full` passed (2,971 Flutter tests, seven optional skips; API 35 instrumentation 24 passes, 42 opt-in assumptions unexecuted). The Flutter host device profile passed on API 35 against the repository fixtures: Docker, Podman, SFTP, SMB, FTP and WebDAV, plus both native terminal lifecycle tests, with no unexpected warnings. FTP listed, downloaded and uploaded through the real fixture server with the new binary mode and separate transfer connection.
+
 ## October 20: Quick connect availability, empty screens, dotfiles and cleartext policy — local/runtime complete
 
 - Quick connect follows Kotlin's rule on the free Play Store build: every entry point is absent rather than shown and refused. Flutter answered the button with a "Quick Connect Requires Premium" sheet, which Kotlin never shows; the sheet is gone and the entries follow licence changes live. Kotlin's own leftover button, shown there and doing nothing, is fixed in #123.

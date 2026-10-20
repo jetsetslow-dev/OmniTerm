@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:ftpconnect/ftpconnect.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -10,7 +11,19 @@ import 'package:uuid/uuid.dart';
 import '../remote_models.dart';
 import 'remote_fs_client.dart';
 
-/// FTP implementation of the shared file-browser contract.
+/// FTP implementation of the shared file-browser contract, matching the Kotlin app's
+/// `FtpFsClient` in how it holds connections:
+///
+/// - **Binary mode on every connection.** FTP starts in ASCII mode, where a server that honours it
+///   rewrites line endings in transit and corrupts every binary file. Kotlin sets
+///   `BINARY_FILE_TYPE` after login and fails if the server refuses; so does this.
+/// - **A dead control connection is replaced, not reused.** Servers drop idle sessions (vsftpd after
+///   five minutes by default). The connection is probed with NOOP before reuse, and any failure
+///   discards it, so the next action redials instead of failing until the share is reopened. Only a
+///   failure where the transport itself died is retried once, as in Kotlin.
+/// - **Transfers get their own connection.** One control channel cannot multiplex, so a long
+///   download would otherwise park every listing behind it. Transfers are never retried: the
+///   caller's stream is already partly written or read when one fails.
 ///
 /// `ftpconnect` exposes local-file transfers rather than byte streams, so streams are staged in the
 /// app cache and deleted in `finally`. The remote API remains streaming and memory-bounded.
@@ -20,52 +33,116 @@ class FtpRemoteFsClient extends RemoteFsClient {
     required int port,
     required String username,
     required String password,
-  }) : _ftp = FTPConnect(host, port: port, user: username, pass: password, timeout: 20);
+    @visibleForTesting FTPConnect Function()? connector,
+  }) : _newConnection =
+           connector ??
+           (() => FTPConnect(host, port: port, user: username, pass: password, timeout: 20));
 
-  final FTPConnect _ftp;
-  bool _connected = false;
+  final FTPConnect Function() _newConnection;
+  FTPConnect? _control;
+  final Set<FTPConnect> _transfers = {};
   bool _closed = false;
   Future<void> _tail = Future.value();
 
-  Future<T> _serial<T>(Future<T> Function() action) {
+  /// A logged-in connection in binary mode with the best list command the server offers.
+  Future<FTPConnect> _dial() async {
+    final ftp = _newConnection();
+    if (!await ftp.connect()) throw const FileSystemException('FTP login failed.');
+    try {
+      final type = await ftp.sendCustomCommand('TYPE I');
+      if (!type.isSuccessCode()) {
+        throw FileSystemException('FTP server rejected binary mode: ${type.message}'.trim());
+      }
+      // Recorded in ftpconnect too, so its own SIZE fallback does not switch back to ASCII.
+      await ftp.setTransferType(TransferType.binary);
+      // MLSD has structured timestamps and types, so prefer it when the server advertises the
+      // RFC 3659 MLST capability. It is not universal: current vsftpd, among other real servers,
+      // can answer `500 Unknown command` to MLSD. ftpconnect defaults to MLSD without probing,
+      // which makes an otherwise healthy share impossible to open. LIST is the interoperable
+      // fallback; a rejected or unsupported FEAT command leaves that fallback selected.
+      ftp.listCommand = ListCommand.list;
+      try {
+        final features = await ftp.sendCustomCommand('FEAT');
+        ftp.listCommand = ftpListCommandForFeatures(features.message.toString());
+      } catch (_) {
+        // RFC 2389 FEAT is optional. Login succeeded, so do not reject an older server merely
+        // because capability discovery is unavailable.
+      }
+      return ftp;
+    } catch (_) {
+      _hangUp(ftp);
+      rethrow;
+    }
+  }
+
+  void _hangUp(FTPConnect ftp) => unawaited(ftp.disconnect().catchError((Object _) => false));
+
+  /// The shared control connection, probed before reuse as Kotlin's `connectLocked` does.
+  Future<FTPConnect> _controlConnection() async {
+    final existing = _control;
+    if (existing != null) {
+      try {
+        if ((await existing.sendCustomCommand('NOOP')).isSuccessCode()) return existing;
+      } catch (_) {
+        // Dropped by the server or the network; replaced below.
+      }
+      _control = null;
+      _hangUp(existing);
+    }
+    return _control = await _dial();
+  }
+
+  /// Runs [action] on the control connection, one at a time.
+  Future<T> _serial<T>(Future<T> Function(FTPConnect ftp) action) {
     final result = Completer<T>();
     _tail = _tail.then((_) async {
-      if (_closed) throw StateError('FTP connection is closed.');
-      try {
-        if (!_connected) {
-          _connected = await _ftp.connect();
-          if (!_connected) throw const FileSystemException('FTP login failed.');
-          // MLSD has structured timestamps and types, so prefer it when the server advertises the
-          // RFC 3659 MLST capability. It is not universal: current vsftpd, among other real servers,
-          // can answer `500 Unknown command` to MLSD. ftpconnect defaults to MLSD without probing,
-          // which makes an otherwise healthy share impossible to open. LIST is the interoperable
-          // fallback; a rejected or unsupported FEAT command leaves that fallback selected.
-          _ftp.listCommand = ListCommand.list;
-          try {
-            final features = await _ftp.sendCustomCommand('FEAT');
-            _ftp.listCommand = ftpListCommandForFeatures(features.message.toString());
-          } catch (_) {
-            // RFC 2389 FEAT is optional. Login succeeded, so do not reject an older server merely
-            // because capability discovery is unavailable.
-          }
+      for (var attempt = 0; ; attempt++) {
+        if (_closed) {
+          result.completeError(StateError('FTP connection is closed.'));
+          return;
         }
-        result.complete(await action());
-      } catch (error, stack) {
-        result.completeError(error, stack);
+        FTPConnect? ftp;
+        try {
+          ftp = await _controlConnection();
+          result.complete(await action(ftp));
+          return;
+        } catch (error, stack) {
+          // A failed command leaves the control channel in an unknown state: always start over.
+          if (ftp != null && identical(_control, ftp)) {
+            _control = null;
+            _hangUp(ftp);
+          }
+          if (attempt == 0 && ftpTransportDied(error)) continue;
+          result.completeError(error, stack);
+          return;
+        }
       }
     });
     return result.future;
   }
 
-  @override
-  Future<String> home() => _serial(_ftp.currentDirectory);
+  /// Runs a transfer on a connection of its own, closed afterwards and never retried.
+  Future<T> _transfer<T>(Future<T> Function(FTPConnect ftp) action) async {
+    if (_closed) throw StateError('FTP connection is closed.');
+    final ftp = await _dial();
+    _transfers.add(ftp);
+    try {
+      return await action(ftp);
+    } finally {
+      _transfers.remove(ftp);
+      _hangUp(ftp);
+    }
+  }
 
   @override
-  Future<List<SftpFile>> list(String path) => _serial(() async {
-    if (!await _ftp.changeDirectory(path)) {
+  Future<String> home() => _serial((ftp) => ftp.currentDirectory());
+
+  @override
+  Future<List<SftpFile>> list(String path) => _serial((ftp) async {
+    if (!await ftp.changeDirectory(path)) {
       throw FileSystemException('Cannot open FTP directory', path);
     }
-    final entries = await _ftp.listDirectoryContent();
+    final entries = await ftp.listDirectoryContent();
     return [
       for (final entry in entries)
         if (entry.name != '.' && entry.name != '..')
@@ -80,23 +157,23 @@ class FtpRemoteFsClient extends RemoteFsClient {
   });
 
   @override
-  Future<void> mkdir(String path) => _serial(() async {
-    if (!await _ftp.makeDirectory(path)) {
+  Future<void> mkdir(String path) => _serial((ftp) async {
+    if (!await ftp.makeDirectory(path)) {
       throw FileSystemException('Could not create FTP directory', path);
     }
   });
 
   @override
   Future<void> rename(String oldPath, String newPath, {bool isDirectory = false}) =>
-      _serial(() async {
-        if (!await _ftp.rename(oldPath, newPath)) {
+      _serial((ftp) async {
+        if (!await ftp.rename(oldPath, newPath)) {
           throw FileSystemException('Could not rename FTP item', oldPath);
         }
       });
 
   @override
-  Future<void> delete(String path, {required bool isDirectory}) => _serial(() async {
-    final ok = isDirectory ? await _ftp.deleteDirectory(path) : await _ftp.deleteFile(path);
+  Future<void> delete(String path, {required bool isDirectory}) => _serial((ftp) async {
+    final ok = isDirectory ? await ftp.deleteDirectory(path) : await ftp.deleteFile(path);
     if (!ok) throw FileSystemException('Could not delete FTP item', path);
   });
 
@@ -110,12 +187,12 @@ class FtpRemoteFsClient extends RemoteFsClient {
     String path,
     StreamSink<List<int>> output, {
     void Function(int copied, int total)? onProgress,
-  }) => _serial(() async {
+  }) => _transfer((ftp) async {
     final temp = await _temporaryFile();
     try {
       var copied = 0;
       var total = 0;
-      final ok = await _ftp.downloadFile(
+      final ok = await ftp.downloadFile(
         path,
         temp,
         onProgress: (_, received, fileSize) {
@@ -141,13 +218,13 @@ class FtpRemoteFsClient extends RemoteFsClient {
     Stream<List<int>> input,
     int totalBytes, {
     void Function(int copied, int total)? onProgress,
-  }) => _serial(() async {
+  }) => _transfer((ftp) async {
     final temp = await _temporaryFile();
     try {
       final sink = temp.openWrite();
       await sink.addStream(input);
       await sink.close();
-      final ok = await _ftp.uploadFile(
+      final ok = await ftp.uploadFile(
         temp,
         sRemoteName: path,
         onProgress: (_, sent, total) => onProgress?.call(sent, total),
@@ -190,7 +267,13 @@ class FtpRemoteFsClient extends RemoteFsClient {
   void close() {
     if (_closed) return;
     _closed = true;
-    if (_connected) unawaited(_ftp.disconnect());
+    final control = _control;
+    _control = null;
+    if (control != null) _hangUp(control);
+    for (final ftp in _transfers.toList()) {
+      _hangUp(ftp);
+    }
+    _transfers.clear();
   }
 }
 
@@ -201,3 +284,10 @@ ListCommand ftpListCommandForFeatures(String reply) {
       ? ListCommand.mlsd
       : ListCommand.list;
 }
+
+/// True when [error] means the connection itself is gone (refused, reset, timed out waiting for a
+/// reply), as opposed to the server answering a command with a refusal. Only the former is worth a
+/// second attempt on a fresh connection.
+bool ftpTransportDied(Object error) =>
+    error is SocketException ||
+    (error is FTPConnectException && error.message.contains('Timeout reached'));
