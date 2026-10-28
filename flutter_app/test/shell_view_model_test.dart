@@ -1607,6 +1607,73 @@ void main() {
       expect(vm.error, contains('could not be confirmed stopped'));
     });
 
+    group('ending a saved session', () {
+      Future<(ShellViewModel, FakeShellTransport, PersistentSession)> leftRunning() async {
+        final transport = FakeShellTransport();
+        final vm = await start(ssh: transport);
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await Future<void>.delayed(Duration.zero);
+        await vm.connect((await repo.getAllServers()).single);
+        vm.close(vm.current!);
+        await Future<void>.delayed(Duration.zero);
+        return (vm, transport, vm.resumableSessions.single);
+      }
+
+      test('a session tmux confirms gone is forgotten', () async {
+        final (vm, transport, row) = await leftRunning();
+        transport.execAnswers['kill-session'] = '';
+        transport.execAnswers['has-session -t ${row.tmuxName}'] = tmuxSessionAbsentMarker;
+
+        expect(await vm.endSavedSession(row), isNull);
+        expect(await repo.getPersistentSessions(), isEmpty);
+        expect(vm.resumableSessions, isEmpty);
+      });
+
+      test('an unreachable server keeps it, and says why and how to forget it', () async {
+        final (vm, transport, row) = await leftRunning();
+        transport.execAnswers['kill-session'] = 'SSH Error: connection refused';
+
+        final error = await vm.endSavedSession(row);
+        expect(error, startsWith("Couldn't reach nas to end"));
+        expect(error, contains('Forget removes it from this device only.'));
+        expect(error, endsWith('SSH Error: connection refused'));
+        expect(await repo.getPersistentSessions(), hasLength(1));
+      });
+
+      test('a session tmux still reports is kept', () async {
+        final (vm, transport, row) = await leftRunning();
+        transport.execAnswers['kill-session'] = '';
+        transport.execAnswers['has-session -t ${row.tmuxName}'] = tmuxSessionPresentMarker;
+
+        expect(await vm.endSavedSession(row), contains('tmux did not confirm'));
+        expect(await repo.getPersistentSessions(), hasLength(1));
+      });
+
+      test('a session whose host was deleted can only be forgotten', () async {
+        final (vm, transport, row) = await leftRunning();
+        final orphan = row.copyWith(serverId: row.serverId + 100);
+
+        expect(await vm.endSavedSession(orphan), contains('is no longer saved'));
+        expect(transport.commands.where((c) => c.contains('kill-session')), isEmpty);
+      });
+    });
+
+    test('new sessions get friendly names that differ from every saved one', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      await vm.connect((await repo.getAllServers()).single);
+      await vm.connect((await repo.getAllServers()).single, freshSession: true);
+
+      final names = (await repo.getPersistentSessions()).map((r) => r.tmuxName).toList();
+      expect(names, hasLength(2));
+      expect(names.toSet(), hasLength(2));
+      for (final name in names) {
+        expect(name, matches(RegExp(r'^omniterm-[a-z]+-[a-z]+-[a-z]+-[a-p]{32}$')));
+      }
+    });
+
     test('closing a tab starts the left-running clock', () async {
       // The whole point of a persistent host is that closing the tab does not end the work — so the
       // moment it stops being watched is the only thing that makes the resumable list actionable.

@@ -461,7 +461,7 @@ Future<void> _exerciseSplitPaneRecovery(
     await tester.ensureVisible(choose);
     await tester.tap(choose);
     await _waitForPopup(tester, find.byKey(const ValueKey('shell.split.cancel')));
-    final resume = find.byKey(ValueKey('shell.split.saved.${second.tmuxName}'));
+    final resume = find.byKey(ValueKey('shell.split.saved.${second.serverId}.${second.tmuxName}'));
     await _waitFor(tester, () => resume.evaluate().isNotEmpty);
     await tester.ensureVisible(resume);
     await tester.tap(resume);

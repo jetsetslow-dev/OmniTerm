@@ -11,6 +11,8 @@ import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/remote_commands.dart';
 import '../../domain/host_display.dart';
 import '../../domain/quick_connect.dart';
+import '../../domain/saved_tmux_sessions.dart';
+import '../../domain/tmux_session_name.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../platform/review_prompt.dart';
 import '../../data/term/terminal_emulator.dart';
@@ -1084,7 +1086,11 @@ class ShellViewModel extends ChangeNotifier {
       );
     }
 
-    final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
+    // Unique across every host, open or saved, as Kotlin's `nextTmuxSessionName`.
+    final name = generateUniqueTmuxSessionName({
+      for (final session in _sessions) ?session.tmuxName,
+      for (final row in _saved) row.tmuxName,
+    });
     await _app.repository.upsertPersistentSession(
       PersistentSessionsCompanion.insert(
         tmuxName: name,
@@ -1112,8 +1118,11 @@ class ShellViewModel extends ChangeNotifier {
   ///
   /// The filter is the point: offering to resume a session the user is currently looking at would
   /// be nonsense, and hiding one they left running would lose it.
-  List<PersistentSession> get resumableSessions =>
-      List.unmodifiable(_saved.where((row) => _sessions.every((s) => s.tmuxName != row.tmuxName)));
+  List<PersistentSession> get resumableSessions => List.unmodifiable(
+    _saved.where(
+      (row) => !_sessions.any((s) => s.serverId == row.serverId && s.tmuxName == row.tmuxName),
+    ),
+  );
 
   /// Removes a saved session from this device.
   ///
@@ -1838,17 +1847,13 @@ class ShellViewModel extends ChangeNotifier {
       if (server == null || transport == null) {
         throw StateError('The host or SSH transport is no longer available.');
       }
-      final creds = resolveCredentials(
-        server,
-        keys: await _app.repository.getAllKeys(),
-        profiles: await _app.repository.getAllProfiles(),
-      );
-      final result = await transport!.exec(creds, tmuxKillCommand(tmuxName));
-      if (result.startsWith('SSH Error:')) throw StateError(result);
-      final presence = parseTmuxSessionProbe(
-        await transport!.exec(creds, tmuxSessionProbeCommand(tmuxName)),
-      );
-      if (presence != false) throw StateError('Tmux did not confirm that this session is gone.');
+      switch (await _endRemoteTmux(server, tmuxName)) {
+        case TmuxUnreachable(:final reason):
+          throw StateError(reason);
+        case TmuxNotConfirmed():
+          throw StateError('Tmux did not confirm that this session is gone.');
+        case TmuxEnded():
+      }
       await _app.repository.deletePersistentSession(session.serverId, tmuxName);
       await _reloadSaved();
       confirmedStopped = true;
@@ -1858,6 +1863,50 @@ class ShellViewModel extends ChangeNotifier {
           'It remains available for recovery: $e';
     } finally {
       _close(session, saveRecovery: !confirmedStopped);
+    }
+  }
+
+  /// Ends [tmuxName] on [server] and checks that it is gone. A host that cannot be signed in to
+  /// counts as unreachable, with the reason.
+  Future<TmuxEndResult> _endRemoteTmux(Server server, String tmuxName) async {
+    final ssh = transport;
+    if (ssh == null) return const TmuxUnreachable('No SSH transport is available.');
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      return await endRemoteTmux(
+        kill: () => ssh.exec(creds, tmuxKillCommand(tmuxName)),
+        stillExists: () async =>
+            parseTmuxSessionProbe(await ssh.exec(creds, tmuxSessionProbeCommand(tmuxName))),
+      );
+    } catch (error) {
+      return TmuxUnreachable('$error');
+    }
+  }
+
+  /// Ends a saved session on its server, then forgets it, as Kotlin's `endSavedSession`. The entry
+  /// is dropped only once tmux confirms the session is gone; otherwise this returns the reason, and
+  /// the entry stays for Forget.
+  Future<String?> endSavedSession(PersistentSession row) async {
+    final name = displayTmuxSessionName(row.tmuxName);
+    final server = _app.servers.where((s) => s.id == row.serverId).firstOrNull;
+    if (server == null) {
+      return 'The host for "$name" is no longer saved, so it can\'t be ended from here. '
+          'Forget removes it from this device.';
+    }
+    switch (await _endRemoteTmux(server, row.tmuxName)) {
+      case TmuxEnded():
+        await forgetResumable(row);
+        return null;
+      case TmuxUnreachable(:final reason):
+        return 'Couldn\'t reach ${server.name} to end "$name". It is still saved; Forget removes '
+            'it from this device only.\n\n$reason';
+      case TmuxNotConfirmed():
+        return '${server.name} answered, but tmux did not confirm that "$name" ended. It is still '
+            'saved; Forget removes it from this device only.';
     }
   }
 

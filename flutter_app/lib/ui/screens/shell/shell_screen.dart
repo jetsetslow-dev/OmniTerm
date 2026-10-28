@@ -18,7 +18,9 @@ import '../../theme/terminal_theme.dart';
 import '../../theme/typography.dart';
 import '../../view_model/shell_session.dart';
 import '../../../domain/session_age.dart';
+import '../../../domain/tmux_session_name.dart';
 import '../../view_model/shell_view_model.dart';
+import 'saved_session_removal_dialog.dart';
 import '../../widgets/terminal_key_bar.dart';
 import '../../widgets/terminal_surface.dart';
 import '../../widgets/terminal_options_dialog.dart';
@@ -777,7 +779,7 @@ class _ResumableCard extends StatelessWidget {
           children: [
             Text(row.serverName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
             Text(
-              '${row.tmuxName}  ·  ${describeSessionAge(row)}',
+              '${displayTmuxSessionName(row.tmuxName)}  ·  ${describeSessionAge(row)}',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -794,10 +796,9 @@ class _ResumableCard extends StatelessWidget {
             onPressed: vm.isConnecting ? null : () => vm.resume(row),
             child: const Text('Resume', style: TextStyle(fontSize: 12)),
           ),
-          TextButton(
-            key: ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.forget'),
-            onPressed: () => _confirmForget(context, vm, row),
-            child: Text('Forget', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+          _RemoveSavedSessionButton(
+            key: ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.remove'),
+            onPressed: () => showSavedSessionRemovalDialog(context, vm, row),
           ),
         ];
         // Keep both actions reachable when system text scaling leaves no room beside the metadata.
@@ -820,32 +821,18 @@ class _ResumableCard extends StatelessWidget {
   );
 }
 
-Future<void> _confirmForget(BuildContext context, ShellViewModel vm, PersistentSession row) async {
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: const ValueKey('shell.resumable.forget.dialog'),
-      title: Text('Forget "${row.serverName}"?'),
-      content: const Text(
-        // The distinction that matters: this is a pointer on this device, not the session itself.
-        'This only removes it from this list. The tmux session keeps running on the server — to '
-        'end it, resume it and exit the shell.',
-      ),
-      actions: [
-        TextButton(
-          key: const ValueKey('shell.resumable.forget.cancel'),
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          key: const ValueKey('shell.resumable.forget.confirm'),
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text('Forget', style: TextStyle(color: OmniColors.red)),
-        ),
-      ],
-    ),
+/// Kotlin's red ✕ beside a saved session, which opens the Remove saved session dialog.
+class _RemoveSavedSessionButton extends StatelessWidget {
+  const _RemoveSavedSessionButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: AppLocalizations.of(context).removeSavedSession,
+    icon: const Icon(Icons.close, color: OmniColors.red),
+    onPressed: onPressed,
   );
-  if (confirmed ?? false) await vm.forgetResumable(row);
 }
 
 /// Shows [child] only while Quick connect is available, following licence changes.
@@ -1442,9 +1429,7 @@ class _TerminalOpenButton extends StatelessWidget {
   Future<void> _open(BuildContext context) async {
     final current = vm.current;
     final background = vm.sessions.where((s) => s != current && s != vm.splitSession).toList();
-    final saved = vm.resumableSessions
-        .where((row) => vm.sessions.every((s) => s.tmuxName != row.tmuxName))
-        .toList();
+    final saved = vm.resumableSessions;
     final anchor = context.findRenderObject()! as RenderBox;
     final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
     final origin = anchor.localToGlobal(Offset.zero, ancestor: overlay);
@@ -1481,7 +1466,10 @@ class _TerminalOpenButton extends StatelessWidget {
               value: 'session:${session.id}',
               child: _TerminalSessionMenuLabel(
                 title: session.serverName,
-                detail: session.tmuxName ?? 'Live SSH session',
+                detail: switch (session.tmuxName) {
+                  final name? => displayTmuxSessionName(name),
+                  null => 'Live SSH session',
+                },
                 startedAt: session.startedAt.millisecondsSinceEpoch,
                 backgroundedAt: vm.backgroundedAtFor(session.id),
               ),
@@ -1501,11 +1489,24 @@ class _TerminalOpenButton extends StatelessWidget {
               // Host and name: two hosts can each have a session with the same name.
               key: ValueKey('shell.open.saved.${row.serverId}.${row.tmuxName}'),
               value: 'saved:${row.serverId}:${row.tmuxName}',
-              child: _TerminalSessionMenuLabel(
-                title: row.serverName,
-                detail: row.tmuxName,
-                startedAt: row.createdAt,
-                backgroundedAt: row.backgroundedAt,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _TerminalSessionMenuLabel(
+                      title: row.serverName,
+                      detail: displayTmuxSessionName(row.tmuxName),
+                      startedAt: row.createdAt,
+                      backgroundedAt: row.backgroundedAt,
+                    ),
+                  ),
+                  Builder(
+                    builder: (menuContext) => _RemoveSavedSessionButton(
+                      key: ValueKey('shell.open.saved.${row.serverId}.${row.tmuxName}.remove'),
+                      onPressed: () =>
+                          Navigator.of(menuContext).pop('remove:${row.serverId}:${row.tmuxName}'),
+                    ),
+                  ),
+                ],
               ),
             ),
         ],
@@ -1535,6 +1536,9 @@ class _TerminalOpenButton extends StatelessWidget {
     } else if (choice.startsWith('saved:')) {
       final row = saved.where((r) => choice == 'saved:${r.serverId}:${r.tmuxName}').firstOrNull;
       if (row != null) await vm.resume(row);
+    } else if (choice.startsWith('remove:')) {
+      final row = saved.where((r) => choice == 'remove:${r.serverId}:${r.tmuxName}').firstOrNull;
+      if (row != null) await showSavedSessionRemovalDialog(context, vm, row);
     } else if (choice == 'new') {
       if (vm.server != null) await vm.connect(vm.server!);
     } else if (choice == 'quick') {
@@ -2362,7 +2366,10 @@ Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm, {int pane
                       ListTile(
                         key: ValueKey('shell.split.pick.${session.id}'),
                         title: Text(session.serverName),
-                        subtitle: Text(session.tmuxName ?? 'SSH terminal'),
+                        subtitle: Text(switch (session.tmuxName) {
+                          final name? => displayTmuxSessionName(name),
+                          null => 'SSH terminal',
+                        }),
                         onTap: () {
                           vm.enterSplit();
                           vm.assignSplitPane(pane, session.id, focus: false);
@@ -2371,9 +2378,16 @@ Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm, {int pane
                       ),
                     for (final row in saved)
                       ListTile(
-                        key: ValueKey('shell.split.saved.${row.tmuxName}'),
+                        key: ValueKey('shell.split.saved.${row.serverId}.${row.tmuxName}'),
                         title: Text(row.serverName),
-                        subtitle: Text('Resume tmux: ${row.tmuxName}'),
+                        subtitle: Text(displayTmuxSessionName(row.tmuxName)),
+                        trailing: _RemoveSavedSessionButton(
+                          key: ValueKey('shell.split.saved.${row.serverId}.${row.tmuxName}.remove'),
+                          onPressed: () {
+                            Navigator.of(sheetContext).pop();
+                            unawaited(showSavedSessionRemovalDialog(context, vm, row));
+                          },
+                        ),
                         onTap: () {
                           Navigator.of(sheetContext).pop();
                           unawaited(vm.resumeIntoSplitPane(row, pane));

@@ -2325,7 +2325,7 @@ void main() {
   });
 
   group('sessions left running', () {
-    testWidgets('a closed persistent session is offered again, and forgetting explains itself', (
+    testWidgets('a closed persistent session is offered again, and removing it explains itself', (
       tester,
     ) async {
       await repo.insertServer(server(name: 'nas', persistent: true));
@@ -2346,23 +2346,49 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('still running on their servers'), findsOneWidget);
+      final remove = find.byKey(ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.remove'));
 
-      await tester.tap(
-        find.byKey(ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.forget')),
-      );
+      await tester.tap(remove);
       await tester.pumpAndSettle();
-      // The distinction that matters: this is a pointer on this device, not the session itself.
-      expect(find.textContaining('keeps running on the server'), findsOneWidget);
+      expect(find.text('Remove saved session'), findsOneWidget);
+      // The distinction that matters: Forget is a pointer on this device, End reaches the server.
+      expect(find.textContaining('Forget removes it from this device only'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('shell.resumable.forget.cancel')));
+      await tester.tap(find.byKey(const ValueKey('shell.saved.remove.cancel')));
       await tester.pumpAndSettle();
       expect(await repo.getPersistentSessions(), hasLength(1));
 
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.saved.remove.forget')));
+      await tester.pumpAndSettle();
+      expect(await repo.getPersistentSessions(), isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('a session the server cannot end stays saved, with the reason, until forgotten', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await pump(tester);
+      await connect(tester);
+      final row = (await repo.getPersistentSessions()).single;
+      vm.close(vm.sessions.single);
+      await tester.pumpAndSettle();
+      transport.execAnswers['kill-session'] = 'SSH Error: connection refused';
+
       await tester.tap(
-        find.byKey(ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.forget')),
+        find.byKey(ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.remove')),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('shell.resumable.forget.confirm')));
+      await tester.tap(find.byKey(const ValueKey('shell.saved.remove.end')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shell.saved.remove.dialog')), findsOneWidget);
+      expect(find.textContaining("Couldn't reach nas"), findsOneWidget);
+      expect(await repo.getPersistentSessions(), hasLength(1));
+
+      await tester.tap(find.byKey(const ValueKey('shell.saved.remove.forget')));
       await tester.pumpAndSettle();
       expect(await repo.getPersistentSessions(), isEmpty);
       await finish(tester);
