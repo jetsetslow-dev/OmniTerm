@@ -1309,6 +1309,67 @@ void main() {
     vm.dispose();
   });
 
+  /// Kotlin's service card (`ServicesTab`, `ui/MonitorScreen.kt`). Flutter put every action in an
+  /// unconfirmed popup menu, so one mis-tap stopped a running service.
+  testWidgets('stopping, restarting or disabling a service asks first; starting does not', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    final transport = RecordingTransport(
+      replies: {
+        'list-units':
+            '$serviceTableMarker\n'
+            'web\trunning\tenabled\tWeb server\n'
+            'batch\tstopped\tdisabled\tBatch jobs',
+      },
+    );
+    await pump(tester, transport: transport);
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.services')));
+    await tester.pumpAndSettle();
+    // By service as well as verb: "restart" contains "start".
+    Iterable<String> actions(String service, String verb) => transport.commands.where(
+      (c) => !c.contains('list-units') && c.contains(service) && c.contains(verb),
+    );
+
+    expect(find.byKey(const ValueKey('monitor.service.web.start')), findsNothing);
+    expect(find.byKey(const ValueKey('monitor.service.web.enable')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('monitor.service.web.stop')));
+    await tester.pumpAndSettle();
+    expect(find.text('Stop web?'), findsOneWidget);
+    expect(find.text('web will stay down until it is started again.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('monitor.service.confirm.cancel')));
+    await tester.pumpAndSettle();
+    expect(actions('web', 'stop'), isEmpty, reason: 'cancelling must leave the service running');
+
+    await tester.tap(find.byKey(const ValueKey('monitor.service.web.restart')));
+    await tester.pumpAndSettle();
+    expect(find.text('web will briefly stop and start again.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('monitor.service.confirm.confirm')));
+    await tester.pumpAndSettle();
+    expect(actions('web', 'restart'), hasLength(1));
+
+    await tester.tap(find.byKey(const ValueKey('monitor.service.web.disable')));
+    await tester.pumpAndSettle();
+    expect(find.text('Stop web from starting at boot.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('monitor.service.confirm.cancel')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('monitor.service.batch.stop')), findsNothing);
+    expect(find.byKey(const ValueKey('monitor.service.batch.disable')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('monitor.service.batch.start')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('monitor.service.confirm.dialog')), findsNothing);
+    expect(actions('batch', 'start'), hasLength(1));
+    await tester.tap(find.byKey(const ValueKey('monitor.service.batch.enable')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('monitor.service.confirm.dialog')), findsNothing);
+    expect(actions('batch', 'enable'), hasLength(1));
+    expect(actions('web', 'disable'), isEmpty);
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
+  });
+
   testWidgets('a first process load says it is loading, not that there are none', (tester) async {
     // The defect: a 2px bar above an empty list is indistinguishable from a host with nothing
     // running. Kotlin splits first-load from refresh for exactly this reason.

@@ -16,6 +16,7 @@ import '../../view_model/monitor_view_model.dart';
 import '../../widgets/command_output_card.dart';
 import '../../widgets/metric_line_chart.dart';
 import '../../widgets/omni_components.dart';
+import '../../widgets/omni_confirm.dart';
 
 /// The Monitor sub-tabs, ported from `OverviewTab` / `ProcessesTab` / `ServicesTab` / `LogsTab` in
 /// `ui/MonitorScreen.kt`.
@@ -899,39 +900,112 @@ class _ServicesTabState extends State<ServicesTab> {
             separatorBuilder: (_, _) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
               final svc = vm.services[index];
+              final running = svc.status == 'running';
+              // Kotlin's card (`ServicesTab`, `ui/MonitorScreen.kt`): every action is a button, and
+              // the ones that take a service down or off the boot list ask first.
+              Widget action(
+                String action,
+                String label,
+                Color color, {
+                ({String title, String message})? confirm,
+              }) => OmniButton(
+                key: ValueKey('monitor.service.${svc.name}.$action'),
+                label: label,
+                color: color,
+                small: true,
+                onPressed: () async {
+                  if (confirm != null &&
+                      !await showOmniConfirm(
+                        context,
+                        title: confirm.title,
+                        message: confirm.message,
+                        confirmLabel: label,
+                        keyPrefix: 'monitor.service.confirm',
+                      )) {
+                    return;
+                  }
+                  if (context.mounted) await _runServiceAction(context, vm, svc, action);
+                },
+              );
               return OmniCard(
                 key: ValueKey('monitor.service.${svc.name}'),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            svc.name,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontFamily: OmniFonts.mono,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  StatusDot(online: running, semanticLabel: svc.status),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      svc.name,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontFamily: OmniFonts.mono,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (svc.desc.isNotEmpty)
+                                Text(
+                                  svc.desc,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                                ),
+                            ],
                           ),
-                          if (svc.desc.isNotEmpty)
-                            Text(
-                              svc.desc,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                            ),
-                        ],
-                      ),
+                        ),
+                        OmniTag(label: svc.subState, color: _subStateColor(svc.subState, scheme)),
+                      ],
                     ),
-                    OmniTag(label: svc.subState, color: _subStateColor(svc.subState)),
-                    PopupMenuButton<String>(
-                      key: ValueKey('monitor.service.${svc.name}.menu'),
-                      onSelected: (action) => _runServiceAction(context, vm, svc, action),
-                      itemBuilder: (_) => [
-                        for (final action in ['start', 'stop', 'restart', 'enable', 'disable'])
-                          PopupMenuItem(value: action, child: Text(action)),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        action(
+                          'restart',
+                          'Restart',
+                          OmniColors.cyan,
+                          confirm: (
+                            title: 'Restart ${svc.name}?',
+                            message: '${svc.name} will briefly stop and start again.',
+                          ),
+                        ),
+                        if (running)
+                          action(
+                            'stop',
+                            'Stop',
+                            OmniColors.red,
+                            confirm: (
+                              title: 'Stop ${svc.name}?',
+                              message: '${svc.name} will stay down until it is started again.',
+                            ),
+                          )
+                        else
+                          action('start', 'Start', OmniColors.green),
+                        if (svc.enabled)
+                          action(
+                            'disable',
+                            'Disable',
+                            OmniColors.amber,
+                            confirm: (
+                              title: 'Disable ${svc.name}?',
+                              message: 'Stop ${svc.name} from starting at boot.',
+                            ),
+                          )
+                        else
+                          action('enable', 'Enable', OmniColors.purple),
                       ],
                     ),
                   ],
@@ -944,10 +1018,10 @@ class _ServicesTabState extends State<ServicesTab> {
     );
   }
 
-  Color _subStateColor(String subState) => switch (subState) {
-    'active' || 'running' => OmniColors.green,
+  Color _subStateColor(String subState, ColorScheme scheme) => switch (subState) {
+    'active' => OmniColors.green,
     'failed' => OmniColors.red,
-    _ => OmniColors.textMuted,
+    _ => scheme.onSurfaceVariant,
   };
 }
 
