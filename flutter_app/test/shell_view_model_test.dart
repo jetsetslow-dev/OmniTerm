@@ -1097,6 +1097,30 @@ void main() {
       expect(transport.opened.last.writes.last, 'c'.codeUnits);
     });
 
+    test('an armed modifier stays with its session when the user switches host', () async {
+      // Armed on one host, carried to another, the next `c` there would be a Ctrl+C on a machine
+      // the user never meant it for. Switching back finds it as it was left.
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertServer(server(name: 'pi'));
+      await start();
+      await vm.connect(app.servers.first);
+      final nas = vm.current!;
+      await vm.connect(app.servers.last);
+      final pi = vm.current!;
+      expect(pi, isNot(same(nas)));
+
+      vm.toggleCtrl();
+      vm.select(nas.id);
+      expect(vm.ctrl, isFalse);
+      vm.typeText('c');
+      expect(transport.opened.first.writes.last, 'c'.codeUnits);
+
+      vm.select(pi.id);
+      expect(vm.ctrl, isTrue);
+      vm.typeText('c');
+      expect(transport.opened.last.writes.last, [0x03]);
+    });
+
     test('a paste is one write and ignores a stuck modifier', () async {
       await repo.insertServer(server(name: 'nas'));
       await start();

@@ -1133,7 +1133,15 @@ class _TerminalHeader extends StatefulWidget {
 }
 
 class _TerminalHeaderState extends State<_TerminalHeader> {
-  String? _workPhase;
+  /// The session a header action is working on, and what it is doing. Only that session's header
+  /// shows it: switching hosts mid-disconnect must not carry the progress, or the disabled
+  /// buttons, over to the other host.
+  (String, String)? _work;
+  String? get _workPhase {
+    final work = _work;
+    return work != null && work.$1 == vm.current?.id ? work.$2 : null;
+  }
+
   ShellViewModel get vm => widget.vm;
   bool get busy =>
       vm.isConnecting || vm.isLeavingSessions || vm.isBackgroundingSession || _workPhase != null;
@@ -1303,10 +1311,10 @@ class _TerminalHeaderState extends State<_TerminalHeader> {
                           vm,
                           session,
                           onBegin: (phase) {
-                            if (mounted) setState(() => _workPhase = phase);
+                            if (mounted) setState(() => _work = (session.id, phase));
                           },
                           onEnd: () {
-                            if (mounted) setState(() => _workPhase = null);
+                            if (mounted) setState(() => _work = null);
                           },
                         ),
                 ),

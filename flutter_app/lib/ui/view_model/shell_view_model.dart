@@ -1970,9 +1970,15 @@ class ShellViewModel extends ChangeNotifier {
   ///
   /// A touch keyboard cannot hold a key down, so the alternative is a latch the user has to
   /// remember to turn off — and a forgotten latch turns the next `l` into a screen-clearing ^L.
-  bool ctrl = false;
-  bool alt = false;
-  bool shift = false;
+  ///
+  /// Each terminal keeps its own ([ShellSession.ctrlArmed]); with none open there is nothing to
+  /// arm them for.
+  bool get ctrl => current?.ctrlArmed ?? false;
+  set ctrl(bool value) => current?.ctrlArmed = value;
+  bool get alt => current?.altArmed ?? false;
+  set alt(bool value) => current?.altArmed = value;
+  bool get shift => current?.shiftArmed ?? false;
+  set shift(bool value) => current?.shiftArmed = value;
 
   bool get hasModifier => ctrl || alt || shift;
 

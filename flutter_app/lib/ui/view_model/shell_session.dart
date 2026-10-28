@@ -396,9 +396,17 @@ class ShellSession extends ChangeNotifier {
   /// paste are three separate entry points, and a guard on only some of them is not a guard.
   bool readOnly = false;
 
+  /// Key-bar Ctrl, Alt and Shift armed on this terminal. Kept per session: armed on one host and
+  /// carried to another, the next key there would become, say, Ctrl+C on a machine the user never
+  /// meant it for. Switching back finds them as they were left.
+  bool ctrlArmed = false;
+  bool altArmed = false;
+  bool shiftArmed = false;
+
   void setReadOnly(bool value) {
     if (value == readOnly) return;
     readOnly = value;
+    if (value) ctrlArmed = altArmed = shiftArmed = false;
     if (value && _pendingInput.isNotEmpty) {
       _pendingInput.clear();
       controlRefreshError = 'Held input was cancelled because this terminal is now read-only.';
