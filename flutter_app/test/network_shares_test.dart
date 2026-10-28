@@ -489,7 +489,7 @@ void main() {
       expect(probe.peakInFlight, lessThanOrEqualTo(SharesViewModel.maxConcurrentProbes));
     });
 
-    test('deleting says what it did not touch', () async {
+    test('deleting says so in Kotlin\'s words', () async {
       await repo.insertNetworkShare(row(name: 'nas'));
       await boot();
 
@@ -497,7 +497,7 @@ void main() {
       await settle();
 
       expect(vm.shares, isEmpty);
-      expect(vm.status, contains('untouched'));
+      expect(vm.status, 'Deleted nas.');
     });
   });
 
@@ -643,6 +643,7 @@ void main() {
       expect(saved.anonymous, isTrue);
       expect(saved.lastStatus, 'online', reason: 'the scan just found it answering');
       expect(vm.scanHits, isEmpty, reason: 'a saved hit leaves the list');
+      expect(vm.scanStatus, 'Saved FTP on 192.168.1.20:21.');
     });
 
     test('SMB and SFTP hits are not saved without the form', () async {

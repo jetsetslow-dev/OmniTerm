@@ -169,7 +169,7 @@ class SharesViewModel extends ChangeNotifier {
       _safeNotify();
       return true;
     } catch (e) {
-      _error = 'Could not save that share: $e';
+      _error = 'Save failed: $e';
       _safeNotify();
       return false;
     }
@@ -178,8 +178,7 @@ class SharesViewModel extends ChangeNotifier {
   Future<void> delete(NetworkShare share) async {
     try {
       await _app.repository.deleteNetworkShareById(share.id);
-      // Saying what was *not* touched, because "delete" next to a file browser reads as destructive.
-      _status = 'Removed "${share.name}". Files on the share are untouched.';
+      _status = 'Deleted ${share.name}.';
       _error = null;
     } catch (e) {
       _error = 'Could not remove that share: $e';
@@ -428,6 +427,9 @@ class SharesViewModel extends ChangeNotifier {
         hit,
       ).toShare(lastChecked: DateTime.now().millisecondsSinceEpoch, lastStatus: 'online');
       await _app.repository.insertNetworkShare(share);
+      // Said in the dialog, where the hit just left the list; the tab's message line is for the
+      // form's saves.
+      _scanStatus = 'Saved ${share.name}.';
       _scanHits.remove(hit);
     } catch (e) {
       _scanStatus = 'Save failed: $e';
