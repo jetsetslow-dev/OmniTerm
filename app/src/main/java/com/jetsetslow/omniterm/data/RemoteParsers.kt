@@ -174,8 +174,22 @@ object RemoteCommands {
     // the tmux server, so reconnecting re-attaches the *same* session (and any long-running command
     // keeps running). These helpers detect tmux and (with user confirmation) install it.
 
+    /**
+     * Starts every tmux command: finds a tmux that a package manager put outside the system PATH.
+     *
+     * A command sent without a terminal starts a non-login shell, and on macOS that shell's PATH
+     * is only /usr/bin:/bin:/usr/sbin:/sbin; Homebrew's directory is added by ~/.zprofile, which
+     * only login shells read. So on a Mac with Homebrew's tmux the check said tmux was missing, and
+     * session checks, screen captures and End session failed quietly. Covers Homebrew on Apple
+     * silicon and Intel, MacPorts, and Homebrew on Linux, and leaves PATH alone wherever tmux is
+     * already found.
+     */
+    const val TMUX_PATH =
+        "command -v tmux >/dev/null 2>&1 || " +
+            "PATH=\"\$PATH:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/home/linuxbrew/.linuxbrew/bin\"; "
+
     /** Prints "yes" if tmux is on PATH, else "no". */
-    const val TMUX_CHECK = "command -v tmux >/dev/null 2>&1 && echo yes || echo no"
+    const val TMUX_CHECK = TMUX_PATH + "command -v tmux >/dev/null 2>&1 && echo yes || echo no"
 
     /**
      * The command run inside the interactive shell to enter a persistent session: attach to the
@@ -190,7 +204,7 @@ object RemoteCommands {
     /** Configure an existing session before the regular/control client attaches to it. */
     private fun tmuxExistingBootstrap(safe: String, historyLimit: Int): String {
         val limit = historyLimit.coerceIn(1_000, 50_000)
-        return "command -v tmux >/dev/null 2>&1 && " +
+        return TMUX_PATH + "command -v tmux >/dev/null 2>&1 && " +
             "tmux has-session -t $safe 2>/dev/null && " +
             "(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && " +
             // Touch scrolling is handled locally by the app. Keep tmux mouse mode off so normal
@@ -201,7 +215,7 @@ object RemoteCommands {
     /** Atomically create a brand-new app-owned session; an existing same-name session is an error. */
     private fun tmuxCreateBootstrap(safe: String, historyLimit: Int): String {
         val limit = historyLimit.coerceIn(1_000, 50_000)
-        return "command -v tmux >/dev/null 2>&1 && " +
+        return TMUX_PATH + "command -v tmux >/dev/null 2>&1 && " +
             // history-limit applies only to newly created panes. One tmux invocation starts the
             // server, sets the global default, and creates the unique session. new-session fails
             // rather than attaching if another client somehow already owns this high-entropy name.
@@ -238,11 +252,11 @@ object RemoteCommands {
 
     /** Active pane id of [name]'s current window, e.g. `%0` (side channel; control mode needs it to route %output). */
     fun tmuxActivePaneQuery(name: String): String =
-        "tmux display-message -p -t ${tmuxSafeName(name)} '#{pane_id}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxSafeName(name)} '#{pane_id}' 2>/dev/null || true"
 
     /** Cursor position as `x y` (0-based) for the control-mode repaint seed. */
     fun tmuxCursorQuery(name: String): String =
-        "tmux display-message -p -t ${tmuxSafeName(name)} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxSafeName(name)} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
 
     /**
      * Prints `1` when a full-screen TUI owns the pane's alternate screen, else `0`. Drives
@@ -250,12 +264,12 @@ object RemoteCommands {
      * side has no history for them), plain shells keep the local-buffer scroll.
      */
     fun tmuxAlternateOnQuery(name: String): String =
-        "tmux display-message -p -t ${tmuxSafeName(name)} '#{alternate_on}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxSafeName(name)} '#{alternate_on}' 2>/dev/null || true"
 
     /** Cursor position for an exact pane id, avoiding an active-pane change between side queries. */
     fun tmuxPaneCursorQuery(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"
-        return "tmux display-message -p -t $safe '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
+        return TMUX_PATH + "tmux display-message -p -t $safe '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
     }
 
     /**
@@ -263,7 +277,7 @@ object RemoteCommands {
      * repaints on attach, so the client must paint the current pane content itself.
      */
     fun tmuxCaptureScreenCommand(name: String): String =
-        "tmux capture-pane -p -e -t ${tmuxSafeName(name)} 2>/dev/null || true"
+        TMUX_PATH + "tmux capture-pane -p -e -t ${tmuxSafeName(name)} 2>/dev/null || true"
 
     /**
      * [tmuxCaptureScreenCommand] guarded on `#{alternate_on}`, for the REGULAR-attach pre-paint.
@@ -279,29 +293,29 @@ object RemoteCommands {
      */
     fun tmuxCaptureScreenIfNoTuiCommand(name: String): String {
         val safe = tmuxSafeName(name)
-        return "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
+        return TMUX_PATH + "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
             "then :; else tmux capture-pane -p -e -t $safe 2>/dev/null; fi || true"
     }
 
     /** Visible screen for an exact pane id (control-mode atomic repaint). */
     fun tmuxCapturePaneScreenCommand(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"
-        return "tmux capture-pane -p -e -t $safe 2>/dev/null || true"
+        return TMUX_PATH + "tmux capture-pane -p -e -t $safe 2>/dev/null || true"
     }
 
     fun tmuxHasSessionCommand(name: String): String {
         val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return "tmux has-session -t $safe >/dev/null 2>&1 && echo yes || echo no"
+        return TMUX_PATH + "tmux has-session -t $safe >/dev/null 2>&1 && echo yes || echo no"
     }
 
     fun tmuxKillCommand(name: String): String {
         val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return "tmux kill-session -t $safe 2>/dev/null"
+        return TMUX_PATH + "tmux kill-session -t $safe 2>/dev/null"
     }
 
     /** Clear only the active pane's server-side history; the visible screen remains intact. */
     fun tmuxClearHistoryCommand(name: String): String =
-        "tmux clear-history -t ${tmuxSafeName(name)} 2>/dev/null || true"
+        TMUX_PATH + "tmux clear-history -t ${tmuxSafeName(name)} 2>/dev/null || true"
 
     /**
      * Dump the pane's scrollback history (colours preserved via -e, wrapped lines re-joined via
@@ -318,7 +332,7 @@ object RemoteCommands {
     fun tmuxCaptureHistoryCommand(name: String, maxLines: Int): String {
         val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
         val lines = maxLines.coerceIn(1_000, 50_000)
-        return "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
+        return TMUX_PATH + "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
             "then :; else tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null; fi || true"
     }
 
@@ -330,7 +344,7 @@ object RemoteCommands {
      */
     fun tmuxExitCopyModeCommand(name: String): String {
         val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return "tmux send-keys -X -t $safe cancel 2>/dev/null || true"
+        return TMUX_PATH + "tmux send-keys -X -t $safe cancel 2>/dev/null || true"
     }
 
     /** Bound for a package-index refresh. Long enough for a slow mirror, short enough to report. */
@@ -345,7 +359,7 @@ object RemoteCommands {
      * fed via stdin to `sudo -S` by the caller (never interpolated into the command string).
      */
     fun tmuxInstallCommand(): String =
-        "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; " +
+        TMUX_PATH + "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; " +
         "if [ \"\$(id -u)\" = 0 ]; then SUDO=; else SUDO='sudo -S'; fi; " +
         // Every package step is bounded and explains a timeout in its own words. A dpkg/apt or dnf
         // lock held by unattended-upgrades blocks forever; the transport would eventually cut the
@@ -364,6 +378,8 @@ object RemoteCommands {
         "elif command -v apk >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO apk add tmux; " +
         "elif command -v zypper >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO zypper install -y tmux; " +
         "elif command -v pkg >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO pkg install -y tmux; " +
+        // Homebrew refuses to run as root and needs no sudo; [TMUX_PATH] puts it on PATH on a Mac.
+        "elif command -v brew >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS brew install tmux; " +
         "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; " +
         "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }"
 
@@ -402,8 +418,14 @@ object RemoteCommands {
         else -> PROCESSES
     }
 
-    const val PROCESS_SAMPLE_MARKER = "##OMNI-SAMPLE"
-    const val PROCESS_NVIDIA_MARKER = "##OMNI-NVIDIA"
+    /** Starts every section the process commands append after the list itself. */
+    const val PROCESS_SECTION_PREFIX = "##OMNI-"
+    const val PROCESS_SAMPLE_MARKER = "${PROCESS_SECTION_PREFIX}SAMPLE"
+    const val PROCESS_NVIDIA_MARKER = "${PROCESS_SECTION_PREFIX}NVIDIA"
+    /** Rates a host has already worked out: "pid readBytesPerSecond writeBytesPerSecond". */
+    const val PROCESS_RATES_MARKER = "${PROCESS_SECTION_PREFIX}RATES"
+    /** Present when the host reports GPU use; then "pid busiestEnginePercent" lines. */
+    const val PROCESS_GPU_MARKER = "${PROCESS_SECTION_PREFIX}GPU"
 
     // Linux: pid,user,%cpu,%mem,vsz,etime,stat,comm (etime adds per-process uptime). The `ps`
     // header line is dropped by the parser (non-numeric pid). BusyBox ps has no -eo, so fall back
@@ -432,11 +454,24 @@ object RemoteCommands {
 
     // Windows: emulate the same 8 space-separated columns (pid user %cpu %mem vsz etime stat comm),
     // sorted by CPU. ProcessName has no spaces so the simple split holds.
+    //
+    // Then the listed processes' I/O rates, which the performance counters already give per
+    // second. Windows has no per-process disk-only counter short of a kernel trace, so these
+    // count all of a process's I/O, as Task Manager's "I/O read/write bytes" columns do. Last,
+    // when the GPU counters exist (Windows 10 1709 and later), each process's busiest engine, as
+    // Task Manager's GPU column shows it. The counter classes are not translated, unlike
+    // Get-Counter's paths, so this works on any display language.
+    // See [RemoteParsers.parseProcessUsage].
     val PROCESSES_WINDOWS =
-        "powershell -NoProfile -Command \"Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | " +
+        "powershell -NoProfile -Command \"\$p = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | " +
             "Where-Object { \$_.IDProcess -ne 0 } | Sort-Object PercentProcessorTime -Descending | " +
-            "Select-Object -First 80 | ForEach-Object { \$_.IDProcess.ToString() + ' NA ' + " +
-            "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }\""
+            "Select-Object -First 80; \$p | ForEach-Object { \$_.IDProcess.ToString() + ' NA ' + " +
+            "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }; " +
+            "'$PROCESS_RATES_MARKER'; \$p | ForEach-Object { \$_.IDProcess.ToString() + ' ' + " +
+            "\$_.IOReadBytesPersec + ' ' + \$_.IOWriteBytesPersec }; " +
+            "try { \$g = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop; " +
+            "'$PROCESS_GPU_MARKER'; \$g | Group-Object { (\$_.Name -split '_')[1] } | ForEach-Object { " +
+            "\$_.Name + ' ' + (\$_.Group | Measure-Object UtilizationPercentage -Maximum).Maximum } } catch { }\""
 
     // Detect the init system instead of assuming systemd: OpenRC hosts (Alpine, Gentoo) get
     // rc-status output (marked so the parser switches format); other inits return a marker the
@@ -1351,7 +1386,7 @@ object RemoteParsers {
     // or BusyBox's plain `ps w` 4-column form (PID USER TIME COMMAND) from the fallback path.
     // The `ps` header line is skipped because its first column ("PID") isn't an integer.
     fun parseProcesses(output: String): List<SimProcess> =
-        output.substringBefore(RemoteCommands.PROCESS_SAMPLE_MARKER).substringBefore(RemoteCommands.PROCESS_NVIDIA_MARKER)
+        output.substringBefore(RemoteCommands.PROCESS_SECTION_PREFIX)
             .lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -2110,7 +2145,8 @@ object RemoteParsers {
 
     /**
      * Disk and GPU use per process from the samples [RemoteCommands.PROCESSES] appends. Rates are
-     * the difference between the two samples over the time between them. A process whose counters
+     * the difference between the two samples over the time between them; Windows sends its own
+     * rates instead ([RemoteCommands.PROCESSES_WINDOWS]). A process whose counters
      * could not be read is absent rather than zero. [ProcessUsage.gpuReported] is true when the
      * host reported any GPU use source at all, so the GPU column only shows where it applies.
      */
@@ -2167,8 +2203,29 @@ object RemoteParsers {
         }
         // pmon prints its "# gpu  pid ..." header only when the driver answered.
         if (nvidia.lineSequence().any { it.trimStart().startsWith("#") }) gpuReported = true
+        // Windows works the rates out itself (see [RemoteCommands.PROCESSES_WINDOWS]).
+        processSection(output, RemoteCommands.PROCESS_RATES_MARKER).forEach { t ->
+            val pid = t.getOrNull(0)?.toIntOrNull() ?: return@forEach
+            val read = t.getOrNull(1)?.toLongOrNull() ?: return@forEach
+            val write = t.getOrNull(2)?.toLongOrNull() ?: return@forEach
+            disk[pid] = DiskRate(read.coerceAtLeast(0), write.coerceAtLeast(0))
+        }
+        if (output.contains(RemoteCommands.PROCESS_GPU_MARKER)) {
+            gpuReported = true
+            processSection(output, RemoteCommands.PROCESS_GPU_MARKER).forEach { t ->
+                val pid = t.getOrNull(0)?.toIntOrNull() ?: return@forEach
+                val busiest = t.getOrNull(1)?.toFloatOrNull() ?: return@forEach
+                gpu[pid] = maxOf(gpu[pid] ?: 0f, busiest.coerceIn(0f, 100f))
+            }
+        }
         return ProcessUsage(disk, gpu, gpuReported)
     }
+
+    /** The whitespace-split lines of the section [marker] starts, up to the next one. */
+    private fun processSection(output: String, marker: String): List<List<String>> =
+        output.substringAfter(marker, "").substringBefore(RemoteCommands.PROCESS_SECTION_PREFIX)
+            .lineSequence().map { it.trim() }.filter { it.isNotEmpty() }
+            .map { it.split(Regex("\\s+")) }.toList()
 
     private class ProcessSample(
         val atNanos: Long?,

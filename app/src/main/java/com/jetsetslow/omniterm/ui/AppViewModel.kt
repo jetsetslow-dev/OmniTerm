@@ -643,6 +643,17 @@ data class NetworkShareScanHit(
 )
 
 /**
+ * The first three octets of [input] (`192.168.1.0/24`, `192.168.1.20` or `192.168.1`), or null when
+ * it is not an IPv4 address or subnet, such as a host name.
+ */
+internal fun scanPrefixOf(input: String): String? {
+    val octets = input.trim().substringBefore('/').split('.').filter { it.isNotBlank() }
+    if (octets.size < 3) return null
+    val prefix = octets.take(3)
+    return if (prefix.all { it.toIntOrNull() in 0..255 }) prefix.joinToString(".") else null
+}
+
+/**
  * Windows-style rollup of the transfers currently in flight: how many files, how many bytes done
  * of the known total, and the combined throughput. [totalBytes] counts only rows whose size is
  * known, so a WebDAV upload with no Content-Length doesn't zero out the aggregate bar.
@@ -1354,6 +1365,33 @@ class AppViewModel @JvmOverloads constructor(
     var networkShareScanStatus by mutableStateOf<String?>(null); private set
     var networkShareScanCidr by mutableStateOf("")
     val networkShareScanHits = mutableStateListOf<NetworkShareScanHit>()
+    // Fraction of the scan's probes answered, or null before the targets are known. A sweep of 254
+    // addresses takes long enough that a spinner alone reads as a hang.
+    var networkShareScanProgress by mutableStateOf<Float?>(null); private set
+    private var networkShareScanCidrPrefilled = false
+
+    // The Network Shares tab's last save, delete or check result, shown above the list. The scan
+    // dialog has its own status line; this one is seen without opening it.
+    var networkShareMessage by mutableStateOf<String?>(null); private set
+    var networkShareMessageIsError by mutableStateOf(false); private set
+
+    fun dismissNetworkShareMessage() { networkShareMessage = null }
+
+    private fun showNetworkShareMessage(message: String, isError: Boolean = false) {
+        networkShareMessage = message
+        networkShareMessageIsError = isError
+    }
+
+    /**
+     * Prefills the scan's subnet once, from an address the user already saved: the subnet they want
+     * is almost always the one their existing shares are on. Left blank when there is nothing to
+     * infer from, which scans this device's own network.
+     */
+    fun prepareNetworkShareScan(shares: List<NetworkShareEntity>) {
+        if (networkShareScanCidrPrefilled || networkShareScanCidr.isNotBlank()) return
+        networkShareScanCidrPrefilled = true
+        shares.firstNotNullOfOrNull { scanPrefixOf(it.address) }?.let { networkShareScanCidr = "$it.0/24" }
+    }
 
     /**
      * Protocols the LAN share scanner probes — a noise filter for networks where, say, every
@@ -8575,7 +8613,7 @@ class AppViewModel @JvmOverloads constructor(
         else -> 0
     }
 
-    private suspend fun persistNetworkShare(share: NetworkShareEntity): NetworkShareEntity? {
+    private suspend fun persistNetworkShare(share: NetworkShareEntity, onInvalid: (String) -> Unit): NetworkShareEntity? {
         val normalizedProtocol = share.protocol.uppercase(Locale.ROOT).ifBlank { "SMB" }
         var normalized = share.copy(
             name = share.name.trim().ifBlank { "${normalizedProtocol.lowercase(Locale.ROOT)}://${share.address.trim()}" },
@@ -8590,23 +8628,23 @@ class AppViewModel @JvmOverloads constructor(
             notes = share.notes.trim(),
         )
         if (normalized.address.isBlank()) {
-            networkShareScanStatus = "Address is required."
+            onInvalid("Address is required.")
             return null
         }
         if (normalized.protocol != "CUSTOM" && normalized.port !in 1..65535) {
-            networkShareScanStatus = "Port must be between 1 and 65535."
+            onInvalid("Port must be between 1 and 65535.")
             return null
         }
         if (normalized.protocol == "SFTP" && normalized.anonymous) {
-            networkShareScanStatus = "SFTP shares need a username or credential profile."
+            onInvalid("SFTP shares need a username or credential profile.")
             return null
         }
         if (normalized.protocol == "SMB" && normalized.sharePath.isBlank()) {
-            networkShareScanStatus = "SMB shares need a Share/path value such as Public or Media."
+            onInvalid("SMB shares need a Share/path value such as Public or Media.")
             return null
         }
         if (!normalized.anonymous && normalized.authProfileId == null && normalized.username.isBlank()) {
-            networkShareScanStatus = "Username is required for ${normalized.protocol} shares that are not anonymous."
+            onInvalid("Username is required for ${normalized.protocol} shares that are not anonymous.")
             return null
         }
         if (!normalized.anonymous && normalized.authProfileId == null && normalized.username.isNotBlank()) {
@@ -8623,29 +8661,35 @@ class AppViewModel @JvmOverloads constructor(
             normalized = normalized.copy(authProfileId = profileId, username = "", password = "")
         }
         repository.insertNetworkShare(normalized)
-        networkShareScanStatus = "Saved ${normalized.name}."
         return normalized
     }
 
     fun saveNetworkShare(share: NetworkShareEntity) {
         viewModelScope.launch {
             try {
-                persistNetworkShare(share)
+                persistNetworkShare(share) { showNetworkShareMessage(it, isError = true) }
+                    ?.let { showNetworkShareMessage("Saved ${it.name}.") }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                networkShareScanStatus = "Save failed: ${e.message ?: "unknown error"}"
+                showNetworkShareMessage("Save failed: ${e.message ?: "unknown error"}", isError = true)
             }
         }
     }
 
     fun deleteNetworkShare(share: NetworkShareEntity) {
         viewModelScope.launch {
-            repository.deleteNetworkShare(share)
+            try {
+                repository.deleteNetworkShare(share)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                showNetworkShareMessage("Could not remove that share: ${e.message ?: "unknown error"}", isError = true)
+                return@launch
+            }
             runCatching { ShortcutHelper.removeShortcutForShare(getApplication(), share.id) }
             repository.deleteSetting("share_bookmarks_${share.id}")
             allBookmarks.removeAll { it.shareId == share.id }
             if (browsingShare?.id == share.id) closeShareBrowser()
-            networkShareScanStatus = "Deleted ${share.name}."
+            showNetworkShareMessage("Deleted ${share.name}.")
         }
     }
 
@@ -8656,7 +8700,7 @@ class AppViewModel @JvmOverloads constructor(
             }
             val status = updateNetworkShareAvailability(share)
             withContext(Dispatchers.Main) {
-                networkShareScanStatus = "${share.name}: $status on ${share.address}:${share.port}."
+                showNetworkShareMessage("${share.name}: $status on ${share.address}:${share.port}.")
             }
         }
     }
@@ -8668,14 +8712,17 @@ class AppViewModel @JvmOverloads constructor(
                 withContext(Dispatchers.Main) { scanNetworkShares() }
                 return@launch
             }
-            shares.forEach { share ->
-                launch {
-                    repository.getAllNetworkShares().firstOrNull { it.id == share.id }?.let {
-                        repository.updateNetworkShare(it.copy(lastStatus = "checking"))
+            coroutineScope {
+                shares.forEach { share ->
+                    launch {
+                        repository.getAllNetworkShares().firstOrNull { it.id == share.id }?.let {
+                            repository.updateNetworkShare(it.copy(lastStatus = "checking"))
+                        }
+                        updateNetworkShareAvailability(share)
                     }
-                    updateNetworkShareAvailability(share)
                 }
             }
+            withContext(Dispatchers.Main) { showNetworkShareMessage("Checked ${shares.size} share(s).") }
         }
     }
 
@@ -8746,9 +8793,10 @@ class AppViewModel @JvmOverloads constructor(
                         useHttps = hit.protocol == "WEBDAV" && (hit.port == 443 || hit.port == 8443),
                         lastChecked = System.currentTimeMillis(),
                         lastStatus = "online",
-                    )
-                )
+                    ),
+                ) { networkShareScanStatus = it }
                 if (saved != null) {
+                    networkShareScanStatus = "Saved ${saved.name}."
                     networkShareScanHits.remove(hit)
                 }
             } catch (e: Exception) {
@@ -8765,6 +8813,7 @@ class AppViewModel @JvmOverloads constructor(
         val protocolLabel = enabledProtocols.joinToString(", ")
         networkShareScanRunning = true
         networkShareScanHits.clear()
+        networkShareScanProgress = null
         networkShareScanStatus = if (input.isBlank()) {
             "Scanning LAN hosts, then probing $protocolLabel."
         } else {
@@ -8798,13 +8847,19 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 withContext(Dispatchers.Main) {
                     networkShareScanStatus = "Scanning ${targets.size} host(s) for $protocolLabel."
+                    networkShareScanProgress = 0f
                 }
+                val probes = targets.size * ports.size
+                val probed = java.util.concurrent.atomic.AtomicInteger()
                 coroutineScope {
                     targets.forEach { host ->
                         ports.forEach { (protocol, port) ->
                             launch {
                                 semaphore.withPermit {
-                                    if (canConnect(host, port, timeoutMs = 700)) {
+                                    val open = canConnect(host, port, timeoutMs = 700)
+                                    val done = probed.incrementAndGet()
+                                    withContext(Dispatchers.Main) { networkShareScanProgress = done.toFloat() / probes }
+                                    if (open) {
                                         val key = "$host:$port"
                                         if (found.add(key)) {
                                             if (protocol == "SMB") {

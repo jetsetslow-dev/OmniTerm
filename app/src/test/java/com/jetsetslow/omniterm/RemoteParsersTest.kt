@@ -298,7 +298,9 @@ class RemoteParsersTest {
             com.jetsetslow.omniterm.data.RemoteCommands.tmuxCaptureScreenCommand(hostile),
         )) {
             assertTrue("expected sanitised name in: $cmd", cmd.contains("-t badrm-rf"))
-            assertTrue("semicolon must not survive: $cmd", !cmd.contains(";"))
+            // The only statement before tmux is the shared PATH line; the name adds none.
+            val tmux = cmd.removePrefix(com.jetsetslow.omniterm.data.RemoteCommands.TMUX_PATH)
+            assertTrue("semicolon must not survive: $cmd", !tmux.contains(";"))
         }
     }
 
@@ -367,7 +369,31 @@ class RemoteParsersTest {
     @Test
     fun tmuxClearHistoryCommandTargetsSanitisedSession() {
         val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxClearHistoryCommand("bad; rm -rf /")
-        assertEquals("tmux clear-history -t badrm-rf 2>/dev/null || true", cmd)
+        assertEquals(
+            com.jetsetslow.omniterm.data.RemoteCommands.TMUX_PATH + "tmux clear-history -t badrm-rf 2>/dev/null || true",
+            cmd,
+        )
+    }
+
+    /**
+     * Over a side channel a Mac's shell PATH is /usr/bin:/bin:/usr/sbin:/sbin, without Homebrew's
+     * directory, so every tmux command must look there itself.
+     */
+    @Test
+    fun everyTmuxCommandFindsHomebrewTmuxOnAMac() {
+        val c = com.jetsetslow.omniterm.data.RemoteCommands
+        val commands = listOf(
+            c.TMUX_CHECK, c.tmuxInstallCommand(),
+            c.tmuxCreateAttachCommand("x"), c.tmuxControlCreateAttachCommand("x"),
+            c.tmuxAttachCommand("x"), c.tmuxControlAttachCommand("x"),
+            c.tmuxActivePaneQuery("x"), c.tmuxCursorQuery("x"), c.tmuxAlternateOnQuery("x"),
+            c.tmuxPaneCursorQuery("%1"), c.tmuxCaptureScreenCommand("x"), c.tmuxCaptureScreenIfNoTuiCommand("x"),
+            c.tmuxCapturePaneScreenCommand("%1"), c.tmuxHasSessionCommand("x"), c.tmuxKillCommand("x"),
+            c.tmuxClearHistoryCommand("x"), c.tmuxCaptureHistoryCommand("x", 5_000), c.tmuxExitCopyModeCommand("x"),
+        )
+        commands.forEach { assertTrue("no Homebrew PATH in: $it", it.startsWith(c.TMUX_PATH)) }
+        assertTrue(c.TMUX_PATH.contains("/opt/homebrew/bin") && c.TMUX_PATH.contains("/usr/local/bin"))
+        assertTrue("a Mac without another package manager installs with Homebrew", c.tmuxInstallCommand().contains("brew install tmux"))
     }
 
     @Test

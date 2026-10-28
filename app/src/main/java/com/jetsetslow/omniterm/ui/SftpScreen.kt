@@ -10,6 +10,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -169,6 +170,26 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
     ConfirmHost(confirm)
 
     Column(modifier = Modifier.fillMaxSize()) {
+        viewModel.networkShareMessage?.let { message ->
+            val isError = viewModel.networkShareMessageIsError
+            OmniCard(
+                modifier = Modifier.fillMaxWidth().testTag("shares.message"),
+                leftAccent = if (isError) OmniColors.red else OmniColors.green,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        message,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 12.sp,
+                        color = if (isError) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    IconButton(onClick = { viewModel.dismissNetworkShareMessage() }) {
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss), modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -194,7 +215,10 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
         Spacer(Modifier.height(12.dp))
 
         OutlinedButton(
-            onClick = { showScanDialog = true },
+            onClick = {
+                viewModel.prepareNetworkShareScan(shares)
+                showScanDialog = true
+            },
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(Icons.Filled.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -316,6 +340,12 @@ private fun NetworkShareScanDialog(
                         Spacer(Modifier.width(8.dp))
                         Text(if (hits.isEmpty()) stringResource(R.string.scan_lan_shares) else stringResource(R.string.rescan_lan_shares), fontSize = 12.sp)
                     }
+                }
+                if (scanning) {
+                    val progress = viewModel.networkShareScanProgress
+                    val barModifier = Modifier.fillMaxWidth().height(2.dp)
+                    if (progress == null) LinearProgressIndicator(modifier = barModifier)
+                    else LinearProgressIndicator(progress = { progress }, modifier = barModifier)
                 }
                 // Protocol noise filter: e.g. drop WebDAV on networks where every printer
                 // answers on 80/443. Persisted; at least one stays enabled.

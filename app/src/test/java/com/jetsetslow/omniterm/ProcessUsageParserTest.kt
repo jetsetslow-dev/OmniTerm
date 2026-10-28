@@ -12,7 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Per-process disk and GPU use from the samples the Linux process command appends. */
+/** Per-process disk and GPU use from what the Linux and Windows process commands append. */
 class ProcessUsageParserTest {
 
     private val ps = """
@@ -134,6 +134,38 @@ class ProcessUsageParserTest {
     fun `the process list ignores the samples after it`() {
         val nvidia = output + "\n" + RemoteCommands.PROCESS_NVIDIA_MARKER + "\n    0  202  C  64  20  -  -  blender"
         assertEquals(listOf(101, 202, 303), RemoteParsers.parseProcesses(nvidia).map { it.pid })
+    }
+
+    // What PROCESSES_WINDOWS prints, CRLF and all: the list, then the I/O rates the counters give
+    // per second, then each process's busiest GPU engine.
+    private val windows = listOf(
+        "4120 NA 35 0 512000 00:00:00 R blender",
+        "880 NA 2 0 20480 00:00:00 R svchost",
+        RemoteCommands.PROCESS_RATES_MARKER,
+        "4120 1048576 2048",
+        "880 0 0",
+        RemoteCommands.PROCESS_GPU_MARKER,
+        "4120 87",
+        "1999 3",
+    ).joinToString("\r\n", postfix = "\r\n")
+
+    @Test
+    fun `windows sends its own rates and busiest gpu engine`() {
+        val usage = RemoteParsers.parseProcessUsage(windows)
+        assertEquals(DiskRate(readBytesPerSecond = 1_048_576, writeBytesPerSecond = 2048), usage.disk[4120])
+        assertEquals(DiskRate(0, 0), usage.disk[880])
+        assertTrue(usage.gpuReported)
+        assertEquals(87f, usage.gpu.getValue(4120), 0.01f)
+        assertNull("no GPU engine of its own", usage.gpu[880])
+        assertEquals(listOf(4120, 880), RemoteParsers.parseProcesses(windows).map { it.pid })
+    }
+
+    @Test
+    fun `windows without gpu counters shows no gpu column`() {
+        val older = windows.substringBefore(RemoteCommands.PROCESS_GPU_MARKER)
+        val usage = RemoteParsers.parseProcessUsage(older)
+        assertFalse(usage.gpuReported)
+        assertEquals(DiskRate(1_048_576, 2048), usage.disk[4120])
     }
 
     @Test
