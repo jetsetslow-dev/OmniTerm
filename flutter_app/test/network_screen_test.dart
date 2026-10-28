@@ -8,6 +8,7 @@ import 'package:omniterm/data/ssh/ssh_tunnel_manager.dart';
 import 'package:omniterm/domain/network_tools.dart';
 import 'package:omniterm/domain/external_ui_requests.dart';
 import 'package:omniterm/domain/host_display.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/navigation.dart';
 import 'package:omniterm/ui/screens/tools/network_screen.dart';
@@ -59,6 +60,8 @@ void main() {
           ChangeNotifierProvider<ExternalUiRequests>.value(value: externalRequests),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: const Scaffold(body: NetworkScreen()),
         ),

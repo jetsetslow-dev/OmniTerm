@@ -951,6 +951,7 @@ class _ScreenBody extends StatelessWidget {
           shell: context.read<ShellViewModel>(),
           sftp: context.read<SftpViewModel>(),
           shortcuts: context.read<ShortcutHelper>(),
+          network: context.read<NetworkViewModel>(),
         ),
         Screen.fleet => const FleetScreen(),
         Screen.monitor => const MonitorScreen(),

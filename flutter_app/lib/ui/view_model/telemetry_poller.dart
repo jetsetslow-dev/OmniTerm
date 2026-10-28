@@ -375,6 +375,7 @@ class TelemetryPoller extends ChangeNotifier {
       server.lastLatency,
     );
 
+    _app.noteSeen(server.id, at.millisecondsSinceEpoch);
     await _app.repository.insertMetric(
       MetricHistoryCompanion.insert(
         serverId: server.id,

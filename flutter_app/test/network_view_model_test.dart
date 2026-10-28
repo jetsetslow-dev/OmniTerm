@@ -595,6 +595,86 @@ void main() {
     });
   });
 
+  group('host check', () {
+    Server host(String address) => Server(
+      id: 7,
+      name: 'nas',
+      host: address,
+      port: 22,
+      username: 'root',
+      serverColor: 'Default',
+      authType: 'password',
+      sudoPassword: '',
+      notes: '',
+      keepAlive: 30,
+      sshCompression: false,
+      persistentSession: false,
+      proxyCommand: '',
+      proxyType: 'none',
+      proxyHost: '',
+      proxyPort: 0,
+      proxyUser: '',
+      proxyPassword: '',
+      agentForwarding: false,
+      healthScore: 100,
+      lastLatency: 0,
+      status: 'offline',
+      authStatus: 'ok',
+    );
+
+    test('pings the host four times without changing the Tools target', () async {
+      final commands = FakeDeviceCommands();
+      final vm = await boot(FakeProbe(), deviceCommands: commands);
+      vm
+        ..pingTarget = 'example.com'
+        ..pingCount = 0;
+      await vm.runHostCheck(host('10.0.0.1'), HostCheck.ping);
+
+      expect(commands.pings, [('10.0.0.1', hostPingCount, null)]);
+      expect(vm.hostCheck?.kind, HostCheck.ping);
+      expect(vm.hostCheckLines, contains(contains('icmp_seq=1')));
+      expect(vm.hostCheckRunning, isFalse);
+      expect(vm.pingTarget, 'example.com');
+      expect(vm.pingCount, 0);
+      vm.dispose();
+    });
+
+    test('traces the host and shows the hops', () async {
+      final vm = await boot(
+        FakeProbe(),
+        deviceCommands: FakeDeviceCommands(
+          tracerouteOutput: const ['traceroute to nas.lan, 30 hops max', ' 1  192.0.2.1  1.1 ms'],
+        ),
+      );
+      await vm.runHostCheck(host('nas.lan'), HostCheck.traceroute);
+
+      expect(vm.hostCheckLines, contains(' 1  192.0.2.1  1.1 ms'));
+      vm.dispose();
+    });
+
+    test('an address the command cannot take is reported in the output, not launched', () async {
+      final commands = FakeDeviceCommands();
+      final vm = await boot(FakeProbe(), deviceCommands: commands);
+      await vm.runHostCheck(host('nas.lan;id'), HostCheck.ping);
+
+      expect(commands.pings, isEmpty);
+      expect(vm.hostCheckLines, ['Enter a valid hostname or IP address.']);
+      expect(vm.error, isNull);
+      vm.dispose();
+    });
+
+    test('closing forgets the check', () async {
+      final vm = await boot(FakeProbe());
+      await vm.runHostCheck(host('10.0.0.1'), HostCheck.ping);
+      vm.closeHostCheck();
+
+      expect(vm.hostCheck, isNull);
+      expect(vm.hostCheckLines, isEmpty);
+      expect(vm.hostCheckRunning, isFalse);
+      vm.dispose();
+    });
+  });
+
   group('port scan', () {
     test('reports open and closed, ordered by port', () async {
       final probe = FakeProbe(open: {'10.0.0.1:22', '10.0.0.1:443'});

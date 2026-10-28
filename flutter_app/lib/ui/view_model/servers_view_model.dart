@@ -7,6 +7,7 @@ import '../../data/app_database.dart';
 import '../../data/remote_models.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../domain/host_limit.dart';
+import '../../domain/host_list.dart';
 import '../../domain/health_scoring.dart';
 import '../../domain/measurement_units.dart';
 import '../../domain/server_credentials.dart';
@@ -49,6 +50,22 @@ class ServersViewModel extends ChangeNotifier {
   MeasurementSystem get measurementSystem => _app.measurementSystem;
   int? get selectedServerId => _app.selectedServerId;
   set selectedServerId(int? value) => _app.selectedServerId = value;
+
+  HostSort get hostSort => _app.hostSort;
+  Future<void> updateHostSort(HostSort sort) => _app.updateHostSort(sort);
+
+  /// When [serverId] last answered, for an offline host's "Last seen" line. See
+  /// [AppState.lastSeenAt].
+  int? lastSeenAt(int serverId) => _app.lastSeenAt(serverId);
+
+  /// [sshCommandFor] with the user a credential profile signs in as, for the ⋮ menu's copy.
+  Future<String> sshCommand(Server server) async {
+    final profileId = server.authProfileId;
+    final profile = server.authType == 'profile' && profileId != null
+        ? await _app.repository.getCredentialProfileById(profileId)
+        : null;
+    return sshCommandFor(server, profile?.username ?? server.username);
+  }
 
   HealthBreakdown healthBreakdown(Server server, HostMetrics? metrics) => metrics == null
       ? HealthBreakdown.unavailable

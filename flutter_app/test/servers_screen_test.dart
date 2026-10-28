@@ -1,5 +1,7 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
@@ -12,9 +14,11 @@ import 'package:omniterm/ui/theme/colors.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/host_status_probe.dart';
+import 'package:omniterm/ui/view_model/network_view_model.dart';
 import 'package:omniterm/ui/view_model/servers_view_model.dart';
 import 'package:provider/provider.dart';
 
+import 'network_view_model_test.dart' show FakeDeviceCommands;
 import 'support/fake_secure_storage.dart';
 
 /// Answers no TCP ping, so a probe reaches an offline verdict without touching the network.
@@ -80,7 +84,12 @@ void main() {
     authStatus: authStatus,
   );
 
-  Future<void> pump(WidgetTester tester, {HostStatusProbe? hostProbe, bool settle = true}) async {
+  Future<void> pump(
+    WidgetTester tester, {
+    HostStatusProbe? hostProbe,
+    NetworkViewModel? network,
+    bool settle = true,
+  }) async {
     await app.start();
     await tester.pumpWidget(
       MultiProvider(
@@ -92,7 +101,9 @@ void main() {
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-          home: Scaffold(body: ServersScreen(hostProbe: hostProbe)),
+          home: Scaffold(
+            body: ServersScreen(hostProbe: hostProbe, network: network),
+          ),
         ),
       ),
     );
@@ -227,8 +238,125 @@ void main() {
     await pump(tester);
 
     expect(find.text('AUTOMATIC SSH CHECK FAILED'), findsOneWidget);
-    expect(find.text('SSH ANYWAY'), findsOneWidget);
+    expect(find.text('SSH anyway'), findsOneWidget);
     expect(find.textContaining('No TCP route'), findsNothing);
+  });
+
+  NetworkViewModel network() {
+    final network = NetworkViewModel(app, deviceCommands: FakeDeviceCommands())..watchWolTargets();
+    addTearDown(network.dispose);
+    return network;
+  }
+
+  testWidgets('an offline card offers WAKE for a wake target at its address, and PING', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas', host: '10.0.0.1'));
+    await repo.insertServer(server(name: 'web', host: '10.0.0.2'));
+    await repo.insertWolTarget(
+      WolTargetsCompanion.insert(
+        name: 'nas',
+        macAddress: 'AA:BB:CC:DD:EE:FF',
+        ipAddress: const Value('10.0.0.1'),
+      ),
+    );
+    await pump(tester, network: network());
+
+    final ids = {for (final s in app.servers) s.name: s.id};
+    expect(find.byKey(ValueKey('servers.card.${ids['nas']}.wake')), findsOneWidget);
+    expect(find.byKey(ValueKey('servers.card.${ids['web']}.wake')), findsNothing);
+    expect(find.text('PING'), findsNWidgets(2));
+
+    await tester.tap(find.byKey(ValueKey('servers.card.${ids['nas']}.wake')));
+    await tester.pumpAndSettle();
+    expect(find.text('Send wake packet?'), findsOneWidget);
+    expect(
+      find.text('Send a Wake-on-LAN magic packet to "nas" (AA:BB:CC:DD:EE:FF)?'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('PING opens the host check and closing it stops and forgets the check', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas', host: '10.0.0.1'));
+    final net = network();
+    await pump(tester, network: net);
+
+    await tester.tap(find.byKey(ValueKey('servers.card.${app.servers.single.id}.ping')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('hosts.check.dialog')), findsOneWidget);
+    expect(find.text('Ping nas'), findsOneWidget);
+    expect(find.textContaining('icmp_seq=1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('hosts.check.again')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('hosts.check.close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('hosts.check.dialog')), findsNothing);
+    expect(net.hostCheck, isNull);
+  });
+
+  testWidgets('an offline card says when the host was last seen', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    await repo.insertServer(server(name: 'web', host: '10.0.0.2'));
+    await app.start();
+    final ids = {for (final s in await repo.getAllServers()) s.name: s.id};
+    final now = DateTime.now().millisecondsSinceEpoch;
+    app.noteSeen(ids['nas']!, now - 10000);
+    app.noteSeen(ids['web']!, now - const Duration(minutes: 5, seconds: 10).inMilliseconds);
+    await pump(tester);
+
+    expect(find.text('Last seen just now'), findsOneWidget);
+    expect(find.text('Last seen 5m ago'), findsOneWidget);
+  });
+
+  testWidgets('the sort menu reorders the hosts and remembers the choice', (tester) async {
+    await repo.insertServer(server(name: 'alpha'));
+    await repo.insertServer(server(name: 'bravo', status: 'online', authStatus: 'ok'));
+    await pump(tester);
+    double top(String name) => tester.getTopLeft(find.text(name)).dy;
+    expect(top('alpha'), lessThan(top('bravo')));
+
+    await tester.tap(find.byKey(const ValueKey('servers.sort')));
+    await tester.pumpAndSettle();
+    expect(find.text('Latency (fastest first)'), findsOneWidget);
+    await tester.tap(find.text('Status (online first)'));
+    await tester.pumpAndSettle();
+
+    expect(top('bravo'), lessThan(top('alpha')));
+    final settings = {for (final row in await repo.getAllSettings()) row.key: row.value};
+    expect(settings['host_sort'], 'status');
+  });
+
+  testWidgets('the actions menu copies an SSH command for the host', (tester) async {
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (
+      call,
+    ) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await repo.insertServer(server(name: 'nas', host: 'nas.lan').copyWith(port: 2222));
+    await pump(tester, network: network());
+
+    await tester.tap(find.byKey(ValueKey('servers.card.${app.servers.single.id}.actions')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ping from this device'), findsOneWidget);
+    expect(find.text('Traceroute from this device'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('servers.action.copySsh')));
+    await tester.pumpAndSettle();
+
+    expect(copied, 'ssh -p 2222 root@nas.lan');
+    expect(find.text('Copied to clipboard'), findsOneWidget);
   });
 
   // Kotlin's card reads `probedServerIds`: a host's stored status is `offline` until something has

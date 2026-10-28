@@ -5,7 +5,9 @@ import '../../../data/app_database.dart';
 import '../../../data/remote_models.dart';
 import '../../../domain/host_display.dart';
 import '../../../domain/external_ui_requests.dart';
+import '../../../domain/host_list.dart';
 import '../../../domain/measurement_units.dart';
+import '../../../domain/session_age.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../platform/distribution.dart';
 import '../../../platform/license_controller.dart';
@@ -15,13 +17,17 @@ import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/servers_view_model.dart';
 import '../../view_model/host_status_probe.dart';
+import '../../view_model/network_view_model.dart';
 import '../../view_model/sftp_view_model.dart';
 import '../../view_model/shell_view_model.dart';
 import '../../view_model/telemetry_poller.dart';
+import '../../widgets/copy_with_confirmation.dart';
 import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/license_gate.dart';
+import '../../widgets/wake_on_lan.dart';
 import '../monitor/system_specs_view.dart';
+import 'host_check_dialog.dart';
 import 'server_form_sheet.dart';
 import 'server_form_state.dart';
 
@@ -42,6 +48,7 @@ class ServersScreen extends StatelessWidget {
     this.shell,
     this.sftp,
     this.shortcuts,
+    this.network,
   });
 
   final LicenseController? licenseController;
@@ -53,10 +60,13 @@ class ServersScreen extends StatelessWidget {
   final SftpViewModel? sftp;
   final ShortcutHelper? shortcuts;
 
+  /// Pings and traces a host from this device, and wakes an offline one.
+  final NetworkViewModel? network;
+
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<ServersViewModel>();
-    final filtered = vm.filteredServers;
+    final filtered = sortHosts(vm.filteredServers, vm.hostSort, _currentHealthScore);
     final license = licenseController;
     if (license == null) {
       return _buildBody(context, vm, filtered, null, false);
@@ -73,6 +83,10 @@ class ServersScreen extends StatelessWidget {
       },
     );
   }
+
+  /// Kotlin's `currentHealthScore`: a host without current metrics has no score (-1).
+  int _currentHealthScore(Server server) =>
+      telemetry?.metricsForServer(server.id) == null ? -1 : server.healthScore;
 
   Widget _buildBody(
     BuildContext context,
@@ -126,6 +140,7 @@ class ServersScreen extends StatelessWidget {
                       shell: shell,
                       sftp: sftp,
                       shortcuts: shortcuts,
+                      network: network,
                     ),
                   ),
           ),
@@ -360,6 +375,7 @@ class _SearchRowState extends State<_SearchRow> {
             size: 26,
           ),
           const SizedBox(width: 4),
+          _SortButton(vm: vm),
           IconButton(
             key: const ValueKey('servers.multiSelect.toggle'),
             tooltip: 'Multi-select',
@@ -384,6 +400,45 @@ class _SearchRowState extends State<_SearchRow> {
       ),
     );
   }
+}
+
+/// Kotlin's sort control: grey while the list is in name order, tinted once another order is picked,
+/// with a tick beside the current one.
+class _SortButton extends StatelessWidget {
+  const _SortButton({required this.vm});
+
+  final ServersViewModel vm;
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<HostSort>(
+    key: const ValueKey('servers.sort'),
+    tooltip: 'Sort hosts',
+    icon: Icon(
+      Icons.sort,
+      color: vm.hostSort != HostSort.name
+          ? Theme.of(context).colorScheme.primary
+          // Compose's Color.Gray.
+          : const Color(0xFF888888),
+    ),
+    onSelected: vm.updateHostSort,
+    itemBuilder: (_) => [
+      for (final sort in HostSort.values)
+        PopupMenuItem(
+          key: ValueKey('servers.sort.${sort.settingValue}'),
+          value: sort,
+          child: Row(
+            children: [
+              SizedBox.square(
+                dimension: 24,
+                child: sort == vm.hostSort ? const Icon(Icons.check) : null,
+              ),
+              const SizedBox(width: 12),
+              Flexible(child: Text(sort.label)),
+            ],
+          ),
+        ),
+    ],
+  );
 }
 
 class _GroupChips extends StatelessWidget {
@@ -537,6 +592,7 @@ class _ServerCard extends StatelessWidget {
     this.shell,
     this.sftp,
     this.shortcuts,
+    this.network,
   });
 
   final Server server;
@@ -548,6 +604,7 @@ class _ServerCard extends StatelessWidget {
   final ShellViewModel? shell;
   final SftpViewModel? sftp;
   final ShortcutHelper? shortcuts;
+  final NetworkViewModel? network;
 
   @override
   Widget build(BuildContext context) {
@@ -762,15 +819,30 @@ class _ServerCard extends StatelessWidget {
                   ),
                   Row(
                     mainAxisSize: MainAxisSize.min,
+                    spacing: 6,
                     children: [
-                      _CardAction(
+                      OmniButton(
+                        key: ValueKey('servers.card.${server.id}.ssh'),
                         label: 'SSH',
+                        color: accent,
+                        small: true,
                         onPressed: shell == null ? null : () => _connect(context),
                       ),
-                      const SizedBox(width: 5),
-                      _CardAction(label: 'SFTP', onPressed: sftp == null ? null : _openSftp),
-                      const SizedBox(width: 5),
-                      _CardAction(label: 'DOCKER', onPressed: () => _navigate(Screen.infra)),
+                      OmniButton(
+                        key: ValueKey('servers.card.${server.id}.sftp'),
+                        label: 'SFTP',
+                        color: accent,
+                        small: true,
+                        onPressed: sftp == null ? null : _openSftp,
+                      ),
+                      OmniButton(
+                        key: ValueKey('servers.card.${server.id}.docker'),
+                        label: 'DOCKER',
+                        color: accent,
+                        small: true,
+                        onPressed: () => _navigate(Screen.infra),
+                      ),
+                      if (network != null) _pingButton(context, accent),
                     ],
                   ),
                 ],
@@ -806,28 +878,82 @@ class _ServerCard extends StatelessWidget {
                           '${display.host(server)}:${server.port}',
                           style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 10),
                         ),
+                        if (vm.lastSeenAt(server.id) case final seenAt?)
+                          Text(
+                            key: ValueKey('servers.card.${server.id}.lastSeen'),
+                            DateTime.now().millisecondsSinceEpoch - seenAt < 60000
+                                ? 'Last seen just now'
+                                : 'Last seen '
+                                      '${formatSessionAge(DateTime.fromMillisecondsSinceEpoch(seenAt))}'
+                                      ' ago',
+                            style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 10),
+                          ),
                       ],
                     ),
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      _CardAction(
-                        label: 'SSH ANYWAY',
-                        onPressed: shell == null ? null : () => _connect(context),
-                      ),
-                      const SizedBox(height: 5),
-                      _CardAction(
-                        label: 'Retry',
-                        color: OmniColors.red,
-                        onPressed: hostProbe == null ? null : () => hostProbe!.probeOne(server),
-                      ),
-                    ],
-                  ),
+                  const SizedBox(width: 6),
+                  _offlineActions(context, accent),
                 ],
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  OmniButton _pingButton(BuildContext context, Color accent) => OmniButton(
+    key: ValueKey('servers.card.${server.id}.ping'),
+    label: 'PING',
+    color: accent,
+    small: true,
+    onPressed: () => showHostCheckDialog(context, network!, server, HostCheck.ping),
+  );
+
+  /// WAKE (when a Wake-on-LAN target has this host's address), SSH anyway, PING and Retry, as
+  /// Kotlin's offline card. They keep their natural width beside the explanation, and wrap rather
+  /// than overflow when large text makes them wider than the card allows.
+  Widget _offlineActions(BuildContext context, Color accent) {
+    Widget buttons() {
+      final wake = network == null ? null : wolTargetFor(server, network!.wolTargets);
+      return Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          if (wake != null)
+            OmniButton(
+              key: ValueKey('servers.card.${server.id}.wake'),
+              label: 'WAKE',
+              color: OmniColors.green,
+              small: true,
+              onPressed: () => confirmAndWake(context, network!, wake),
+            ),
+          OmniButton(
+            key: ValueKey('servers.card.${server.id}.sshAnyway'),
+            label: 'SSH anyway',
+            color: accent,
+            small: true,
+            onPressed: shell == null ? null : () => _connect(context),
+          ),
+          if (network != null) _pingButton(context, accent),
+          OmniButton(
+            key: ValueKey('servers.card.${server.id}.retry'),
+            label: 'Retry',
+            color: OmniColors.red,
+            small: true,
+            onPressed: hostProbe == null ? null : () => hostProbe!.probeOne(server),
+          ),
+        ],
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) => ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.7),
+        // Wake targets can be added in Tools while this card is showing.
+        child: network == null
+            ? buttons()
+            : ListenableBuilder(listenable: network!, builder: (_, _) => buttons()),
       ),
     );
   }
@@ -871,8 +997,17 @@ class _ServerCard extends StatelessWidget {
           ),
           if (shortcuts != null)
             _DialogAction(value: 'pin', icon: Icons.push_pin, label: 'Pin to home screen'),
+          _DialogAction(value: 'copySsh', icon: Icons.content_paste, label: 'Copy SSH command'),
           if (shell != null)
             _DialogAction(value: 'shell', icon: Icons.terminal, label: 'Open terminal console'),
+          if (network != null) ...[
+            _DialogAction(value: 'ping', icon: Icons.network_check, label: 'Ping from this device'),
+            _DialogAction(
+              value: 'traceroute',
+              icon: Icons.route,
+              label: 'Traceroute from this device',
+            ),
+          ],
           // Read over SSH, so only while the host answers.
           _DialogAction(
             value: 'specs',
@@ -904,8 +1039,15 @@ class _ServerCard extends StatelessWidget {
             const SnackBar(content: Text('This launcher does not support pinned shortcuts.')),
           );
         }
+      case 'copySsh':
+        final command = await vm.sshCommand(server);
+        if (context.mounted) await copyWithConfirmation(context, command);
       case 'shell':
         await _connect(context);
+      case 'ping':
+        await showHostCheckDialog(context, network!, server, HostCheck.ping);
+      case 'traceroute':
+        await showHostCheckDialog(context, network!, server, HostCheck.traceroute);
       case 'specs':
         await showSystemSpecsDialog(context, server);
       case 'monitor':
@@ -983,28 +1125,6 @@ class _DialogAction extends StatelessWidget {
       ),
     );
   }
-}
-
-class _CardAction extends StatelessWidget {
-  const _CardAction({required this.label, required this.onPressed, this.color = OmniColors.cyan});
-
-  final String label;
-  final VoidCallback? onPressed;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 30,
-    child: OutlinedButton(
-      onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: color,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        textStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-      ),
-      child: Text(label),
-    ),
-  );
 }
 
 class _MetricRetryButton extends StatefulWidget {
@@ -1112,7 +1232,7 @@ class _AuthFailure extends StatelessWidget {
           ],
         ),
       ),
-      _CardAction(label: 'Retry', color: OmniColors.red, onPressed: onRetry),
+      OmniButton(label: 'Retry', color: OmniColors.red, small: true, onPressed: onRetry),
     ],
   );
 }

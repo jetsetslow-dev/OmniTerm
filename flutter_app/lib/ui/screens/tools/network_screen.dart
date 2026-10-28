@@ -11,6 +11,7 @@ import '../../../data/network/network_probe.dart';
 import '../../../domain/external_ui_requests.dart';
 import '../../../domain/host_display.dart';
 import '../../../domain/input_validation.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../navigation.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
@@ -19,7 +20,9 @@ import '../../view_model/network_view_model.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/omni_confirm.dart';
 import '../../widgets/popup_scroll_behavior.dart';
+import '../../widgets/stream_output_box.dart';
 import '../../widgets/text_controllers_state.dart';
+import '../../widgets/wake_on_lan.dart';
 
 /// The Network tools, ported from `NetworkToolView` in `ui/ToolsScreen.kt`: nine device-side tools
 /// under one scrollable tab row. Ping, Traceroute and Port Scan share one target.
@@ -193,8 +196,8 @@ Widget _actionButton({
   ),
 );
 
-/// Monospace output lines in a card, following the newest line as Kotlin's list does.
-class _OutputCard extends StatefulWidget {
+/// Ping or traceroute output in a card.
+class _OutputCard extends StatelessWidget {
   const _OutputCard({required this.cardKey, required this.lines, required this.isFailure});
 
   final String cardKey;
@@ -202,63 +205,13 @@ class _OutputCard extends StatefulWidget {
   final bool Function(String line) isFailure;
 
   @override
-  State<_OutputCard> createState() => _OutputCardState();
-}
-
-class _OutputCardState extends State<_OutputCard> {
-  final _scroll = ScrollController();
-
-  @override
-  void didUpdateWidget(_OutputCard old) {
-    super.didUpdateWidget(old);
-    if (widget.lines.length != old.lines.length) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll.hasClients) {
-          _scroll.animateTo(
-            _scroll.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    return OmniCard(
-      key: ValueKey(widget.cardKey),
-      child: SizedBox(
-        height: 320,
-        child: SelectionArea(
-          child: ListView.separated(
-            controller: _scroll,
-            padding: const EdgeInsets.all(10),
-            itemCount: widget.lines.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 2),
-            itemBuilder: (_, i) {
-              final line = widget.lines[i];
-              return Text(
-                line,
-                style: composeBody(
-                  fontSize: 11,
-                  fontFamily: OmniFonts.mono,
-                  color: widget.isFailure(line) ? OmniColors.red : onSurface,
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => OmniCard(
+    key: ValueKey(cardKey),
+    child: SizedBox(
+      height: 320,
+      child: StreamOutputBox(lines: lines, isFailure: isFailure),
+    ),
+  );
 }
 
 extension on ScannedHost {
@@ -669,8 +622,7 @@ class _PingTabState extends State<_PingTab> {
             : null,
       ),
       Text(
-        'Pings are sent from this device, so they tell you whether the HOST is reachable on your '
-        'current network — independent of SSH.',
+        AppLocalizations.of(context).pingsAreSentFromThisDevice,
         style: composeBody(fontSize: 11, color: _muted(context)),
       ),
       if (vm.error != null) _errorText(vm.error!),
@@ -678,10 +630,7 @@ class _PingTabState extends State<_PingTab> {
         _OutputCard(
           cardKey: 'network.ping.output',
           lines: vm.pingLines,
-          isFailure: (line) =>
-              line.toLowerCase().contains('failed') ||
-              line.toLowerCase().contains('unreachable') ||
-              line.contains('100% packet loss'),
+          isFailure: isPingFailureLine,
         ),
     ]);
   }
@@ -723,8 +672,7 @@ class _TracerouteTab extends StatelessWidget {
           : null,
     ),
     Text(
-      "Traces each network hop from this device to the host. Uses the platform traceroute; if it "
-      "isn't available, a clear message is shown.",
+      AppLocalizations.of(context).tracesEachNetworkHopFromThis,
       style: composeBody(fontSize: 11, color: _muted(context)),
     ),
     if (vm.error != null) _errorText(vm.error!),
@@ -732,8 +680,7 @@ class _TracerouteTab extends StatelessWidget {
       _OutputCard(
         cardKey: 'network.traceroute.output',
         lines: vm.tracerouteLines,
-        isFailure: (line) =>
-            line.toLowerCase().contains('not available') || line.toLowerCase().contains('failed'),
+        isFailure: isTracerouteFailureLine,
       ),
   ]);
 }
@@ -921,7 +868,7 @@ class _WolCard extends StatelessWidget {
                 maxLines: 1,
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
               ),
-              onPressed: () => _confirmWake(context),
+              onPressed: () => confirmAndWake(context, vm, target),
             ),
           ),
           IconButton(
@@ -949,21 +896,6 @@ class _WolCard extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _confirmWake(BuildContext context) async {
-    final confirmed = await showOmniConfirm(
-      context,
-      title: 'Send wake packet?',
-      message: 'Send a Wake-on-LAN magic packet to "${target.name}" (${target.macAddress})?',
-      confirmLabel: 'Wake',
-      destructive: true,
-      keyPrefix: 'network.wol.wakeDialog',
-    );
-    if (!confirmed || !context.mounted) return;
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    final message = await vm.wake(target);
-    messenger?.showSnackBar(SnackBar(content: Text(message)));
   }
 }
 

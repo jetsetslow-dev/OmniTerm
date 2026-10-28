@@ -290,6 +290,7 @@ class OmniTermApp extends StatelessWidget {
           create: (context) => HostStatusProbe(
             context.read<AppState>().repository,
             transport: context.read<SshTransport>(),
+            onSeen: context.read<AppState>().noteSeen,
           )..start(),
         ),
         // Declared after AppState because it reads the same repository, and loaded eagerly: the
@@ -414,7 +415,7 @@ class OmniTermApp extends StatelessWidget {
             context.read<AppState>(),
             tunnels: context.read<SshTunnelManager>(),
             operationNotifications: context.read<LongOperationNotifications>(),
-          ),
+          )..watchWolTargets(),
           update: (_, app, previous) => previous ?? NetworkViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, BackupViewModel>(

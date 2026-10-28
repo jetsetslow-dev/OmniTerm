@@ -7,6 +7,7 @@ import '../../data/app_repository.dart';
 import '../../data/remote_commands.dart';
 import '../../domain/app_preferences.dart';
 import '../../domain/health_scoring.dart';
+import '../../domain/host_list.dart';
 
 /// The state every feature shares: the host list, which host is selected, and the persisted app
 /// settings.
@@ -113,6 +114,9 @@ class AppState extends ChangeNotifier {
   bool homelabPresetsEnabled = false;
   bool alertPresetsEnabled = false;
   bool fleetPresetsEnabled = false;
+
+  /// The Hosts list's order, saved as `host_sort`.
+  HostSort hostSort = HostSort.name;
   bool get batterySaverEnabled => _preferences.batterySaverEnabled;
   int get batterySaverThresholdPct => _preferences.batterySaverThresholdPercent;
   int get sftpLargeBatchFileThreshold => _preferences.sftpWarnFileCount;
@@ -127,6 +131,7 @@ class AppState extends ChangeNotifier {
   /// Begin observing the database and load persisted settings.
   Future<void> start() async {
     await loadSettings();
+    unawaited(_seedLastSeen());
 
     _serversSub = _repository.serversStream.listen((list) {
       _forgetGoneOrMovedHosts(_servers, list);
@@ -152,6 +157,7 @@ class AppState extends ChangeNotifier {
     homelabPresetsEnabled = values['homelab_presets'] == 'true';
     alertPresetsEnabled = values['alert_presets'] == 'true';
     fleetPresetsEnabled = values['fleet_presets'] == 'true';
+    hostSort = HostSort.fromSetting(values[HostSort.settingKey]);
     _settingsLoaded = true;
     notifyListeners();
   }
@@ -183,6 +189,30 @@ class AppState extends ChangeNotifier {
   /// readings (system specs, notably) drop them, as the OS cache below does.
   final List<void Function(int serverId)> onHostForgotten = [];
 
+  final Map<int, int> _lastSeenAt = {};
+
+  /// When OmniTerm last had metrics or a working SSH connection from [serverId], in epoch
+  /// milliseconds, for an offline host's "Last seen" line; null when it never has. Kotlin's
+  /// `lastSeenAt`: seeded from stored metrics, so it survives a restart for as long as they are kept.
+  int? lastSeenAt(int serverId) => _lastSeenAt[serverId];
+
+  /// Records that [serverId] answered at [atMs], unless a later answer is already known.
+  ///
+  /// Quietly: telemetry calls this for every sample of every host, and only an offline host shows
+  /// the time. A host going offline rebuilds its card anyway, which then reads the latest value.
+  void noteSeen(int serverId, int atMs) {
+    if ((_lastSeenAt[serverId] ?? 0) < atMs) _lastSeenAt[serverId] = atMs;
+  }
+
+  Future<void> _seedLastSeen() async {
+    final samples = await _repository.getLatestMetricsForAllServers();
+    for (final sample in samples) {
+      noteSeen(sample.serverId, sample.timestamp);
+    }
+    // Hosts may already be drawn as offline by now; show them their stored time.
+    if (samples.isNotEmpty) notifyListeners();
+  }
+
   /// Kotlin's `forgetTelemetryFor`, run for each host that left [next] or moved within it.
   void _forgetGoneOrMovedHosts(List<Server> previous, List<Server> next) {
     final now = {for (final s in next) s.id: s};
@@ -190,6 +220,7 @@ class AppState extends ChangeNotifier {
       final after = now[before.id];
       if (after != null && after.host == before.host && after.port == before.port) continue;
       _osByServer.remove(before.id);
+      _lastSeenAt.remove(before.id);
       for (final listener in onHostForgotten) {
         listener(before.id);
       }
@@ -208,6 +239,13 @@ class AppState extends ChangeNotifier {
     final os = normaliseOs(probe);
     if (!probe.startsWith('SSH Error')) recordOsForServer(serverId, os);
     return os;
+  }
+
+  /// Orders the Hosts list by [sort] at once and remembers it for next time.
+  Future<void> updateHostSort(HostSort sort) async {
+    hostSort = sort;
+    notifyListeners();
+    await _repository.insertSetting(HostSort.settingKey, sort.settingValue);
   }
 
   /// Persist a setting and refresh the in-memory copy.

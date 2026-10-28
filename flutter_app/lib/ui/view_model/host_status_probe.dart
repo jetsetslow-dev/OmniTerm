@@ -26,6 +26,7 @@ class HostStatusProbe extends ChangeNotifier {
     NetworkProbe? probe,
     this.transport,
     this.interval = const Duration(seconds: 45),
+    this.onSeen,
   }) : probe = probe ?? const SocketNetworkProbe();
 
   final AppRepository _repository;
@@ -34,6 +35,9 @@ class HostStatusProbe extends ChangeNotifier {
 
   /// How often the sweep repeats once [start] is called.
   final Duration interval;
+
+  /// Told when a real shell reached a host, for its "Last seen" line ([AppState.noteSeen]).
+  final void Function(int serverId, int atMs)? onSeen;
 
   /// Long enough for a busy host on a slow link, short enough that a sweep of a large fleet does not
   /// take minutes when most of it is down.
@@ -170,6 +174,7 @@ class HostStatusProbe extends ChangeNotifier {
     // immediately and is no longer allowed to commit an offline result.
     _evidenceGeneration[server.id] = (_evidenceGeneration[server.id] ?? 0) + 1;
     _probed.add(server.id);
+    onSeen?.call(server.id, DateTime.now().millisecondsSinceEpoch);
     await Future.wait([
       _repository.updateReachability(server.id, 'online', server.lastLatency),
       _repository.updateAuthState(server.id, 'ok', null),

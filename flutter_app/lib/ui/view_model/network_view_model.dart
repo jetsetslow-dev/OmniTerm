@@ -42,6 +42,22 @@ class PortResult {
 }
 
 /// The Network tool's state and actions, split out of `NetworkToolView` in `ui/ToolsScreen.kt`.
+/// A device-side check the Hosts tab can run against a host.
+enum HostCheck { ping, traceroute }
+
+/// The host check open in the Hosts tab's pop-up.
+class HostCheckRequest {
+  const HostCheckRequest(this.server, this.kind);
+
+  final Server server;
+  final HostCheck kind;
+}
+
+/// Pings a host check sends, as Kotlin's `HOST_PING_COUNT`.
+const hostPingCount = 4;
+
+const _invalidTarget = 'Enter a valid hostname or IP address.';
+
 class NetworkViewModel extends ChangeNotifier {
   NetworkViewModel(
     this._app, {
@@ -293,11 +309,18 @@ class NetworkViewModel extends ChangeNotifier {
 
   List<WolTarget> get wolTargets => List.unmodifiable(_wolTargets);
 
-  Future<void> start() async {
+  /// Keeps [wolTargets] current. The Hosts tab needs them for its wake button before Tools is ever
+  /// opened, so this runs when the model is created as well as from [start]; calling it again does
+  /// nothing.
+  void watchWolTargets() {
     _wolSub ??= _app.repository.wolTargetsStream.listen((list) {
       _wolTargets = list;
       _safeNotify();
     });
+  }
+
+  Future<void> start() async {
+    watchWolTargets();
     // Subscribed here rather than when the Tunnels tab is first opened: a tunnel can be running
     // while the user is on another tab, and the list has to know about it either way.
     startTunnels();
@@ -672,11 +695,24 @@ class NetworkViewModel extends ChangeNotifier {
   List<String> get pingLines => List.unmodifiable(_pingLines);
   bool get pinging => _pinging;
 
-  Future<void> runPing() async {
-    if (_pinging) return;
-    final target = pingTarget.trim();
+  /// The ping now running, so a host check can wait for a stopped one to finish.
+  Future<void>? _pingRun;
+
+  /// Pings [host], or the Tools tab's target when it is null, [count] times (the Tools setting
+  /// when null). A bad [host] is reported in the output, where a host check shows it.
+  Future<void> runPing({String? host, int? count}) {
+    if (_pinging) return Future.value();
+    return _pingRun = _runPing(host, count ?? pingCount);
+  }
+
+  Future<void> _runPing(String? host, int pingCount) async {
+    final target = (host ?? pingTarget).trim();
     if (!isValidNetworkCommandTarget(target)) {
-      _error = 'Enter a valid hostname or IP address.';
+      if (host != null) {
+        _pingLines = const [_invalidTarget];
+      } else {
+        _error = _invalidTarget;
+      }
       _safeNotify();
       return;
     }
@@ -728,6 +764,65 @@ class NetworkViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  // ── host checks ─────────────────────────────────────────────────────────────
+
+  HostCheckRequest? _hostCheck;
+
+  /// The host check open in a pop-up on the Hosts tab, or null.
+  HostCheckRequest? get hostCheck => _hostCheck;
+
+  bool get hostCheckRunning => switch (_hostCheck?.kind) {
+    HostCheck.ping => _pinging,
+    HostCheck.traceroute => _tracerouteRunning,
+    null => false,
+  };
+
+  List<String> get hostCheckLines => switch (_hostCheck?.kind) {
+    HostCheck.ping => pingLines,
+    HostCheck.traceroute => tracerouteLines,
+    null => const [],
+  };
+
+  /// Pings or traces [server]'s address from this device, whatever its status: an offline host is
+  /// exactly when this helps. Uses the Tools tab's ping and traceroute, replacing a run of the same
+  /// tool still going there, as Kotlin's `runHostCheck` does.
+  Future<void> runHostCheck(Server server, HostCheck kind) async {
+    final request = HostCheckRequest(server, kind);
+    _hostCheck = request;
+    _safeNotify();
+    switch (kind) {
+      case HostCheck.ping:
+        if (_pinging) {
+          stopPing();
+          await _pingRun;
+        }
+        if (identical(_hostCheck, request)) await runPing(host: server.host, count: hostPingCount);
+      case HostCheck.traceroute:
+        if (_tracerouteRunning) {
+          stopTraceroute();
+          await _tracerouteRun;
+        }
+        if (identical(_hostCheck, request)) await runTraceroute(host: server.host);
+    }
+  }
+
+  void stopHostCheck() {
+    switch (_hostCheck?.kind) {
+      case HostCheck.ping:
+        stopPing();
+      case HostCheck.traceroute:
+        stopTraceroute();
+      case null:
+        break;
+    }
+  }
+
+  void closeHostCheck() {
+    stopHostCheck();
+    _hostCheck = null;
+    _safeNotify();
+  }
+
   // ── traceroute ──────────────────────────────────────────────────────────────
 
   String get tracerouteTarget => sharedTarget;
@@ -739,11 +834,24 @@ class NetworkViewModel extends ChangeNotifier {
   List<String> get tracerouteLines => List.unmodifiable(_tracerouteLines);
   bool get tracerouteRunning => _tracerouteRunning;
 
-  Future<void> runTraceroute() async {
-    if (_tracerouteRunning) return;
-    final target = tracerouteTarget.trim();
+  /// The traceroute now running, so a host check can wait for a stopped one to finish.
+  Future<void>? _tracerouteRun;
+
+  /// Traces the route to [host], or to the Tools tab's target when it is null. A bad [host] is
+  /// reported in the output, where a host check shows it.
+  Future<void> runTraceroute({String? host}) {
+    if (_tracerouteRunning) return Future.value();
+    return _tracerouteRun = _runTraceroute(host);
+  }
+
+  Future<void> _runTraceroute(String? host) async {
+    final target = (host ?? tracerouteTarget).trim();
     if (!isValidNetworkCommandTarget(target)) {
-      _error = 'Enter a valid hostname or IP address.';
+      if (host != null) {
+        _tracerouteLines = const [_invalidTarget];
+      } else {
+        _error = _invalidTarget;
+      }
       _safeNotify();
       return;
     }

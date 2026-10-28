@@ -157,6 +157,20 @@ void main() {
     probe.dispose();
   });
 
+  test(
+    'a working shell counts as seeing the host, as Kotlin\'s markServerReachableAfterSsh',
+    () async {
+      await repo.insertServer(server(name: 'nas', status: 'offline'));
+      final seen = <int>[];
+      final probe = HostStatusProbe(repo, probe: _FakeProbe(), onSeen: (id, _) => seen.add(id));
+
+      await probe.markReachable(await only());
+
+      expect(seen, [(await only()).id]);
+      probe.dispose();
+    },
+  );
+
   test('an unreachable host becomes offline', () async {
     await repo.insertServer(server(name: 'nas', status: 'online'));
     final probe = HostStatusProbe(repo, probe: _FakeProbe());
