@@ -161,9 +161,11 @@ class HostStatusProbe extends ChangeNotifier {
       ..clear()
       ..addAll(next);
     for (final id in ended) {
-      unawaited(_repository.updateHealthScore(id, -1));
       // The channel that proved reachability has gone away. Recheck immediately instead of showing
-      // its old online result until the next 45-second sweep.
+      // its old online result until the next 45-second sweep. Its health is left alone: closing a
+      // terminal says nothing about the host's metrics. As in Kotlin, only a dropped connection
+      // being reconnected resets it ("Connection lost"), and a host this recheck cannot reach says
+      // so itself.
       unawaited(_recheckAfterSessionEnded(id));
     }
   }

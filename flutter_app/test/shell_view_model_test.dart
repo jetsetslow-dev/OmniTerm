@@ -2321,6 +2321,25 @@ void main() {
       await transport.opened.single.dropConnection();
       await until(() => vm.current!.reconnecting);
       expect(app.metricsErrorFor(id), 'Connection lost. Waiting for current metrics.');
+      expect((await repo.getServerById(id))!.healthScore, -1);
+    });
+
+    // Kotlin's rule, kept in both apps: only a drop being reconnected resets health. Closing a
+    // terminal, or the shell exiting on the server, says nothing about the host's metrics.
+    test('a terminal closed here or exited on the server leaves health alone', () async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      await vm.connect(vm.server!, freshSession: true);
+      final health = (await repo.getServerById(id))!.healthScore;
+
+      vm.close(vm.sessions.first);
+      await transport.opened.last.endByRemoteExit();
+      await until(() => vm.sessions.every((session) => !session.isOpen));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(app.metricsErrorFor(id), isNull);
+      expect((await repo.getServerById(id))!.healthScore, health);
     });
   });
 

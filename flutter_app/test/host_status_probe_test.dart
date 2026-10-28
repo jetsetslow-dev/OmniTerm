@@ -293,6 +293,8 @@ void main() {
 
     probe.setLiveSessionServers(const <int>{});
     await ssh.started.future;
+    // Kotlin's rule, kept in both apps: ending a terminal leaves the host's health as it was.
+    expect((await only()).healthScore, row.healthScore);
     ssh.result.complete('Connection timed out');
     // Joins the close-triggered check rather than starting a competing handshake.
     await probe.probeOne(row);
