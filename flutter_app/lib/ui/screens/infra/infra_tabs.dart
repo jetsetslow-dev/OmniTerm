@@ -1098,8 +1098,8 @@ class ImagesTab extends StatelessWidget {
     final accepted = await _confirmDestructive(
       context,
       keyName: 'infra.images.deleteSelected',
-      title: 'Remove images?',
-      message: 'Permanently remove ${targets.length} selected images?',
+      title: 'Remove Images?',
+      message: 'Permanently remove ${targets.length} images?',
       confirmLabel: 'Remove',
     );
     if (accepted) await vm.removeImages(host, targets);
@@ -1251,8 +1251,8 @@ class VolumesTab extends StatelessWidget {
     final accepted = await _confirmDestructive(
       context,
       keyName: 'infra.volumes.deleteSelected',
-      title: 'Remove volumes?',
-      message: 'Permanently remove ${targets.length} selected volumes and all data they contain?',
+      title: 'Remove Volumes?',
+      message: 'Permanently remove ${targets.length} volumes?',
       confirmLabel: 'Remove',
     );
     if (accepted) await vm.removeVolumes(host, targets);
