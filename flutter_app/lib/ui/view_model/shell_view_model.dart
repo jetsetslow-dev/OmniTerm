@@ -1380,6 +1380,23 @@ class ShellViewModel extends ChangeNotifier {
     }
   }
 
+  /// False for a Windows host. Answers true when the host cannot be asked, so a failed probe never
+  /// downgrades a persistent session on its own.
+  Future<bool> _hasUnixShell(Server server) async {
+    final ssh = transport;
+    if (ssh == null) return true;
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      return hasUnixShell(await _app.hostOs(server.id, (command) => ssh.exec(creds, command)));
+    } catch (_) {
+      return true;
+    }
+  }
+
   /// Saved key aliases and credential profiles, offered by the Quick connect dialog.
   Future<List<String>> savedKeyAliases() async =>
       (await _app.repository.getAllKeys()).map((k) => k.alias).toList();
@@ -1446,7 +1463,7 @@ class ShellViewModel extends ChangeNotifier {
     final resumeName = request.resumeName;
     final controlMode = request.controlMode;
     final initialCommand = request.initialCommand;
-    final forcePlainShell = request.forcePlainShell;
+    var forcePlainShell = request.forcePlainShell;
     final confirmedOffline = request.confirmedOffline;
     final other = request.pane == 1 ? splitSecondSession : splitFirstSession;
     if (request.pane != null &&
@@ -1510,6 +1527,10 @@ class ShellViewModel extends ChangeNotifier {
         if (generation != _connectGeneration) return;
         if (present == true) {
           _tmuxVerified.add(server.id);
+        } else if (present == false && !await _hasUnixShell(server)) {
+          // Windows has no tmux: an ordinary shell, not an offer to install the impossible.
+          if (generation != _connectGeneration) return;
+          forcePlainShell = true;
         } else if (present == false) {
           _tmuxPromptServer = server;
           _pendingConnectRequest = request;

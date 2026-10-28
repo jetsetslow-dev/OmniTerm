@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
+import '../../../data/remote_commands.dart';
 import '../../../domain/host_display.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
@@ -176,9 +177,8 @@ class _SelectorBar extends StatelessWidget {
         key: const ValueKey('monitor.reboot.dialog'),
         title: Text('Reboot ${server.name}?'),
         content: Text(
-          'This runs `sudo reboot` on ${HostDisplay.instance.host(server)}. '
-          'The host will drop offline until it comes back up. '
-          'Requires sudo rights for the SSH user.',
+          'This runs `${rebootLabel(vm.knownOs)}` on ${HostDisplay.instance.host(server)}. '
+          'The host will drop offline until it comes back up.',
         ),
         actions: [
           TextButton(
@@ -200,7 +200,7 @@ class _SelectorBar extends StatelessWidget {
     // you mean this"; it does not answer "are you the person who saved that password". Kotlin gates
     // the same two actions through `withSudoAuth` (`ui/AppViewModel.kt:2521`).
     final lock = context.read<AppLockController>();
-    if (lock.requiresSudoAuth(server.sudoPassword)) {
+    if (rebootUsesSudo(vm.knownOs) && lock.requiresSudoAuth(server.sudoPassword)) {
       if (!await requestSudoAuth(context, lock)) return;
     }
     await vm.rebootMonitoredHost();

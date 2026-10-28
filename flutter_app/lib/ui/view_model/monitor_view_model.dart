@@ -234,6 +234,7 @@ class MonitorViewModel extends ChangeNotifier {
     _cronLines = const [];
     _cronReadable = false;
     _cronError = null;
+    _cronUnsupported = null;
     _cronStatus = null;
     _expandedProcessPid = null;
     _actionFeedback = null;
@@ -298,7 +299,7 @@ class MonitorViewModel extends ChangeNotifier {
             _error = failure;
           };
         }
-        final out = await exec(metricsFor(_osFor(server)));
+        final out = await exec(metricsFor(await _hostOs(server, exec)));
         final parsed = parseMetrics(out, host: server.host);
         if (!hasReliableHealthMetrics(out, parsed: parsed)) {
           return () {
@@ -398,7 +399,7 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'processes',
       setLoading: (v) => _processesLoading = v,
       run: (server, exec) async {
-        final out = await exec(processesFor(_osFor(server)));
+        final out = await exec(processesFor(await _hostOs(server, exec)));
         final parsed = sortProcesses(parseProcesses(out), byCpu: _sortByCpu);
         return () => _processes = parsed;
       },
@@ -410,7 +411,8 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'killProcess',
       setLoading: (_) {},
       run: (server, exec) async {
-        final out = (await exec(killProcessCommand(pid, signal: signal))).trim();
+        final os = await _hostOs(server, exec);
+        final out = (await exec(killProcessCommand(pid, signal: signal, os: os))).trim();
         return () => _actionFeedback = out;
       },
     );
@@ -424,7 +426,7 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'services',
       setLoading: (v) => _servicesLoading = v,
       run: (server, exec) async {
-        final out = await exec(servicesCommand);
+        final out = await exec(servicesFor(await _hostOs(server, exec)));
         final unsupported = out.contains('---NOSYSTEMD---');
         final parsed = parseServices(out);
         return () {
@@ -437,7 +439,8 @@ class MonitorViewModel extends ChangeNotifier {
 
   /// Runs start / stop / restart / enable / disable against [service].
   ///
-  /// The sudo password travels via stdin, never in the command string — see [sudoStdin].
+  /// The sudo password travels via stdin, never in the command string — see [sudoStdin] — and only
+  /// to a host whose service manager is driven through sudo ([serviceActionUsesSudo]).
   Future<void> runServiceAction(SimService service, String action) async {
     // Keyed per service and action: two actions on different services are genuinely independent,
     // and keying them together would let one silently discard the other's result.
@@ -445,10 +448,11 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'serviceAction:${service.name}:$action',
       setLoading: (v) => _servicesLoading = v,
       run: (server, exec) async {
+        final os = await _hostOs(server, exec);
         final password = server.sudoPassword;
         final out = await exec(
-          serviceAction(service.name, action, sudoPassword: password),
-          stdin: sudoStdin(password),
+          serviceAction(service.name, action, sudoPassword: password, os: os),
+          stdin: serviceActionUsesSudo(os) ? sudoStdin(password) : null,
         );
         final trimmed = out.trim();
         return () => _actionFeedback = trimmed.isEmpty ? '$action ${service.name}: done' : trimmed;
@@ -500,7 +504,7 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'logs',
       setLoading: (v) => _logsLoading = v,
       run: (server, exec) async {
-        final out = await exec(journalCommand(os: _osFor(server)));
+        final out = await exec(journalCommand(os: await _hostOs(server, exec)));
         final unsupported = journalUnsupported(out);
         final parsed = parseJournal(out);
         return () {
@@ -581,6 +585,7 @@ class MonitorViewModel extends ChangeNotifier {
   bool _cronLoading = false;
   bool _cronReadable = false;
   String? _cronError;
+  String? _cronUnsupported;
   String? _cronStatus;
 
   List<CronLine> get cronLines => _cronLines;
@@ -596,6 +601,9 @@ class MonitorViewModel extends ChangeNotifier {
   /// Why the crontab could not be read, verbatim from the host.
   String? get cronError => _cronError;
 
+  /// Set instead of [cronError] when the host has no cron to read at all.
+  String? get cronUnsupported => _cronUnsupported;
+
   /// The result of the last save, for the screen to show.
   String? get cronStatus => _cronStatus;
 
@@ -610,9 +618,19 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'cron',
       setLoading: (v) => _cronLoading = v,
       run: (server, exec) async {
+        if (!hasUnixShell(await _hostOs(server, exec))) {
+          return () {
+            _cronReadable = false;
+            _cronError = null;
+            _cronLines = const [];
+            _cronUnsupported =
+                'Windows has no cron. Schedule tasks on this host with Task Scheduler.';
+          };
+        }
         final read = parseCrontabRead(await exec(crontabReadCommand));
         final parsed = parseCrontab(read.text);
         return () {
+          _cronUnsupported = null;
           _cronReadable = read.readable;
           _cronError = read.readable ? null : read.error;
           _cronLines = read.readable ? parsed : const [];
@@ -661,8 +679,12 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'reboot',
       setLoading: (_) {},
       run: (server, exec) async {
+        final os = await _hostOs(server, exec);
         final password = server.sudoPassword;
-        await exec(rebootCommand(sudoPassword: password), stdin: sudoStdin(password));
+        await exec(
+          rebootCommand(sudoPassword: password, os: os),
+          stdin: rebootUsesSudo(os) ? sudoStdin(password) : null,
+        );
         return () => _actionFeedback = '${server.name} is rebooting.';
       },
     );
@@ -670,8 +692,17 @@ class MonitorViewModel extends ChangeNotifier {
 
   // ── shared loader plumbing ──────────────────────────────────────────────────
 
-  /// Remote OS family, cached by the telemetry poller. Empty resolves to Linux, the safest superset.
-  String _osFor(Server server) => _app.osForServer(server.id);
+  /// The monitored host's OS family as far as it is already known, for wording that differs per OS.
+  /// Commands use [_hostOs] instead, which asks the host when nothing is known yet.
+  String get knownOs {
+    final server = monitoredServer;
+    return server == null ? '' : _app.osForServer(server.id);
+  }
+
+  Future<String> _hostOs(
+    Server server,
+    Future<String> Function(String command, {String? stdin}) exec,
+  ) => _app.hostOs(server.id, (command) => exec(command));
 
   /// Runs [run] against the monitored host, handling loading flags and errors.
   ///

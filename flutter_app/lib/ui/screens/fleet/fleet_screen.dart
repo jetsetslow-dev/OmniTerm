@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
+import '../../../data/remote_commands.dart';
 import '../../../domain/host_display.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
@@ -294,30 +295,30 @@ class _FleetHostCard extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (final (label, command) in [
-                    ('Uptime', 'uptime'),
-                    ('DF', 'df -h'),
-                    ('PS', 'ps aux | head -5'),
-                  ])
+                  for (final check in QuickCheck.values)
                     OmniButton(
-                      key: ValueKey('fleet.host.${server.id}.${label.toLowerCase()}'),
-                      label: label,
+                      key: ValueKey('fleet.host.${server.id}.${check.label.toLowerCase()}'),
+                      label: check.label,
                       color: accent,
                       small: true,
-                      onPressed: () => showDialog<void>(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (_) => StreamingCommandDialog(
-                          title: '$label · ${display.name(server)}',
-                          command: command,
-                          run: (onChunk, cancellation) => vm.runHostDiagnostic(
-                            server,
-                            command,
-                            onChunk: onChunk,
-                            cancellation: cancellation,
+                      onPressed: () async {
+                        final command = await vm.quickCheckFor(server, check);
+                        if (!context.mounted) return;
+                        await showDialog<void>(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (_) => StreamingCommandDialog(
+                            title: '${check.label} · ${display.name(server)}',
+                            command: command,
+                            run: (onChunk, cancellation) => vm.runHostDiagnostic(
+                              server,
+                              command,
+                              onChunk: onChunk,
+                              cancellation: cancellation,
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
                 ],
               ),

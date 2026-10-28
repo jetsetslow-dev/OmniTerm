@@ -22,6 +22,9 @@ enum InfraTab { stacks, builder, images, volumes, networks }
 /// The Infra (containers) screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class InfraViewModel extends ChangeNotifier {
   InfraViewModel(this._app, {this.transport, this.operationNotifications}) {
+    // The host already showing is not a change: without this, the first unrelated AppState
+    // notification (a host's OS being recorded, say) loaded it a second time.
+    _lastServerId = inspectedServer?.id;
     _app.addListener(_onAppChanged);
   }
 
@@ -280,6 +283,10 @@ class InfraViewModel extends ChangeNotifier {
     _composeError = null;
     _safeNotify();
     try {
+      if (!await _hostHasUnixShell(serverId)) {
+        _composeError = needsUnixShell('Deploying a Compose stack');
+        return false;
+      }
       final output = await _exec(
         composeDeploy(
           path,
@@ -338,6 +345,11 @@ class InfraViewModel extends ChangeNotifier {
         profiles: await _app.repository.getAllProfiles(),
       );
       Future<String> run(String command) => ssh.exec(creds, command);
+
+      if (!hasUnixShell(await _app.hostOs(server.id, run))) {
+        if (inspectedServer?.id == startedFor) _failWith(needsUnixShell('Container management'));
+        return;
+      }
 
       final results = await Future.wait([
         run(dockerPsCommand),
@@ -754,6 +766,13 @@ class InfraViewModel extends ChangeNotifier {
   }
 
   /// Runs one command, surfacing failures as [error]. Returns null when it could not run.
+  /// False when [serverId] is a Windows host, which has no Unix shell to run compose on.
+  Future<bool> _hostHasUnixShell(int serverId) async {
+    // A failed exec answers null; passed on as an SSH error, it is used for this call but not cached.
+    final os = await _app.hostOs(serverId, (command) async => await _exec(command) ?? 'SSH Error');
+    return hasUnixShell(os);
+  }
+
   Future<String?> _exec(String command) async {
     final server = inspectedServer;
     final ssh = transport;

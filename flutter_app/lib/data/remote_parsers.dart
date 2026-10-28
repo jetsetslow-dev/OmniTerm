@@ -84,6 +84,36 @@ List<SimProcess> parseProcesses(String output) {
 final _openrcServiceRe = RegExp(r'^(\S+)\s*\[\s*(\w+)\s*]');
 
 List<SimService> parseServices(String output) {
+  if (output.contains(serviceTableMarker)) {
+    final out = <SimService>[];
+    for (final line in output.substringAfter(serviceTableMarker).lines) {
+      final t = line.split('\t');
+      final name = t[0].trim();
+      if (name.isEmpty || t.length < 3) continue;
+      // Windows reports Running/Stopped/Paused/…Pending; the rest already say running/stopped/failed.
+      final state = t[1].trim().toLowerCase();
+      // Windows says when a service starts (Automatic, AutomaticDelayedStart, Manual, Disabled).
+      final boot = t[2].trim().toLowerCase();
+      out.add(
+        SimService(
+          name: name,
+          desc: t.getOrNull(3)?.trim() ?? '',
+          status: switch (state) {
+            'running' => 'running',
+            'failed' => 'failed',
+            _ => 'dead',
+          },
+          subState: state,
+          enabled:
+              boot == 'enabled' ||
+              boot.startsWith('automatic') ||
+              boot == 'boot' ||
+              boot == 'system',
+        ),
+      );
+    }
+    return out;
+  }
   if (output.contains('---OPENRC---')) {
     final out = <SimService>[];
     for (final raw in output.substringAfter('---OPENRC---').lines) {
@@ -804,7 +834,7 @@ const _pseudoFs = <String>{
 
 /// Parse `df` (all mounts) into per-partition usage, excluding pseudo filesystems.
 ///
-/// [blockBytes] scales the size columns: 1 for `df -PB1` (Linux, already bytes), 1024 for `df -k`
+/// [blockBytes] scales the size columns: 1 for `df -PB1` (Linux, already bytes), 1024 for `df -Pk`
 /// (BSD/macOS).
 List<DiskUsage> parseDisks(String output, {int blockBytes = 1}) {
   final out = <DiskUsage>[];
@@ -816,6 +846,7 @@ List<DiskUsage> parseDisks(String output, {int blockBytes = 1}) {
     final raw = splitWhitespace(line);
     final kb = raw.firstOrNull == 'KB1024';
     final t = kb ? raw.sublist(1) : raw;
+    final scale = kb ? 1024 : blockBytes;
     if (t.length < 6) continue;
 
     final fs = t[0];
@@ -831,12 +862,7 @@ List<DiskUsage> parseDisks(String output, {int blockBytes = 1}) {
       continue;
     }
     out.add(
-      DiskUsage(
-        mount: mount,
-        filesystem: fs,
-        totalBytes: total * blockBytes,
-        usedBytes: used * blockBytes,
-      ),
+      DiskUsage(mount: mount, filesystem: fs, totalBytes: total * scale, usedBytes: used * scale),
     );
   }
   return out.distinctBy((d) => d.mount);

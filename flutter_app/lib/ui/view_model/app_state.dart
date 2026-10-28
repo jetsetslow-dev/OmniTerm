@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
 import '../../data/app_repository.dart';
+import '../../data/remote_commands.dart';
 import '../../domain/app_preferences.dart';
 import '../../domain/health_scoring.dart';
 
@@ -161,10 +162,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Persist a setting and refresh the in-memory copy.
-  ///
-  /// Written through the repository so a secret setting (`app_pin`) is encrypted on the way down
-  /// without this class knowing which keys those are.
   /// Remote OS family per host id ("Linux" | "FreeBSD" | "Darwin" | "Windows"), as detected by the
   /// probe. Cached here rather than per screen so the Monitor, Infra and SFTP screens all pick the
   /// same command variants for a host.
@@ -180,6 +177,24 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The OS family of [serverId], asking the host over [exec] when nothing has probed it yet.
+  ///
+  /// `exec` returns `'SSH Error: …'` rather than throwing, and a cached answer is trusted for the
+  /// life of the host. Caching what a failed probe normalises to would send Linux commands to that
+  /// host from then on, so a failed probe answers this one call and is never cached.
+  Future<String> hostOs(int serverId, Future<String> Function(String command) exec) async {
+    final known = osForServer(serverId);
+    if (known.isNotEmpty) return known;
+    final probe = await exec(osProbeCommand);
+    final os = normaliseOs(probe);
+    if (!probe.startsWith('SSH Error')) recordOsForServer(serverId, os);
+    return os;
+  }
+
+  /// Persist a setting and refresh the in-memory copy.
+  ///
+  /// Written through the repository so a secret setting (`app_pin`) is encrypted on the way down
+  /// without this class knowing which keys those are.
   Future<void> saveSetting(String key, String value) async {
     await _repository.insertSetting(key, value);
     await loadSettings();

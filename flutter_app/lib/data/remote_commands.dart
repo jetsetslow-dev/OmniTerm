@@ -9,6 +9,13 @@ import 'dart:convert';
 import 'kotlin_strings.dart';
 import 'term/tmux_bootstrap.dart' show tmuxPath;
 
+const _windowsShellErrors = [
+  'not recognized',
+  'commandnotfound',
+  'is not a valid statement separator',
+  'parsererror',
+];
+
 /// Collapses `uname -s` output (or a Windows shell's error text) to one of the four families the
 /// metrics parsers branch on.
 ///
@@ -26,11 +33,10 @@ String normaliseOs(String raw) {
     return 'FreeBSD';
   }
   if (lower.startsWith('darwin')) return 'Darwin';
-  if (lower.contains('windows') ||
-      lower.contains('not recognized') ||
-      lower.contains('commandnotfound')) {
-    return 'Windows';
-  }
+  // cmd.exe answers `uname` with "not recognized"; Windows PowerShell 5.1 as the SSH shell rejects
+  // the probe's `||` before running anything, so its first line is only "At line:1".
+  final rawLower = raw.toLowerCase();
+  if (lower.contains('windows') || _windowsShellErrors.any(rawLower.contains)) return 'Windows';
   // Empty (missing @OS section) or unknown Unix-like → Linux, the safest superset.
   return 'Linux';
 }
@@ -115,12 +121,76 @@ const servicesCommand =
     "elif command -v rc-status >/dev/null 2>&1; then echo '---OPENRC---'; rc-status -a 2>/dev/null; "
     "else echo '---NOSYSTEMD---'; fi";
 
-/// start | stop | restart | status | enable | disable, against systemd or OpenRC.
+/// Heads the service list of every host that is neither systemd nor OpenRC: one tab-separated line
+/// per service of name, state (running/stopped/failed, or Windows' own), start-at-boot
+/// (enabled/disabled, or Windows' start type) and description.
+const serviceTableMarker = '---SERVICE-TABLE---';
+
+/// OpenBSD's rcctl or the rc.d `service` of FreeBSD/NetBSD. Each `onestatus` is bounded: an rc
+/// script is arbitrary shell, and one that hangs must not take the whole list with it.
+///
+/// The loop variable is `svc` because [otHelper] assigns `n`: a loop over `n` named every service
+/// after `ot`'s timeout.
+const servicesBsd =
+    '$otHelper'
+    "if command -v rcctl >/dev/null 2>&1; then echo '$serviceTableMarker'; "
+    r'''on=" $(rcctl ls on 2>/dev/null | tr '\n' ' ') "; '''
+    r'''up=" $(rcctl ls started 2>/dev/null | tr '\n' ' ') "; '''
+    r'for svc in $(rcctl ls all 2>/dev/null); do '
+    r'case "$up" in *" $svc "*) s=running;; *) s=stopped;; esac; '
+    r'case "$on" in *" $svc "*) e=enabled;; *) e=disabled;; esac; '
+    r'''printf '%s\t%s\t%s\t\n' "$svc" "$s" "$e"; done; '''
+    "elif command -v service >/dev/null 2>&1; then echo '$serviceTableMarker'; "
+    r'''on=" $(service -e 2>/dev/null | sed 's|.*/||' | tr '\n' ' ') "; '''
+    // Upper-case entries (FILESYSTEMS, LOGIN, …) are rcorder checkpoints, not services.
+    r'''for svc in $(service -l 2>/dev/null | grep -v '^[A-Z_]*$'); do '''
+    r'if ot 5 service "$svc" onestatus >/dev/null 2>&1; then s=running; else s=stopped; fi; '
+    r'case "$on" in *" $svc "*) e=enabled;; *) e=disabled;; esac; '
+    r'''printf '%s\t%s\t%s\t\n' "$svc" "$s" "$e"; done; '''
+    "else echo '---NOSYSTEMD---'; fi";
+
+/// launchd jobs in the domain the SSH user can manage without sudo: the system domain as root,
+/// otherwise the user's GUI session (or the background `user/` domain when nobody is logged in at
+/// the screen). [serviceAction] computes the same domain, so a listed job can be acted on.
+const _launchdDomain =
+    r'u=$(id -u); if [ "$u" = 0 ]; then d=system; else d=gui/$u; '
+    r'launchctl print "$d" >/dev/null 2>&1 || d=user/$u; fi; ';
+
+const servicesDarwin =
+    '$_launchdDomain'
+    r'''off=" $(launchctl print-disabled "$d" 2>/dev/null | awk -F'"' '/=> (true|disabled)/{print $2}' | tr '\n' ' ') "; '''
+    "echo '$serviceTableMarker'; "
+    r'''launchctl list 2>/dev/null | awk 'NR>1' | while IFS="$(printf '\t')" read -r pid st label; do '''
+    r'if [ "$pid" != - ]; then s=running; elif [ "$st" = 0 ]; then s=stopped; else s=failed; fi; '
+    r'case "$off" in *" $label "*) e=disabled;; *) e=enabled;; esac; '
+    r'''printf '%s\t%s\t%s\t\n' "$label" "$s" "$e"; done''';
+
+const servicesWindows =
+    "powershell -NoProfile -Command \"'$serviceTableMarker'; Get-Service | ForEach-Object { "
+    r'$_.Name + [char]9 + $_.Status + [char]9 + $_.StartType + [char]9 + $_.DisplayName }"';
+
+/// Per-OS service list; [parseServices] reads every variant.
+String servicesFor(String os) => switch (normaliseOs(os)) {
+  'FreeBSD' => servicesBsd,
+  'Darwin' => servicesDarwin,
+  'Windows' => servicesWindows,
+  _ => servicesCommand,
+};
+
+/// start | stop | restart | status | enable | disable, against the host's own service manager.
 ///
 /// [name] is shell-quoted: a unit name comes from remote output, and a host that returns a crafted
 /// one must not be able to append a command.
-String serviceAction(String name, String action, {String sudoPassword = ''}) {
+String serviceAction(String name, String action, {String sudoPassword = '', String os = ''}) {
   final quoted = shellQuote(name);
+  switch (normaliseOs(os)) {
+    case 'Windows':
+      return _windowsServiceAction(name, action);
+    case 'Darwin':
+      return _darwinServiceAction(quoted, action);
+    case 'FreeBSD':
+      return sudoShWrap(_bsdServiceScript(quoted, action), sudoPassword);
+  }
   final openRc = switch (action) {
     'enable' => 'rc-update add $quoted default',
     'disable' => 'rc-update delete $quoted -a',
@@ -131,6 +201,48 @@ String serviceAction(String name, String action, {String sudoPassword = ''}) {
       'elif command -v rc-service >/dev/null 2>&1; then $openRc; '
       "else echo 'No supported service manager found' >&2; exit 1; fi";
   return sudoShWrap(script, sudoPassword);
+}
+
+/// False where [serviceAction] runs without sudo, so no password is sent along with it.
+bool serviceActionUsesSudo(String os) => !const {'Windows', 'Darwin'}.contains(normaliseOs(os));
+
+String _bsdServiceScript(String quotedName, String action) {
+  // `onestart` and friends work whether or not rc.conf enables the service, as the Start button
+  // must; `service X enable` (FreeBSD 12+) finds the service's own rcvar.
+  final rc = const {'start', 'stop', 'restart', 'status'}.contains(action) ? 'one$action' : action;
+  final rcctl = action == 'status' ? 'check' : action;
+  return 'if command -v rcctl >/dev/null 2>&1; then rcctl $rcctl $quotedName; '
+      'elif command -v service >/dev/null 2>&1; then service $quotedName $rc; '
+      "else echo 'No supported service manager found' >&2; exit 1; fi";
+}
+
+/// Acts in the same launchd domain [servicesDarwin] listed, which is why it needs no sudo.
+String _darwinServiceAction(String quotedName, String action) {
+  final verb = switch (action) {
+    'start' => 'kickstart',
+    'restart' => 'kickstart -k',
+    'stop' => 'kill TERM',
+    'enable' || 'disable' => action,
+    _ => 'print',
+  };
+  return '${_launchdDomain}launchctl $verb "\$d"/$quotedName 2>&1';
+}
+
+String _windowsServiceAction(String name, String action) {
+  // Inside cmd's double quotes only `"` and `%` are still special, and no service name needs them.
+  if (name.contains('"') || name.contains('%')) {
+    return 'echo This service name cannot be passed to PowerShell safely.';
+  }
+  final n = "'${name.replaceAll("'", "''")}'";
+  final ps = switch (action) {
+    'start' => 'Start-Service -Name $n',
+    'stop' => 'Stop-Service -Name $n -Force',
+    'restart' => 'Restart-Service -Name $n -Force',
+    'enable' => 'Set-Service -Name $n -StartupType Automatic',
+    'disable' => 'Set-Service -Name $n -StartupType Disabled',
+    _ => 'Get-Service -Name $n',
+  };
+  return 'powershell -NoProfile -Command "$ps"';
 }
 
 // ── logs ───────────────────────────────────────────────────────────────────────
@@ -178,12 +290,74 @@ String _journalWindows(int lines) =>
 
 // ── host actions ───────────────────────────────────────────────────────────────
 
-/// Reboots the host: sudo first, then a bare `reboot` for already-root or NOPASSWD wrappers.
-String rebootCommand({String sudoPassword = ''}) =>
-    '${sudoWrap('reboot', sudoPassword)} || reboot 2>&1';
+/// Reboots the host: sudo first, then the bare command for already-root or NOPASSWD wrappers.
+///
+/// BSD and macOS use `shutdown -r now`, because their `reboot` skips the shutdown scripts.
+String rebootCommand({String sudoPassword = '', String os = ''}) {
+  if (normaliseOs(os) == 'Windows') return 'shutdown /r /t 0 2>&1';
+  final command = _rebootFor(os);
+  return '${sudoWrap(command, sudoPassword)} || $command 2>&1';
+}
 
-/// Sends [signal] to [pid]. The pid is an int, so there is nothing here to quote.
-String killProcessCommand(int pid, {int signal = 15}) => 'kill -$signal $pid 2>&1';
+/// What [rebootCommand] runs, as the confirmation names it.
+String rebootLabel(String os) =>
+    normaliseOs(os) == 'Windows' ? 'shutdown /r /t 0' : 'sudo ${_rebootFor(os)}';
+
+bool rebootUsesSudo(String os) => normaliseOs(os) != 'Windows';
+
+String _rebootFor(String os) => switch (normaliseOs(os)) {
+  'FreeBSD' || 'Darwin' => 'shutdown -r now',
+  _ => 'reboot',
+};
+
+/// Ends process [pid]: [signal] 15 asks it to exit and 9 forces it. Windows has no signals, so those
+/// become `taskkill` and `taskkill /F`. The pid is an int, so there is nothing here to quote.
+String killProcessCommand(int pid, {int signal = 15, String os = ''}) =>
+    normaliseOs(os) == 'Windows'
+    ? 'taskkill /PID $pid${signal == 9 ? ' /F' : ''} 2>&1'
+    : 'kill -$signal $pid 2>&1';
+
+/// False for Windows: cron, tmux, sudo, the container commands and Files' search, archives, folder
+/// sizes and same-host paste are all Unix shell scripts it cannot run.
+bool hasUnixShell(String os) => normaliseOs(os) != 'Windows';
+
+/// What a Windows host's user is told in place of [feature], a Unix shell script it cannot run.
+String needsUnixShell(String feature) =>
+    '$feature needs a Linux, macOS or BSD host; Windows hosts have no Unix shell to run it on.';
+
+/// The Fleet screen's one-tap checks.
+enum QuickCheck {
+  uptime('Uptime'),
+  disk('DF'),
+  processes('PS');
+
+  const QuickCheck(this.label);
+
+  final String label;
+}
+
+String quickCheckCommand(QuickCheck check, String os) {
+  if (normaliseOs(os) != 'Windows') {
+    return switch (check) {
+      QuickCheck.uptime => 'uptime',
+      QuickCheck.disk => 'df -h',
+      QuickCheck.processes => 'ps aux | head -5',
+    };
+  }
+  final ps = switch (check) {
+    QuickCheck.uptime =>
+      '(Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime | '
+          'Format-Table Days,Hours,Minutes -AutoSize',
+    QuickCheck.disk =>
+      "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Format-Table DeviceID,"
+          r"@{n='Size GB';e={[math]::Round($_.Size/1GB,1)}},"
+          r"@{n='Free GB';e={[math]::Round($_.FreeSpace/1GB,1)}} -AutoSize",
+    QuickCheck.processes =>
+      'Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | '
+          'Format-Table Id,ProcessName,CPU,WS -AutoSize',
+  };
+  return 'powershell -NoProfile -Command "$ps"';
+}
 
 // ── host metrics ───────────────────────────────────────────────────────────────
 
@@ -279,8 +453,8 @@ const metricsBsd =
     'echo free \$(sysctl -n vm.stats.vm.v_free_count 2>/dev/null); '
     'echo inactive \$(sysctl -n vm.stats.vm.v_inactive_count 2>/dev/null); '
     'echo cache \$(sysctl -n vm.stats.vm.v_cache_count 2>/dev/null); '
-    "echo '@DISK'; df -k / 2>/dev/null | tail -1 || true; "
-    "echo '@DISKS'; df -k 2>/dev/null | tail -n +2 || true; "
+    "echo '@DISK'; df -Pk / 2>/dev/null | tail -1 || true; "
+    "echo '@DISKS'; df -Pk 2>/dev/null | tail -n +2 || true; "
     "echo '@LOADAVG'; sysctl -n vm.loadavg 2>/dev/null || true; "
     "echo '@BOOT'; sysctl -n kern.boottime 2>/dev/null || true; "
     "echo '@NOW'; date +%s 2>/dev/null || true; "
@@ -294,8 +468,9 @@ const metricsDarwin =
     "echo '@CPU'; top -l1 -n0 2>/dev/null | grep -i 'CPU usage' | head -1 || true; "
     "echo '@MEMSIZE'; sysctl -n hw.memsize 2>/dev/null || true; "
     "echo '@VMSTAT'; vm_stat 2>/dev/null || true; "
-    "echo '@DISK'; df -k / 2>/dev/null | tail -1 || true; "
-    "echo '@DISKS'; df -k 2>/dev/null | tail -n +2 || true; "
+    // -P: without it macOS adds inode columns, which would end up in the mount point.
+    "echo '@DISK'; df -Pk / 2>/dev/null | tail -1 || true; "
+    "echo '@DISKS'; df -Pk 2>/dev/null | tail -n +2 || true; "
     "echo '@LOADAVG'; sysctl -n vm.loadavg 2>/dev/null || true; "
     "echo '@BOOT'; sysctl -n kern.boottime 2>/dev/null || true; "
     "echo '@NOW'; date +%s 2>/dev/null || true; "

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../data/app_database.dart';
+import '../../../data/remote_commands.dart';
 import '../../../data/remote_models.dart';
 import '../../../data/remote_parsers.dart';
 import '../../../domain/measurement_units.dart';
@@ -497,7 +498,10 @@ Future<void> _runServiceAction(
 ) async {
   final server = vm.monitoredServer;
   final lock = context.read<AppLockController>();
-  if (server != null && lock.requiresSudoAuth(server.sudoPassword)) {
+  // launchd and Windows services are managed without sudo, so the password is neither sent nor gated.
+  if (server != null &&
+      serviceActionUsesSudo(vm.knownOs) &&
+      lock.requiresSudoAuth(server.sudoPassword)) {
     if (!await requestSudoAuth(context, lock)) return;
   }
   await vm.runServiceAction(service, action);
@@ -618,6 +622,7 @@ class _ProcessesTabState extends State<ProcessesTab> {
   Widget build(BuildContext context) {
     final vm = widget.vm;
     final scheme = Theme.of(context).colorScheme;
+    final windows = normaliseOs(vm.knownOs) == 'Windows';
 
     return LayoutBuilder(
       builder: (context, constraints) => CustomScrollView(
@@ -707,18 +712,14 @@ class _ProcessesTabState extends State<ProcessesTab> {
                                 style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                               ),
                             ),
-                            TextButton(
-                              key: ValueKey('monitor.process.${proc.pid}.kill'),
-                              onPressed: () => _confirmKill(context, vm, proc, force: false),
-                              child: const Text('Kill', style: TextStyle(color: OmniColors.red)),
-                            ),
                             // SIGTERM is exactly the signal a wedged process ignores, so an app
                             // that only sends it cannot end the one case you reach for it.
-                            TextButton(
-                              key: ValueKey('monitor.process.${proc.pid}.forceKill'),
-                              onPressed: () => _confirmKill(context, vm, proc, force: true),
-                              child: const Text('Force', style: TextStyle(color: OmniColors.red)),
-                            ),
+                            for (final kill in _killWordings(windows: windows))
+                              TextButton(
+                                key: ValueKey('monitor.process.${proc.pid}.${kill.key}'),
+                                onPressed: () => _confirmKill(context, vm, proc, kill),
+                                child: Text(kill.button, style: TextStyle(color: kill.color)),
+                              ),
                           ],
                         ),
                       ],
@@ -732,34 +733,25 @@ class _ProcessesTabState extends State<ProcessesTab> {
     );
   }
 
-  /// Confirms, then signals [proc].
+  /// Confirms, then ends [proc] the way [kill] describes.
   ///
-  /// [force] selects SIGKILL over SIGTERM. Kotlin offers both as separate actions with separate
-  /// prompts (`ui/MonitorScreen.kt:920` and `:934`); the port wired only the graceful one, leaving
-  /// `killProcess`'s `signal` parameter with no caller that ever changed it.
-  ///
-  /// They are deliberately not one dialog with a checkbox: the two differ in whether the process
-  /// gets to save anything, which is a choice to make before confirming, not while confirming.
+  /// The gentle and the forced way are separate actions with separate prompts, as in Kotlin: the two
+  /// differ in whether the process gets to save anything, which is a choice to make before
+  /// confirming, not while confirming.
   Future<void> _confirmKill(
     BuildContext context,
     MonitorViewModel vm,
-    SimProcess proc, {
-    required bool force,
-  }) async {
+    SimProcess proc,
+    _KillWording kill,
+  ) async {
     // Killing the wrong pid can take a host offline, and the list is sorted live — a row can move
     // under the finger between reading and tapping. So the dialog names what will be killed.
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('monitor.kill.dialog'),
-        title: Text(force ? 'Force kill (SIGKILL)?' : 'Kill ${proc.name}?'),
-        content: Text(
-          force
-              // Kotlin's warning, kept: the consequence is the whole difference between the two.
-              ? 'Forcibly kills pid ${proc.pid} (${proc.name}) with kill -9. '
-                    'Unsaved work in that process is lost.'
-              : 'Sends SIGTERM to pid ${proc.pid} (${proc.owner}).',
-        ),
+        title: Text(kill.title),
+        content: Text(kill.message(proc)),
         actions: [
           TextButton(
             key: const ValueKey('monitor.kill.cancel'),
@@ -769,19 +761,84 @@ class _ProcessesTabState extends State<ProcessesTab> {
           TextButton(
             key: const ValueKey('monitor.kill.confirm'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(
-              force ? 'Force kill' : 'Kill',
-              style: const TextStyle(color: OmniColors.red),
-            ),
+            child: Text(kill.confirm, style: TextStyle(color: kill.color)),
           ),
         ],
       ),
     );
     if (confirmed ?? false) {
-      await vm.killProcess(proc.pid, signal: force ? 9 : 15);
+      await vm.killProcess(proc.pid, signal: kill.signal);
     }
   }
 }
+
+/// One way of ending a process, in the words its OS uses.
+class _KillWording {
+  const _KillWording({
+    required this.key,
+    required this.signal,
+    required this.button,
+    required this.title,
+    required this.message,
+    required this.confirm,
+    required this.color,
+  });
+
+  final String key;
+  final int signal;
+  final String button;
+  final String title;
+  final String Function(SimProcess proc) message;
+  final String confirm;
+  final Color color;
+}
+
+/// The gentle and the forced way to end a process; Windows has no signals, so it says taskkill.
+List<_KillWording> _killWordings({required bool windows}) => windows
+    ? [
+        _KillWording(
+          key: 'kill',
+          signal: 15,
+          button: 'END',
+          title: 'End this process?',
+          message: (p) => 'Ask PID ${p.pid} (${p.name}) to close with taskkill?',
+          confirm: 'End',
+          color: OmniColors.amber,
+        ),
+        _KillWording(
+          key: 'forceKill',
+          signal: 9,
+          button: 'FORCE END',
+          title: 'Force this process to end?',
+          message: (p) =>
+              'Force PID ${p.pid} (${p.name}) to end with taskkill /F? '
+              'Unsaved work in that process is lost.',
+          confirm: 'Force end',
+          color: OmniColors.red,
+        ),
+      ]
+    : [
+        _KillWording(
+          key: 'kill',
+          signal: 15,
+          button: 'KILL -15',
+          title: 'Send SIGTERM?',
+          message: (p) => 'Gracefully terminate PID ${p.pid} (${p.name}) with kill -15?',
+          confirm: 'Kill -15',
+          color: OmniColors.amber,
+        ),
+        _KillWording(
+          key: 'forceKill',
+          signal: 9,
+          button: 'KILL -9',
+          title: 'Force kill (SIGKILL)?',
+          message: (p) =>
+              'Forcibly kill PID ${p.pid} (${p.name}) with kill -9? '
+              'Unsaved work in that process is lost.',
+          confirm: 'Kill -9',
+          color: OmniColors.red,
+        ),
+      ];
 
 /// systemd / OpenRC units, with start, stop and restart.
 class ServicesTab extends StatefulWidget {
@@ -809,7 +866,8 @@ class _ServicesTabState extends State<ServicesTab> {
       return Center(
         key: const ValueKey('monitor.services.unsupported'),
         child: Text(
-          'This host runs neither systemd nor OpenRC, so its services cannot be listed.',
+          'This host has no service manager OmniTerm can read (systemd, OpenRC, BSD rc.d, '
+          'launchd or Windows services), so its services cannot be listed.',
           textAlign: TextAlign.center,
           style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
         ),
@@ -887,7 +945,7 @@ class _ServicesTabState extends State<ServicesTab> {
   }
 
   Color _subStateColor(String subState) => switch (subState) {
-    'active' => OmniColors.green,
+    'active' || 'running' => OmniColors.green,
     'failed' => OmniColors.red,
     _ => OmniColors.textMuted,
   };

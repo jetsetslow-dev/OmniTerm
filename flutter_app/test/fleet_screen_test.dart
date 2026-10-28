@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/remote_commands.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
@@ -163,10 +164,15 @@ void main() {
           findsWidgets,
           reason: 'a command still running must show it is still running',
         );
-        expect(transport.hosts, ['10.0.0.8'], reason: 'the popup must dial the host it names');
-        expect(transport.commands, [
-          command,
-        ], reason: 'each button must send its own command, not the first one');
+        expect(transport.hosts.toSet(), {
+          '10.0.0.8',
+        }, reason: 'the popup must dial the host it names');
+        // The host's OS is asked once first, so a Windows host is sent PowerShell instead.
+        expect(
+          transport.commands.where((c) => c != osProbeCommand),
+          [command],
+          reason: 'each button must send its own command, not the first one',
+        );
 
         // The defect this half guards against: a read-only diagnostic that quietly consumed the
         // Broadcast tab's unsent command or target selection.

@@ -277,20 +277,8 @@ class TelemetryPoller extends ChangeNotifier {
       // The OS decides which metrics command to send, and sending the wrong one produces output the
       // parser reads as a host with no memory and no disks. Probed once per host and cached in
       // AppState, where Monitor, Infra and SFTP read it too.
-      var os = _app.osForServer(server.id);
-      if (os.isEmpty) {
-        final probe = await ssh.exec(creds, osProbeCommand);
-        if (!_workIsCurrent(generation)) return null;
-        os = normaliseOs(probe);
-        // `exec` returns `'SSH Error: …'` rather than throwing, and the cache is consulted once per
-        // host and then trusted forever. Caching what a failed probe normalises to would send the
-        // wrong metrics command for the life of the host — exactly the "no memory and no disks"
-        // reading described above, from one transient failure. Compose guards the same way at
-        // `ui/AppViewModel.kt:2404`.
-        if (!probe.startsWith('SSH Error')) {
-          _app.recordOsForServer(server.id, os);
-        }
-      }
+      final os = await _app.hostOs(server.id, (command) => ssh.exec(creds, command));
+      if (!_workIsCurrent(generation)) return null;
 
       final raw = await ssh.exec(creds, metricsFor(os));
       if (!_workIsCurrent(generation)) return null;

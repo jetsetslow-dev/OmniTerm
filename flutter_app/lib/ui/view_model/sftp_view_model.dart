@@ -729,6 +729,10 @@ class SftpViewModel extends ChangeNotifier {
   /// file browser to ask.
   bool get canMeasureSize => transport != null && _browsedShare == null && browsedServer != null;
 
+  /// The browsed host's OS family, asking the host once when nothing has yet.
+  Future<String> _hostOs(Server server, SshTransport ssh, SshCredentials credentials) =>
+      _app.hostOs(server.id, (command) => ssh.exec(credentials, command));
+
   Future<FolderSize?> folderSize(SftpFile entry) async {
     final ssh = transport;
     final server = browsedServer;
@@ -745,6 +749,10 @@ class SftpViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
+      if (!hasUnixShell(await _hostOs(server, ssh, creds))) {
+        _error = needsUnixShell('Measuring folder sizes');
+        return null;
+      }
       final output = await ssh.exec(creds, folderSizeCommand(joinPath(_path, entry.name)));
       final size = parseFolderSize(output);
       if (size == null) {
@@ -792,6 +800,12 @@ class SftpViewModel extends ChangeNotifier {
 
   set sudoMode(bool value) {
     if (_sudo == value) return;
+    final server = browsedServer;
+    if (value && server != null && !hasUnixShell(_app.osForServer(server.id))) {
+      _error = 'Sudo mode needs a Linux, macOS or BSD host; Windows has no sudo.';
+      _safeNotify();
+      return;
+    }
     _sudo = value;
     _safeNotify();
   }
@@ -928,6 +942,10 @@ class SftpViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
+      if (!hasUnixShell(await _hostOs(server, ssh, creds))) {
+        _error = needsUnixShell('Searching files');
+        return;
+      }
       final base = _path.isEmpty ? '/' : _path;
       final script = remoteSearchCommand(base, query);
       final output = await ssh.exec(
@@ -1082,6 +1100,7 @@ class SftpViewModel extends ChangeNotifier {
       archiveCreateCommand(_path.isEmpty ? '.' : _path, archiveName, [
         for (final e in entries) e.name,
       ], format),
+      feature: 'Creating archives',
       sentinel: 'OMNITERM_ARCHIVE_OK',
       success: 'Created $archiveName${_sudo ? ' as root' : ''}.',
       failurePrefix: 'Archive failed',
@@ -1093,6 +1112,7 @@ class SftpViewModel extends ChangeNotifier {
     if (!isArchiveFile(entry.name) || !canArchive) return false;
     return _runArchiveCommand(
       archiveExtractCommand(_path.isEmpty ? '.' : _path, entry.name),
+      feature: 'Extracting archives',
       sentinel: 'OMNITERM_EXTRACT_OK',
       success: 'Extracted ${entry.name}${_sudo ? ' as root' : ''}.',
       failurePrefix: 'Extract failed',
@@ -1101,6 +1121,7 @@ class SftpViewModel extends ChangeNotifier {
 
   Future<bool> _runArchiveCommand(
     String command, {
+    required String feature,
     required String sentinel,
     required String success,
     required String failurePrefix,
@@ -1122,6 +1143,10 @@ class SftpViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
+      if (!hasUnixShell(await _hostOs(server, ssh, creds))) {
+        _error = needsUnixShell(feature);
+        return false;
+      }
       final output = await ssh.exec(
         creds,
         _sudo ? sudoShWrap(command, server.sudoPassword) : command,
@@ -1332,14 +1357,18 @@ class SftpViewModel extends ChangeNotifier {
     List<TransferConflict> conflicts;
     // The scan runs one shell command on the destination host, so it can only compare sources that
     // live on that same host.
-    if (_browsedShare == null && server != null && ssh != null && sameEndpoint) {
+    final credentials = _browsedShare == null && server != null && ssh != null && sameEndpoint
+        ? resolveCredentials(
+            server,
+            keys: await _app.repository.getAllKeys(),
+            profiles: await _app.repository.getAllProfiles(),
+          )
+        : null;
+    // Windows has no shell to run the scan in, so its clashes are listed unverified, as a share's
+    // are; the paste itself goes over SFTP either way.
+    if (credentials != null && hasUnixShell(await _hostOs(server!, ssh!, credentials))) {
       final sources = [for (final entry in clashing) joinPath(clipboard.directory, entry.name)];
       final script = compareForConflicts(destination, sources);
-      final credentials = resolveCredentials(
-        server,
-        keys: await _app.repository.getAllKeys(),
-        profiles: await _app.repository.getAllProfiles(),
-      );
       final output = _sudo
           ? await ssh.exec(
               credentials,

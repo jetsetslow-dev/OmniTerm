@@ -104,7 +104,8 @@ class _CronTabState extends State<CronTab> {
                 const Icon(Icons.lock_clock, size: 32, color: OmniColors.textMuted),
                 const SizedBox(height: 8),
                 Text(
-                  'This host would not show its crontab, so nothing here can be changed.',
+                  vm.cronUnsupported ??
+                      'This host would not show its crontab, so nothing here can be changed.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                 ),

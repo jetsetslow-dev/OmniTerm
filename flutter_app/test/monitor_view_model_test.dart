@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/remote_commands.dart';
 import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/platform/secret_store.dart';
@@ -196,6 +197,7 @@ void main() {
       final id = await repo.insertServer(server(name: 'a'));
       final transport = RecordingTransport(
         replies: {
+          osProbeCommand: 'FreeBSD\n',
           "echo '@OS'":
               '@OS\nFreeBSD\n@CPU\nCPU: 10.0% idle\n@SYSMEM\nphys 1000000\nfree 10\npagesize 4096\n@DISKS\n/dev/ada0 100 1 99 1% /\n',
         },
@@ -204,7 +206,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await vm.loadActiveTab();
 
-      expect(transport.commands.single, contains('@LOAD'));
+      expect(transport.commands, [osProbeCommand, metricsBsd]);
       // Probing uname once and caching it beats every tab asking for itself.
       expect(app.osForServer(id), 'FreeBSD');
       await vm.loadProcesses();

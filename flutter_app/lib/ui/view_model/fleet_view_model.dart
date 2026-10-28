@@ -78,6 +78,28 @@ class FleetViewModel extends ChangeNotifier {
     return ssh.execStream(credentials, command, onChunk: onChunk, cancellation: cancellation);
   }
 
+  /// [check] as the command [server]'s OS understands, asking the host its OS if nothing has yet.
+  ///
+  /// A host that cannot be asked gets the Unix command, which is what the check ran before it was
+  /// per OS; running it then reports the same failure the probe hit.
+  Future<String> quickCheckFor(Server server, QuickCheck check) async {
+    final ssh = transport;
+    if (ssh == null) return quickCheckCommand(check, _app.osForServer(server.id));
+    try {
+      final credentials = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      return quickCheckCommand(
+        check,
+        await _app.hostOs(server.id, (command) => ssh.exec(credentials, command)),
+      );
+    } on CredentialResolutionException {
+      return quickCheckCommand(check, '');
+    }
+  }
+
   /// The fleet-wide telemetry loop, when one is running.
   ///
   /// Fleet reads the poller rather than fetching for itself. It is the one screen showing every

@@ -498,7 +498,7 @@ class _BulkActions extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         key: const ValueKey('servers.bulk.delete.dialog'),
-        title: Text('Delete $count hosts?'),
+        title: Text(count == 1 ? 'Delete 1 host?' : 'Delete $count hosts?'),
         content: const Text(
           'Remove these host connections and their saved credentials from OmniTerm? '
           'This does not affect the remote machines and cannot be undone here.',

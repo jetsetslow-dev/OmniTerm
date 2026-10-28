@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/remote_commands.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/infra_view_model.dart';
@@ -96,8 +97,9 @@ void main() {
       await vm.load();
 
       // Serialising six independent probes would multiply latency by six on the screen a user
-      // opens to check something quickly.
-      expect(transport.commands, hasLength(6));
+      // opens to check something quickly. The host's OS is asked once before them.
+      expect(transport.commands.first, osProbeCommand);
+      expect(transport.commands.skip(1), hasLength(6));
       vm.dispose();
     });
 

@@ -375,8 +375,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('monitor.process.102.kill')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Kill runaway?'), findsOneWidget);
-    expect(find.text('Sends SIGTERM to pid 102 (root).'), findsOneWidget);
+    expect(find.text('Send SIGTERM?'), findsOneWidget);
+    expect(find.text('Gracefully terminate PID 102 (runaway) with kill -15?'), findsOneWidget);
 
     // Cancelling must not send anything: the list re-sorts live, so a row can move under a finger.
     await tester.tap(find.byKey(const ValueKey('monitor.kill.cancel')));

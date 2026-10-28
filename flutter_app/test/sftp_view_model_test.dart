@@ -37,9 +37,12 @@ class FakeShell implements SshTransport {
 
   @override
   Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
+    if (_failure != null) throw Exception(_failure);
+    // Answered as a Linux host would and left out of [commands]: the tests here are about the
+    // command that follows it. Windows routing has its own test.
+    if (command == osProbeCommand) return 'Linux\n';
     commands.add(command);
     stdins.add(stdin);
-    if (_failure != null) throw Exception(_failure);
     return _output;
   }
 

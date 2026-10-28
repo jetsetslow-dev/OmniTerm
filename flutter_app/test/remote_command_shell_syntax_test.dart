@@ -34,6 +34,11 @@ void main() {
     'dockerVolumesCommand': dockerVolumesCommand,
     'dockerNetworksCommand': dockerNetworksCommand,
     'servicesCommand': servicesCommand,
+    'servicesBsd': servicesBsd,
+    'servicesDarwin': servicesDarwin,
+    'serviceAction(FreeBSD)': serviceAction('sshd', 'restart', os: 'FreeBSD'),
+    'serviceAction(Darwin)': serviceAction('com.example.web', 'restart', os: 'Darwin'),
+    'rebootCommand(FreeBSD)': rebootCommand(os: 'FreeBSD'),
     'tmuxInstallCommand': tmuxInstallCommand(),
   };
 
