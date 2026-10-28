@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/remote_commands.dart' show tmuxCheckCommand;
 import 'package:omniterm/data/ssh/dartssh_transport.dart' show SshHostKeyException;
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/l10n/app_localizations.dart';
@@ -109,7 +110,7 @@ void main() {
   }
 
   testWidgets('nothing is shown until a host actually lacks tmux', (tester) async {
-    ssh.execAnswers['command -v tmux'] = 'yes';
+    ssh.execAnswers[tmuxCheckCommand] = 'yes';
     await pump(tester);
 
     await tester.runAsync(() => vm.connect(vm.connectableServers.single));
@@ -119,7 +120,7 @@ void main() {
   });
 
   testWidgets('a host without tmux is asked about, not silently refused', (tester) async {
-    ssh.execAnswers['command -v tmux'] = 'no';
+    ssh.execAnswers[tmuxCheckCommand] = 'no';
     await pump(tester);
 
     await tester.runAsync(() => vm.connect(vm.connectableServers.single));
@@ -134,7 +135,7 @@ void main() {
   });
 
   testWidgets('connect non-resumable closes the prompt and opens a plain shell', (tester) async {
-    ssh.execAnswers['command -v tmux'] = 'no';
+    ssh.execAnswers[tmuxCheckCommand] = 'no';
     await pump(tester);
     await tester.runAsync(() => vm.connect(vm.connectableServers.single));
     await settle(tester);
@@ -148,7 +149,7 @@ void main() {
   });
 
   testWidgets('cancelling closes the prompt and connects nothing', (tester) async {
-    ssh.execAnswers['command -v tmux'] = 'no';
+    ssh.execAnswers[tmuxCheckCommand] = 'no';
     await pump(tester);
     await tester.runAsync(() => vm.connect(vm.connectableServers.single));
     await settle(tester);
@@ -167,7 +168,7 @@ void main() {
 
   testWidgets('a failed install keeps the prompt up and shows the output', (tester) async {
     ssh
-      ..execAnswers['command -v tmux'] = 'no'
+      ..execAnswers[tmuxCheckCommand] = 'no'
       ..streamChunks = const ['E: Unable to locate package tmux\n'];
     await pump(tester);
     await tester.runAsync(() => vm.connect(vm.connectableServers.single));
@@ -188,14 +189,14 @@ void main() {
 
   testWidgets('a successful install closes the prompt and connects', (tester) async {
     ssh
-      ..execAnswers['command -v tmux'] = 'no'
+      ..execAnswers[tmuxCheckCommand] = 'no'
       ..streamChunks = const ['tmux installed\n'];
     await pump(tester);
     await tester.runAsync(() => vm.connect(vm.connectableServers.single));
     await settle(tester);
 
     // The re-probe after installing now answers yes.
-    ssh.execAnswers['command -v tmux'] = 'yes';
+    ssh.execAnswers[tmuxCheckCommand] = 'yes';
     await tester.tap(find.byKey(const ValueKey('tmux.install.confirm')));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await settle(tester);
@@ -257,7 +258,7 @@ void main() {
 
     testWidgets('the offline question is asked before the tmux round trip', (tester) async {
       // No point asking a host whether it has tmux when the last check said it was not answering.
-      ssh.execAnswers['command -v tmux'] = 'no';
+      ssh.execAnswers[tmuxCheckCommand] = 'no';
       await pump(tester, probed: true, status: 'offline', persistent: true);
 
       await tester.runAsync(() => vm.connect(app.servers.single));

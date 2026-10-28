@@ -37,10 +37,22 @@ String tmuxSafeName(String name) {
 
 int _boundedHistory(int limit) => limit.clamp(tmuxHistoryMin, tmuxHistoryMax);
 
+/// Starts every tmux command: finds a tmux that a package manager put outside the system PATH.
+///
+/// Kotlin's `RemoteCommands.TMUX_PATH`. A command sent without a terminal starts a non-login shell,
+/// and on macOS that shell's PATH is only /usr/bin:/bin:/usr/sbin:/sbin; Homebrew's directory is
+/// added by ~/.zprofile, which only login shells read. So on a Mac with Homebrew's tmux the check
+/// said tmux was missing, and session checks and End session failed quietly. Covers Homebrew on
+/// Apple silicon and Intel, MacPorts, and Homebrew on Linux, and leaves PATH alone wherever tmux is
+/// already found.
+const tmuxPath =
+    'command -v tmux >/dev/null 2>&1 || '
+    'PATH="\$PATH:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/home/linuxbrew/.linuxbrew/bin"; ';
+
 /// Prepares a session that already exists, before a client attaches to it.
 String _existingBootstrap(String safe, int historyLimit) {
   final limit = _boundedHistory(historyLimit);
-  return 'command -v tmux >/dev/null 2>&1 && '
+  return '${tmuxPath}command -v tmux >/dev/null 2>&1 && '
       'tmux has-session -t $safe 2>/dev/null && '
       '(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && '
       // Touch scrolling is handled by the app against its own buffer. Leaving tmux's mouse mode on
@@ -52,7 +64,7 @@ String _existingBootstrap(String safe, int historyLimit) {
 /// Creates a brand-new session, failing rather than attaching if the name is already taken.
 String _createBootstrap(String safe, int historyLimit) {
   final limit = _boundedHistory(historyLimit);
-  return 'command -v tmux >/dev/null 2>&1 && '
+  return '${tmuxPath}command -v tmux >/dev/null 2>&1 && '
       // One invocation starts the server, sets the global default and creates the session.
       // `history-limit` applies only to panes created afterwards, so it has to be set before the
       // session exists rather than on it.
@@ -100,7 +112,7 @@ const tmuxSessionAbsentMarker = 'OMNITERM_TMUX_ABSENT';
 /// Checks one exact remembered name. Exit codes other than tmux's documented 0/1 stay unknown.
 String tmuxSessionProbeCommand(String name) {
   final safe = tmuxSafeName(name);
-  return 'tmux has-session -t $safe >/dev/null 2>&1; OT_TMUX_STATUS=\$?; '
+  return '${tmuxPath}tmux has-session -t $safe >/dev/null 2>&1; OT_TMUX_STATUS=\$?; '
       'if [ "\$OT_TMUX_STATUS" = 0 ]; then echo $tmuxSessionPresentMarker; '
       'elif [ "\$OT_TMUX_STATUS" = 1 ]; then echo $tmuxSessionAbsentMarker; '
       'else echo OMNITERM_TMUX_UNKNOWN; fi';
@@ -134,5 +146,5 @@ String tmuxControlCreateAttachCommand(String name, {int historyLimit = 10000}) {
 /// Stops one persistent session from a separate SSH exec channel.
 String tmuxKillCommand(String name) {
   final safe = tmuxSafeName(name);
-  return 'tmux kill-session -t $safe 2>/dev/null';
+  return '${tmuxPath}tmux kill-session -t $safe 2>/dev/null';
 }

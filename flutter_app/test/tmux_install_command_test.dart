@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/remote_commands.dart';
+import 'package:omniterm/data/term/tmux_bootstrap.dart';
 
 /// The tmux presence check and installer, ported from `RemoteCommands.TMUX_CHECK` and
 /// `tmuxInstallCommand()` (`data/RemoteParsers.kt:140`, `:303`).
@@ -65,9 +66,12 @@ void main() {
 
     test('answers for a PATH with no tmux', () {
       // An empty PATH is the reliable way to stage "not installed" without touching the machine.
+      // The check is run without the PATH line, which would otherwise look in this machine's
+      // /usr/local/bin and Homebrew directories.
+      expect(tmuxCheckCommand, startsWith(tmuxPath));
       final run = Process.runSync(
         sh,
-        ['-c', tmuxCheckCommand],
+        ['-c', tmuxCheckCommand.substring(tmuxPath.length)],
         environment: {'PATH': '/nonexistent'},
         includeParentEnvironment: false,
       );
@@ -118,6 +122,62 @@ void main() {
         tmuxInstallCommand(),
         contains('No supported package manager found; install tmux manually.'),
       );
+    });
+  });
+
+  /// Kotlin's `RemoteCommands.TMUX_PATH`. Over a side channel a Mac's shell PATH is
+  /// /usr/bin:/bin:/usr/sbin:/sbin, without Homebrew's directory, so every tmux command must look
+  /// there itself.
+  group('tmuxPath', () {
+    late Directory dir;
+    setUp(() => dir = Directory.systemTemp.createTempSync('tmux-path'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    String pathAfter() {
+      final run = Process.runSync(
+        sh,
+        ['-c', '${tmuxPath}printf %s "\$PATH"'],
+        environment: {'PATH': dir.path},
+        includeParentEnvironment: false,
+      );
+      expect(run.exitCode, 0, reason: '${run.stderr}');
+      return run.stdout as String;
+    }
+
+    test('adds the package managers\' directories when tmux is not on PATH', () {
+      expect(
+        pathAfter(),
+        '${dir.path}:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/home/linuxbrew/.linuxbrew/bin',
+      );
+    });
+
+    test('leaves PATH alone where tmux is found', () {
+      final tmux = File('${dir.path}/tmux')..writeAsStringSync('#!/bin/sh\n');
+      Process.runSync('/bin/chmod', ['+x', tmux.path]);
+      expect(pathAfter(), dir.path);
+    });
+
+    test('starts every tmux command sent outside a terminal', () {
+      final commands = [
+        tmuxCheckCommand,
+        tmuxInstallCommand(),
+        tmuxCreateAttachCommand('x'),
+        tmuxControlCreateAttachCommand('x'),
+        tmuxAttachCommand('x'),
+        tmuxControlAttachCommand('x'),
+        tmuxSessionProbeCommand('x'),
+        tmuxKillCommand('x'),
+        tmuxActivePaneQuery('x'),
+        tmuxAlternateOnQuery('x'),
+        tmuxCaptureHistoryCommand('x', 5000),
+      ];
+      for (final command in commands) {
+        expect(command, startsWith(tmuxPath));
+      }
+    });
+
+    test('a Mac without another package manager installs with Homebrew', () {
+      expect(tmuxInstallCommand(), contains('then pm $pmInstallSeconds brew install tmux;'));
     });
   });
 }

@@ -7,6 +7,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/remote_commands.dart' show tmuxCheckCommand;
 import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/data/term/tmux_bootstrap.dart';
 import 'package:omniterm/domain/app_preferences.dart';
@@ -734,7 +735,7 @@ void main() {
         ),
       );
       final row = (await repo.getPersistentSessions()).single;
-      transport.execAnswers['command -v tmux'] = 'yes';
+      transport.execAnswers[tmuxCheckCommand] = 'yes';
       transport.execAnswers['has-session'] = tmuxSessionPresentMarker;
       vm.useControlMode = true;
       await vm.resumeIntoSplitPane(row, 2);
@@ -754,7 +755,7 @@ void main() {
       await start();
       await vm.connect(app.servers.first);
       final first = vm.current!;
-      transport.execAnswers['command -v tmux'] = 'no';
+      transport.execAnswers[tmuxCheckCommand] = 'no';
       vm.enterSplit();
       await vm.connect(
         app.servers.last,
@@ -828,7 +829,7 @@ void main() {
         app.servers.singleWhere((host) => host.persistentSession),
         app.servers.singleWhere((host) => !host.persistentSession),
       ];
-      transport.execAnswers['command -v tmux'] = 'no';
+      transport.execAnswers[tmuxCheckCommand] = 'no';
       await vm.openSplitForServers(hosts.first, hosts.last);
       expect(vm.isSplit, isTrue);
       expect(vm.tmuxPromptServer?.id, hosts.first.id);
@@ -1319,7 +1320,7 @@ void main() {
     });
 
     test('regular tmux queries the pane once per cache window', () async {
-      transport.execAnswers['command -v tmux'] = 'yes';
+      transport.execAnswers[tmuxCheckCommand] = 'yes';
       await repo.insertServer(server(name: 'nas', persistent: true));
       await start();
       await vm.connect(vm.server!);
@@ -1399,7 +1400,7 @@ void main() {
       expect(command, contains('new-session -d -s'));
       expect(command, contains('exec tmux attach-session'));
       // Guarded, so a host without tmux is left at an ordinary prompt rather than a broken one.
-      expect(command, startsWith('command -v tmux'));
+      expect(command, startsWith('${tmuxPath}command -v tmux'));
 
       final saved = await repo.getPersistentSessions();
       expect(saved, hasLength(1));
@@ -1728,7 +1729,7 @@ void main() {
           ),
         );
         final transport = FakeShellTransport()
-          ..execAnswers['command -v tmux'] = 'yes'
+          ..execAnswers[tmuxCheckCommand] = 'yes'
           ..execAnswers['has-session -t omniterm-1-kept'] = 'SSH Error: No route to host';
         final model = await start(ssh: transport);
         await model.refreshResumable();
@@ -1755,7 +1756,7 @@ void main() {
           ),
         );
         final transport = FakeShellTransport()
-          ..execAnswers['command -v tmux'] = 'yes'
+          ..execAnswers[tmuxCheckCommand] = 'yes'
           ..execAnswers['has-session -t omniterm-1-gone'] = tmuxSessionAbsentMarker;
         final model = await start(ssh: transport);
         await model.refreshResumable();
@@ -1802,7 +1803,7 @@ void main() {
       // The defect: `terminate` wrote straight to `_error`, so in a loop the second failure
       // overwrote the first. A user disconnecting three hosts saw one message and had no idea the
       // others were still running on their servers.
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'yes';
       await repo.insertServer(persistent(name: 'alpha'));
       await repo.insertServer(persistent(name: 'beta'));
       final vm = await start(ssh: ssh);
@@ -1822,7 +1823,7 @@ void main() {
 
     test('it reports being busy, and refuses to start twice', () async {
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'yes'
+        ..execAnswers[tmuxCheckCommand] = 'yes'
         ..execAnswers['kill-session'] = 'ok'
         ..execAnswers['has-session'] = tmuxSessionAbsentMarker;
       await repo.insertServer(persistent(name: 'alpha'));
@@ -1849,7 +1850,7 @@ void main() {
 
     test('a clean disconnect leaves no error behind', () async {
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'yes'
+        ..execAnswers[tmuxCheckCommand] = 'yes'
         ..execAnswers['kill-session'] = 'ok'
         ..execAnswers['has-session'] = tmuxSessionAbsentMarker;
       await repo.insertServer(persistent(name: 'alpha'));
@@ -1870,7 +1871,7 @@ void main() {
       // The defect: `_persistentTarget` does real database work *after* the shell is open. When it
       // threw, the exception unwound straight past the channel — not in `_sessions`, invisible to
       // the user, and holding a shell on the server until the process died.
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'yes';
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
       await db.customStatement(
@@ -1893,7 +1894,7 @@ void main() {
 
     test('a superseded attempt closes its channel instead of leaking it', () async {
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'yes'
+        ..execAnswers[tmuxCheckCommand] = 'yes'
         ..gate = Completer<void>();
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
@@ -1926,7 +1927,7 @@ void main() {
       );
       app.dispose();
       app = AppState(failing);
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'yes';
       await failing.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
 
@@ -1953,7 +1954,7 @@ void main() {
         server(name: name).copyWith(persistentSession: true);
 
     test('a host without tmux is not connected, it is asked about', () async {
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'no';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'no';
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
 
@@ -1968,7 +1969,7 @@ void main() {
     });
 
     test('a host with tmux connects without a prompt', () async {
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'yes';
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
 
@@ -1979,7 +1980,7 @@ void main() {
     });
 
     test('the probe runs once per host, not per connection', () async {
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'yes';
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
       final host = vm.connectableServers.single;
@@ -1990,7 +1991,7 @@ void main() {
       await vm.connect(host);
 
       expect(
-        ssh.commands.where((c) => c.contains('command -v tmux')).length,
+        ssh.commands.where((c) => c == tmuxCheckCommand).length,
         1,
         reason: 'a round trip before every connection would be felt',
       );
@@ -2025,7 +2026,7 @@ void main() {
       // caught thrown errors. A refused connection therefore looked like a definite "tmux is
       // missing", and the app offered to install a package over a link that did not exist.
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'SSH Error: Connection refused'
+        ..execAnswers[tmuxCheckCommand] = 'SSH Error: Connection refused'
         ..failure = SshConnectException('Connection refused');
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
@@ -2052,11 +2053,11 @@ void main() {
       final host = vm.connectableServers.single;
 
       await vm.connect(host);
-      ssh.execAnswers['command -v tmux'] = 'no';
+      ssh.execAnswers[tmuxCheckCommand] = 'no';
       await vm.connect(host);
 
       expect(
-        ssh.commands.where((c) => c.contains('command -v tmux')),
+        ssh.commands.where((c) => c == tmuxCheckCommand),
         hasLength(2),
         reason: 'the second connection must ask again, not trust a probe that never answered',
       );
@@ -2067,7 +2068,7 @@ void main() {
       // It is a round trip to the host. It used to run with `_connecting` still false, so a slow
       // probe looked exactly like a tap that had done nothing at all.
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'yes'
+        ..execAnswers[tmuxCheckCommand] = 'yes'
         ..execGate = Completer<void>();
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
@@ -2086,7 +2087,7 @@ void main() {
     test('a second tap during the probe does not start a second connection', () async {
       // `if (_connecting) return` could not see the probe, because the probe ran before it was set.
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'yes'
+        ..execAnswers[tmuxCheckCommand] = 'yes'
         ..execGate = Completer<void>();
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
@@ -2101,7 +2102,7 @@ void main() {
       await Future.wait([first, second]);
 
       expect(
-        ssh.commands.where((c) => c.contains('command -v tmux')),
+        ssh.commands.where((c) => c == tmuxCheckCommand),
         hasLength(1),
         reason: 'two probes means two connections were in flight',
       );
@@ -2112,7 +2113,7 @@ void main() {
       // Nothing owned the probe, so `cancelConnect` had nothing to cancel and its answer still
       // landed — raising a tmux prompt for a connection the user had already given up on.
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'no'
+        ..execAnswers[tmuxCheckCommand] = 'no'
         ..execGate = Completer<void>();
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
@@ -2129,7 +2130,7 @@ void main() {
     });
 
     test('connecting without persistence opens a plain shell', () async {
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'no';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'no';
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
       await vm.connect(vm.connectableServers.single);
@@ -2148,14 +2149,14 @@ void main() {
 
     test('a successful install connects with persistence', () async {
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'no'
+        ..execAnswers[tmuxCheckCommand] = 'no'
         ..streamChunks = const ['reading package lists…\n', 'tmux installed\n'];
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
       await vm.connect(vm.connectableServers.single);
 
       // The re-probe after installing must now answer yes.
-      ssh.execAnswers['command -v tmux'] = 'yes';
+      ssh.execAnswers[tmuxCheckCommand] = 'yes';
       await vm.installTmuxAndConnect();
 
       expect(vm.tmuxPromptServer, isNull);
@@ -2166,7 +2167,7 @@ void main() {
     test('a failed install keeps the prompt and says what to do', () async {
       // The installer can exit 0 against a broken mirror, so the re-probe is what decides.
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'no'
+        ..execAnswers[tmuxCheckCommand] = 'no'
         ..streamChunks = const ['E: Unable to locate package tmux\n'];
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
@@ -2181,7 +2182,7 @@ void main() {
 
     test('installer output is streamed as it arrives', () async {
       final ssh = FakeShellTransport()
-        ..execAnswers['command -v tmux'] = 'no'
+        ..execAnswers[tmuxCheckCommand] = 'no'
         ..streamChunks = const ['step one\n', 'step two\n'];
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
@@ -2194,7 +2195,7 @@ void main() {
     });
 
     test('dismissing clears the prompt without connecting', () async {
-      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'no';
+      final ssh = FakeShellTransport()..execAnswers[tmuxCheckCommand] = 'no';
       await repo.insertServer(persistentHost());
       final vm = await start(ssh: ssh);
       await vm.connect(vm.connectableServers.single);

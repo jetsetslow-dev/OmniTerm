@@ -7,6 +7,7 @@ library;
 
 import 'dart:convert';
 import 'kotlin_strings.dart';
+import 'term/tmux_bootstrap.dart' show tmuxPath;
 
 /// Collapses `uname -s` output (or a Windows shell's error text) to one of the four families the
 /// metrics parsers branch on.
@@ -1123,7 +1124,7 @@ String compareForConflicts(String destDir, List<String> sources) {
 /// Whether tmux is on the host's PATH. Answers exactly `yes` or `no`.
 ///
 /// Ported from `RemoteCommands.TMUX_CHECK` in `data/RemoteParsers.kt:140`.
-const tmuxCheckCommand = 'command -v tmux >/dev/null 2>&1 && echo yes || echo no';
+const tmuxCheckCommand = '${tmuxPath}command -v tmux >/dev/null 2>&1 && echo yes || echo no';
 
 /// `true` tmux is present, `false` it is definitely absent, `null` the probe did not answer.
 ///
@@ -1164,7 +1165,7 @@ const pmInstallSeconds = 600;
 /// return 0 for "nothing to do" on a broken mirror, and reporting a successful install of something
 /// that is not there would send the user back to a non-resumable shell with no explanation.
 String tmuxInstallCommand() =>
-    "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; "
+    "${tmuxPath}set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; "
     'if [ "\$(id -u)" = 0 ]; then SUDO=; else SUDO=\'sudo -S\'; fi; '
     // Every package step is bounded and explains a timeout in its own words. A dpkg/apt or dnf lock
     // held by unattended-upgrades blocks forever; the transport would eventually cut the stream at
@@ -1183,6 +1184,8 @@ String tmuxInstallCommand() =>
     'elif command -v apk >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO apk add tmux; '
     'elif command -v zypper >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO zypper install -y tmux; '
     'elif command -v pkg >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO pkg install -y tmux; '
+    // Homebrew refuses to run as root and needs no sudo; [tmuxPath] puts it on PATH on a Mac.
+    'elif command -v brew >/dev/null 2>&1; then pm $pmInstallSeconds brew install tmux; '
     "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; "
     "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }";
 
@@ -1206,12 +1209,12 @@ String tmuxSafeSessionName(String name) {
 /// to be answerable while the control stream is mid-burst, and an exec channel cannot be starved by
 /// pane output the way the control conversation can.
 String tmuxActivePaneQuery(String name) =>
-    "tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{pane_id}' 2>/dev/null || true";
+    "${tmuxPath}tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{pane_id}' 2>/dev/null || true";
 
 /// Whether the pane itself owns an alternate screen, rather than the tmux client around it.
 /// Regular tmux attach keeps the client's alternate screen active even at a plain shell prompt.
 String tmuxAlternateOnQuery(String name) =>
-    "tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{alternate_on}' 2>/dev/null || true";
+    "${tmuxPath}tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{alternate_on}' 2>/dev/null || true";
 
 /// Ported from `RemoteCommands.tmuxCaptureHistoryCommand` (`data/RemoteParsers.kt:280`).
 ///
@@ -1228,6 +1231,6 @@ String tmuxAlternateOnQuery(String name) =>
 String tmuxCaptureHistoryCommand(String name, int maxLines) {
   final safe = tmuxSafeSessionName(name);
   final lines = maxLines.clamp(1000, 50000);
-  return 'if [ "\$(tmux display-message -p -t $safe \'#{alternate_on}\' 2>/dev/null)" = 1 ]; '
+  return '${tmuxPath}if [ "\$(tmux display-message -p -t $safe \'#{alternate_on}\' 2>/dev/null)" = 1 ]; '
       'then :; else tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null; fi || true';
 }

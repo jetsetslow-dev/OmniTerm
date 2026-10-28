@@ -62,7 +62,7 @@ void main() {
         tmuxControlAttachCommand('a'),
         tmuxControlCreateAttachCommand('a'),
       ]) {
-        expect(command, startsWith('command -v tmux >/dev/null 2>&1 && '));
+        expect(command, startsWith('${tmuxPath}command -v tmux >/dev/null 2>&1 && '));
       }
     });
 
@@ -105,7 +105,7 @@ void main() {
     });
 
     test('resume still degrades to a plain shell without tmux', () {
-      expect(tmuxResumeCommand('a'), startsWith('command -v tmux >/dev/null 2>&1 && '));
+      expect(tmuxResumeCommand('a'), startsWith('${tmuxPath}command -v tmux >/dev/null 2>&1 && '));
     });
 
     test('resume bounds the scrollback and turns mouse mode off', () {
@@ -132,10 +132,11 @@ void main() {
       expect(command, isNot(contains('rm -rf')));
       expect(command, isNot(contains('evil;')));
 
-      // The only `;` left is tmux's own command separator in the fixed template (`start-server \;
-      // set-option`), which is why banning the character outright would be the wrong assertion.
+      // The only `;` left are the shared PATH line's and tmux's own command separator in the fixed
+      // template (`start-server \; set-option`), which is why banning the character outright would
+      // be the wrong assertion.
       expect(
-        command.replaceAll(r'\;', ''),
+        command.substring(tmuxPath.length).replaceAll(r'\;', ''),
         isNot(contains(';')),
         reason: 'no semicolon may come from the name',
       );
