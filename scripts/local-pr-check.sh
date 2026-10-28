@@ -117,14 +117,28 @@ run_secret_scan() {
   if command -v gitleaks >/dev/null 2>&1; then
     cmd=(gitleaks)
   elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    cmd=(docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:latest)
+    # Both mounted at their own paths. In a linked worktree `.git` is a file naming the main
+    # repository's git directory; with only the worktree mounted, gitleaks found no repository,
+    # scanned 0 commits and still reported "no leaks found".
+    local common
+    common="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+    cmd=(docker run --rm -v "$PWD:$PWD" -v "$common:$common:ro" -w "$PWD"
+      zricethezav/gitleaks:latest)
   else
     echo "WARNING: neither gitleaks nor a working docker found — the secret gate was NOT run." >&2
     echo "         CI will still run it over every ref. Install gitleaks to catch this locally." >&2
     return 0
   fi
   echo "Scanning every ref for committed secrets"
-  "${cmd[@]}" git --log-opts="--all" --redact --no-banner --no-color .
+  local log status=0
+  log="$("${cmd[@]}" git --log-opts="--all" --redact --no-banner --no-color . 2>&1)" || status=$?
+  printf '%s\n' "$log"
+  # A scan that could not read the history is not a clean scan.
+  if grep -q ' 0 commits scanned' <<<"$log"; then
+    echo "The secret scan read no commits, so it checked nothing." >&2
+    return 1
+  fi
+  return "$status"
 }
 
 run_secret_scan
