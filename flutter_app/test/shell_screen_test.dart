@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/data/term/tmux_bootstrap.dart' show tmuxSessionUnknownMarker;
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_commands.dart' show tmuxCheckCommand;
@@ -856,7 +857,7 @@ void main() {
     );
     late Completer<void> gate;
     transport.execAnswers[tmuxCheckCommand] = 'yes';
-    transport.execAnswers['has-session'] = 'SSH Error: connection refused';
+    transport.execAnswers[tmuxSessionUnknownMarker] = 'SSH Error: connection refused';
     final row = (await repo.getPersistentSessions()).single;
     late Future<void> pending;
     await tester.runAsync(() async {

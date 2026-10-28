@@ -4,6 +4,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
+import '../../data/remote_commands.dart' show hasUnixShell;
 import '../../data/remote_models.dart';
 import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/ssh/ssh_transport.dart';
@@ -75,6 +76,10 @@ class ServersViewModel extends ChangeNotifier {
 
   HostSort get hostSort => _app.hostSort;
   Future<void> updateHostSort(HostSort sort) => _app.updateHostSort(sort);
+
+  /// False for a host already known to run Windows, which has no tmux to attach. A host not yet
+  /// probed counts as Unix, as Kotlin's blank `knownOs` does.
+  bool hasKnownUnixShell(Server server) => hasUnixShell(_app.osForServer(server.id));
 
   /// When [serverId] last answered, for an offline host's "Last seen" line. See
   /// [AppState.lastSeenAt].

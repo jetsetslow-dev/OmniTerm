@@ -217,6 +217,9 @@ class ShellViewModel extends ChangeNotifier {
                 name,
                 historyLimit: preferences.terminalScrollbackLimit,
                 controlMode: session.controlMode,
+                adopted: _saved.any(
+                  (row) => row.serverId == session.serverId && row.tmuxName == name && row.adopted,
+                ),
               ),
             ),
           ),
@@ -1082,7 +1085,12 @@ class ShellViewModel extends ChangeNotifier {
       // recreating an absent session here would disguise data loss as a successful recovery.
       return (
         existing,
-        tmuxResumeCommand(existing, historyLimit: scrollback, controlMode: controlMode),
+        tmuxResumeCommand(
+          existing,
+          historyLimit: scrollback,
+          controlMode: controlMode,
+          adopted: rows.any((row) => row.tmuxName == existing && row.adopted),
+        ),
       );
     }
 
@@ -1885,6 +1893,110 @@ class ShellViewModel extends ChangeNotifier {
     } catch (error) {
       return TmuxUnreachable('$error');
     }
+  }
+
+  // ── a host's own tmux sessions ──────────────────────────────────────────────
+
+  /// The host whose own tmux sessions the Attach dialog lists, while it is open.
+  Server? get tmuxAttachServer => _tmuxAttachServer;
+  Server? _tmuxAttachServer;
+
+  HostTmuxListing get tmuxAttachListing => _tmuxAttachListing;
+  HostTmuxListing _tmuxAttachListing = const HostTmuxListing();
+
+  /// Bumped by each listing and by closing the dialog, so a late answer is dropped.
+  int _tmuxAttachRun = 0;
+
+  /// Hosts ⋮ › Attach existing tmux…: lists the tmux sessions running on [server].
+  void openAttachTmux(Server server) {
+    _tmuxAttachServer = server;
+    _tmuxAttachListing = const HostTmuxListing();
+    unawaited(refreshAttachTmux());
+  }
+
+  Future<void> refreshAttachTmux() async {
+    final server = _tmuxAttachServer;
+    if (server == null) return;
+    final run = ++_tmuxAttachRun;
+    _tmuxAttachListing = HostTmuxListing(sessions: _tmuxAttachListing.sessions);
+    _safeNotify();
+    final listing = await _listHostTmux(server);
+    if (run != _tmuxAttachRun || _tmuxAttachServer?.id != server.id) return;
+    _tmuxAttachListing = listing;
+    _safeNotify();
+  }
+
+  Future<HostTmuxListing> _listHostTmux(Server server) async {
+    final ssh = transport;
+    if (ssh == null) {
+      return const HostTmuxListing(loading: false, error: 'No SSH transport is available.');
+    }
+    if (!await _hasUnixShell(server)) {
+      return HostTmuxListing(loading: false, error: needsUnixShell('tmux'));
+    }
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      final output = await ssh.exec(creds, tmuxListSessionsCommand);
+      if (output.startsWith('SSH Error')) {
+        return HostTmuxListing(loading: false, error: output.trim());
+      }
+      return HostTmuxListing(loading: false, sessions: parseTmuxSessions(output));
+    } catch (error) {
+      return HostTmuxListing(loading: false, error: '$error');
+    }
+  }
+
+  void dismissAttachTmux() {
+    _tmuxAttachRun++;
+    _tmuxAttachServer = null;
+    _tmuxAttachListing = const HostTmuxListing();
+    _safeNotify();
+  }
+
+  /// Whether tmux session [name] on [serverId] is open in a tab here.
+  bool isTmuxSessionOpen(int serverId, String name) =>
+      _sessions.any((session) => session.serverId == serverId && session.tmuxName == name);
+
+  /// Attaches to [session], running on the Attach dialog's host, by its own name: the same as
+  /// `tmux attach -t name`, so every client shows the same window. One open here already is
+  /// switched to and one saved here resumes; any other is saved as adopted first, keeping the
+  /// user's options, so it is offered again like OmniTerm's own. Terminate here ends it on the
+  /// server, as it does any persistent session. Kotlin's `attachHostTmuxSession`.
+  Future<void> attachHostTmuxSession(RemoteTmuxSession session) async {
+    final server = _tmuxAttachServer;
+    if (server == null || !isAttachableTmuxName(session.name)) return;
+    dismissAttachTmux();
+    _app.selectedServerId = server.id;
+    final open = _sessions
+        .where((s) => s.serverId == server.id && s.tmuxName == session.name)
+        .firstOrNull;
+    if (open != null) {
+      _selectWithoutValidation(open);
+      await _validateExistingTmux(open);
+      return;
+    }
+    if (!_saved.any((row) => row.serverId == server.id && row.tmuxName == session.name)) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _app.repository.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: session.name,
+          serverId: server.id,
+          serverName: server.name,
+          createdAt: session.createdAtMs > 0 ? session.createdAtMs : now,
+          backgroundedAt: now,
+          adopted: const Value(true),
+        ),
+      );
+      await _reloadSaved();
+    }
+    final row = _saved
+        .where((row) => row.serverId == server.id && row.tmuxName == session.name)
+        .firstOrNull;
+    if (row != null) await resume(row);
   }
 
   /// Every tmux session on the servers of [serverIds]: the persistent sessions open here plus the

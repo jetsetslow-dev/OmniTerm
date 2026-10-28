@@ -16,6 +16,7 @@ import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/host_status_probe.dart';
 import 'package:omniterm/ui/view_model/network_view_model.dart';
 import 'package:omniterm/ui/view_model/servers_view_model.dart';
+import 'package:omniterm/ui/view_model/shell_view_model.dart';
 import 'package:provider/provider.dart';
 
 import 'network_view_model_test.dart' show FakeDeviceCommands;
@@ -112,6 +113,7 @@ void main() {
     WidgetTester tester, {
     HostStatusProbe? hostProbe,
     NetworkViewModel? network,
+    ShellViewModel? shell,
     bool settle = true,
   }) async {
     await app.start();
@@ -126,7 +128,7 @@ void main() {
           supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: Scaffold(
-            body: ServersScreen(hostProbe: hostProbe, network: network),
+            body: ServersScreen(hostProbe: hostProbe, network: network, shell: shell),
           ),
         ),
       ),
@@ -299,6 +301,36 @@ void main() {
 
       expect(hosts.deletes, [('$nas,$web', false)]);
     });
+  });
+
+  testWidgets('Attach existing tmux… is offered on hosts that can have tmux, while online', (
+    tester,
+  ) async {
+    final shell = ShellViewModel(app);
+    addTearDown(shell.dispose);
+    final up = await repo.insertServer(server(name: 'nas', status: 'online'));
+    final down = await repo.insertServer(server(name: 'old'));
+    final windows = await repo.insertServer(server(name: 'win', status: 'online'));
+    app.recordOsForServer(windows, 'Windows');
+    await pump(tester, shell: shell);
+
+    /// Whether the host's ⋮ menu has the entry, and whether it can be tapped; null when absent.
+    Future<bool?> attachIn(int id) async {
+      await tester.tap(find.byKey(ValueKey('servers.card.$id.actions')));
+      await tester.pumpAndSettle();
+      final found = find.byKey(const ValueKey('servers.action.attachTmux'));
+      final enabled = found.evaluate().isEmpty
+          ? null
+          : tester.widget<SimpleDialogOption>(found).onPressed != null;
+      if (enabled != null) expect(find.text('Attach existing tmux…'), findsOneWidget);
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pumpAndSettle();
+      return enabled;
+    }
+
+    expect(await attachIn(up), isTrue);
+    expect(await attachIn(down), isFalse, reason: 'listed only while it answers');
+    expect(await attachIn(windows), isNull, reason: 'Windows has no tmux: absent, not refused');
   });
 
   testWidgets('an empty fleet shows Kotlin\'s first-run checklist and Add Host Server', (

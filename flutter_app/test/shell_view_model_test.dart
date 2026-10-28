@@ -7,7 +7,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
-import 'package:omniterm/data/remote_commands.dart' show tmuxCheckCommand;
+import 'package:omniterm/data/remote_commands.dart' show needsUnixShell, tmuxCheckCommand;
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/data/ssh/ssh_tunnel_manager.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
@@ -376,7 +376,7 @@ void main() {
       final session = vm.current!;
       final gate = Completer<void>();
       transport.execGate = gate;
-      transport.execAnswers['has-session'] = 'SSH Error: connection refused';
+      transport.execAnswers[tmuxSessionUnknownMarker] = 'SSH Error: connection refused';
       vm.select(session.id);
       expect(vm.isConnecting, isTrue);
       gate.complete();
@@ -399,7 +399,7 @@ void main() {
       final session = vm.current!;
       final gate = Completer<void>();
       transport.execGate = gate;
-      transport.execAnswers['has-session'] = 'SSH Error: connection refused';
+      transport.execAnswers[tmuxSessionUnknownMarker] = 'SSH Error: connection refused';
       vm.select(session.id);
       expect(vm.isConnecting, isTrue);
       await transport.opened.single.dropConnection();
@@ -422,7 +422,7 @@ void main() {
       await start();
       await vm.connect(vm.server!);
       final session = vm.current!;
-      transport.execAnswers['has-session'] = tmuxSessionAbsentMarker;
+      transport.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionAbsentMarker;
       vm.select(session.id);
       await until(() => !vm.isConnecting);
       expect(vm.error, contains('no empty replacement'));
@@ -437,7 +437,7 @@ void main() {
       await start();
       await vm.connect(vm.server!);
       final session = vm.current!;
-      transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionPresentMarker;
+      transport.execAnswers[tmuxSessionProbeCommand(session.tmuxName!)] = tmuxSessionPresentMarker;
       await transport.opened.single.dropConnection();
       await until(() => transport.opened.length == 2 && session.isOpen);
       final command = transport.opened.last.writes.map(utf8.decode).join();
@@ -452,7 +452,7 @@ void main() {
       await start();
       await vm.connect(vm.server!);
       final session = vm.current!;
-      transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionAbsentMarker;
+      transport.execAnswers[tmuxSessionProbeCommand(session.tmuxName!)] = tmuxSessionAbsentMarker;
       await transport.opened.single.dropConnection();
       await until(() => session.reconnectError != null);
       expect(session.reconnectError, contains('no longer exists'));
@@ -466,7 +466,7 @@ void main() {
       await start();
       await vm.connect(vm.server!, controlMode: true);
       final session = vm.current!;
-      transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionPresentMarker;
+      transport.execAnswers[tmuxSessionProbeCommand(session.tmuxName!)] = tmuxSessionPresentMarker;
       transport.opened.single.emit('%exit detached\r\n');
       await until(() => session.endReason != ShellSessionEnd.open);
       expect(session.reconnecting, isTrue);
@@ -749,7 +749,7 @@ void main() {
       );
       final row = (await repo.getPersistentSessions()).single;
       transport.execAnswers[tmuxCheckCommand] = 'yes';
-      transport.execAnswers['has-session'] = tmuxSessionPresentMarker;
+      transport.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionPresentMarker;
       vm.useControlMode = true;
       await vm.resumeIntoSplitPane(row, 2);
       expect(
@@ -758,7 +758,7 @@ void main() {
         reason: 'an explicit saved target overrides only the default for new terminals',
       );
       expect(vm.splitSecondSession!.controlMode, isTrue);
-      expect(transport.commands.any((command) => command.contains('has-session')), isTrue);
+      expect(transport.commands, contains(tmuxSessionProbeCommand(row.tmuxName)));
       expect((await repo.getServerById(host.id))!.persistentSession, isFalse);
     });
 
@@ -1455,12 +1455,12 @@ void main() {
 
       await vm.connect(host);
       final name = (await repo.getPersistentSessions()).single.tmuxName;
-      transport.execAnswers['has-session -t $name'] = tmuxSessionPresentMarker;
+      transport.execAnswers[tmuxSessionProbeCommand(name)] = tmuxSessionPresentMarker;
 
       await vm.connect(host);
       final second = sent(transport);
 
-      expect(second, contains('has-session -t $name'));
+      expect(second, contains('grep -qxF -- $name && '));
       expect(second, contains('attach-session -t $name'));
       expect(second, isNot(contains('new-session -d -s $name')));
       expect(
@@ -1597,7 +1597,7 @@ void main() {
         await vm.connect((await repo.getAllServers()).single);
         final session = vm.current!;
         transport.execAnswers['kill-session'] = '';
-        transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionAbsentMarker;
+        transport.execAnswers[tmuxSessionProbeCommand(session.tmuxName!)] = tmuxSessionAbsentMarker;
         await vm.terminate(session);
         expect(await repo.getPersistentSessions(), isEmpty);
         expect(vm.resumableSessions, isEmpty);
@@ -1614,7 +1614,7 @@ void main() {
       await vm.connect((await repo.getAllServers()).single);
       final session = vm.current!;
       transport.execAnswers['kill-session'] = '';
-      transport.execAnswers['has-session -t ${session.tmuxName}'] = 'SSH Error: timed out';
+      transport.execAnswers[tmuxSessionProbeCommand(session.tmuxName!)] = 'SSH Error: timed out';
       await vm.terminate(session);
       expect((await repo.getPersistentSessions()).single.tmuxName, session.tmuxName);
       expect(vm.error, contains('could not be confirmed stopped'));
@@ -1635,7 +1635,7 @@ void main() {
       test('a session tmux confirms gone is forgotten', () async {
         final (vm, transport, row) = await leftRunning();
         transport.execAnswers['kill-session'] = '';
-        transport.execAnswers['has-session -t ${row.tmuxName}'] = tmuxSessionAbsentMarker;
+        transport.execAnswers[tmuxSessionProbeCommand(row.tmuxName)] = tmuxSessionAbsentMarker;
 
         expect(await vm.endSavedSession(row), isNull);
         expect(await repo.getPersistentSessions(), isEmpty);
@@ -1656,7 +1656,7 @@ void main() {
       test('a session tmux still reports is kept', () async {
         final (vm, transport, row) = await leftRunning();
         transport.execAnswers['kill-session'] = '';
-        transport.execAnswers['has-session -t ${row.tmuxName}'] = tmuxSessionPresentMarker;
+        transport.execAnswers[tmuxSessionProbeCommand(row.tmuxName)] = tmuxSessionPresentMarker;
 
         expect(await vm.endSavedSession(row), contains('tmux did not confirm'));
         expect(await repo.getPersistentSessions(), hasLength(1));
@@ -1747,7 +1747,7 @@ void main() {
         final host = await hostInUse();
         final names = vm.tmuxSessionsOnHosts({host.id}).map((s) => s.tmuxName).toList();
         ssh.execAnswers['kill-session'] = '';
-        ssh.execAnswers['has-session'] = tmuxSessionAbsentMarker;
+        ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionAbsentMarker;
 
         await servers.deleteServer(host.id, endTmuxSessions: true);
 
@@ -1761,7 +1761,7 @@ void main() {
       test('a session tmux will not confirm gone is reported on the Shell tab', () async {
         final host = await hostInUse();
         ssh.execAnswers['kill-session'] = '';
-        ssh.execAnswers['has-session'] = tmuxSessionPresentMarker;
+        ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionPresentMarker;
 
         await servers.deleteServer(host.id, endTmuxSessions: true);
 
@@ -1818,7 +1818,7 @@ void main() {
         }
         await Future<void>.delayed(Duration.zero);
         ssh.execAnswers['kill-session'] = '';
-        ssh.execAnswers['has-session'] = tmuxSessionPresentMarker;
+        ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionPresentMarker;
 
         expect(await servers.reconcileHostLimit({keep}, endTmuxSessions: true), 1);
 
@@ -1832,6 +1832,119 @@ void main() {
           'Hosts removed locally, but at least one remote tmux session could not be confirmed '
           'stopped.',
         );
+      });
+    });
+
+    group('attaching a session already running on the host', () {
+      // Kotlin's `AttachExistingTmuxRobolectricTest`: a session found on the host is joined by its
+      // own name, as `tmux attach -t name` does, and saved so it is offered again.
+      const listing = '1700000100 0 3 main\n1700000000 2 1 my project\n';
+
+      Future<void> loaded() async {
+        await Future<void>(() async {
+          while (vm.tmuxAttachListing.loading) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        }).timeout(const Duration(seconds: 5));
+      }
+
+      Future<Server> listed() async {
+        vm = await start();
+        await repo.insertServer(server(name: 'a'));
+        await Future<void>.delayed(Duration.zero);
+        final host = (await repo.getAllServers()).single;
+        transport.execAnswers[tmuxListSessionsCommand] = listing;
+        transport.execAnswers[tmuxSessionProbeCommand('main')] = tmuxSessionPresentMarker;
+        vm.openAttachTmux(host);
+        await loaded();
+        return host;
+      }
+
+      RemoteTmuxSession named(String name) =>
+          vm.tmuxAttachListing.sessions!.singleWhere((s) => s.name == name);
+
+      test('the dialog lists what is running on the host, oldest first', () async {
+        await listed();
+        expect(vm.tmuxAttachListing.sessions!.map((s) => s.name), ['my project', 'main']);
+        expect(vm.tmuxAttachListing.error, isNull);
+
+        transport.execAnswers[tmuxListSessionsCommand] = '$tmuxMissingMarker\n';
+        await vm.refreshAttachTmux();
+        expect(vm.tmuxAttachListing.loading, isFalse);
+        expect(vm.tmuxAttachListing.sessions, isNull, reason: 'no tmux on the host');
+      });
+
+      test('a Windows host is told it has no tmux, without asking it for sessions', () async {
+        vm = await start();
+        await repo.insertServer(server(name: 'win'));
+        await Future<void>.delayed(Duration.zero);
+        final host = (await repo.getAllServers()).single;
+        app.recordOsForServer(host.id, 'Windows');
+
+        vm.openAttachTmux(host);
+        await loaded();
+
+        expect(vm.tmuxAttachListing.error, needsUnixShell('tmux'));
+        expect(transport.commands, isNot(contains(tmuxListSessionsCommand)));
+      });
+
+      test('attaching joins it by its own name and leaves its options alone', () async {
+        final host = await listed();
+        final main = named('main');
+
+        await vm.attachHostTmuxSession(main);
+
+        expect(vm.tmuxAttachServer, isNull, reason: 'the dialog closes');
+        final saved = (await repo.getPersistentSessions()).single;
+        expect((saved.serverId, saved.tmuxName), (host.id, 'main'));
+        expect(saved.adopted, isTrue, reason: 'attached, not created by OmniTerm');
+        expect(saved.createdAt, main.createdAtMs);
+        final attach = sent(transport);
+        expect(attach, contains('grep -qxF -- main && exec tmux attach-session -t main'));
+        expect(attach, isNot(contains('set-option')), reason: "the user's other clients share it");
+        expect(vm.current?.tmuxName, 'main');
+        expect(vm.isTmuxSessionOpen(host.id, 'main'), isTrue);
+        expect(app.selectedServerId, host.id);
+      });
+
+      test('a reconnect still leaves its options alone', () async {
+        await listed();
+        await vm.attachHostTmuxSession(named('main'));
+        final session = vm.current!;
+
+        await transport.opened.single.dropConnection();
+        await Future<void>(() async {
+          while (transport.opened.length < 2 || !session.isOpen) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        }).timeout(const Duration(seconds: 5));
+
+        final again = sent(transport);
+        expect(again, contains('exec tmux attach-session -t main'));
+        expect(again, isNot(contains('set-option')));
+      });
+
+      test('one open here already is switched to, not opened twice', () async {
+        final host = await listed();
+        await vm.attachHostTmuxSession(named('main'));
+        final first = vm.current;
+
+        vm.openAttachTmux(host);
+        await loaded();
+        await vm.attachHostTmuxSession(named('main'));
+
+        expect(transport.opened, hasLength(1));
+        expect(vm.current, same(first));
+        expect(await repo.getPersistentSessions(), hasLength(1));
+      });
+
+      test('a name the shell would change is not attached', () async {
+        await listed();
+
+        await vm.attachHostTmuxSession(named('my project'));
+
+        expect(await repo.getPersistentSessions(), isEmpty);
+        expect(transport.opened, isEmpty);
       });
     });
 
@@ -1916,7 +2029,7 @@ void main() {
         ),
       );
       await vm.refreshResumable();
-      transport.execAnswers['has-session -t omniterm-1-older'] = tmuxSessionPresentMarker;
+      transport.execAnswers[tmuxSessionProbeCommand('omniterm-1-older')] = tmuxSessionPresentMarker;
 
       await vm.resume(vm.resumableSessions.firstWhere((r) => r.tmuxName == 'omniterm-1-older'));
 
@@ -1937,7 +2050,7 @@ void main() {
       );
       await start();
       await vm.refreshResumable();
-      transport.execAnswers['has-session -t omniterm-kept-default-changed'] =
+      transport.execAnswers[tmuxSessionProbeCommand('omniterm-kept-default-changed')] =
           tmuxSessionPresentMarker;
       vm.useControlMode = true;
       await vm.resume(vm.resumableSessions.single);
@@ -1998,7 +2111,7 @@ void main() {
         );
         final transport = FakeShellTransport()
           ..execAnswers[tmuxCheckCommand] = 'yes'
-          ..execAnswers['has-session -t omniterm-1-kept'] = 'SSH Error: No route to host';
+          ..execAnswers[tmuxSessionProbeCommand('omniterm-1-kept')] = 'SSH Error: No route to host';
         final model = await start(ssh: transport);
         await model.refreshResumable();
 
@@ -2025,7 +2138,7 @@ void main() {
         );
         final transport = FakeShellTransport()
           ..execAnswers[tmuxCheckCommand] = 'yes'
-          ..execAnswers['has-session -t omniterm-1-gone'] = tmuxSessionAbsentMarker;
+          ..execAnswers[tmuxSessionProbeCommand('omniterm-1-gone')] = tmuxSessionAbsentMarker;
         final model = await start(ssh: transport);
         await model.refreshResumable();
 
@@ -2093,7 +2206,7 @@ void main() {
       final ssh = FakeShellTransport()
         ..execAnswers[tmuxCheckCommand] = 'yes'
         ..execAnswers['kill-session'] = 'ok'
-        ..execAnswers['has-session'] = tmuxSessionAbsentMarker;
+        ..execAnswers[tmuxSessionUnknownMarker] = tmuxSessionAbsentMarker;
       await repo.insertServer(persistent(name: 'alpha'));
       final vm = await start(ssh: ssh);
       await vm.connect(vm.connectableServers.single);
@@ -2120,7 +2233,7 @@ void main() {
       final ssh = FakeShellTransport()
         ..execAnswers[tmuxCheckCommand] = 'yes'
         ..execAnswers['kill-session'] = 'ok'
-        ..execAnswers['has-session'] = tmuxSessionAbsentMarker;
+        ..execAnswers[tmuxSessionUnknownMarker] = tmuxSessionAbsentMarker;
       await repo.insertServer(persistent(name: 'alpha'));
       final vm = await start(ssh: ssh);
       await vm.connect(vm.connectableServers.single);
@@ -2255,7 +2368,7 @@ void main() {
 
       await vm.connect(host);
       final name = (await repo.getPersistentSessions()).single.tmuxName;
-      ssh.execAnswers['has-session -t $name'] = tmuxSessionPresentMarker;
+      ssh.execAnswers[tmuxSessionProbeCommand(name)] = tmuxSessionPresentMarker;
       await vm.connect(host);
 
       expect(

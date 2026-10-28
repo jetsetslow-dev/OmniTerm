@@ -7,7 +7,7 @@ library;
 
 import 'dart:convert';
 import 'kotlin_strings.dart';
-import 'term/tmux_bootstrap.dart' show tmuxPath;
+import 'term/tmux_bootstrap.dart' show tmuxPane, tmuxPath, tmuxSafeName;
 
 const _windowsShellErrors = [
   'not recognized',
@@ -1400,17 +1400,6 @@ String tmuxInstallCommand() =>
     "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; "
     "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }";
 
-/// The tmux session name reduced to what is safe to interpolate into a shell command.
-///
-/// Ported from the filter in `RemoteCommands.tmuxCaptureHistoryCommand` (`data/RemoteParsers.kt:281`).
-/// The name travels inside a command string, so anything outside this set is dropped rather than
-/// escaped; the fallback keeps a name that reduces to nothing from producing a bare `-t ` and a
-/// syntax error.
-String tmuxSafeSessionName(String name) {
-  final safe = name.split('').where((c) => RegExp(r'[0-9A-Za-z-]').hasMatch(c)).join();
-  return safe.isEmpty ? 'omniterm' : safe;
-}
-
 /// Reads a persistent pane's own scrollback — or nothing at all while a TUI owns the pane.
 ///
 /// Active pane id of [name]'s current window, e.g. `%0`.
@@ -1420,12 +1409,12 @@ String tmuxSafeSessionName(String name) {
 /// to be answerable while the control stream is mid-burst, and an exec channel cannot be starved by
 /// pane output the way the control conversation can.
 String tmuxActivePaneQuery(String name) =>
-    "${tmuxPath}tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{pane_id}' 2>/dev/null || true";
+    "${tmuxPath}tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{pane_id}' 2>/dev/null || true";
 
 /// Whether the pane itself owns an alternate screen, rather than the tmux client around it.
 /// Regular tmux attach keeps the client's alternate screen active even at a plain shell prompt.
 String tmuxAlternateOnQuery(String name) =>
-    "${tmuxPath}tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{alternate_on}' 2>/dev/null || true";
+    "${tmuxPath}tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{alternate_on}' 2>/dev/null || true";
 
 /// Ported from `RemoteCommands.tmuxCaptureHistoryCommand` (`data/RemoteParsers.kt:280`).
 ///
@@ -1440,7 +1429,7 @@ String tmuxAlternateOnQuery(String name) =>
 /// replace real history with `vim` repaints. Producing **empty output** in that case is deliberate:
 /// the caller keeps its dirty flag armed and retries once the TUI exits.
 String tmuxCaptureHistoryCommand(String name, int maxLines) {
-  final safe = tmuxSafeSessionName(name);
+  final safe = tmuxPane(tmuxSafeName(name));
   final lines = maxLines.clamp(1000, 50000);
   return '${tmuxPath}if [ "\$(tmux display-message -p -t $safe \'#{alternate_on}\' 2>/dev/null)" = 1 ]; '
       'then :; else tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null; fi || true';

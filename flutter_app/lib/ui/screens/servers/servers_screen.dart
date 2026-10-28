@@ -28,6 +28,7 @@ import '../../widgets/omni_confirm.dart';
 import '../../widgets/license_gate.dart';
 import '../../widgets/wake_on_lan.dart';
 import '../monitor/system_specs_view.dart';
+import 'attach_tmux_dialog.dart';
 import 'host_check_dialog.dart';
 import 'server_form_sheet.dart';
 import 'server_form_state.dart';
@@ -1021,6 +1022,14 @@ class _ServerCard extends StatelessWidget {
           _DialogAction(value: 'copySsh', icon: Icons.content_paste, label: 'Copy SSH command'),
           if (shell != null)
             _DialogAction(value: 'shell', icon: Icons.terminal, label: 'Open terminal console'),
+          // A Windows host has no tmux: absent rather than shown and refused.
+          if (shell != null && vm.hasKnownUnixShell(server))
+            _DialogAction(
+              value: 'attachTmux',
+              icon: Icons.terminal,
+              label: 'Attach existing tmux…',
+              enabled: server.status == 'online',
+            ),
           if (network != null) ...[
             _DialogAction(value: 'ping', icon: Icons.network_check, label: 'Ping from this device'),
             _DialogAction(
@@ -1065,6 +1074,8 @@ class _ServerCard extends StatelessWidget {
         if (context.mounted) await copyWithConfirmation(context, command);
       case 'shell':
         await _connect(context);
+      case 'attachTmux':
+        await showAttachTmuxDialog(context, shell!, server, navigation: navigation);
       case 'ping':
         await showHostCheckDialog(context, network!, server, HostCheck.ping);
       case 'traceroute':

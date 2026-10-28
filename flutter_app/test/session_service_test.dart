@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:drift/native.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/data/term/tmux_bootstrap.dart' show tmuxSessionUnknownMarker;
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/platform/secret_store.dart';
@@ -390,7 +391,7 @@ void main() {
       await boot();
       await vm.connect(vm.server!);
       final session = vm.current!;
-      transport.execAnswers['has-session'] = 'OMNITERM_TMUX_PRESENT';
+      transport.execAnswers[tmuxSessionUnknownMarker] = 'OMNITERM_TMUX_PRESENT';
       final locked = Completer<void>();
       final release = Completer<void>();
       final holding = db.transaction(() async {

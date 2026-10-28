@@ -3,6 +3,18 @@
 library;
 
 import '../data/app_database.dart';
+import '../data/term/tmux_bootstrap.dart' show RemoteTmuxSession;
+
+/// What the Attach dialog found running on its host. Kotlin's `HostTmuxListing`.
+class HostTmuxListing {
+  const HostTmuxListing({this.loading = true, this.sessions = const [], this.error});
+
+  final bool loading;
+
+  /// The host's tmux sessions, oldest first; null when the host has no tmux.
+  final List<RemoteTmuxSession>? sessions;
+  final String? error;
+}
 
 /// How an attempt to end a tmux session on its server turned out.
 sealed class TmuxEndResult {

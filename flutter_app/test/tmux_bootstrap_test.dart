@@ -6,6 +6,7 @@ void main() {
     test('ordinary names pass through', () {
       expect(tmuxSafeName('omniterm-nas-1'), 'omniterm-nas-1');
       expect(tmuxSafeName('Web01'), 'Web01');
+      expect(tmuxSafeName('my_project'), 'my_project');
     });
 
     test('nothing that could end the command survives', () {
@@ -28,9 +29,100 @@ void main() {
       expect(tmuxSafeName('   '), 'omniterm');
     });
 
-    test('unicode is not a loophole', () {
-      expect(tmuxSafeName('naïve-héllo'), 'nave-hllo');
-      expect(tmuxSafeName('日本語'), 'omniterm');
+    test('letters in any script are kept, as Kotlin keeps them, and nothing else is', () {
+      // Kotlin's `isLetterOrDigit`. Their UTF-8 bytes are never ASCII, so none is shell syntax.
+      expect(tmuxSafeName('naïve-héllo'), 'naïve-héllo');
+      expect(tmuxSafeName('日本語'), '日本語');
+      expect(tmuxSafeName('ü\u00a0x\u200by'), 'üxy', reason: 'spaces and format marks go');
+      expect(tmuxSafeName('a😀b'), 'ab', reason: 'neither half of a surrogate pair is a letter');
+    });
+  });
+
+  group('isAttachableTmuxName', () {
+    // A session found on the host is attached by its own name, so only a name that survives
+    // [tmuxSafeName] unchanged and is not read as an option qualifies. Kotlin's test cases.
+    test('tmux default names and ordinary ones qualify', () {
+      for (final name in ['0', 'main', 'my_project', 'web-1']) {
+        expect(isAttachableTmuxName(name), isTrue, reason: name);
+      }
+    });
+
+    test('anything the shell or tmux would read differently does not', () {
+      for (final name in ['', '-x', 'two words', 'a;b', "it's", r'x$y']) {
+        expect(isAttachableTmuxName(name), isFalse, reason: name);
+      }
+    });
+  });
+
+  group('exact session names', () {
+    // `-t name` also matches a session whose name only starts with it, so once "0" has ended a check
+    // or kill would reach "01". Kotlin's `tmuxCommandsTargetExactlyTheNamedSession`.
+    const exact = "tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -qxF -- 0";
+
+    test('attaching, checking and ending all match the whole name', () {
+      expect(tmuxAttachCommand('0'), contains('$exact && '));
+      expect(tmuxControlAttachCommand('0'), contains('$exact && '));
+      expect(tmuxKillCommand('0'), '$tmuxPath$exact && tmux kill-session -t 0 2>/dev/null');
+      expect(tmuxSessionProbeCommand('0'), contains('elif $exact; then'));
+      for (final command in [
+        tmuxAttachCommand('0'),
+        tmuxKillCommand('0'),
+        tmuxSessionProbeCommand('0'),
+      ]) {
+        expect(command, isNot(contains('has-session')), reason: command);
+      }
+    });
+
+    test('a host without tmux is unknown, not a vanished session', () {
+      expect(
+        tmuxSessionProbeCommand('0'),
+        startsWith(
+          '${tmuxPath}if ! command -v tmux >/dev/null 2>&1; then echo $tmuxSessionUnknownMarker;',
+        ),
+      );
+    });
+  });
+
+  group('an attached session', () {
+    test('keeps its own options, which the user\'s other clients share', () {
+      for (final command in [
+        tmuxAttachCommand('main', adopted: true),
+        tmuxControlAttachCommand('main', adopted: true),
+        tmuxResumeCommand('main', adopted: true),
+        tmuxResumeCommand('main', adopted: true, controlMode: true),
+      ]) {
+        expect(command, isNot(contains('set-option')), reason: command);
+        expect(command, contains('grep -qxF -- main && exec tmux'));
+      }
+      expect(tmuxAttachCommand('omniterm-own'), contains('mouse off'));
+    });
+  });
+
+  group('listing the host\'s sessions', () {
+    test('oldest first, with names that may have spaces', () {
+      final sessions = parseTmuxSessions(
+        '1700000100 0 3 main\r\n1700000000 2 1 two words\r\n\r\n',
+      )!;
+      expect(sessions.map((s) => s.name), ['two words', 'main']);
+      expect(sessions[0].attachedClients, 2);
+      expect(sessions[1].windows, 3);
+      expect(sessions[1].createdAtMs, 1700000100000);
+    });
+
+    test('no tmux server is no sessions, and no tmux is null', () {
+      expect(parseTmuxSessions(''), isEmpty);
+      expect(parseTmuxSessions('$tmuxMissingMarker\n'), isNull);
+    });
+
+    test('the listing finds Homebrew tmux and never fails the exec', () {
+      expect(tmuxListSessionsCommand, startsWith(tmuxPath));
+      expect(
+        tmuxListSessionsCommand,
+        contains(
+          "tmux list-sessions -F '#{session_created} #{session_attached} #{session_windows} "
+          "#{session_name}' 2>/dev/null; true;",
+        ),
+      );
     });
   });
 
@@ -50,7 +142,7 @@ void main() {
     test('attaching checks the session is there first', () {
       final command = tmuxAttachCommand('nas-1');
 
-      expect(command, contains('has-session -t nas-1'));
+      expect(command, contains('grep -qxF -- nas-1 && '));
       expect(command, isNot(contains('new-session')));
     });
 
@@ -99,7 +191,7 @@ void main() {
     test('resuming never creates a replacement for missing work', () {
       final command = tmuxResumeCommand('nas-1');
 
-      expect(command, contains('has-session -t nas-1'));
+      expect(command, contains('grep -qxF -- nas-1 && '));
       expect(command, isNot(contains('new-session -d -s nas-1')));
       expect(command, contains('exec tmux attach-session -t nas-1'));
     });
@@ -117,7 +209,7 @@ void main() {
     test('resume sanitises the name too', () {
       final command = tmuxResumeCommand('evil; rm -rf ~');
       expect(command, isNot(contains('rm -rf')));
-      expect(command, contains('has-session -t evilrm-rf'));
+      expect(command, contains('grep -qxF -- evilrm-rf && '));
       expect(command, isNot(contains('new-session -d -s evilrm-rf')));
     });
 
@@ -147,7 +239,7 @@ void main() {
     test('resuming in control mode never creates a vanished session', () {
       final command = tmuxResumeCommand('nas-1', controlMode: true);
 
-      expect(command, contains('has-session -t nas-1'));
+      expect(command, contains('grep -qxF -- nas-1 && '));
       expect(command, isNot(contains('new-session -d -s nas-1')));
       expect(command, contains('exec tmux -C attach-session -t nas-1'));
     });
