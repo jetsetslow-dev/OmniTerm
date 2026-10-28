@@ -268,23 +268,21 @@ Future<Map<String, String>> readSystemArpTable() async {
   return result;
 }
 
-/// Sweeps a `/24` for hosts that answer on any of [ports].
+/// The [addresses] that answer on any of [ports], each with the ports that answered, in the order
+/// they finished.
 ///
 /// Concurrency is capped: 254 addresses times several ports each, all at once, exhausts the file
 /// descriptors of a mobile process and makes the sweep slower than doing it in batches.
-Future<List<ScannedHost>> sweepSubnet(
+Future<List<ScannedHost>> probeHosts(
   NetworkProbe probe,
-  String prefix, {
-  List<int> ports = const [22, 80, 443, 445, 3389, 5900, 8080],
+  List<String> addresses, {
+  required List<int> ports,
   int concurrency = 32,
   Duration timeout = const Duration(milliseconds: 400),
-  Future<Map<String, String>> Function()? arpReader,
   void Function(int done, int total)? onProgress,
 }) async {
-  final addresses = hostsInSubnet(prefix);
   final found = <ScannedHost>[];
   var done = 0;
-
   final queue = List<String>.from(addresses);
   Future<void> worker() async {
     while (queue.isNotEmpty) {
@@ -305,6 +303,28 @@ Future<List<ScannedHost>> sweepSubnet(
   }
 
   await Future.wait([for (var i = 0; i < concurrency; i++) worker()]);
+  return found;
+}
+
+/// Sweeps a `/24` for hosts that answer on any of [ports] ([probeHosts]), adding the neighbours the
+/// ARP table knows of.
+Future<List<ScannedHost>> sweepSubnet(
+  NetworkProbe probe,
+  String prefix, {
+  List<int> ports = const [22, 80, 443, 445, 3389, 5900, 8080],
+  int concurrency = 32,
+  Duration timeout = const Duration(milliseconds: 400),
+  Future<Map<String, String>> Function()? arpReader,
+  void Function(int done, int total)? onProgress,
+}) async {
+  final found = await probeHosts(
+    probe,
+    hostsInSubnet(prefix),
+    ports: ports,
+    concurrency: concurrency,
+    timeout: timeout,
+    onProgress: onProgress,
+  );
 
   final arp = await arpReader?.call() ?? const <String, String>{};
   final byAddress = {for (final host in found) host.address: host};

@@ -87,6 +87,7 @@ class SharesViewModel extends ChangeNotifier {
       anonymous: true,
       useHttps: false,
     );
+    _draftSeenOnlineAt = null;
     _error = null;
     unawaited(_loadProfiles());
     _safeNotify();
@@ -94,6 +95,7 @@ class SharesViewModel extends ChangeNotifier {
 
   void startEdit(NetworkShare share) {
     _draft = NetworkShareDraft.fromShare(share);
+    _draftSeenOnlineAt = null;
     _error = null;
     unawaited(_loadProfiles());
     _safeNotify();
@@ -131,6 +133,7 @@ class SharesViewModel extends ChangeNotifier {
 
   void cancelEdit() {
     _draft = null;
+    _draftSeenOnlineAt = null;
     _safeNotify();
   }
 
@@ -151,14 +154,16 @@ class SharesViewModel extends ChangeNotifier {
       // Shares" group, and the share points at it instead of holding the password itself.
       final newProfile = current.profileToCreate;
       final profileId = newProfile == null ? null : await _app.repository.insertProfile(newProfile);
+      final seenAt = _draftSeenOnlineAt;
       final share = current.toShare(
-        lastChecked: existing?.lastChecked ?? 0,
-        lastStatus: existing?.lastStatus ?? 'unknown',
+        lastChecked: existing?.lastChecked ?? seenAt ?? 0,
+        lastStatus: existing?.lastStatus ?? (seenAt == null ? 'unknown' : 'online'),
         createdProfileId: profileId,
       );
       await _app.repository.insertNetworkShare(share);
       if (profileId != null) await _loadProfiles();
       _draft = null;
+      _draftSeenOnlineAt = null;
       _status = 'Saved ${share.name}.';
       _error = null;
       _safeNotify();
@@ -290,18 +295,14 @@ class SharesViewModel extends ChangeNotifier {
     await _app.repository.insertSetting(shareScanProtocolsKey, encodeScanProtocols(_scanProtocols));
   }
 
-  /// Sweeps [cidr] for hosts offering the selected protocols.
+  /// Kotlin's `scanNetworkShares`: probes the hosts [input] names for the selected protocols.
   ///
-  /// A single /24. The sweep is 254 addresses times the chosen ports, which is already a lot of
-  /// sockets for a phone; a wider mask would promise a scan that should not be attempted.
-  Future<void> scanForShares(String cidr) async {
+  /// [input] is a `/24` subnet or one host ([shareScanTargets]). Blank means this device's own
+  /// network, and [lanTargets] supplies it: the hosts the shared LAN sweep found, or the whole /24.
+  Future<void> scanForShares(String input, {Future<List<String>> Function()? lanTargets}) async {
     if (_scanning) return;
-    final prefix = scanPrefixOf(cidr);
-    if (prefix == null) {
-      _scanStatus = 'Enter a subnet like 192.168.1.0/24.';
-      _safeNotify();
-      return;
-    }
+    final typed = input.trim();
+    final protocols = _scanProtocols.join(', ');
 
     final operationId =
         'share-scan-${DateTime.now().microsecondsSinceEpoch}-${_operationSequence++}';
@@ -319,14 +320,29 @@ class SharesViewModel extends ChangeNotifier {
     _scanDone = 0;
     _scanTotal = 0;
     _error = null;
-    _scanStatus = 'Scanning $prefix.0/24 for ${_scanProtocols.join(', ')}.';
+    _scanStatus = typed.isEmpty
+        ? 'Scanning LAN hosts, then probing $protocols.'
+        : 'Scanning share services for $protocols.';
     _safeNotify();
 
     try {
-      final hosts = await sweepSubnet(
+      final targets = typed.isEmpty
+          ? await lanTargets?.call() ?? const <String>[]
+          : shareScanTargets(typed);
+      if (_disposed) return;
+      if (targets.isEmpty) {
+        _scanStatus = 'Enter a /24 subnet like 192.168.1.0/24, or leave it blank on Wi-Fi/LAN.';
+        return;
+      }
+      _scanStatus = 'Scanning ${targets.length} host(s) for $protocols.';
+      _safeNotify();
+      // Kotlin's budget: a 700 ms connect per port, at most 64 at a time.
+      final hosts = await probeHosts(
         probe,
-        prefix,
+        targets,
         ports: portsForProtocols(_scanProtocols),
+        concurrency: 64,
+        timeout: const Duration(milliseconds: 700),
         onProgress: (done, total) {
           _scanDone = done;
           _scanTotal = total;
@@ -335,18 +351,37 @@ class SharesViewModel extends ChangeNotifier {
       );
       if (_disposed) return;
       _scanHits.addAll(hitsFromScan(hosts, _scanProtocols));
-      _scanStatus = _scanHits.isEmpty
-          ? 'No share services answered on $prefix.0/24.'
-          : 'Found ${_scanHits.length} share service(s).';
+      _scanStatus = 'Scan complete: ${_scanHits.length} candidate share service(s).';
       succeeded = true;
     } catch (e) {
-      _scanStatus = null;
-      _error = 'Scan failed: $e';
+      // Said in the scan dialog, where the user is looking; the tab's message card is behind it.
+      _scanStatus = 'Scan failed: $e';
     } finally {
       _scanning = false;
       if (notifications != null) {
         unawaited(notifications.finish(id: operationId, success: succeeded));
       }
+      _safeNotify();
+    }
+  }
+
+  /// What the scan dialog's "Subnet or host" field holds: Kotlin's `networkShareScanCidr`, kept
+  /// here so closing the dialog and opening it again finds the same input.
+  ///
+  /// Prefilled once from an address the user already saved, because the subnet they want is almost
+  /// always the one their existing shares are on. Left blank when there is nothing to infer from,
+  /// which scans this device's own network.
+  String scanInput = '';
+  bool _scanInputPrefilled = false;
+
+  /// Loads the protocol selection and prefills [scanInput]; called as the scan dialog opens.
+  Future<void> prepareScan() async {
+    await loadScanSettings();
+    if (_scanInputPrefilled || scanInput.isNotEmpty) return;
+    _scanInputPrefilled = true;
+    final prefix = _shares.map((s) => scanPrefixOf(s.address)).whereType<String>().firstOrNull;
+    if (prefix != null) {
+      scanInput = '$prefix.0/24';
       _safeNotify();
     }
   }
@@ -360,25 +395,43 @@ class SharesViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  /// Opens the add-share form prefilled from [hit].
+  /// Opens the add-share form prefilled from [hit]: Kotlin's `shareDraftFromScan`.
   ///
   /// The share **path and credentials are left blank on purpose**: a port probe says a service is
   /// listening, not what it exports or who may read it. Guessing either would produce a saved share
   /// that fails on first use with no clue why.
   void startAddFromScan(ShareScanHit hit) {
-    final protocol = ShareProtocol.fromId(hit.protocol);
-    // Kotlin's `shareDraftFromScan`: anonymous unless SSH, which has no anonymous mode, and HTTPS on
-    // the two TLS ports a WebDAV server answers on.
-    _draft = NetworkShareDraft(
-      name: hit.address,
-      protocol: protocol,
-      address: hit.address,
-      port: '${hit.port}',
-      anonymous: protocol != ShareProtocol.sftp,
-      useHttps: protocol == ShareProtocol.webdav && (hit.port == 443 || hit.port == 8443),
-    );
+    _draft = NetworkShareDraft.fromScan(hit);
+    _draftSeenOnlineAt = DateTime.now().millisecondsSinceEpoch;
     _error = null;
     unawaited(_loadProfiles());
+    _safeNotify();
+  }
+
+  /// When the open draft came from a scan hit, the time that hit answered. Kotlin's scan draft is
+  /// saved as seen online then, so the new card reads Available rather than Unknown.
+  int? _draftSeenOnlineAt;
+
+  /// Kotlin's `addNetworkShareFromScan`: saves [hit] as it stands, signed in as a guest.
+  ///
+  /// SMB and SFTP are refused here, as in Kotlin: SMB needs a share path and SFTP an account, so
+  /// the dialog opens the form for those instead.
+  Future<void> saveFromScan(ShareScanHit hit) async {
+    final protocol = ShareProtocol.fromId(hit.protocol);
+    if (protocol == ShareProtocol.smb || protocol == ShareProtocol.sftp) {
+      _scanStatus = '${hit.protocol} needs configuration before saving.';
+      _safeNotify();
+      return;
+    }
+    try {
+      final share = NetworkShareDraft.fromScan(
+        hit,
+      ).toShare(lastChecked: DateTime.now().millisecondsSinceEpoch, lastStatus: 'online');
+      await _app.repository.insertNetworkShare(share);
+      _scanHits.remove(hit);
+    } catch (e) {
+      _scanStatus = 'Save failed: $e';
+    }
     _safeNotify();
   }
 

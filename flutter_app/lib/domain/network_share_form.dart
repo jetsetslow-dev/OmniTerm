@@ -1,4 +1,5 @@
 import '../data/app_database.dart';
+import 'share_scan.dart';
 
 /// The protocols a saved share can speak, ported from `NetworkSharesTab` in `ui/SftpScreen.kt`.
 ///
@@ -55,6 +56,20 @@ class NetworkShareDraft {
     this.useHttps = true,
     this.notes = '',
   });
+
+  /// Kotlin's `shareDraftFromScan`: named after the hit, guest access unless SFTP (which has no
+  /// anonymous mode), and HTTPS on the two TLS ports a WebDAV server answers on.
+  factory NetworkShareDraft.fromScan(ShareScanHit hit) {
+    final protocol = ShareProtocol.fromId(hit.protocol);
+    return NetworkShareDraft(
+      name: hit.label,
+      protocol: protocol,
+      address: hit.address,
+      port: '${hit.port}',
+      anonymous: protocol != ShareProtocol.sftp,
+      useHttps: protocol == ShareProtocol.webdav && (hit.port == 443 || hit.port == 8443),
+    );
+  }
 
   factory NetworkShareDraft.fromShare(NetworkShare share) => NetworkShareDraft(
     id: share.id,

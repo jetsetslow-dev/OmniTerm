@@ -76,6 +76,31 @@ void main() {
     });
   });
 
+  group("Kotlin's scan targets for what the user typed", () {
+    test('a /24 subnet is its 254 hosts', () {
+      final targets = shareScanTargets(' 192.168.1.0/24 ');
+      expect(targets, hasLength(254));
+      expect(targets.first, '192.168.1.1');
+      expect(targets.last, '192.168.1.254');
+    });
+
+    test('without a mask it is one host, by address or name', () {
+      expect(shareScanTargets('nas.local'), ['nas.local']);
+      expect(shareScanTargets('192.168.1.20'), ['192.168.1.20']);
+    });
+
+    test('any other mask, or a malformed subnet, gives nothing to scan', () {
+      expect(shareScanTargets('10.0.0.0/16'), isEmpty);
+      expect(shareScanTargets('192.168.1/24'), isEmpty);
+      expect(shareScanTargets('999.168.1.0/24'), isEmpty);
+      expect(shareScanTargets('192.168.1.0/24/x'), isEmpty, reason: 'split at the first slash');
+    });
+
+    test('blank is left to the caller, which scans its own network', () {
+      expect(shareScanTargets('   '), isEmpty);
+    });
+  });
+
   group('turning a sweep into share hits', () {
     ScannedHost host(String address, List<int> ports) =>
         ScannedHost(address: address, latency: null, openPorts: ports);

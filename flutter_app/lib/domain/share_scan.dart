@@ -4,12 +4,13 @@
 /// `:1177`). Flutter's Shares tab could only add a share by typing its address, so a NAS had to be
 /// known before it could be saved — the discovery half of the feature was absent entirely.
 ///
-/// The sweep itself reuses `sweepSubnet` rather than repeating Kotlin's bespoke connect loop: it
+/// The probing itself reuses `probeHosts` rather than repeating Kotlin's bespoke connect loop: it
 /// already caps concurrency, applies a timeout and reports progress, and a second implementation of
 /// that would be a second place for those limits to drift.
 library;
 
 import '../data/network/network_probe.dart';
+import 'network_tools.dart';
 
 /// The protocols worth probing for, and the ports that mean each one is there.
 ///
@@ -80,6 +81,24 @@ String? scanPrefixOf(String input) {
     if (value == null || value < 0 || value > 255) return null;
   }
   return octets.take(3).join('.');
+}
+
+/// The addresses Kotlin's `expandScanTargets` probes for typed [input]: a `/24` subnet's 254 hosts,
+/// or, without a `/`, the one host named (an address or a name such as `nas.local`). Any other mask
+/// gives nothing, so the caller can say what it accepts.
+///
+/// A blank input is the caller's to resolve: it means this device's own network, found by the LAN
+/// sweep.
+List<String> shareScanTargets(String input) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return const [];
+  if (!trimmed.contains('/')) return [trimmed];
+  final slash = trimmed.indexOf('/');
+  final mask = trimmed.substring(slash + 1);
+  final octets = trimmed.substring(0, slash).split('.').map(int.tryParse).toList();
+  final valid = octets.length == 4 && octets.every((o) => o != null && o >= 0 && o <= 255);
+  if (!valid || int.tryParse(mask) != 24) return const [];
+  return hostsInSubnet(octets.take(3).join('.'));
 }
 
 /// One share service found on the network.

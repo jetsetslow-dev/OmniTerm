@@ -534,7 +534,7 @@ void main() {
       expect(vm.scanHits.single.protocol, 'SMB');
       expect(vm.scanHits.single.address, '192.168.1.20');
       expect(vm.scanning, isFalse);
-      expect(vm.scanStatus, contains('1 share service'));
+      expect(vm.scanStatus, 'Scan complete: 1 candidate share service(s).');
     });
 
     test('a quiet subnet says so rather than looking unfinished', () async {
@@ -543,7 +543,7 @@ void main() {
       await vm.scanForShares('192.168.1.0/24');
 
       expect(vm.scanHits, isEmpty);
-      expect(vm.scanStatus, contains('No share services'));
+      expect(vm.scanStatus, 'Scan complete: 0 candidate share service(s).');
     });
 
     test('only the selected protocols are probed', () async {
@@ -588,15 +588,82 @@ void main() {
       expect(vm.scanProtocols, ['SMB', 'NFS']);
     });
 
-    test('input that is not a subnet is refused without sweeping anything', () async {
-      await boot();
+    test('a name without a mask probes that one host, as Kotlin does', () async {
+      await boot(reachable: {'nas.local:445'});
 
       await vm.scanForShares('nas.local');
 
       final probe = vm.probe as _FakeProbe;
-      expect(probe.probed, isEmpty);
-      expect(vm.scanStatus, contains('192.168.1.0/24'));
+      expect(probe.probed.every((p) => p.startsWith('nas.local:')), isTrue);
+      expect(vm.scanHits.single.address, 'nas.local');
+    });
+
+    test('a mask other than /24 is refused without probing anything', () async {
+      await boot();
+
+      await vm.scanForShares('10.0.0.0/16');
+
+      expect((vm.probe as _FakeProbe).probed, isEmpty);
+      expect(
+        vm.scanStatus,
+        'Enter a /24 subnet like 192.168.1.0/24, or leave it blank on Wi-Fi/LAN.',
+      );
       expect(vm.scanning, isFalse);
+    });
+
+    test('a blank subnet probes the hosts the LAN sweep found', () async {
+      await boot(reachable: {'192.168.1.20:21'});
+
+      await vm.scanForShares(' ', lanTargets: () async => ['192.168.1.20', '192.168.1.30']);
+
+      final probed = (vm.probe as _FakeProbe).probed.map((p) => p.split(':').first).toSet();
+      expect(probed, {'192.168.1.20', '192.168.1.30'});
+      expect(vm.scanHits.single.protocol, 'FTP');
+    });
+
+    test('a blank subnet with no network to scan says what to enter', () async {
+      await boot();
+
+      await vm.scanForShares('', lanTargets: () async => const []);
+
+      expect(
+        vm.scanStatus,
+        'Enter a /24 subnet like 192.168.1.0/24, or leave it blank on Wi-Fi/LAN.',
+      );
+    });
+
+    test('a hit that needs no path or account is saved as a guest share, as found', () async {
+      await boot(reachable: {'192.168.1.20:21'});
+      await vm.scanForShares('192.168.1.20');
+
+      await vm.saveFromScan(vm.scanHits.single);
+
+      final saved = (await repo.getAllNetworkShares()).single;
+      expect(saved.name, 'FTP on 192.168.1.20:21');
+      expect(saved.anonymous, isTrue);
+      expect(saved.lastStatus, 'online', reason: 'the scan just found it answering');
+      expect(vm.scanHits, isEmpty, reason: 'a saved hit leaves the list');
+    });
+
+    test('SMB and SFTP hits are not saved without the form', () async {
+      await boot(reachable: {'192.168.1.20:445'});
+      await vm.scanForShares('192.168.1.20');
+
+      await vm.saveFromScan(vm.scanHits.single);
+
+      expect(await repo.getAllNetworkShares(), isEmpty);
+      expect(vm.scanStatus, 'SMB needs configuration before saving.');
+    });
+
+    test('a share configured from a hit is saved as seen online', () async {
+      await boot(reachable: {'192.168.1.20:445'});
+      await vm.scanForShares('192.168.1.20');
+      vm.startAddFromScan(vm.scanHits.single);
+      vm.updateDraft((d) => d.copyWith(sharePath: 'media'));
+
+      expect(await vm.saveDraft(), isTrue);
+
+      expect((await repo.getAllNetworkShares()).single.lastStatus, 'online');
     });
 
     test('a second scan while one is running is ignored', () async {
@@ -618,6 +685,7 @@ void main() {
 
       vm.startAddFromScan(vm.scanHits.single);
 
+      expect(vm.draft!.name, 'SMB on 192.168.1.20:445', reason: "Kotlin names it after the hit");
       expect(vm.draft!.address, '192.168.1.20');
       expect(vm.draft!.port, '445');
       expect(vm.draft!.protocol, ShareProtocol.smb);
@@ -684,13 +752,13 @@ void main() {
       await db.close();
     });
 
-    Future<void> pump(WidgetTester tester) async {
+    Future<void> pump(WidgetTester tester, {Set<String> reachable = const {}}) async {
       tester.view.physicalSize = const Size(1000, 2200);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
 
       await app.start();
-      probe = _FakeProbe();
+      probe = _FakeProbe(reachable: reachable);
       vm = SharesViewModel(app, probe: probe);
       sftp = SftpViewModel(app, shareClientFor: (_) async => _FakeShareClient());
       await tester.pumpWidget(
@@ -732,6 +800,75 @@ void main() {
       lastChecked: 0,
       lastStatus: 'unknown',
     );
+
+    Future<void> scan(WidgetTester tester, String input) async {
+      await tester.tap(find.byKey(const ValueKey('shares.scan.open')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('shares.form.scanInput')), input);
+      await tester.tap(find.byKey(const ValueKey('shares.scan.start')));
+      // Six ports on one host, each fake probe taking 5 ms.
+      for (var i = 0; i < 10 && vm.scanning; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets("scanning opens Kotlin's LAN share scan dialog", (tester) async {
+      await pump(tester);
+
+      await tester.tap(find.byKey(const ValueKey('shares.scan.open')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Scan LAN for shares'), findsOneWidget);
+      expect(find.text('LAN share scan'), findsOneWidget);
+      expect(find.text('Subnet or host'), findsOneWidget);
+      expect(find.text('Scan LAN shares'), findsOneWidget);
+      expect(find.text('No shares yet - run a scan.'), findsOneWidget);
+      expect(find.textContaining('untick protocols to cut noise'), findsOneWidget);
+      for (final protocol in ['SMB', 'FTP', 'SFTP', 'NFS', 'WEBDAV']) {
+        expect(find.byKey(ValueKey('shares.scan.protocol.$protocol')), findsOneWidget);
+      }
+
+      await tester.tap(find.byKey(const ValueKey('shares.scan.close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shares.scan.dialog')), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('an FTP hit is saved from the dialog, which then closes', (tester) async {
+      await pump(tester, reachable: {'10.0.0.7:21'});
+      await scan(tester, '10.0.0.7');
+
+      expect(find.text('10.0.0.7 · FTP'), findsOneWidget);
+      expect(find.text('Rescan LAN shares'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shares.scan.pick.10.0.0.7:21')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shares.scan.dialog')), findsNothing);
+      expect(find.text('FTP on 10.0.0.7:21'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('an SMB hit opens the form to add its path', (tester) async {
+      await pump(tester, reachable: {'10.0.0.7:445'});
+      await scan(tester, '10.0.0.7');
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('shares.scan.pick.10.0.0.7:445')),
+          matching: find.text('Configure'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('shares.scan.pick.10.0.0.7:445')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shares.scan.dialog')), findsNothing);
+      expect(find.text('Add network share'), findsOneWidget);
+      expect(vm.draft!.address, '10.0.0.7');
+      expect(await repo.getAllNetworkShares(), isEmpty, reason: 'nothing is saved until Save');
+      await finish(tester);
+    });
 
     testWidgets('with nothing saved it says so', (tester) async {
       await pump(tester);

@@ -261,6 +261,14 @@ class NetworkViewModel extends ChangeNotifier {
     if (_error == null) _lastScanAt = DateTime.now();
   }
 
+  /// What a scan of "this network" should probe, as Kotlin's share scan does with a blank subnet:
+  /// the hosts a fresh LAN sweep found, or every address on this device's /24 when it found none.
+  Future<List<String>> lanTargets() async {
+    await refreshLanScan();
+    if (_scanResults.isNotEmpty) return [for (final host in _scanResults) host.address];
+    return _subnetPrefix.isEmpty ? const [] : hostsInSubnet(_subnetPrefix);
+  }
+
   Future<String> _resolveLanHostname(String address) async {
     final reverse = await probe
         .reverseLookup(address)

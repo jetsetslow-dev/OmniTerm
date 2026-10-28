@@ -36,6 +36,21 @@ The standard (user, 2026-10-27): both apps are the same app, written in two lang
   - The edit-host fixes.
   - Kotlin's tmux session names: Flutter uses `omniterm-<id>-<millis>`.
 
+## October 28: Kotlin's LAN share scan dialog — validated October 28
+
+- "Scan LAN for shares" is Kotlin's full-width outlined button, and it opens Kotlin's "LAN share scan" dialog instead of Flutter's inline panel. The dialog has the "Subnet or host" field, Scan/Rescan LAN shares, protocol chips, the probe note, the status line, and hit rows ("host · PROTOCOL", then address:port) with Configure (SMB, SFTP) or Save.
+- Behaviour now follows Kotlin's `scanNetworkShares`:
+  - A blank field scans this device's network: the hosts the shared LAN sweep found, or the whole /24 when it found none.
+  - A value without `/` is one host (`nas.local`). Only /24 masks are accepted.
+  - Kotlin's status texts and its probe budget (700 ms per connect, 64 at a time).
+  - Save on an FTP, NFS or WebDAV hit stores it as a guest share named after the hit, marked online, and closes the dialog. SMB and SFTP open the form, whose draft is named after the hit, and the share is saved as seen online.
+  - Closing the dialog keeps the hits and the typed subnet, as Kotlin does.
+- Kept from Flutter, to port to Kotlin: the determinate progress bar, prefilling the subnet from a saved share, and the tab's message card for test, save and delete results. Kotlin only shows those results inside the scan dialog, so a failed save outside it is silent there. A scan failure is now said in the dialog.
+- Still missing in Flutter: anonymous SMB share listing, which gives one hit per share. The Android side has smbj but not smbj-rpc, so it needs a new dependency with checksums and SBOM; that is the next slice.
+- Parity baseline: 386 known differences (11 fixed).
+- **Validated 2026-10-28.** The full gate passed on the final tree. The API 35 core profile passed: 10 plain and 5 native test files, no unexpected warnings (`artifacts/device-tests/20261028T085648Z_android_emulator-5554_core`).
+- The three Flutter extras (progress bar, subnet prefill, message card) are ported to Kotlin in the `kotlin-bug-fixes` tree for #128, not pushed yet.
+
 ## October 20: Kotlin's network share form and share cards — validated October 28
 
 - Adding or editing a share opens Kotlin's "Add network share" / "Edit network share" dialog instead of a bottom sheet: optional custom name, a protocol menu, address beside a narrow digits-only port, "Share/path", the WebDAV "Use HTTPS" row, the "Anonymous / guest login" checkbox, then (signed in) the FTP cleartext note, "Credential profile" chips with "New profile", and workgroup, username and password. A new share starts as Kotlin's does: SMB on 445, anonymous, HTTPS off until WebDAV is picked.

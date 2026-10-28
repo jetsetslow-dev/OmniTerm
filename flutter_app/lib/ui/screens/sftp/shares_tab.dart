@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
+import '../../../data/network/network_probe.dart';
 import '../../../domain/host_display.dart';
 import '../../../domain/input_validation.dart';
 import '../../../l10n/app_localizations.dart';
@@ -11,6 +12,7 @@ import '../../../domain/share_scan.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/sftp_view_model.dart';
+import '../../view_model/network_view_model.dart';
 import '../../view_model/shares_view_model.dart';
 import '../../widgets/omni_components.dart';
 
@@ -78,7 +80,18 @@ class SharesTab extends StatelessWidget {
             ],
           ),
         ),
-        _ScanPanel(onAdd: (hit) => _edit(context, vm, fromScan: hit)),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const ValueKey('shares.scan.open'),
+              icon: const Icon(Icons.radar, size: 18),
+              label: Text(l10n.scanLanForShares, style: composeBody(fontSize: 12)),
+              onPressed: () => _scan(context, vm),
+            ),
+          ),
+        ),
         Expanded(
           // Kotlin's pull-to-refresh on this list checks every saved share.
           child: RefreshIndicator(
@@ -147,6 +160,25 @@ class SharesTab extends StatelessWidget {
     vm.cancelEdit();
   }
 
+  /// Kotlin's `NetworkShareScanDialog`. A hit that needs a path or an account (SMB, SFTP) closes it
+  /// and opens the form; any other is saved as it stands, and closes it too.
+  Future<void> _scan(BuildContext context, SharesViewModel vm) async {
+    final network = context.read<NetworkViewModel?>();
+    await vm.prepareScan();
+    if (!context.mounted) return;
+    final picked = await showDialog<ShareScanHit>(
+      context: context,
+      builder: (_) => MultiProvider(
+        providers: [
+          ChangeNotifierProvider<SharesViewModel>.value(value: vm),
+          if (network != null) ChangeNotifierProvider<NetworkViewModel>.value(value: network),
+        ],
+        child: const _ScanDialog(),
+      ),
+    );
+    if (picked != null && context.mounted) await _edit(context, vm, fromScan: picked);
+  }
+
   Future<void> _confirmDelete(BuildContext context, SharesViewModel vm, NetworkShare share) async {
     final l10n = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
@@ -174,183 +206,179 @@ class SharesTab extends StatelessWidget {
   }
 }
 
-/// Finds share services on the local network, so a NAS does not have to be known before it can be
-/// saved.
-///
-/// Collapsed by default: the tab's job is the saved shares, and a scanner permanently occupying the
-/// top of it would push them off a phone screen.
-class _ScanPanel extends StatefulWidget {
-  const _ScanPanel({required this.onAdd});
+/// Kotlin's `NetworkShareScanDialog`: finds share services on the local network, so a NAS does not
+/// have to be known before it can be saved. Pops with a hit to configure, or with nothing.
+class _ScanDialog extends StatelessWidget {
+  const _ScanDialog();
 
-  final void Function(ShareScanHit hit) onAdd;
+  static bool _needsForm(ShareScanHit hit) => hit.protocol == 'SMB' || hit.protocol == 'SFTP';
 
-  @override
-  State<_ScanPanel> createState() => _ScanPanelState();
-}
-
-class _ScanPanelState extends State<_ScanPanel> {
-  final _cidr = TextEditingController();
-  bool _open = false;
-  bool _loaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      final vm = context.read<SharesViewModel>();
-      await vm.loadScanSettings();
-      if (!mounted || _cidr.text.isNotEmpty) return;
-      // Prefilled from an address the user already saved, because the subnet they want is almost
-      // always the one their existing shares are on. Left blank when there is nothing to infer
-      // from, rather than guessing at 192.168.1.
-      final prefix = vm.shares.map((s) => scanPrefixOf(s.address)).whereType<String>().firstOrNull;
-      if (prefix != null) setState(() => _cidr.text = '$prefix.0/24');
-      _loaded = true;
-    });
-  }
-
-  @override
-  void dispose() {
-    _cidr.dispose();
-    super.dispose();
+  Future<void> _pick(BuildContext context, SharesViewModel vm, ShareScanHit hit) async {
+    if (_needsForm(hit)) {
+      Navigator.of(context).pop(hit);
+      return;
+    }
+    await vm.saveFromScan(hit);
+    if (context.mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<SharesViewModel>();
+    final network = context.watch<NetworkViewModel?>();
+    final hostnames = {
+      for (final host in network?.scanResults ?? const <ScannedHost>[])
+        if ((host.hostname ?? '').isNotEmpty) host.address: host.hostname!,
+    };
     final scheme = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context);
+    final muted = composeBody(fontSize: 12, color: scheme.onSurfaceVariant);
 
-    if (!_open) {
-      return Align(
-        alignment: Alignment.centerLeft,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-          child: TextButton.icon(
-            key: const ValueKey('shares.scan.open'),
-            icon: const Icon(Icons.wifi_find, size: 16),
-            label: const Text('Find shares on my network', style: TextStyle(fontSize: 12)),
-            onPressed: () => setState(() => _open = true),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-      child: OmniCard(
-        key: const ValueKey('shares.scan.panel'),
-        leftAccent: OmniColors.cyan,
+    return AlertDialog(
+      key: const ValueKey('shares.scan.dialog'),
+      title: Text(l10n.lanShareScan),
+      content: SingleChildScrollView(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          spacing: 8,
           children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Find shares on my network',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Close scan',
-                  key: const ValueKey('shares.scan.close'),
-                  icon: const Icon(Icons.close, size: 16),
-                  onPressed: () {
-                    vm.clearScanHits();
-                    setState(() => _open = false);
-                  },
-                ),
-              ],
+            _Field(
+              fieldKey: 'scanInput',
+              label: l10n.subnetOrHost,
+              hint: l10n.str1921681024Or,
+              value: vm.scanInput,
+              onChanged: (value) => vm.scanInput = value,
             ),
+            FilledButton(
+              key: const ValueKey('shares.scan.start'),
+              onPressed: vm.scanning
+                  ? null
+                  : () => vm.scanForShares(vm.scanInput, lanTargets: network?.lanTargets),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: vm.scanning
+                    ? [
+                        const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(l10n.scanningShares),
+                      ]
+                    : [
+                        const Icon(Icons.search, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          vm.scanHits.isEmpty ? l10n.scanLanShares : l10n.rescanLanShares,
+                          style: composeBody(fontSize: 12),
+                        ),
+                      ],
+              ),
+            ),
+            if (vm.scanning)
+              // Determinate: a sweep of 254 addresses takes long enough that a spinner alone reads
+              // as a hang.
+              LinearProgressIndicator(value: vm.scanProgress, minHeight: 2),
+            // Protocol noise filter: drop WebDAV on networks where every printer answers on 80/443.
             Wrap(
               spacing: 6,
               children: [
                 for (final protocol in allScanProtocols)
                   FilterChip(
                     key: ValueKey('shares.scan.protocol.$protocol'),
-                    label: Text(protocol, style: const TextStyle(fontSize: 11)),
+                    label: Text(protocol, style: composeBody(fontSize: 10)),
                     selected: vm.isScanProtocolEnabled(protocol),
                     onSelected: vm.scanning ? null : (_) => vm.toggleScanProtocol(protocol),
                   ),
               ],
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('shares.scan.cidr'),
-                    controller: _cidr,
-                    enabled: !vm.scanning,
-                    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      labelText: 'Subnet',
-                      hintText: '192.168.1.0/24',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  key: const ValueKey('shares.scan.start'),
-                  onPressed: vm.scanning ? null : () => vm.scanForShares(_cidr.text),
-                  child: Text(vm.scanning ? 'Scanning…' : 'Scan'),
-                ),
-              ],
-            ),
-            if (vm.scanning) ...[
-              const SizedBox(height: 6),
-              // Determinate: a sweep of 254 addresses takes long enough that a spinner alone reads
-              // as a hang.
-              LinearProgressIndicator(value: vm.scanProgress, minHeight: 2),
-            ],
+            Text(l10n.probesSmb445Ftp21Sftp, style: muted.copyWith(fontSize: 11)),
             if (vm.scanStatus != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  vm.scanStatus!,
-                  key: const ValueKey('shares.scan.status'),
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                ),
+              Text(
+                vm.scanStatus!,
+                key: const ValueKey('shares.scan.status'),
+                style: muted.copyWith(fontFamily: OmniFonts.mono),
               ),
+            if (!vm.scanning && vm.scanHits.isEmpty)
+              Text(l10n.noSharesYetRunAScan, key: const ValueKey('shares.scan.none'), style: muted),
+            // Rows rather than a nested list: the dialog measures its content, which a lazy list
+            // cannot report, and the content already scrolls.
             for (final hit in vm.scanHits)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Row(
-                  key: ValueKey('shares.scan.hit.${hit.address}:${hit.port}'),
-                  children: [
-                    const Icon(Icons.lan, size: 14, color: OmniColors.cyan),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        hit.label,
-                        style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
-                      ),
-                    ),
-                    TextButton(
-                      key: ValueKey('shares.scan.add.${hit.address}:${hit.port}'),
-                      onPressed: () => widget.onAdd(hit),
-                      child: const Text('Add', style: TextStyle(fontSize: 12)),
-                    ),
-                  ],
-                ),
-              ),
-            if (_loaded && vm.scanHits.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  // Said plainly, because an open port is weaker evidence than it looks.
-                  'An open port means something is listening — not that these credentials will '
-                  'work, or what the server exports. Fill in the path and sign-in details, then '
-                  'use Check.',
-                  style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
-                ),
+              _ScanHitRow(
+                hit: hit,
+                hostLabel: hostnames[hit.address] ?? hit.address,
+                action: _needsForm(hit) ? l10n.configure : l10n.save,
+                onPressed: () => _pick(context, vm, hit),
               ),
           ],
         ),
       ),
+      actions: [
+        TextButton(
+          key: const ValueKey('shares.scan.close'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.close),
+        ),
+      ],
+    );
+  }
+}
+
+/// Kotlin's `NetworkShareScanHitRow`.
+class _ScanHitRow extends StatelessWidget {
+  const _ScanHitRow({
+    required this.hit,
+    required this.hostLabel,
+    required this.action,
+    required this.onPressed,
+  });
+
+  final ShareScanHit hit;
+
+  /// The name the LAN sweep found for the address, or the address. Deliberately not routed through
+  /// HostDisplay: this is a live result of a scan the user just ran, and the address is the result.
+  final String hostLabel;
+  final String action;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      key: ValueKey('shares.scan.hit.${hit.address}:${hit.port}'),
+      children: [
+        const Icon(Icons.lan, color: OmniColors.green),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$hostLabel · ${hit.protocol}',
+                style: const TextStyle(
+                  fontFamily: OmniFonts.mono,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                '${hit.address}:${hit.port}',
+                style: TextStyle(
+                  fontFamily: OmniFonts.mono,
+                  fontSize: 11,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        TextButton(
+          key: ValueKey('shares.scan.pick.${hit.address}:${hit.port}'),
+          onPressed: onPressed,
+          child: Text(action),
+        ),
+      ],
     );
   }
 }

@@ -385,6 +385,9 @@ void main() {
                   '$themeName/$orientationName/sftp/${tab.name}',
                   renderFailures,
                 );
+                if (tab == SftpTab.shares) {
+                  await _openAndCloseShareScan(tester, '$themeName/$orientationName/sftp/scan');
+                }
               }
             case Screen.infra:
               await _openAndCloseHostPicker(tester, 'infra.hostPicker');
@@ -524,6 +527,17 @@ Future<void> _openAndCloseHostPicker(WidgetTester tester, String prefix) async {
   await tester.pumpAndSettle();
   expect(current, findsNothing, reason: 'Selecting the current host still dismisses the menu');
   expect(tester.takeException(), isNull, reason: '$prefix menu');
+}
+
+/// Opens the Shares tab's LAN share scan dialog and closes it again, as a person would.
+Future<void> _openAndCloseShareScan(WidgetTester tester, String label) async {
+  await tester.tap(find.byKey(const ValueKey('shares.scan.open')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('shares.scan.dialog')), findsOneWidget, reason: label);
+  expect(tester.takeException(), isNull, reason: label);
+  await tester.tap(find.byKey(const ValueKey('shares.scan.close')));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey('shares.scan.dialog')), findsNothing, reason: label);
 }
 
 /// Waits until the live text scaler is the one the preference asked for.
