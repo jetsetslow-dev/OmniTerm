@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart' as raw_sqlite;
 
 /// Exercises the Room migration chain ported into [AppDatabase].
 ///
-/// It normally never runs — a device coming from the native app is already at v22 — but it is the
+/// It normally never runs — a device coming from the native app is already at v23 — but it is the
 /// only path for a user who installs the Flutter build directly over an older native build. Each
 /// starting point is built from Room's own committed schema export for that version, so the
 /// fixtures are the real historical shapes rather than a guess at them.
@@ -57,7 +57,7 @@ void main() {
     return rows.map((r) => r.read<String>('name')).toSet();
   }
 
-  for (final from in const [8, 12, 18, 21]) {
+  for (final from in const [8, 12, 18, 21, 22]) {
     test('migrates a v$from database up to v$kRoomSchemaVersion', () async {
       final file = await seedLegacyDatabase(from);
       final db = AppDatabase(NativeDatabase(file));
@@ -173,6 +173,31 @@ void main() {
       12345,
       reason: 'seeding from "now" would falsely show every restored session as just-backgrounded',
     );
+  });
+
+  test('22 -> 23 keeps saved sessions and keys them by host and name', () async {
+    final file = await seedLegacyDatabase(22);
+    final raw = sqlite3Native(file);
+    raw.execute(
+      "INSERT INTO persistent_sessions (tmuxName, serverId, serverName, createdAt, backgroundedAt) "
+      "VALUES ('omni-1', 1, 'nas', 100, 200)",
+    );
+    raw.close();
+
+    final db = AppDatabase(NativeDatabase(file));
+    addTearDown(db.close);
+    final kept = await db.appDataDao.getAllPersistentSessions();
+    expect(kept.single.tmuxName, 'omni-1');
+    expect(kept.single.serverId, 1);
+    expect(kept.single.backgroundedAt, 200);
+    expect(kept.single.adopted, isFalse, reason: 'OmniTerm created every session saved before 23');
+
+    // A second host can now save a session of the same name.
+    await db.customStatement(
+      "INSERT INTO persistent_sessions (tmuxName, serverId, serverName, createdAt, backgroundedAt, "
+      "adopted) VALUES ('omni-1', 2, 'web', 300, 300, 1)",
+    );
+    expect(await db.appDataDao.getAllPersistentSessions(), hasLength(2));
   });
 
   test('19 -> 20 only back-stamps presetKey when that preset family is enabled', () async {

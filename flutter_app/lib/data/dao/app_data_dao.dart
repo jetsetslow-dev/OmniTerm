@@ -203,8 +203,9 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   Future<int> upsertPersistentSession(PersistentSessionsCompanion session) =>
       into(persistentSessions).insert(session, mode: InsertMode.replace);
 
-  Future<void> deletePersistentSession(String tmuxName) =>
-      (delete(persistentSessions)..where((s) => s.tmuxName.equals(tmuxName))).go();
+  Future<void> deletePersistentSession(int serverId, String tmuxName) => (delete(
+    persistentSessions,
+  )..where((s) => s.serverId.equals(serverId) & s.tmuxName.equals(tmuxName))).go();
 
   Future<void> deletePersistentSessionsForServer(int serverId) =>
       (delete(persistentSessions)..where((s) => s.serverId.equals(serverId))).go();

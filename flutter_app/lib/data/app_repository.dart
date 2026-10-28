@@ -394,8 +394,8 @@ class AppRepository {
       _db.appDataDao.getAllPersistentSessions();
   Future<int> upsertPersistentSession(PersistentSessionsCompanion session) =>
       _db.appDataDao.upsertPersistentSession(session);
-  Future<void> deletePersistentSession(String tmuxName) =>
-      _db.appDataDao.deletePersistentSession(tmuxName);
+  Future<void> deletePersistentSession(int serverId, String tmuxName) =>
+      _db.appDataDao.deletePersistentSession(serverId, tmuxName);
   Future<void> deletePersistentSessionsForServer(int serverId) =>
       _db.appDataDao.deletePersistentSessionsForServer(serverId);
 

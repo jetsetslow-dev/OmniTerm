@@ -1509,7 +1509,7 @@ void main() {
         await Future<void>.delayed(Duration.zero);
         await vm.connect((await repo.getAllServers()).single);
         final session = vm.current!;
-        await repo.deletePersistentSession(session.tmuxName!);
+        await repo.deletePersistentSession(session.serverId, session.tmuxName!);
         expect(await vm.leaveResumable(session), isFalse);
         expect(vm.current, same(session));
         expect(session.isOpen, isTrue);

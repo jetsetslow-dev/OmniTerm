@@ -308,8 +308,13 @@ class AppSettings extends Table {
 
 /// `persistent_sessions` — live tmux sessions to re-offer after an app restart.
 ///
-/// One row per live tmux session the app created; the [tmuxName] is how a reconnect re-attaches the
-/// exact session. Pure runtime/device state — deliberately NOT included in backup/restore.
+/// One row per live tmux session the app created or attached to; the [tmuxName] is how a reconnect
+/// re-attaches the exact session. Pure runtime/device state — deliberately NOT included in
+/// backup/restore.
+///
+/// Keyed by host and name together: names the app generates are unique, but a session attached
+/// from the host's own list is called whatever the user called it, and two hosts can each have a
+/// "main" (or tmux's default "0").
 @DataClassName('PersistentSession')
 class PersistentSessions extends Table {
   @override
@@ -326,8 +331,13 @@ class PersistentSessions extends Table {
   /// has it been sitting there since I last used it?".
   IntColumn get backgroundedAt => integer()();
 
+  /// The session was already running on the host and the user attached to it. OmniTerm leaves its
+  /// tmux options alone (its own sessions get mouse off and a history limit), because the user's
+  /// other tmux clients share them.
+  BoolColumn get adopted => boolean().clientDefault(() => false)();
+
   @override
-  Set<Column<Object>> get primaryKey => {tmuxName};
+  Set<Column<Object>> get primaryKey => {serverId, tmuxName};
 }
 
 /// `port_forwards` — saved SSH tunnels.

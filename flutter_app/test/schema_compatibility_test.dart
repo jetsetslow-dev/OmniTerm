@@ -10,13 +10,16 @@ import 'package:omniterm/data/app_database.dart';
 /// Room's committed schema export — the real artifact, not a transcription of it — so any drift
 /// (a renamed column, a lost index, a changed type) fails here rather than on a user's device.
 ///
-/// Room's export lives at `app/schemas/com.jetsetslow.omniterm.data.AppDatabase/22.json`.
+/// Room's export lives at `app/schemas/com.jetsetslow.omniterm.data.AppDatabase/<version>.json`,
+/// for the version in [kRoomSchemaVersion].
 void main() {
   late Map<String, dynamic> roomSchema;
 
   setUpAll(() {
     // Located relative to the repo, not the machine — the suite must stay host-independent.
-    final file = File('../app/schemas/com.jetsetslow.omniterm.data.AppDatabase/22.json');
+    final file = File(
+      '../app/schemas/com.jetsetslow.omniterm.data.AppDatabase/$kRoomSchemaVersion.json',
+    );
     expect(
       file.existsSync(),
       isTrue,
@@ -122,10 +125,10 @@ void main() {
       }
     }
     // metric_history, active_alerts, alert_history, stack_registry.
-    expect(checked, 4, reason: 'expected exactly four indices in the v22 schema');
+    expect(checked, 4, reason: 'expected exactly four indices in the v$kRoomSchemaVersion schema');
   });
 
-  test('an existing Room database at user_version 22 opens without migrating', () async {
+  test('an existing Room database at the current user_version opens without migrating', () async {
     // Simulate what is on a user's device: the exact Room DDL, user_version stamped by
     // SQLiteOpenHelper, and one row of real data.
     final file = File('${Directory.systemTemp.createTempSync('omniterm').path}/omniterm_database');

@@ -193,7 +193,7 @@ void main() {
               ))!.singleWhere((row) => row.tmuxName == tmuxName);
               expect(saved.backgroundedAt, greaterThan(0));
               shell.useControlMode = control;
-              await $(ValueKey('shell.resumable.$tmuxName.resume')).tap();
+              await $(ValueKey('shell.resumable.${original.serverId}.$tmuxName.resume')).tap();
               await _until($, () => shell.current != null && shell.current != original);
               final resumed = shell.current!;
               expect(resumed.tmuxName, tmuxName);
@@ -230,7 +230,9 @@ void main() {
             }
             if (tmuxName != null) {
               await $.tester.runAsync(() => transport.exec(credentials, tmuxKillCommand(tmuxName)));
-              await $.tester.runAsync(() => state.repository.deletePersistentSession(tmuxName));
+              await $.tester.runAsync(
+                () => state.repository.deletePersistentSession(original.serverId, tmuxName),
+              );
               await $.tester.runAsync(shell.refreshResumable);
             }
           }

@@ -2341,10 +2341,15 @@ void main() {
       vm.close(vm.sessions.single);
       await tester.pumpAndSettle();
 
-      expect(find.byKey(ValueKey('shell.resumable.${row.tmuxName}')), findsOneWidget);
+      expect(
+        find.byKey(ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}')),
+        findsOneWidget,
+      );
       expect(find.textContaining('still running on their servers'), findsOneWidget);
 
-      await tester.tap(find.byKey(ValueKey('shell.resumable.${row.tmuxName}.forget')));
+      await tester.tap(
+        find.byKey(ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.forget')),
+      );
       await tester.pumpAndSettle();
       // The distinction that matters: this is a pointer on this device, not the session itself.
       expect(find.textContaining('keeps running on the server'), findsOneWidget);
@@ -2353,7 +2358,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(await repo.getPersistentSessions(), hasLength(1));
 
-      await tester.tap(find.byKey(ValueKey('shell.resumable.${row.tmuxName}.forget')));
+      await tester.tap(
+        find.byKey(ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.forget')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('shell.resumable.forget.confirm')));
       await tester.pumpAndSettle();

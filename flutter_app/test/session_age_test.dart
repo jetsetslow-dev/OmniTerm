@@ -9,6 +9,7 @@ void main() {
     serverName: 'nas',
     createdAt: 0,
     backgroundedAt: backgroundedAt,
+    adopted: false,
   );
 
   final now = DateTime(2026, 8, 5, 12);

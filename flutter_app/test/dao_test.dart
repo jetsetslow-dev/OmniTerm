@@ -327,25 +327,28 @@ void main() {
       expect(stacks.single.workingDir, '/new');
     });
 
-    test('persistent sessions are keyed by tmux name', () async {
-      Future<void> upsert(String name, String server) => db.appDataDao.upsertPersistentSession(
-        PersistentSessionsCompanion.insert(
-          tmuxName: name,
-          serverId: 1,
-          serverName: server,
-          createdAt: 0,
-          backgroundedAt: 0,
-        ),
-      );
+    test('persistent sessions are keyed by host and tmux name', () async {
+      Future<void> upsert(int serverId, String name, String server) =>
+          db.appDataDao.upsertPersistentSession(
+            PersistentSessionsCompanion.insert(
+              tmuxName: name,
+              serverId: serverId,
+              serverName: server,
+              createdAt: 0,
+              backgroundedAt: 0,
+            ),
+          );
 
-      await upsert('omni-1', 'old');
-      await upsert('omni-1', 'new');
+      await upsert(1, 'main', 'old');
+      await upsert(1, 'main', 'new');
+      // Two hosts can each have a "main".
+      await upsert(2, 'main', 'web');
       final sessions = await db.appDataDao.getAllPersistentSessions();
-      expect(sessions, hasLength(1));
-      expect(sessions.single.serverName, 'new');
+      expect(sessions, hasLength(2));
+      expect(sessions.firstWhere((s) => s.serverId == 1).serverName, 'new');
 
-      await db.appDataDao.deletePersistentSession('omni-1');
-      expect(await db.appDataDao.getAllPersistentSessions(), isEmpty);
+      await db.appDataDao.deletePersistentSession(1, 'main');
+      expect((await db.appDataDao.getAllPersistentSessions()).single.serverId, 2);
     });
   });
 }

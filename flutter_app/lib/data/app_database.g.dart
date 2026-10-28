@@ -6736,8 +6736,26 @@ class $PersistentSessionsTable extends PersistentSessions
     type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _adoptedMeta = const VerificationMeta('adopted');
   @override
-  List<GeneratedColumn> get $columns => [tmuxName, serverId, serverName, createdAt, backgroundedAt];
+  late final GeneratedColumn<bool> adopted = GeneratedColumn<bool>(
+    'adopted',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways('CHECK ("adopted" IN (0, 1))'),
+    clientDefault: () => false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    tmuxName,
+    serverId,
+    serverName,
+    createdAt,
+    backgroundedAt,
+    adopted,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -6790,11 +6808,14 @@ class $PersistentSessionsTable extends PersistentSessions
     } else if (isInserting) {
       context.missing(_backgroundedAtMeta);
     }
+    if (data.containsKey('adopted')) {
+      context.handle(_adoptedMeta, adopted.isAcceptableOrUnknown(data['adopted']!, _adoptedMeta));
+    }
     return context;
   }
 
   @override
-  Set<GeneratedColumn> get $primaryKey => {tmuxName};
+  Set<GeneratedColumn> get $primaryKey => {serverId, tmuxName};
   @override
   PersistentSession map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
@@ -6819,6 +6840,10 @@ class $PersistentSessionsTable extends PersistentSessions
         DriftSqlType.int,
         data['${effectivePrefix}backgroundedAt'],
       )!,
+      adopted: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}adopted'],
+      )!,
     );
   }
 
@@ -6839,12 +6864,18 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
   /// every time the user backgrounds the session again, so "backgrounded since" answers "how long
   /// has it been sitting there since I last used it?".
   final int backgroundedAt;
+
+  /// The session was already running on the host and the user attached to it. OmniTerm leaves its
+  /// tmux options alone (its own sessions get mouse off and a history limit), because the user's
+  /// other tmux clients share them.
+  final bool adopted;
   const PersistentSession({
     required this.tmuxName,
     required this.serverId,
     required this.serverName,
     required this.createdAt,
     required this.backgroundedAt,
+    required this.adopted,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -6854,6 +6885,7 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
     map['serverName'] = Variable<String>(serverName);
     map['createdAt'] = Variable<int>(createdAt);
     map['backgroundedAt'] = Variable<int>(backgroundedAt);
+    map['adopted'] = Variable<bool>(adopted);
     return map;
   }
 
@@ -6864,6 +6896,7 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
       serverName: Value(serverName),
       createdAt: Value(createdAt),
       backgroundedAt: Value(backgroundedAt),
+      adopted: Value(adopted),
     );
   }
 
@@ -6875,6 +6908,7 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
       serverName: serializer.fromJson<String>(json['serverName']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
       backgroundedAt: serializer.fromJson<int>(json['backgroundedAt']),
+      adopted: serializer.fromJson<bool>(json['adopted']),
     );
   }
   @override
@@ -6886,6 +6920,7 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
       'serverName': serializer.toJson<String>(serverName),
       'createdAt': serializer.toJson<int>(createdAt),
       'backgroundedAt': serializer.toJson<int>(backgroundedAt),
+      'adopted': serializer.toJson<bool>(adopted),
     };
   }
 
@@ -6895,12 +6930,14 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
     String? serverName,
     int? createdAt,
     int? backgroundedAt,
+    bool? adopted,
   }) => PersistentSession(
     tmuxName: tmuxName ?? this.tmuxName,
     serverId: serverId ?? this.serverId,
     serverName: serverName ?? this.serverName,
     createdAt: createdAt ?? this.createdAt,
     backgroundedAt: backgroundedAt ?? this.backgroundedAt,
+    adopted: adopted ?? this.adopted,
   );
   PersistentSession copyWithCompanion(PersistentSessionsCompanion data) {
     return PersistentSession(
@@ -6909,6 +6946,7 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
       serverName: data.serverName.present ? data.serverName.value : this.serverName,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       backgroundedAt: data.backgroundedAt.present ? data.backgroundedAt.value : this.backgroundedAt,
+      adopted: data.adopted.present ? data.adopted.value : this.adopted,
     );
   }
 
@@ -6919,13 +6957,15 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
           ..write('serverId: $serverId, ')
           ..write('serverName: $serverName, ')
           ..write('createdAt: $createdAt, ')
-          ..write('backgroundedAt: $backgroundedAt')
+          ..write('backgroundedAt: $backgroundedAt, ')
+          ..write('adopted: $adopted')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(tmuxName, serverId, serverName, createdAt, backgroundedAt);
+  int get hashCode =>
+      Object.hash(tmuxName, serverId, serverName, createdAt, backgroundedAt, adopted);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -6934,7 +6974,8 @@ class PersistentSession extends DataClass implements Insertable<PersistentSessio
           other.serverId == this.serverId &&
           other.serverName == this.serverName &&
           other.createdAt == this.createdAt &&
-          other.backgroundedAt == this.backgroundedAt);
+          other.backgroundedAt == this.backgroundedAt &&
+          other.adopted == this.adopted);
 }
 
 class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
@@ -6943,6 +6984,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
   final Value<String> serverName;
   final Value<int> createdAt;
   final Value<int> backgroundedAt;
+  final Value<bool> adopted;
   final Value<int> rowid;
   const PersistentSessionsCompanion({
     this.tmuxName = const Value.absent(),
@@ -6950,6 +6992,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
     this.serverName = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.backgroundedAt = const Value.absent(),
+    this.adopted = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   PersistentSessionsCompanion.insert({
@@ -6958,6 +7001,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
     required String serverName,
     required int createdAt,
     required int backgroundedAt,
+    this.adopted = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : tmuxName = Value(tmuxName),
        serverId = Value(serverId),
@@ -6970,6 +7014,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
     Expression<String>? serverName,
     Expression<int>? createdAt,
     Expression<int>? backgroundedAt,
+    Expression<bool>? adopted,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -6978,6 +7023,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
       if (serverName != null) 'serverName': serverName,
       if (createdAt != null) 'createdAt': createdAt,
       if (backgroundedAt != null) 'backgroundedAt': backgroundedAt,
+      if (adopted != null) 'adopted': adopted,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -6988,6 +7034,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
     Value<String>? serverName,
     Value<int>? createdAt,
     Value<int>? backgroundedAt,
+    Value<bool>? adopted,
     Value<int>? rowid,
   }) {
     return PersistentSessionsCompanion(
@@ -6996,6 +7043,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
       serverName: serverName ?? this.serverName,
       createdAt: createdAt ?? this.createdAt,
       backgroundedAt: backgroundedAt ?? this.backgroundedAt,
+      adopted: adopted ?? this.adopted,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -7018,6 +7066,9 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
     if (backgroundedAt.present) {
       map['backgroundedAt'] = Variable<int>(backgroundedAt.value);
     }
+    if (adopted.present) {
+      map['adopted'] = Variable<bool>(adopted.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -7032,6 +7083,7 @@ class PersistentSessionsCompanion extends UpdateCompanion<PersistentSession> {
           ..write('serverName: $serverName, ')
           ..write('createdAt: $createdAt, ')
           ..write('backgroundedAt: $backgroundedAt, ')
+          ..write('adopted: $adopted, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -10857,6 +10909,7 @@ typedef $$PersistentSessionsTableCreateCompanionBuilder =
       required String serverName,
       required int createdAt,
       required int backgroundedAt,
+      Value<bool> adopted,
       Value<int> rowid,
     });
 typedef $$PersistentSessionsTableUpdateCompanionBuilder =
@@ -10866,6 +10919,7 @@ typedef $$PersistentSessionsTableUpdateCompanionBuilder =
       Value<String> serverName,
       Value<int> createdAt,
       Value<int> backgroundedAt,
+      Value<bool> adopted,
       Value<int> rowid,
     });
 
@@ -10892,6 +10946,9 @@ class $$PersistentSessionsTableFilterComposer
 
   ColumnFilters<int> get backgroundedAt =>
       $composableBuilder(column: $table.backgroundedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get adopted =>
+      $composableBuilder(column: $table.adopted, builder: (column) => ColumnFilters(column));
 }
 
 class $$PersistentSessionsTableOrderingComposer
@@ -10919,6 +10976,9 @@ class $$PersistentSessionsTableOrderingComposer
     column: $table.backgroundedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<bool> get adopted =>
+      $composableBuilder(column: $table.adopted, builder: (column) => ColumnOrderings(column));
 }
 
 class $$PersistentSessionsTableAnnotationComposer
@@ -10944,6 +11004,9 @@ class $$PersistentSessionsTableAnnotationComposer
 
   GeneratedColumn<int> get backgroundedAt =>
       $composableBuilder(column: $table.backgroundedAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get adopted =>
+      $composableBuilder(column: $table.adopted, builder: (column) => column);
 }
 
 class $$PersistentSessionsTableTableManager
@@ -10982,6 +11045,7 @@ class $$PersistentSessionsTableTableManager
                 Value<String> serverName = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<int> backgroundedAt = const Value.absent(),
+                Value<bool> adopted = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => PersistentSessionsCompanion(
                 tmuxName: tmuxName,
@@ -10989,6 +11053,7 @@ class $$PersistentSessionsTableTableManager
                 serverName: serverName,
                 createdAt: createdAt,
                 backgroundedAt: backgroundedAt,
+                adopted: adopted,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -10998,6 +11063,7 @@ class $$PersistentSessionsTableTableManager
                 required String serverName,
                 required int createdAt,
                 required int backgroundedAt,
+                Value<bool> adopted = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => PersistentSessionsCompanion.insert(
                 tmuxName: tmuxName,
@@ -11005,6 +11071,7 @@ class $$PersistentSessionsTableTableManager
                 serverName: serverName,
                 createdAt: createdAt,
                 backgroundedAt: backgroundedAt,
+                adopted: adopted,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) =>

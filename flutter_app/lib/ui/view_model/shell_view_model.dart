@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
@@ -192,7 +193,7 @@ class ShellViewModel extends ChangeNotifier {
           throw SshConnectException('Could not verify the saved tmux session.');
         }
         if (!presence) {
-          await _app.repository.deletePersistentSession(name);
+          await _app.repository.deletePersistentSession(session.serverId, name);
           if (!_ownsReconnect(session, run)) return;
           await _reloadSaved();
           if (!_ownsReconnect(session, run)) return;
@@ -641,7 +642,7 @@ class ShellViewModel extends ChangeNotifier {
       final present = parseTmuxSessionProbe(raw);
       if (present == null) throw SshConnectException(raw);
       if (!present) {
-        await _app.repository.deletePersistentSession(session.tmuxName!);
+        await _app.repository.deletePersistentSession(server.id, session.tmuxName!);
         await _app.repository.updateHealthScore(server.id, -1);
         await markReachable?.call(server);
         await _reloadSaved();
@@ -846,7 +847,9 @@ class ShellViewModel extends ChangeNotifier {
       _splitId = null;
     }
     if (resumeName != null) {
-      final existing = _sessions.where((s) => s.tmuxName == resumeName).firstOrNull;
+      final existing = _sessions
+          .where((s) => s.serverId == server.id && s.tmuxName == resumeName)
+          .firstOrNull;
       if (existing != null) {
         if (!assignSplitPane(pane, existing.id)) {
           _splitPaneMessages[pane] = 'That tmux session is already shown in the other pane.';
@@ -1117,7 +1120,7 @@ class ShellViewModel extends ChangeNotifier {
   /// **Does not touch the server.** The tmux session keeps running; this only forgets the pointer,
   /// which is why the button says "Forget" rather than "Close".
   Future<void> forgetResumable(PersistentSession row) async {
-    await _app.repository.deletePersistentSession(row.tmuxName);
+    await _app.repository.deletePersistentSession(row.serverId, row.tmuxName);
     await _reloadSaved();
   }
 
@@ -1146,18 +1149,19 @@ class ShellViewModel extends ChangeNotifier {
     );
   }
 
-  /// Stamps when [tmuxName] stopped being watched.
+  /// Stamps when [serverId]'s [tmuxName] stopped being watched.
   ///
-  /// Read-then-write rather than a partial update: the row carries the host it belongs to, and
-  /// rewriting it from anything but itself would be how a session ends up attributed to the wrong
-  /// machine.
+  /// Read-then-write rather than a partial update: the row carries the host it belongs to and
+  /// whether it was adopted, and rewriting it from anything but itself would be how a session ends
+  /// up attributed to the wrong machine, or has its user's tmux options changed.
   Future<void> _markBackgrounded(
+    int serverId,
     String tmuxName, {
     bool requireRecord = false,
     bool reload = true,
   }) async {
     final row = (await _app.repository.getPersistentSessions())
-        .where((r) => r.tmuxName == tmuxName)
+        .where((r) => r.serverId == serverId && r.tmuxName == tmuxName)
         .firstOrNull;
     if (row == null) {
       if (requireRecord) throw StateError('The saved tmux recovery record is missing.');
@@ -1170,6 +1174,7 @@ class ShellViewModel extends ChangeNotifier {
         serverName: row.serverName,
         createdAt: row.createdAt,
         backgroundedAt: DateTime.now().millisecondsSinceEpoch,
+        adopted: Value(row.adopted),
       ),
     );
     if (reload) await _reloadSaved();
@@ -1581,7 +1586,7 @@ class ShellViewModel extends ChangeNotifier {
             );
           }
           if (!presence) {
-            await _app.repository.deletePersistentSession(remembered);
+            await _app.repository.deletePersistentSession(server.id, remembered);
             await _app.repository.updateHealthScore(server.id, -1);
             await _reloadSaved();
             if (generation != _connectGeneration || !_requestStillValid(request)) return;
@@ -1784,7 +1789,7 @@ class ShellViewModel extends ChangeNotifier {
     final tmuxName = session.tmuxName;
     if (tmuxName != null && saveRecovery) {
       unawaited(
-        _markBackgrounded(tmuxName).catchError((Object error) {
+        _markBackgrounded(session.serverId, tmuxName).catchError((Object error) {
           _error = 'Could not update the saved tmux recovery record: $error';
           _safeNotify();
         }),
@@ -1844,7 +1849,7 @@ class ShellViewModel extends ChangeNotifier {
         await transport!.exec(creds, tmuxSessionProbeCommand(tmuxName)),
       );
       if (presence != false) throw StateError('Tmux did not confirm that this session is gone.');
-      await _app.repository.deletePersistentSession(tmuxName);
+      await _app.repository.deletePersistentSession(session.serverId, tmuxName);
       await _reloadSaved();
       confirmedStopped = true;
       return null;
@@ -1917,7 +1922,12 @@ class ShellViewModel extends ChangeNotifier {
       await _app.repository.inTransaction(() async {
         for (final session in persistent) {
           if (_disposed || resumeRevision != _terminalResumeRevision) throw _LeaveSuperseded();
-          await _markBackgrounded(session.tmuxName!, requireRecord: true, reload: false);
+          await _markBackgrounded(
+            session.serverId,
+            session.tmuxName!,
+            requireRecord: true,
+            reload: false,
+          );
           if (_disposed || resumeRevision != _terminalResumeRevision) throw _LeaveSuperseded();
         }
       });

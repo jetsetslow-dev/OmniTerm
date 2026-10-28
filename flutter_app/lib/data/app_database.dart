@@ -19,16 +19,16 @@ part 'app_database.g.dart';
 /// script and alert.
 const kDatabaseFileName = 'omniterm_database';
 
-/// The schema version the shipped Android app reached (`AppDatabase.kt`, `version = 22`).
+/// The schema version the shipped Android app reached (`AppDatabase.kt`, `version = 23`).
 ///
 /// This number is load-bearing for data continuity. Android's `SQLiteOpenHelper` — which Room is
 /// built on — records the schema version in `PRAGMA user_version`, and that is the same pragma
-/// Drift reads. So a database already migrated to Room v22 is seen by Drift as "already at version
-/// 22" and no migration runs: the existing rows simply open.
+/// Drift reads. So a database already migrated to Room v23 is seen by Drift as "already at version
+/// 23" and no migration runs: the existing rows simply open.
 ///
 /// (The README's mention of "schema v18" is stale; the exported schemas in
-/// `app/schemas/com.jetsetslow.omniterm.data.AppDatabase/` run to 22.json.)
-const kRoomSchemaVersion = 22;
+/// `app/schemas/com.jetsetslow.omniterm.data.AppDatabase/` run to 23.json.)
+const kRoomSchemaVersion = 23;
 
 @DriftDatabase(
   tables: [
@@ -65,7 +65,7 @@ class AppDatabase extends _$AppDatabase {
     },
     onUpgrade: (m, from, to) async {
       // Room's own chain, ported step for step. It normally never runs: a device coming from
-      // the native app is already at 22, and a fresh install starts there. It matters only for
+      // the native app is already at 23, and a fresh install starts there. It matters only for
       // a user who installs the Flutter build directly over an older native build without
       // taking the intermediate Android update.
       //
@@ -239,6 +239,26 @@ class AppDatabase extends _$AppDatabase {
         'CREATE INDEX IF NOT EXISTS index_metric_history_serverId_timestamp '
         'ON metric_history (serverId, timestamp)',
       );
+    });
+
+    // Saved tmux sessions become keyed by host and name: a session attached from a host's own
+    // list keeps the user's name, and two hosts can each have a "main". `adopted` marks those
+    // attached sessions. SQLite cannot change a primary key in place, so the table is rebuilt.
+    await step(23, () async {
+      await customStatement(
+        'CREATE TABLE IF NOT EXISTS persistent_sessions_new ('
+        'tmuxName TEXT NOT NULL, serverId INTEGER NOT NULL, serverName TEXT NOT NULL, '
+        'createdAt INTEGER NOT NULL, backgroundedAt INTEGER NOT NULL, '
+        'adopted INTEGER NOT NULL, PRIMARY KEY(serverId, tmuxName))',
+      );
+      await customStatement(
+        'INSERT INTO persistent_sessions_new '
+        '(tmuxName, serverId, serverName, createdAt, backgroundedAt, adopted) '
+        'SELECT tmuxName, serverId, serverName, createdAt, backgroundedAt, 0 '
+        'FROM persistent_sessions',
+      );
+      await customStatement('DROP TABLE persistent_sessions');
+      await customStatement('ALTER TABLE persistent_sessions_new RENAME TO persistent_sessions');
     });
   }
 

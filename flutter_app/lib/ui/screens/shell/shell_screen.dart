@@ -767,7 +767,7 @@ class _ResumableCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => OmniCard(
-    key: ValueKey('shell.resumable.${row.tmuxName}'),
+    key: ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}'),
     leftAccent: OmniColors.amber,
     child: LayoutBuilder(
       builder: (context, constraints) {
@@ -790,12 +790,12 @@ class _ResumableCard extends StatelessWidget {
         );
         final actions = [
           TextButton(
-            key: ValueKey('shell.resumable.${row.tmuxName}.resume'),
+            key: ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.resume'),
             onPressed: vm.isConnecting ? null : () => vm.resume(row),
             child: const Text('Resume', style: TextStyle(fontSize: 12)),
           ),
           TextButton(
-            key: ValueKey('shell.resumable.${row.tmuxName}.forget'),
+            key: ValueKey('shell.resumable.${row.serverId}.${row.tmuxName}.forget'),
             onPressed: () => _confirmForget(context, vm, row),
             child: Text('Forget', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
           ),
@@ -1498,8 +1498,9 @@ class _TerminalOpenButton extends StatelessWidget {
           ),
           for (final row in saved)
             PopupMenuItem<String>(
-              key: ValueKey('shell.open.saved.${row.tmuxName}'),
-              value: 'saved:${row.tmuxName}',
+              // Host and name: two hosts can each have a session with the same name.
+              key: ValueKey('shell.open.saved.${row.serverId}.${row.tmuxName}'),
+              value: 'saved:${row.serverId}:${row.tmuxName}',
               child: _TerminalSessionMenuLabel(
                 title: row.serverName,
                 detail: row.tmuxName,
@@ -1532,7 +1533,7 @@ class _TerminalOpenButton extends StatelessWidget {
     if (choice.startsWith('session:')) {
       vm.resumeExisting(choice.substring(8));
     } else if (choice.startsWith('saved:')) {
-      final row = saved.where((r) => r.tmuxName == choice.substring(6)).firstOrNull;
+      final row = saved.where((r) => choice == 'saved:${r.serverId}:${r.tmuxName}').firstOrNull;
       if (row != null) await vm.resume(row);
     } else if (choice == 'new') {
       if (vm.server != null) await vm.connect(vm.server!);
