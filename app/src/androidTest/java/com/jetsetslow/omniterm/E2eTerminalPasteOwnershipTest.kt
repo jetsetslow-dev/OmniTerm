@@ -126,7 +126,7 @@ class E2eTerminalPasteOwnershipTest {
                     try {
                         vm.executeSshCommand(fixture, "tmux kill-session -t ${RemoteCommands.shellQuote(name)}")
                     } finally {
-                        repository.deletePersistentSession(name)
+                        repository.deletePersistentSession(fixture.id, name)
                     }
                 }
             } finally {

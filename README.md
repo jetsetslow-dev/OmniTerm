@@ -9,7 +9,7 @@ OmniTerm is a native Android app for running your homelab and servers from a pho
 - **Network shares** — browse and manage files on **SMB, FTP, SFTP, and WebDAV** shares with LAN discovery and saved profiles, at full parity with the SFTP tab (multi-select, search, sort, in-app editing). **Cross-protocol copy/paste** streams multi-GB files between shares, or between a share and an SSH host, in either direction.
 - **Network tools** — one tabbed screen: Host Scan, Wake-on-LAN, Ping, Traceroute, Port Scanner, **DNS Lookup**, **WHOIS**, **Speed Test**, and **SSH Tunnels** (port forwarding).
 - **Docker & Podman** — containers, stacks, images, and volumes; per-container **live stats** and one-tap **exec-into-shell**; a visual **Compose Builder** with validate-before-deploy.
-- **Live monitoring** — CPU, memory, disk, load, uptime, temperature, per-core usage, network/disk I/O rates, SMART health, and process/service/log/cron views.
+- **Live monitoring** — CPU, memory, disk, load, uptime, temperature, per-core usage, network/disk I/O rates, SMART health, a detailed hardware and software spec sheet, and process/service/log/cron views.
 - **Fleet Broadcast** — run a command across many hosts or groups at once with live per-host output.
 - **Scripts, alerts, cron, and Wake-on-LAN** management.
 - **Encrypted, selective backups** (AES-256-GCM) of your app data.
@@ -57,13 +57,15 @@ The first-run flow walks you through creating a server. Authenticate with a pass
 - Display name, hostname/IP, SSH port, username, and authentication method.
 - Optional group, color, notes, keepalive, compression, jump host / proxy, sudo password, and **SSH agent forwarding**.
 
-Groups make Fleet Broadcast targeting easier; host colors help you tell servers apart across sessions and dashboards. Use the host picker on operational screens to switch the active server, or **swipe left/right** to move between tabs and subtabs outside the terminal.
+Groups make Fleet Broadcast targeting easier; host colors help you tell servers apart across sessions and dashboards. Use the host picker on operational screens to switch the active server, or **swipe left/right** to move between tabs and subtabs outside the terminal. A pull-to-refresh re-checks hosts without moving the picker off the one you are looking at.
+
+The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), **Copy SSH command** (including its jump host or proxy), and **System specs**. **Attach existing tmux…** lists the tmux sessions already running on a Linux, macOS or BSD host (one you started from a desktop, say) and joins one, as `tmux attach` does, so every client sees the same window. Terminate in OmniTerm then ends that session on the server; Leave keeps it running. Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Select several hosts to delete them together, optionally ending their tmux sessions too.
 
 ### Terminal
 Open **Term** for an interactive SSH shell on the selected host.
 - **MultiSSH split screen** — tap **SPLIT** to view two sessions at once, side-by-side or stacked (flip with the layout button). In split mode only, check two hosts in the top picker to load them into the panes. The focused pane and current host are labelled at the top; the cyan-bordered pane owns the keyboard and special-key bar. **OPEN** and each pane's **PICK** menu can attach a background session, resume saved tmux, or start a new host without filling the terminal with a long server list. **BG** frees a pane while keeping its session connected, and **✕** offers either a resumable tmux detach or a background normal SSH session before disconnecting. **SINGLE** returns to single-session view while keeping both sessions available.
 - **Quick connect** (**Unlock OmniTerm** only) — **OPEN › Quick connect** SSHes to a host that is not in your saved list, for one-off access. It offers the same options as Add Host (password, saved key, or credential profile; HTTP/SOCKS5 proxy or SSH jump host, optionally filled from a saved host) and enforces the same validation and host-key trust prompts, but writes nothing to the database. The free Play Store build does not include it — save the host instead, within the 1-host limit. **Remove Ads does not unlock it.**
-- **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically. On a Mac, OmniTerm finds tmux installed with Homebrew or MacPorts, and can install it with Homebrew.
+- **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically. Remove one you no longer need from the session picker: **Forget** drops it from this device and leaves it running, **End session** stops it on the server too. On a Mac, OmniTerm finds tmux installed with Homebrew or MacPorts, and can install it with Homebrew.
 - Multiple background sessions with session switching and explicit disconnect prompts.
 - Adjustable, persisted font size with reflowing scrollback on resize.
 - Themes: App theme (follows app light/dark/AMOLED/high-contrast), Omni Dark, Solarized Dark, Matrix, and Light.
@@ -90,7 +92,7 @@ Open **Files** to work with remote filesystems.
 
 ### Network shares
 Open the **Shares** subtab for network file shares separate from your SSH hosts.
-- **Discovery & profiles** — scan a subnet (e.g. `192.168.1.0/24`, or leave blank on Wi-Fi) to find SMB, FTP, SFTP, NFS, and WebDAV services and save them as reusable profiles. Protocol filter chips cut scan noise; SMB hosts expand into their share names when anonymous enumeration is allowed. Credentials can be inline or linked to a shared profile.
+- **Discovery & profiles** — scan a subnet (e.g. `192.168.1.0/24`, or leave blank on Wi-Fi) to find SMB, FTP, SFTP, NFS, and WebDAV services and save them as reusable profiles. Protocol filter chips cut scan noise; SMB hosts expand into their share names when anonymous enumeration is allowed. The scan shows its progress and starts from the subnet of a share you already saved. Credentials can be inline or linked to a shared profile. Saving, deleting or checking shares says what happened in a card above the list.
 - **Browsing at SFTP parity** — for SMB/FTP/SFTP/WebDAV shares: navigate, create/rename/delete, upload/download, plus **multi-select batch operations, search (filter + recursive), sort, and in-app text editing**. WebDAV shares carry an explicit **Use HTTPS** toggle. (NFS and custom profiles are save-only for now.)
 - **Cross-protocol copy/paste** — copy or cut in a share and paste into another folder, another share, or the SFTP host (and vice versa). Same-host SFTP pastes run server-side (`cp`/`mv`); everything else streams through the device without buffering the whole file, so multi-GB transfers work. Whole **folders** copy recursively when you tick **Include folders**.
 - **Progress** — every surface shows a Windows-style rollup (files, bytes of total, combined speed, ETA) plus per-file cancel in the Transfers tab.
@@ -107,7 +109,11 @@ Open **Network** for a tabbed suite of diagnostics:
 - **Tunnels** — user-defined SSH port forwards: **local (-L)**, **remote (-R)**, and **dynamic SOCKS (-D)**, each running over a saved host. Start/stop per tunnel; they stay up until you stop them or leave the app.
 
 ### Monitoring
-Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, process count, temperature, per-core usage, and network/disk I/O rates — plus disk mounts with SMART health, and process/service/log/scripts/cron views (including visual cron schedule management).
+Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, process count, temperature, per-core usage, and network/disk I/O rates — plus disk mounts with SMART health, and process/service/log/scripts/cron views (including visual cron schedule management). On Linux and Windows hosts the process list also shows how fast each process is reading and writing (on Windows this counts all of a process's I/O, network included, as Task Manager's I/O columns do) and, where the host reports it, how much of the GPU it is using: AMD, Intel and NVIDIA graphics on Linux, and any graphics card on Windows 10 version 1709 or later. You can sort by either.
+
+The **Specs** tab (also under **⋮ → System specs** on the Hosts list) lists the host's hardware and software in collapsible sections: system and firmware, processor, memory, storage, graphics and network. It works on Linux, FreeBSD, macOS and Windows hosts, and the copy button copies the whole sheet. A few details — each memory module's size, speed and part number, and each drive's health, temperature and wear — can only be read with administrator rights, so OmniTerm never asks for them on its own: tap **Read with sudo** to fetch them using the sudo password saved for that host.
+
+Monitoring uses each host's own tools. Services are listed and managed through systemd or OpenRC on Linux, rc.d or `rcctl` on the BSDs, launchd on macOS (the jobs your SSH user can manage), and Windows services on Windows. **Reboot** runs `sudo reboot` on Linux, `sudo shutdown -r now` on BSD and macOS, and `shutdown /r` on Windows, and ending a process uses `kill` or, on Windows, `taskkill`. Windows hosts have no cron, tmux or sudo, so the Cron tab, persistent terminal sessions, sudo mode, container management, and Files' search, archives, folder sizes and same-host paste need a Linux, macOS or BSD host; on Windows they say so instead of failing.
 
 ### Docker, Podman & stacks
 Open **Infra** to manage containers, compose stacks, images, and volumes (Docker and Podman are detected automatically).
@@ -154,7 +160,7 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 ## Troubleshooting
 - **Host offline** — check hostname/IP, SSH port, network route, and firewalls.
 - **Auth fails** — verify username, password/key, and proxy/jump-host config.
-- **Empty monitoring** — confirm the host has the expected platform tools (Linux gives the richest metrics).
+- **Empty monitoring** — confirm the host has the expected platform tools (Linux gives the richest metrics). Windows hosts need OpenSSH Server with its default `cmd` shell, because OmniTerm runs its Windows checks through `powershell` from there.
 - **Infra issues** — confirm Docker/Podman is installed and the SSH user may run it.
 - **Tunnel won't start** — confirm the bind port is free and the destination is reachable *from the SSH host* (for `-L`) or *from this device* (for `-R`).
 

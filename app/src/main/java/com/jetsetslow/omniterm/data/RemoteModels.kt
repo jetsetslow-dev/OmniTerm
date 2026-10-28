@@ -71,6 +71,31 @@ data class SimProcess(
     var state: String,    // "R", "S", ...
     val vms: String,      // human-readable virtual memory size
     val uptime: String = "",  // elapsed run time (ps etime), e.g. "01:23:45" or "2-03:04:05"
+    /** Disk throughput over the sampled second; null when its counters could not be read. */
+    val disk: DiskRate? = null,
+    /** Busiest GPU engine's use over the sampled second, 0–100; null when not reported. */
+    val gpu: Float? = null,
+)
+
+data class DiskRate(val readBytesPerSecond: Long, val writeBytesPerSecond: Long) {
+    val totalBytesPerSecond: Long get() = readBytesPerSecond + writeBytesPerSecond
+}
+
+/** A tmux session running on a host, as [RemoteParsers.parseTmuxSessions] read it. */
+data class RemoteTmuxSession(
+    val name: String,
+    val windows: Int,
+    /** How many tmux clients are attached to it right now, anywhere. */
+    val attachedClients: Int,
+    val createdAtMs: Long,
+)
+
+/** What [RemoteParsers.parseProcessUsage] found: per-pid disk and GPU use. */
+data class ProcessUsage(
+    val disk: Map<Int, DiskRate>,
+    val gpu: Map<Int, Float>,
+    /** True when the host reported a GPU use source, even if every process was idle on it. */
+    val gpuReported: Boolean,
 )
 
 data class SimService(

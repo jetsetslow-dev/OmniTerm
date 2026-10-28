@@ -165,6 +165,7 @@ fun CodeEditor(
                 matchCount = matches.size,
                 currentIndex = currentMatchIndex,
                 error = regexError,
+                readOnly = readOnly,
                 onNext = { selectMatch(currentMatchIndex + 1) },
                 onPrev = { selectMatch(currentMatchIndex - 1) },
                 onReplace = { replaceCurrent() },
@@ -404,36 +405,14 @@ fun FullScreenCodeEditor(
         androidx.compose.material3.Scaffold(
             topBar = {
                 Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .background(MaterialTheme.colorScheme.surfaceContainer)
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(onClick = onClose) {
-                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_editor))
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                title + if (dirty) " •" else "",
-                                fontFamily = OmniFonts.mono,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            )
-                            if (subtitle != null) {
-                                Text(
-                                    subtitle,
-                                    fontSize = 10.sp,
-                                    color = subtitleColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                        topBarAction?.invoke()
-                    }
+                    FullScreenTopBar(
+                        title = title + if (dirty) " •" else "",
+                        closeDescription = stringResource(R.string.close_editor),
+                        onClose = onClose,
+                        subtitle = subtitle,
+                        subtitleColor = subtitleColor,
+                        action = topBarAction,
+                    )
                     androidx.compose.material3.HorizontalDivider()
                 }
             },
@@ -561,6 +540,7 @@ private fun FindReplaceBar(
     matchCount: Int,
     currentIndex: Int,
     error: String?,
+    readOnly: Boolean,
     onNext: () -> Unit,
     onPrev: () -> Unit,
     onReplace: () -> Unit,
@@ -592,8 +572,10 @@ private fun FindReplaceBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             EditorInput(replacement, onReplacement, "Replace with", Modifier.weight(1f))
             Spacer(Modifier.width(6.dp))
-            TextButton(onClick = onReplace, enabled = matchCount > 0) { Text(stringResource(R.string.replace), fontSize = 12.sp) }
-            TextButton(onClick = onReplaceAll, enabled = matchCount > 0) { Text(stringResource(R.string.all), fontSize = 12.sp) }
+            // Shown in a read-only editor too, but disabled there: these do nothing when the text
+            // cannot change, and an enabled button that does nothing reads as broken.
+            TextButton(onClick = onReplace, enabled = !readOnly && matchCount > 0) { Text(stringResource(R.string.replace), fontSize = 12.sp) }
+            TextButton(onClick = onReplaceAll, enabled = !readOnly && matchCount > 0) { Text(stringResource(R.string.all), fontSize = 12.sp) }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(selected = caseSensitive, onClick = { onCase(!caseSensitive) }, label = { Text(stringResource(R.string.aa), fontSize = 11.sp) })
@@ -847,4 +829,46 @@ class FullScreenEditorHost {
 
 val LocalFullScreenEditorHost = staticCompositionLocalOf<FullScreenEditorHost> {
     error("FullScreenEditorHost is not installed")
+}
+
+/** The top bar of a full-screen editor or viewer: close, a one-line title, an optional subtitle and action. */
+@Composable
+internal fun FullScreenTopBar(
+    title: String,
+    closeDescription: String,
+    onClose: () -> Unit,
+    subtitle: String? = null,
+    subtitleColor: androidx.compose.ui.graphics.Color? = null,
+    action: @Composable (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onClose) {
+            Icon(Icons.Filled.Close, contentDescription = closeDescription)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                fontFamily = OmniFonts.mono,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    fontSize = 10.sp,
+                    color = subtitleColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        action?.invoke()
+    }
 }

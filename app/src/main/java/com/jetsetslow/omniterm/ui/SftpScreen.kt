@@ -10,6 +10,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -84,17 +85,8 @@ private fun CompactSftpIconToggleButton(
 
 @Composable
 fun SftpScreen(viewModel: AppViewModel) {
-    val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = servers.filter { it.status == "online" }
-    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
-    val srv = explicitlySelected ?: onlineServers.firstOrNull()
-    LaunchedEffect(srv?.id) {
-        if (srv != null) {
-            if (explicitlySelected == null && viewModel.selectedServerId != srv.id) {
-                viewModel.selectedServerId = srv.id
-            }
-            viewModel.ensureSftpLoadedForSelectedServer()
-        }
+    val srv = screenHost(viewModel) {
+        if (it != null) viewModel.ensureSftpLoadedForSelectedServer()
         // Only the SFTP subtab needs an online SSH host; Bookmarks/Shares/Transfers work without.
         else if (viewModel.activeSftpTab == 1) viewModel.activeSftpTab = 0
     }
@@ -169,6 +161,26 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
     ConfirmHost(confirm)
 
     Column(modifier = Modifier.fillMaxSize()) {
+        viewModel.networkShareMessage?.let { message ->
+            val isError = viewModel.networkShareMessageIsError
+            OmniCard(
+                modifier = Modifier.fillMaxWidth().testTag("shares.message"),
+                leftAccent = if (isError) OmniColors.red else OmniColors.green,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        message,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 12.sp,
+                        color = if (isError) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    IconButton(onClick = { viewModel.dismissNetworkShareMessage() }) {
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss), modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -194,7 +206,10 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
         Spacer(Modifier.height(12.dp))
 
         OutlinedButton(
-            onClick = { showScanDialog = true },
+            onClick = {
+                viewModel.prepareNetworkShareScan(shares)
+                showScanDialog = true
+            },
             modifier = Modifier.fillMaxWidth(),
         ) {
             Icon(Icons.Filled.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -316,6 +331,12 @@ private fun NetworkShareScanDialog(
                         Spacer(Modifier.width(8.dp))
                         Text(if (hits.isEmpty()) stringResource(R.string.scan_lan_shares) else stringResource(R.string.rescan_lan_shares), fontSize = 12.sp)
                     }
+                }
+                if (scanning) {
+                    val progress = viewModel.networkShareScanProgress
+                    val barModifier = Modifier.fillMaxWidth().height(2.dp)
+                    if (progress == null) LinearProgressIndicator(modifier = barModifier)
+                    else LinearProgressIndicator(progress = { progress }, modifier = barModifier)
                 }
                 // Protocol noise filter: e.g. drop WebDAV on networks where every printer
                 // answers on 80/443. Persisted; at least one stays enabled.
@@ -1386,8 +1407,8 @@ private fun NetworkShareDialog(
                             DropdownMenuItem(
                                 text = { Text(option) },
                                 onClick = {
+                                    portText = portAfterProtocolSwitch(portText, defaultPort(protocol), defaultPort(option))
                                     protocol = option
-                                    portText = defaultPort(option).takeIf { it > 0 }?.toString().orEmpty()
                                     if (option == "SFTP") anonymous = false
                                     // Sensible TLS default when switching to WebDAV; still user-editable.
                                     if (option == "WEBDAV") useHttps = true
@@ -1533,6 +1554,18 @@ private fun NetworkShareDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+/**
+ * The port field after the share's protocol changes from one whose default is [oldDefault]: a blank
+ * port or the old default moves to [newDefault] (blank for a protocol without one), and a port the
+ * user typed is kept. Overwriting it is how a share stops reaching a NAS on a non-standard port with
+ * no visible cause. Ported from Flutter's `NetworkShareDraft.withProtocol`.
+ */
+internal fun portAfterProtocolSwitch(portText: String, oldDefault: Int, newDefault: Int): String {
+    val typed = portText.trim()
+    val wasDefault = typed.isEmpty() || typed.toIntOrNull() == oldDefault
+    return if (!wasDefault) portText else newDefault.takeIf { it > 0 }?.toString().orEmpty()
 }
 
 private fun shareUri(share: NetworkShareEntity): String {
@@ -3418,7 +3451,7 @@ private fun globToRegex(glob: String): Regex {
 }
 
 /** Resolves a content URI's display name (the filename an upload will use), or null if unknown. */
-private fun contentDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
+internal fun contentDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
     runCatching {
         context.contentResolver.query(uri, null, null, null, null)?.use { c ->
             val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)

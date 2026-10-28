@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 21
+        const val CURRENT_VERSION = 23
     }
 
     @get:Rule
@@ -176,6 +176,51 @@ class AppDatabaseMigrationTest {
                 assertEquals(11f, cursor.getFloat(1))
                 assertEquals(22f, cursor.getFloat(2))
                 assertTrue(cursor.isNull(3))
+            }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /**
+     * Saved tmux sessions are re-keyed by host and name. Existing rows keep every value, are
+     * marked as OmniTerm's own, and two hosts may then each save a session with the same name.
+     */
+    @Test
+    fun migrationToTwentyThreeKeysSavedSessionsByHostAndName() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-22-saved-sessions"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 22).use { db ->
+            db.execSQL(
+                "INSERT INTO persistent_sessions (tmuxName, serverId, serverName, createdAt, backgroundedAt) " +
+                    "VALUES ('omniterm-calm-otter', 7, 'nas', 1000, 2000)"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query(
+                "SELECT tmuxName, serverId, serverName, createdAt, backgroundedAt, adopted FROM persistent_sessions"
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("omniterm-calm-otter", cursor.getString(0))
+                assertEquals(7, cursor.getInt(1))
+                assertEquals("nas", cursor.getString(2))
+                assertEquals(1000L, cursor.getLong(3))
+                assertEquals(2000L, cursor.getLong(4))
+                assertEquals(0, cursor.getInt(5))
+            }
+            db.execSQL(
+                "INSERT INTO persistent_sessions (tmuxName, serverId, serverName, createdAt, backgroundedAt, adopted) " +
+                    "VALUES ('main', 7, 'nas', 1, 1, 1), ('main', 8, 'pi', 1, 1, 1)"
+            )
+            db.query("SELECT COUNT(*) FROM persistent_sessions WHERE tmuxName = 'main'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
             }
         }
         context.deleteDatabase(databaseName)

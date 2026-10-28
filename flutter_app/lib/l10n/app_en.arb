@@ -231,6 +231,32 @@
       }
     }
   },
+  "alsoEndItsTmuxSessionOnTheServer": "Also end its tmux session on the server",
+  "@alsoEndItsTmuxSessionOnTheServer": {
+    "description": "Android R.string.also_end_its_tmux_session_on_the_server"
+  },
+  "alsoEndItsTmuxSessionsOnTheServer": "Also end its {a1} tmux sessions on the server",
+  "@alsoEndItsTmuxSessionsOnTheServer": {
+    "description": "Android R.string.also_end_its_tmux_sessions_on_the_server",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "alsoEndTheTmuxSessionOnTheRemovedHosts": "Also end the tmux session running on a removed host",
+  "@alsoEndTheTmuxSessionOnTheRemovedHosts": {
+    "description": "Android R.string.also_end_the_tmux_session_on_the_removed_hosts"
+  },
+  "alsoEndTheTmuxSessionsOnTheRemovedHosts": "Also end the {a1} tmux sessions running on the removed hosts",
+  "@alsoEndTheTmuxSessionsOnTheRemovedHosts": {
+    "description": "Android R.string.also_end_the_tmux_sessions_on_the_removed_hosts",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "alsoRemovesContainersForServicesNo": "Also removes containers for services no longer defined in the compose file. Use with care.",
   "@alsoRemovesContainersForServicesNo": {
     "description": "Android R.string.also_removes_containers_for_services_no"
@@ -263,13 +289,33 @@
   "@applyToAll": {
     "description": "Android R.string.apply_to_all"
   },
+  "askPidToCloseWithTaskkill": "Ask PID {a1} ({a2}) to close with taskkill?",
+  "@askPidToCloseWithTaskkill": {
+    "description": "Android R.string.ask_pid_to_close_with_taskkill",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
   "assignGroup": "Assign Group",
   "@assignGroup": {
     "description": "Android R.string.assign_group"
   },
+  "attachExistingTmux": "Attach existing tmux…",
+  "@attachExistingTmux": {
+    "description": "Android R.string.attach_existing_tmux"
+  },
   "attachInControlMode": "Attach in control mode",
   "@attachInControlMode": {
     "description": "Android R.string.attach_in_control_mode"
+  },
+  "attachingJoinsTheSessionItself": "Attaching joins the session itself, as tmux attach does: every client shows the same window. Terminate in OmniTerm ends it on the server; Leave keeps it running.",
+  "@attachingJoinsTheSessionItself": {
+    "description": "Android R.string.attaching_joins_the_session_itself"
   },
   "authKeysProfiles": "Auth Keys & Profiles",
   "@authKeysProfiles": {
@@ -832,6 +878,10 @@
   "@copyAll": {
     "description": "Android R.string.copy_all"
   },
+  "copyAllSpecs": "Copy all specs",
+  "@copyAllSpecs": {
+    "description": "Android R.string.copy_all_specs"
+  },
   "copyDeployOutput": "Copy deploy output",
   "@copyDeployOutput": {
     "description": "Android R.string.copy_deploy_output"
@@ -873,6 +923,10 @@
   "@copyPublicKey": {
     "description": "Android R.string.copy_public_key"
   },
+  "copySshCommand": "Copy SSH command",
+  "@copySshCommand": {
+    "description": "Android R.string.copy_ssh_command"
+  },
   "copyTerminalText": "Copy terminal text",
   "@copyTerminalText": {
     "description": "Android R.string.copy_terminal_text"
@@ -912,9 +966,9 @@
       }
     }
   },
-  "couldNotReadFile2": "Could not read file: {a1}",
-  "@couldNotReadFile2": {
-    "description": "Android R.string.could_not_read_file_2",
+  "couldNotReadSpecs": "Could not read the specs: {a1}",
+  "@couldNotReadSpecs": {
+    "description": "Android R.string.could_not_read_specs",
     "placeholders": {
       "a1": {
         "type": "Object"
@@ -1245,9 +1299,22 @@
   "@deleteKey": {
     "description": "Android R.string.delete_key"
   },
+  "deleteNHosts": "Delete {a1} hosts?",
+  "@deleteNHosts": {
+    "description": "Android R.string.delete_n_hosts",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "deleteNode": "Delete node",
   "@deleteNode": {
     "description": "Android R.string.delete_node"
+  },
+  "deleteOneHost": "Delete 1 host?",
+  "@deleteOneHost": {
+    "description": "Android R.string.delete_one_host"
   },
   "deleteProfile": "Delete profile?",
   "@deleteProfile": {
@@ -1444,9 +1511,25 @@
   "@disconnected": {
     "description": "Android R.string.disconnected"
   },
+  "disk2": "DISK",
+  "@disk2": {
+    "description": "Android R.string.disk_2"
+  },
   "diskMounts": "Disk Mounts",
   "@diskMounts": {
     "description": "Android R.string.disk_mounts"
+  },
+  "diskReadWritePerSecond": "Disk: read {a1}/s · write {a2}/s",
+  "@diskReadWritePerSecond": {
+    "description": "Android R.string.disk_read_write_per_second",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "dismiss": "Dismiss",
   "@dismiss": {
@@ -1714,6 +1797,22 @@
   "@encryptedBackup": {
     "description": "Android R.string.encrypted_backup"
   },
+  "endProcess": "End",
+  "@endProcess": {
+    "description": "Android R.string.end_process"
+  },
+  "endProcessButton": "END",
+  "@endProcessButton": {
+    "description": "Android R.string.end_process_button"
+  },
+  "endProcessQ": "End this process?",
+  "@endProcessQ": {
+    "description": "Android R.string.end_process_q"
+  },
+  "endSession": "End session",
+  "@endSession": {
+    "description": "Android R.string.end_session"
+  },
   "engageBelow": "Engage below: {a1}%",
   "@engageBelow": {
     "description": "Android R.string.engage_below",
@@ -1808,6 +1907,15 @@
   "@extractHere2": {
     "description": "Android R.string.extract_here_2"
   },
+  "failedToSendMagicPacketTo": "Failed to send magic packet to {a1}",
+  "@failedToSendMagicPacketTo": {
+    "description": "Android R.string.failed_to_send_magic_packet_to",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "fileOptions": "File options",
   "@fileOptions": {
     "description": "Android R.string.file_options"
@@ -1877,6 +1985,30 @@
       }
     }
   },
+  "forceEndPidWithTaskkill": "Force PID {a1} ({a2}) to end with taskkill /F? Unsaved work in that process is lost.",
+  "@forceEndPidWithTaskkill": {
+    "description": "Android R.string.force_end_pid_with_taskkill",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "forceEndProcess": "Force end",
+  "@forceEndProcess": {
+    "description": "Android R.string.force_end_process"
+  },
+  "forceEndProcessButton": "FORCE END",
+  "@forceEndProcessButton": {
+    "description": "Android R.string.force_end_process_button"
+  },
+  "forceEndProcessQ": "Force this process to end?",
+  "@forceEndProcessQ": {
+    "description": "Android R.string.force_end_process_q"
+  },
   "forceKillSigkill": "Force kill (SIGKILL)?",
   "@forceKillSigkill": {
     "description": "Android R.string.force_kill_sigkill"
@@ -1902,6 +2034,18 @@
     "description": "Android R.string.forget_2",
     "placeholders": {
       "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "forgetRemovesItFromThisDeviceOnly": "\"{a1}\" on {a2}.\n\nForget removes it from this device only; the tmux session keeps running on the server. End session stops it on the server too, and needs the server to answer.",
+  "@forgetRemovesItFromThisDeviceOnly": {
+    "description": "Android R.string.forget_removes_it_from_this_device_only",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
         "type": "Object"
       }
     }
@@ -1999,6 +2143,10 @@
   "goUp": "Go up",
   "@goUp": {
     "description": "Android R.string.go_up"
+  },
+  "gpu2": "GPU",
+  "@gpu2": {
+    "description": "Android R.string.gpu_2"
   },
   "gracefullyTerminatePidWithKill15": "Gracefully terminate PID {a1} ({a2}) with kill -15?",
   "@gracefullyTerminatePidWithKill15": {
@@ -2423,6 +2571,19 @@
       }
     }
   },
+  "lastSeenAgo": "Last seen {a1} ago",
+  "@lastSeenAgo": {
+    "description": "Android R.string.last_seen_ago",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "lastSeenJustNow": "Last seen just now",
+  "@lastSeenJustNow": {
+    "description": "Android R.string.last_seen_just_now"
+  },
   "leave": "LEAVE",
   "@leave": {
     "description": "Android R.string.leave"
@@ -2487,6 +2648,10 @@
         "type": "Object"
       }
     }
+  },
+  "listingTmuxSessions": "Listing tmux sessions…",
+  "@listingTmuxSessions": {
+    "description": "Android R.string.listing_tmux_sessions"
   },
   "live": "LIVE",
   "@live": {
@@ -2554,6 +2719,15 @@
   "machineName": "Machine Name",
   "@machineName": {
     "description": "Android R.string.machine_name"
+  },
+  "magicPacketSentTo": "Magic packet sent to {a1}",
+  "@magicPacketSentTo": {
+    "description": "Android R.string.magic_packet_sent_to",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "maintainActiveSshSftpSessionsWhen": "Maintain active SSH/SFTP sessions when app is minimized",
   "@maintainActiveSshSftpSessionsWhen": {
@@ -2898,6 +3072,15 @@
   "noSshKeysSavedYetGo": "No SSH keys saved yet. Go to Tools → Keys to generate or import one.",
   "@noSshKeysSavedYetGo": {
     "description": "Android R.string.no_ssh_keys_saved_yet_go"
+  },
+  "noTmuxSessionsAreRunningOn": "No tmux sessions are running on {a1}.",
+  "@noTmuxSessionsAreRunningOn": {
+    "description": "Android R.string.no_tmux_sessions_are_running_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "noTransfersRecordedThisSession": "No transfers recorded this session.",
   "@noTransfersRecordedThisSession": {
@@ -3273,6 +3456,32 @@
   "@pinToHomeScreen": {
     "description": "Android R.string.pin_to_home_screen"
   },
+  "ping2": "PING",
+  "@ping2": {
+    "description": "Android R.string.ping_2"
+  },
+  "pingFromThisDevice": "Ping from this device",
+  "@pingFromThisDevice": {
+    "description": "Android R.string.ping_from_this_device"
+  },
+  "pingHost": "Ping {a1}",
+  "@pingHost": {
+    "description": "Android R.string.ping_host",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "pinging": "Pinging {a1}…",
+  "@pinging": {
+    "description": "Android R.string.pinging",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "pingsAreSentFromThisDevice": "Pings are sent from this device, so they tell you whether the HOST is reachable on your current network — independent of SSH.",
   "@pingsAreSentFromThisDevice": {
     "description": "Android R.string.pings_are_sent_from_this_device"
@@ -3534,9 +3743,17 @@
   "@readOnlyDragToScroll": {
     "description": "Android R.string.read_only_drag_to_scroll"
   },
+  "readWithSudo": "Read with sudo",
+  "@readWithSudo": {
+    "description": "Android R.string.read_with_sudo"
+  },
   "readingBackup": "Reading backup…",
   "@readingBackup": {
     "description": "Android R.string.reading_backup"
+  },
+  "readingSystemSpecs": "Reading system specs…",
+  "@readingSystemSpecs": {
+    "description": "Android R.string.reading_system_specs"
   },
   "readingTheProcessList": "Reading the process list…",
   "@readingTheProcessList": {
@@ -3558,6 +3775,18 @@
   "rebootHost": "Reboot host",
   "@rebootHost": {
     "description": "Android R.string.reboot_host"
+  },
+  "rebootRunsOn": "This runs `{a1}` on {a2}. The host will drop offline until it comes back up.",
+  "@rebootRunsOn": {
+    "description": "Android R.string.reboot_runs_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
   },
   "reconnect": "Reconnect",
   "@reconnect": {
@@ -3583,6 +3812,10 @@
   "refresh2": "Refresh",
   "@refresh2": {
     "description": "Android R.string.refresh_2"
+  },
+  "refreshSpecs": "Read specs again",
+  "@refreshSpecs": {
+    "description": "Android R.string.refresh_specs"
   },
   "reject": "Reject",
   "@reject": {
@@ -3669,6 +3902,10 @@
   "@removeReconnect": {
     "description": "Android R.string.remove_reconnect"
   },
+  "removeSavedSession": "Remove saved session",
+  "@removeSavedSession": {
+    "description": "Android R.string.remove_saved_session"
+  },
   "removeTheBookmarkFor": "Remove the bookmark for \"{a1}\"?",
   "@removeTheBookmarkFor": {
     "description": "Android R.string.remove_the_bookmark_for",
@@ -3695,6 +3932,10 @@
         "type": "Object"
       }
     }
+  },
+  "removeTheseHostConnectionsAndTheir": "Remove these host connections (and their saved credentials) from OmniTerm? This does not affect the remote machines, but cannot be undone here.",
+  "@removeTheseHostConnectionsAndTheir": {
+    "description": "Android R.string.remove_these_host_connections_and_their"
   },
   "removeThisHostConnectionAndIts": "Remove this host connection (and its saved credentials) from OmniTerm? This does not affect the remote machine, but cannot be undone here.",
   "@removeThisHostConnectionAndIts": {
@@ -3744,6 +3985,10 @@
   "renameNode": "Rename node",
   "@renameNode": {
     "description": "Android R.string.rename_node"
+  },
+  "renameThisTmuxSessionToAttach": "Rename it on the host to attach: letters, digits, - and _ only, not starting with -.",
+  "@renameThisTmuxSessionToAttach": {
+    "description": "Android R.string.rename_this_tmux_session_to_attach"
   },
   "renamingUpdatesEveryHostAndProfile": "Renaming updates every host and profile that uses this key. Leave the key fields blank to keep the current key pair; paste a new private key to replace it.",
   "@renamingUpdatesEveryHostAndProfile": {
@@ -3934,6 +4179,10 @@
   "@run": {
     "description": "Android R.string.run"
   },
+  "runAgain": "Run again",
+  "@runAgain": {
+    "description": "Android R.string.run_again"
+  },
   "runComposeDown": "Run compose down?",
   "@runComposeDown": {
     "description": "Android R.string.run_compose_down"
@@ -3968,24 +4217,6 @@
         "type": "Object"
       },
       "a2": {
-        "type": "Object"
-      }
-    }
-  },
-  "runSystemctlRestartOnTheService": "Run systemctl restart on {a1}? The service will briefly stop and start again.",
-  "@runSystemctlRestartOnTheService": {
-    "description": "Android R.string.run_systemctl_restart_on_the_service",
-    "placeholders": {
-      "a1": {
-        "type": "Object"
-      }
-    }
-  },
-  "runSystemctlStopOnItWill": "Run systemctl stop on {a1}? It will remain down until started again.",
-  "@runSystemctlStopOnItWill": {
-    "description": "Android R.string.run_systemctl_stop_on_it_will",
-    "placeholders": {
-      "a1": {
         "type": "Object"
       }
     }
@@ -4034,6 +4265,10 @@
   "save": "Save",
   "@save": {
     "description": "Android R.string.save"
+  },
+  "saveASudoPasswordForSpecs": "No sudo password is saved for this host. Add one under Edit host, or allow dmidecode and smartctl without a password.",
+  "@saveASudoPasswordForSpecs": {
+    "description": "Android R.string.save_a_sudo_password_for_specs"
   },
   "saveAfterFailedCheck": "Save after failed check?",
   "@saveAfterFailedCheck": {
@@ -4403,6 +4638,15 @@
   "@serviceLogs": {
     "description": "Android R.string.service_logs"
   },
+  "serviceRestartExplained": "{a1} will briefly stop and start again.",
+  "@serviceRestartExplained": {
+    "description": "Android R.string.service_restart_explained",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "serviceSContainers": "{a1} service(s) · {a2}/{a3} containers",
   "@serviceSContainers": {
     "description": "Android R.string.service_s_containers",
@@ -4414,6 +4658,15 @@
         "type": "Object"
       },
       "a3": {
+        "type": "Object"
+      }
+    }
+  },
+  "serviceStopExplained": "{a1} will stay down until it is started again.",
+  "@serviceStopExplained": {
+    "description": "Android R.string.service_stop_explained",
+    "placeholders": {
+      "a1": {
         "type": "Object"
       }
     }
@@ -4562,17 +4815,102 @@
   "@smartSwipeInput": {
     "description": "Android R.string.smart_swipe_input"
   },
+  "someSpecsNeedRoot": "Memory modules and drive health can only be read as root.",
+  "@someSpecsNeedRoot": {
+    "description": "Android R.string.some_specs_need_root"
+  },
   "sort": "Sort",
   "@sort": {
     "description": "Android R.string.sort"
+  },
+  "sortByHealth": "Health (lowest first)",
+  "@sortByHealth": {
+    "description": "Android R.string.sort_by_health"
+  },
+  "sortByLatency": "Latency (fastest first)",
+  "@sortByLatency": {
+    "description": "Android R.string.sort_by_latency"
+  },
+  "sortByName": "Name",
+  "@sortByName": {
+    "description": "Android R.string.sort_by_name"
+  },
+  "sortByStatus": "Status (online first)",
+  "@sortByStatus": {
+    "description": "Android R.string.sort_by_status"
+  },
+  "sortDisk": "↓ DISK",
+  "@sortDisk": {
+    "description": "Android R.string.sort_disk"
   },
   "sortFiles": "Sort files",
   "@sortFiles": {
     "description": "Android R.string.sort_files"
   },
+  "sortGpu": "↓ GPU",
+  "@sortGpu": {
+    "description": "Android R.string.sort_gpu"
+  },
+  "sortHosts": "Sort hosts",
+  "@sortHosts": {
+    "description": "Android R.string.sort_hosts"
+  },
   "sourceCodeContributions": "Source code & contributions",
   "@sourceCodeContributions": {
     "description": "Android R.string.source_code_contributions"
+  },
+  "specCpu": "Processor",
+  "@specCpu": {
+    "description": "Android R.string.spec_cpu"
+  },
+  "specDriveHealthNeedsRoot": "Drive health, temperature, hours in use and wear can only be read as root.",
+  "@specDriveHealthNeedsRoot": {
+    "description": "Android R.string.spec_drive_health_needs_root"
+  },
+  "specDriveHealthToolMissing": "Install smartmontools on this host to see drive health, temperature and wear.",
+  "@specDriveHealthToolMissing": {
+    "description": "Android R.string.spec_drive_health_tool_missing"
+  },
+  "specGpu": "Graphics",
+  "@specGpu": {
+    "description": "Android R.string.spec_gpu"
+  },
+  "specMemory": "Memory",
+  "@specMemory": {
+    "description": "Android R.string.spec_memory"
+  },
+  "specModulesNeedRoot": "Each memory module's size, type, speed, maker and part number can only be read as root.",
+  "@specModulesNeedRoot": {
+    "description": "Android R.string.spec_modules_need_root"
+  },
+  "specModulesToolMissing": "Install dmidecode on this host to see its memory modules.",
+  "@specModulesToolMissing": {
+    "description": "Android R.string.spec_modules_tool_missing"
+  },
+  "specNetwork": "Network",
+  "@specNetwork": {
+    "description": "Android R.string.spec_network"
+  },
+  "specNoModulesReported": "This host's firmware lists no memory modules. Virtual machines usually don't.",
+  "@specNoModulesReported": {
+    "description": "Android R.string.spec_no_modules_reported"
+  },
+  "specReadFrom": "Hardware and software of {a1}",
+  "@specReadFrom": {
+    "description": "Android R.string.spec_read_from",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "specStorage": "Storage",
+  "@specStorage": {
+    "description": "Android R.string.spec_storage"
+  },
+  "specSystem": "System",
+  "@specSystem": {
+    "description": "Android R.string.spec_system"
   },
   "ssh": "SSH",
   "@ssh": {
@@ -4670,18 +5008,6 @@
   "startedAgoBackgroundedAgo": "Started {a1} ago · backgrounded {a2} ago",
   "@startedAgoBackgroundedAgo": {
     "description": "Android R.string.started_ago_backgrounded_ago",
-    "placeholders": {
-      "a1": {
-        "type": "Object"
-      },
-      "a2": {
-        "type": "Object"
-      }
-    }
-  },
-  "startedAgoBackgroundedAgo2": "Started {a1} ago · backgrounded {a2} ago",
-  "@startedAgoBackgroundedAgo2": {
-    "description": "Android R.string.started_ago_backgrounded_ago_2",
     "placeholders": {
       "a1": {
         "type": "Object"
@@ -4807,6 +5133,15 @@
   "@sudoPasswordOptional": {
     "description": "Android R.string.sudo_password_optional"
   },
+  "sudoRefused": "sudo said: {a1}",
+  "@sudoRefused": {
+    "description": "Android R.string.sudo_refused",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "sweepYourLocalNetworkAndGather": "Sweep your local network and gather as much detail as possible per host: hostname, MAC + vendor, and which common ports answer. Tap a host for actions — save it, ping, port scan, and more.",
   "@sweepYourLocalNetworkAndGather": {
     "description": "Android R.string.sweep_your_local_network_and_gather"
@@ -4826,6 +5161,10 @@
   "systemDefault": "System Default",
   "@systemDefault": {
     "description": "Android R.string.system_default"
+  },
+  "systemSpecs": "System specs",
+  "@systemSpecs": {
+    "description": "Android R.string.system_specs"
   },
   "takenDownItsContainersAndNetworks": "Taken down — its containers and networks no longer exist. OmniTerm recorded this stack while it was up; the compose file stays on the host.",
   "@takenDownItsContainersAndNetworks": {
@@ -5023,7 +5362,7 @@
   "@thisHostIsSetToUse": {
     "description": "Android R.string.this_host_is_set_to_use"
   },
-  "thisHostRunsNeitherSystemdNor": "This host runs neither systemd nor OpenRC, so its services cannot be listed.",
+  "thisHostRunsNeitherSystemdNor": "This host has no service manager OmniTerm can read (systemd, OpenRC, BSD rc.d, launchd or Windows services), so its services cannot be listed.",
   "@thisHostRunsNeitherSystemdNor": {
     "description": "Android R.string.this_host_runs_neither_systemd_nor"
   },
@@ -5042,15 +5381,6 @@
   "thisRemovesTheDefaultCpuMemory": "This removes the default CPU/memory/disk/latency/temperature All Hosts rules, including any edits to them. Custom rules you added are kept.",
   "@thisRemovesTheDefaultCpuMemory": {
     "description": "Android R.string.this_removes_the_default_cpu_memory"
-  },
-  "thisRunsSudoRebootOnThe": "This runs `sudo reboot` on {a1}. The host will drop offline until it comes back up. Requires passwordless sudo for the SSH user.",
-  "@thisRunsSudoRebootOnThe": {
-    "description": "Android R.string.this_runs_sudo_reboot_on_the",
-    "placeholders": {
-      "a1": {
-        "type": "Object"
-      }
-    }
   },
   "thisSession": "This session",
   "@thisSession": {
@@ -5121,9 +5451,52 @@
   "@timeToFirstByte": {
     "description": "Android R.string.time_to_first_byte"
   },
+  "tmuxAttachedElsewhere": "attached elsewhere",
+  "@tmuxAttachedElsewhere": {
+    "description": "Android R.string.tmux_attached_elsewhere"
+  },
   "tmuxControlModeExperimental": "tmux control mode (experimental)",
   "@tmuxControlModeExperimental": {
     "description": "Android R.string.tmux_control_mode_experimental"
+  },
+  "tmuxDetached": "detached",
+  "@tmuxDetached": {
+    "description": "Android R.string.tmux_detached"
+  },
+  "tmuxIsNotInstalledOn": "tmux is not installed on {a1}.",
+  "@tmuxIsNotInstalledOn": {
+    "description": "Android R.string.tmux_is_not_installed_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "tmuxOneWindow": "1 window",
+  "@tmuxOneWindow": {
+    "description": "Android R.string.tmux_one_window"
+  },
+  "tmuxOpenHere": "open here",
+  "@tmuxOpenHere": {
+    "description": "Android R.string.tmux_open_here"
+  },
+  "tmuxSessionsOn": "tmux sessions on {a1}",
+  "@tmuxSessionsOn": {
+    "description": "Android R.string.tmux_sessions_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "tmuxWindows": "{a1} windows",
+  "@tmuxWindows": {
+    "description": "Android R.string.tmux_windows",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "topLevelNetworks": "Top-level networks",
   "@topLevelNetworks": {
@@ -5148,6 +5521,19 @@
   "total2": "Total",
   "@total2": {
     "description": "Android R.string.total_2"
+  },
+  "tracerouteFromThisDevice": "Traceroute from this device",
+  "@tracerouteFromThisDevice": {
+    "description": "Android R.string.traceroute_from_this_device"
+  },
+  "tracerouteTo": "Traceroute to {a1}",
+  "@tracerouteTo": {
+    "description": "Android R.string.traceroute_to",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
   },
   "tracesEachNetworkHopFromThis": "Traces each network hop from this device to the host. Uses the platform traceroute; if it isn't available, a clear message is shown.",
   "@tracesEachNetworkHopFromThis": {
@@ -5295,6 +5681,10 @@
   "uploadFilesFromDevice": "Upload files from device",
   "@uploadFilesFromDevice": {
     "description": "Android R.string.upload_files_from_device"
+  },
+  "uptimeLabel": "Uptime",
+  "@uptimeLabel": {
+    "description": "Android R.string.uptime_label"
   },
   "useASavedHost": "Use a saved host…",
   "@useASavedHost": {
@@ -5445,6 +5835,10 @@
   "wake": "Wake",
   "@wake": {
     "description": "Android R.string.wake"
+  },
+  "wake2": "WAKE",
+  "@wake2": {
+    "description": "Android R.string.wake_2"
   },
   "warnAtFileCount": "Warn at file count",
   "@warnAtFileCount": {

@@ -155,9 +155,10 @@ when configuring a Codex client to read these agreements.
   build, test, lint, migration, SBOM, signing-input, or dependency-verification behavior changes.
 - Run `git diff --check` and `git diff --cached --check` before committing.
 - Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.
-  `scripts/check-duplicates.py` fails the gate and CI on a new copied block. The Flutter baseline
-  (`scripts/flutter-duplicate-code-baseline.json`) lists the one known copy; only
-  `--update-baseline` adds to it, and that needs the reviewer's agreement.
+  `scripts/check-duplicates.py` fails the gate and CI on a new copied block. The Kotlin
+  baseline (`scripts/duplicate-code-baseline.json`) is empty, and the Flutter baseline
+  (`scripts/flutter-duplicate-code-baseline.json`) lists the one known copy. Only
+  `--update-baseline` adds to either, and that needs the reviewer's agreement.
 
 ## Monitor every PR head to completion
 
@@ -214,6 +215,12 @@ when configuring a Codex client to read these agreements.
   forced fresh resolution across buildscript, both app variants, tests, lint, benchmark, and both
   release SBOM graphs.
 - Preserve root security substitutions and the trusted-main Dependabot metadata-fixup workflow.
+  The fixup workflow commits through the Git Data API so GitHub signs the commit, and fails
+  rather than publish an unsigned one; keep it that way.
+- main requires every commit in a PR to be signed, and GitHub enforces that only at merge time.
+  Before merging another branch into a PR branch, check each incoming commit with
+  `gh api repos/{owner}/{repo}/commits/<sha> --jq .commit.verification.verified`. An unsigned
+  commit can only be removed by rewriting the PR branch, which dismisses its approval.
 - Inspect Dependabot configuration, open dependency PRs, and update-job policy together. Respect
   compatibility holds and dedicated review for user-visible network/SSH/ads/consent majors.
 - Keep Actions pinned to full SHAs and retain dependency review/submission, CodeQL, Scorecard,

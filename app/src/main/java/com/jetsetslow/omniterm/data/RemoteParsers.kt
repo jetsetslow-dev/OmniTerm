@@ -174,8 +174,22 @@ object RemoteCommands {
     // the tmux server, so reconnecting re-attaches the *same* session (and any long-running command
     // keeps running). These helpers detect tmux and (with user confirmation) install it.
 
+    /**
+     * Starts every tmux command: finds a tmux that a package manager put outside the system PATH.
+     *
+     * A command sent without a terminal starts a non-login shell, and on macOS that shell's PATH
+     * is only /usr/bin:/bin:/usr/sbin:/sbin; Homebrew's directory is added by ~/.zprofile, which
+     * only login shells read. So on a Mac with Homebrew's tmux the check said tmux was missing, and
+     * session checks, screen captures and End session failed quietly. Covers Homebrew on Apple
+     * silicon and Intel, MacPorts, and Homebrew on Linux, and leaves PATH alone wherever tmux is
+     * already found.
+     */
+    const val TMUX_PATH =
+        "command -v tmux >/dev/null 2>&1 || " +
+            "PATH=\"\$PATH:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/home/linuxbrew/.linuxbrew/bin\"; "
+
     /** Prints "yes" if tmux is on PATH, else "no". */
-    const val TMUX_CHECK = "command -v tmux >/dev/null 2>&1 && echo yes || echo no"
+    const val TMUX_CHECK = TMUX_PATH + "command -v tmux >/dev/null 2>&1 && echo yes || echo no"
 
     /**
      * The command run inside the interactive shell to enter a persistent session: attach to the
@@ -185,13 +199,42 @@ object RemoteCommands {
      * [name] so multiple persistent sessions to one host re-attach their own session on reconnect.
      */
     private fun tmuxSafeName(name: String) =
-        name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        name.filter { it.isTmuxNameChar() }.ifBlank { "omniterm" }
 
-    /** Configure an existing session before the regular/control client attaches to it. */
-    private fun tmuxExistingBootstrap(safe: String, historyLimit: Int): String {
+    private fun Char.isTmuxNameChar() = isLetterOrDigit() || this == '-' || this == '_'
+
+    /**
+     * Whether a session found on the host can be attached by its own name. Names go into shell
+     * commands unquoted, so it must pass [tmuxSafeName] unchanged, and it must not start with `-`,
+     * which tmux would read as an option. tmux's default names (0, 1, …) qualify.
+     */
+    fun isAttachableTmuxName(name: String): Boolean =
+        name.isNotEmpty() && name.first() != '-' && name.all { it.isTmuxNameChar() }
+
+    /**
+     * Succeeds only when a session is called exactly [safe]. `-t name` also accepts a session whose
+     * name merely starts with it, so once a session called "0" has ended, `has-session -t 0` finds
+     * "01", and an attach or kill would act on a session the user never picked.
+     */
+    private fun tmuxExactSession(safe: String) =
+        "tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -qxF -- $safe"
+
+    /**
+     * The active pane of session [safe]. A bare name is tried as a pane and then a window before a
+     * session, so a session called "0" would reach pane 0 of whichever session tmux took as current.
+     */
+    private fun tmuxPane(safe: String) = "$safe:"
+
+    /**
+     * Configure an existing session before the regular/control client attaches to it. A session
+     * the user attached from the host's own list is left as it is ([configure] false): their other
+     * tmux clients share its options.
+     */
+    private fun tmuxExistingBootstrap(safe: String, historyLimit: Int, configure: Boolean = true): String {
         val limit = historyLimit.coerceIn(1_000, 50_000)
-        return "command -v tmux >/dev/null 2>&1 && " +
-            "tmux has-session -t $safe 2>/dev/null && " +
+        val bootstrap = TMUX_PATH + "command -v tmux >/dev/null 2>&1 && " + tmuxExactSession(safe) + " && "
+        if (!configure) return bootstrap
+        return bootstrap +
             "(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && " +
             // Touch scrolling is handled locally by the app. Keep tmux mouse mode off so normal
             // drags don't get captured by tmux copy-mode or terminal apps in surprising ways.
@@ -201,7 +244,7 @@ object RemoteCommands {
     /** Atomically create a brand-new app-owned session; an existing same-name session is an error. */
     private fun tmuxCreateBootstrap(safe: String, historyLimit: Int): String {
         val limit = historyLimit.coerceIn(1_000, 50_000)
-        return "command -v tmux >/dev/null 2>&1 && " +
+        return TMUX_PATH + "command -v tmux >/dev/null 2>&1 && " +
             // history-limit applies only to newly created panes. One tmux invocation starts the
             // server, sets the global default, and creates the unique session. new-session fails
             // rather than attaching if another client somehow already owns this high-entropy name.
@@ -219,10 +262,10 @@ object RemoteCommands {
         return tmuxCreateBootstrap(safe, historyLimit) + "exec tmux -C attach-session -t $safe\n"
     }
 
-    fun tmuxAttachCommand(name: String, historyLimit: Int = 10_000): String {
-        // Defensive: only allow our own [a-z0-9-] names through into the shell command.
+    fun tmuxAttachCommand(name: String, historyLimit: Int = 10_000, adopted: Boolean = false): String {
+        // Defensive: only allow [A-Za-z0-9_-] names through into the shell command.
         val safe = tmuxSafeName(name)
-        return tmuxExistingBootstrap(safe, historyLimit) + "exec tmux attach-session -t $safe\n"
+        return tmuxExistingBootstrap(safe, historyLimit, configure = !adopted) + "exec tmux attach-session -t $safe\n"
     }
 
     /**
@@ -231,18 +274,31 @@ object RemoteCommands {
      * repaint (see [com.jetsetslow.omniterm.data.term.TmuxControlParser]). Single `-C`, not `-CC`
      * — the double form wraps the conversation in a DCS envelope for terminal-embedded clients.
      */
-    fun tmuxControlAttachCommand(name: String, historyLimit: Int = 10_000): String {
+    fun tmuxControlAttachCommand(name: String, historyLimit: Int = 10_000, adopted: Boolean = false): String {
         val safe = tmuxSafeName(name)
-        return tmuxExistingBootstrap(safe, historyLimit) + "exec tmux -C attach-session -t $safe\n"
+        return tmuxExistingBootstrap(safe, historyLimit, configure = !adopted) + "exec tmux -C attach-session -t $safe\n"
     }
+
+    /** Marks a host without tmux in [TMUX_LIST_SESSIONS]'s output. */
+    const val TMUX_MISSING_MARKER = "##OMNI-NO-TMUX"
+
+    /**
+     * The host's tmux sessions, one per line: when each was created (epoch seconds), how many
+     * clients are attached, how many windows it has, and its name last, since a name the user chose
+     * may contain spaces. See [RemoteParsers.parseTmuxSessions].
+     */
+    const val TMUX_LIST_SESSIONS = TMUX_PATH +
+        "if command -v tmux >/dev/null 2>&1; then " +
+        "tmux list-sessions -F '#{session_created} #{session_attached} #{session_windows} #{session_name}' 2>/dev/null; true; " +
+        "else echo '$TMUX_MISSING_MARKER'; fi"
 
     /** Active pane id of [name]'s current window, e.g. `%0` (side channel; control mode needs it to route %output). */
     fun tmuxActivePaneQuery(name: String): String =
-        "tmux display-message -p -t ${tmuxSafeName(name)} '#{pane_id}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{pane_id}' 2>/dev/null || true"
 
     /** Cursor position as `x y` (0-based) for the control-mode repaint seed. */
     fun tmuxCursorQuery(name: String): String =
-        "tmux display-message -p -t ${tmuxSafeName(name)} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
 
     /**
      * Prints `1` when a full-screen TUI owns the pane's alternate screen, else `0`. Drives
@@ -250,12 +306,12 @@ object RemoteCommands {
      * side has no history for them), plain shells keep the local-buffer scroll.
      */
     fun tmuxAlternateOnQuery(name: String): String =
-        "tmux display-message -p -t ${tmuxSafeName(name)} '#{alternate_on}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{alternate_on}' 2>/dev/null || true"
 
     /** Cursor position for an exact pane id, avoiding an active-pane change between side queries. */
     fun tmuxPaneCursorQuery(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"
-        return "tmux display-message -p -t $safe '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
+        return TMUX_PATH + "tmux display-message -p -t $safe '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
     }
 
     /**
@@ -263,7 +319,7 @@ object RemoteCommands {
      * repaints on attach, so the client must paint the current pane content itself.
      */
     fun tmuxCaptureScreenCommand(name: String): String =
-        "tmux capture-pane -p -e -t ${tmuxSafeName(name)} 2>/dev/null || true"
+        TMUX_PATH + "tmux capture-pane -p -e -t ${tmuxPane(tmuxSafeName(name))} 2>/dev/null || true"
 
     /**
      * [tmuxCaptureScreenCommand] guarded on `#{alternate_on}`, for the REGULAR-attach pre-paint.
@@ -278,30 +334,28 @@ object RemoteCommands {
      * skipping costs nothing while the TUI is up. Same guard as [tmuxCaptureHistoryCommand].
      */
     fun tmuxCaptureScreenIfNoTuiCommand(name: String): String {
-        val safe = tmuxSafeName(name)
-        return "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
+        val safe = tmuxPane(tmuxSafeName(name))
+        return TMUX_PATH + "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
             "then :; else tmux capture-pane -p -e -t $safe 2>/dev/null; fi || true"
     }
 
     /** Visible screen for an exact pane id (control-mode atomic repaint). */
     fun tmuxCapturePaneScreenCommand(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"
-        return "tmux capture-pane -p -e -t $safe 2>/dev/null || true"
+        return TMUX_PATH + "tmux capture-pane -p -e -t $safe 2>/dev/null || true"
     }
 
-    fun tmuxHasSessionCommand(name: String): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return "tmux has-session -t $safe >/dev/null 2>&1 && echo yes || echo no"
-    }
+    fun tmuxHasSessionCommand(name: String): String =
+        TMUX_PATH + tmuxExactSession(tmuxSafeName(name)) + " && echo yes || echo no"
 
     fun tmuxKillCommand(name: String): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return "tmux kill-session -t $safe 2>/dev/null"
+        val safe = tmuxSafeName(name)
+        return TMUX_PATH + tmuxExactSession(safe) + " && tmux kill-session -t $safe 2>/dev/null"
     }
 
     /** Clear only the active pane's server-side history; the visible screen remains intact. */
     fun tmuxClearHistoryCommand(name: String): String =
-        "tmux clear-history -t ${tmuxSafeName(name)} 2>/dev/null || true"
+        TMUX_PATH + "tmux clear-history -t ${tmuxPane(tmuxSafeName(name))} 2>/dev/null || true"
 
     /**
      * Dump the pane's scrollback history (colours preserved via -e, wrapped lines re-joined via
@@ -316,9 +370,9 @@ object RemoteCommands {
      * callers keep their dirty flag armed and retry after the TUI exits.
      */
     fun tmuxCaptureHistoryCommand(name: String, maxLines: Int): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        val safe = tmuxPane(tmuxSafeName(name))
         val lines = maxLines.coerceIn(1_000, 50_000)
-        return "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
+        return TMUX_PATH + "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
             "then :; else tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null; fi || true"
     }
 
@@ -329,8 +383,8 @@ object RemoteCommands {
      * would land at the shell prompt as a literal letter. Harmless no-op outside copy-mode.
      */
     fun tmuxExitCopyModeCommand(name: String): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return "tmux send-keys -X -t $safe cancel 2>/dev/null || true"
+        val safe = tmuxPane(tmuxSafeName(name))
+        return TMUX_PATH + "tmux send-keys -X -t $safe cancel 2>/dev/null || true"
     }
 
     /** Bound for a package-index refresh. Long enough for a slow mirror, short enough to report. */
@@ -345,7 +399,7 @@ object RemoteCommands {
      * fed via stdin to `sudo -S` by the caller (never interpolated into the command string).
      */
     fun tmuxInstallCommand(): String =
-        "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; " +
+        TMUX_PATH + "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; " +
         "if [ \"\$(id -u)\" = 0 ]; then SUDO=; else SUDO='sudo -S'; fi; " +
         // Every package step is bounded and explains a timeout in its own words. A dpkg/apt or dnf
         // lock held by unattended-upgrades blocks forever; the transport would eventually cut the
@@ -364,8 +418,13 @@ object RemoteCommands {
         "elif command -v apk >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO apk add tmux; " +
         "elif command -v zypper >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO zypper install -y tmux; " +
         "elif command -v pkg >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO pkg install -y tmux; " +
+        // Homebrew refuses to run as root and needs no sudo; [TMUX_PATH] puts it on PATH on a Mac.
+        "elif command -v brew >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS brew install tmux; " +
         "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; " +
         "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }"
+
+    private val WINDOWS_SHELL_ERRORS =
+        listOf("not recognized", "CommandNotFound", "is not a valid statement separator", "ParserError")
 
     /** Normalise raw [OS_PROBE] output to a family token used to pick command/parse variants. */
     fun normaliseOs(raw: String): String {
@@ -375,8 +434,10 @@ object RemoteCommands {
             s.startsWith("FreeBSD", true) || s.startsWith("OpenBSD", true) ||
                 s.startsWith("NetBSD", true) || s.startsWith("DragonFly", true) -> "FreeBSD"
             s.startsWith("Darwin", true) -> "Darwin"
-            s.contains("Windows", true) || s.contains("not recognized", true) ||
-                s.contains("CommandNotFound", true) -> "Windows"
+            // cmd.exe answers `uname` with "not recognized"; Windows PowerShell 5.1 as the SSH shell
+            // rejects the probe's `||` before running anything, so its first line is only "At line:1".
+            s.contains("Windows", true) ||
+                WINDOWS_SHELL_ERRORS.any { raw.contains(it, ignoreCase = true) } -> "Windows"
             // Empty (missing @OS section) or unknown Unix-like → Linux, the safest superset.
             else -> "Linux"
         }
@@ -397,12 +458,35 @@ object RemoteCommands {
         else -> PROCESSES
     }
 
+    /** Starts every section the process commands append after the list itself. */
+    const val PROCESS_SECTION_PREFIX = "##OMNI-"
+    const val PROCESS_SAMPLE_MARKER = "${PROCESS_SECTION_PREFIX}SAMPLE"
+    const val PROCESS_NVIDIA_MARKER = "${PROCESS_SECTION_PREFIX}NVIDIA"
+    /** Rates a host has already worked out: "pid readBytesPerSecond writeBytesPerSecond". */
+    const val PROCESS_RATES_MARKER = "${PROCESS_SECTION_PREFIX}RATES"
+    /** Present when the host reports GPU use; then "pid busiestEnginePercent" lines. */
+    const val PROCESS_GPU_MARKER = "${PROCESS_SECTION_PREFIX}GPU"
+
     // Linux: pid,user,%cpu,%mem,vsz,etime,stat,comm (etime adds per-process uptime). The `ps`
     // header line is dropped by the parser (non-numeric pid). BusyBox ps has no -eo, so fall back
     // to its plain 4-column output (PID USER TIME COMMAND), which the parser also understands.
+    //
+    // Then two samples, a second apart, of what the listed processes did meanwhile: disk bytes
+    // from /proc/<pid>/io, and GPU use from the DRM fdinfo that the open drivers publish (engine
+    // time from amdgpu, i915 and most others; engine cycles from Intel's xe). NVIDIA's own driver
+    // publishes none, so `nvidia-smi pmon` answers for it. Another user's counters are unreadable
+    // without root; grep skips those quietly and the parser reports them as unknown, not zero.
+    // xargs keeps a process with thousands of descriptors under the argument limit.
+    // See [RemoteParsers.parseProcessUsage].
     const val PROCESSES =
-        "ps -eo pid,user,%cpu,%mem,vsz,etime,stat,comm 2>/dev/null | sort -k3 -rn | head -n 80" +
-        " || ps w 2>/dev/null | head -n 80"
+        "P=\$(ps -eo pid,user,%cpu,%mem,vsz,etime,stat,comm 2>/dev/null | sort -k3 -rn | head -n 80); " +
+        "[ -n \"\$P\" ] || P=\$(ps w 2>/dev/null | head -n 80); printf '%s\\n' \"\$P\"; " +
+        "D=''; for p in \$(printf '%s\\n' \"\$P\" | awk '{print \$1}'); do [ -d /proc/\$p ] && D=\"\$D /proc/\$p\"; done; " +
+        "s(){ echo \"$PROCESS_SAMPLE_MARKER \$(date +%s%N 2>/dev/null)\"; [ -n \"\$D\" ] && " +
+        "for d in \$D; do echo \$d/io; ls -d \$d/fdinfo/* 2>/dev/null; done | " +
+        "xargs grep -H -E '^(read_bytes|write_bytes|drm-client-id|drm-pdev|drm-engine-[a-z0-9-]+|drm-(total-)?cycles-[a-z0-9-]+):' 2>/dev/null; }; " +
+        "s; sleep 1; s; " +
+        "if command -v nvidia-smi >/dev/null 2>&1; then echo '$PROCESS_NVIDIA_MARKER'; nvidia-smi pmon -c 1 -s u 2>/dev/null; fi; true"
 
     // FreeBSD/macOS BSD ps: same 8 columns via -axo (keywords differ slightly).
     const val PROCESSES_BSD =
@@ -410,11 +494,24 @@ object RemoteCommands {
 
     // Windows: emulate the same 8 space-separated columns (pid user %cpu %mem vsz etime stat comm),
     // sorted by CPU. ProcessName has no spaces so the simple split holds.
+    //
+    // Then the listed processes' I/O rates, which the performance counters already give per
+    // second. Windows has no per-process disk-only counter short of a kernel trace, so these
+    // count all of a process's I/O, as Task Manager's "I/O read/write bytes" columns do. Last,
+    // when the GPU counters exist (Windows 10 1709 and later), each process's busiest engine, as
+    // Task Manager's GPU column shows it. The counter classes are not translated, unlike
+    // Get-Counter's paths, so this works on any display language.
+    // See [RemoteParsers.parseProcessUsage].
     val PROCESSES_WINDOWS =
-        "powershell -NoProfile -Command \"Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | " +
+        "powershell -NoProfile -Command \"\$p = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | " +
             "Where-Object { \$_.IDProcess -ne 0 } | Sort-Object PercentProcessorTime -Descending | " +
-            "Select-Object -First 80 | ForEach-Object { \$_.IDProcess.ToString() + ' NA ' + " +
-            "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }\""
+            "Select-Object -First 80; \$p | ForEach-Object { \$_.IDProcess.ToString() + ' NA ' + " +
+            "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }; " +
+            "'$PROCESS_RATES_MARKER'; \$p | ForEach-Object { \$_.IDProcess.ToString() + ' ' + " +
+            "\$_.IOReadBytesPersec + ' ' + \$_.IOWriteBytesPersec }; " +
+            "try { \$g = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop; " +
+            "'$PROCESS_GPU_MARKER'; \$g | Group-Object { (\$_.Name -split '_')[1] } | ForEach-Object { " +
+            "\$_.Name + ' ' + (\$_.Group | Measure-Object UtilizationPercentage -Maximum).Maximum } } catch { }\""
 
     // Detect the init system instead of assuming systemd: OpenRC hosts (Alpine, Gentoo) get
     // rc-status output (marked so the parser switches format); other inits return a marker the
@@ -426,6 +523,63 @@ object RemoteCommands {
         "echo '---ENABLED---'; ot 15 systemctl list-unit-files --type=service --no-pager --no-legend --plain 2>/dev/null; }; " +
         "elif command -v rc-status >/dev/null 2>&1; then echo '---OPENRC---'; rc-status -a 2>/dev/null; " +
         "else echo '---NOSYSTEMD---'; fi"
+
+    /**
+     * Heads the service list of every host that is neither systemd nor OpenRC: one tab-separated
+     * line per service of name, state (running/stopped/failed, or Windows' own), start-at-boot
+     * (enabled/disabled, or Windows' start type) and description.
+     */
+    const val SERVICE_TABLE_MARKER = "---SERVICE-TABLE---"
+
+    /**
+     * OpenBSD's rcctl or the rc.d `service` of FreeBSD/NetBSD. Each `onestatus` is bounded: an rc
+     * script is arbitrary shell, and one that hangs must not take the whole list with it.
+     */
+    const val SERVICES_BSD =
+        OT_HELPER +
+        "if command -v rcctl >/dev/null 2>&1; then echo '$SERVICE_TABLE_MARKER'; " +
+        "on=\" \$(rcctl ls on 2>/dev/null | tr '\\n' ' ') \"; up=\" \$(rcctl ls started 2>/dev/null | tr '\\n' ' ') \"; " +
+        "for svc in \$(rcctl ls all 2>/dev/null); do " +
+        "case \"\$up\" in *\" \$svc \"*) s=running;; *) s=stopped;; esac; " +
+        "case \"\$on\" in *\" \$svc \"*) e=enabled;; *) e=disabled;; esac; " +
+        "printf '%s\\t%s\\t%s\\t\\n' \"\$svc\" \"\$s\" \"\$e\"; done; " +
+        "elif command -v service >/dev/null 2>&1; then echo '$SERVICE_TABLE_MARKER'; " +
+        "on=\" \$(service -e 2>/dev/null | sed 's|.*/||' | tr '\\n' ' ') \"; " +
+        // Upper-case entries (FILESYSTEMS, LOGIN, …) are rcorder checkpoints, not services.
+        "for svc in \$(service -l 2>/dev/null | grep -v '^[A-Z_]*\$'); do " +
+        "if ot 5 service \"\$svc\" onestatus >/dev/null 2>&1; then s=running; else s=stopped; fi; " +
+        "case \"\$on\" in *\" \$svc \"*) e=enabled;; *) e=disabled;; esac; " +
+        "printf '%s\\t%s\\t%s\\t\\n' \"\$svc\" \"\$s\" \"\$e\"; done; " +
+        "else echo '---NOSYSTEMD---'; fi"
+
+    /**
+     * launchd jobs in the domain the SSH user can manage without sudo: the system domain as root,
+     * otherwise the user's GUI session (or the background `user/` domain when nobody is logged in
+     * at the screen). [serviceAction] computes the same domain, so a listed job can be acted on.
+     */
+    private const val LAUNCHD_DOMAIN =
+        "u=\$(id -u); if [ \"\$u\" = 0 ]; then d=system; else d=gui/\$u; launchctl print \"\$d\" >/dev/null 2>&1 || d=user/\$u; fi; "
+
+    const val SERVICES_DARWIN =
+        LAUNCHD_DOMAIN +
+        "off=\" \$(launchctl print-disabled \"\$d\" 2>/dev/null | awk -F'\"' '/=> (true|disabled)/{print \$2}' | tr '\\n' ' ') \"; " +
+        "echo '$SERVICE_TABLE_MARKER'; " +
+        "launchctl list 2>/dev/null | awk 'NR>1' | while IFS=\"\$(printf '\\t')\" read -r pid st label; do " +
+        "if [ \"\$pid\" != - ]; then s=running; elif [ \"\$st\" = 0 ]; then s=stopped; else s=failed; fi; " +
+        "case \"\$off\" in *\" \$label \"*) e=disabled;; *) e=enabled;; esac; " +
+        "printf '%s\\t%s\\t%s\\t\\n' \"\$label\" \"\$s\" \"\$e\"; done"
+
+    const val SERVICES_WINDOWS =
+        "powershell -NoProfile -Command \"'$SERVICE_TABLE_MARKER'; Get-Service | ForEach-Object { " +
+            "\$_.Name + [char]9 + \$_.Status + [char]9 + \$_.StartType + [char]9 + \$_.DisplayName }\""
+
+    /** Per-OS service list; [RemoteParsers.parseServices] reads every variant. */
+    fun servicesFor(os: String): String = when (normaliseOs(os)) {
+        "FreeBSD" -> SERVICES_BSD
+        "Darwin" -> SERVICES_DARWIN
+        "Windows" -> SERVICES_WINDOWS
+        else -> SERVICES
+    }
 
     /**
      * Host logs. `journalctl` only exists on systemd hosts, so fall through the same way [SERVICES]
@@ -511,8 +665,13 @@ object RemoteCommands {
     fun sudoStdin(sudoPassword: String): String? =
         if (sudoPassword.isNotBlank()) sudoPassword + "\n" else null
 
-    fun serviceAction(name: String, action: String, sudoPassword: String = ""): String {
+    fun serviceAction(name: String, action: String, sudoPassword: String = "", os: String = ""): String {
         val quotedName = shellQuote(name)
+        when (normaliseOs(os)) {
+            "Windows" -> return windowsServiceAction(name, action)
+            "Darwin" -> return darwinServiceAction(quotedName, action)
+            "FreeBSD" -> return sudoShWrap(bsdServiceScript(quotedName, action), sudoPassword)
+        }
         val openRc = when (action) {
             "start", "stop", "restart", "status" -> "rc-service $quotedName $action"
             "enable" -> "rc-update add $quotedName default"
@@ -526,9 +685,102 @@ object RemoteCommands {
         return sudoShWrap(script, sudoPassword)
     }
 
-    /** Reboot the host: try sudo first, then a bare `reboot` (already root / NOPASSWD wrappers). */
-    fun reboot(sudoPassword: String = "") =
-        "${sudoWrap("reboot", sudoPassword)} || reboot 2>&1"
+    /** False where [serviceAction] runs without sudo, so no password is sent along with it. */
+    fun serviceActionUsesSudo(os: String): Boolean = normaliseOs(os) !in setOf("Windows", "Darwin")
+
+    private fun bsdServiceScript(quotedName: String, action: String): String {
+        // `onestart` and friends work whether or not rc.conf enables the service, as the Start
+        // button must; `service X enable` (FreeBSD 12+) finds the service's own rcvar.
+        val rc = if (action in setOf("start", "stop", "restart", "status")) "one$action" else action
+        val rcctl = if (action == "status") "check" else action
+        return "if command -v rcctl >/dev/null 2>&1; then rcctl $rcctl $quotedName; " +
+            "elif command -v service >/dev/null 2>&1; then service $quotedName $rc; " +
+            "else echo 'No supported service manager found' >&2; exit 1; fi"
+    }
+
+    /** Acts in the same launchd domain [SERVICES_DARWIN] listed, which is why it needs no sudo. */
+    private fun darwinServiceAction(quotedName: String, action: String): String {
+        val verb = when (action) {
+            "start" -> "kickstart"
+            "restart" -> "kickstart -k"
+            "stop" -> "kill TERM"
+            "enable", "disable" -> action
+            else -> "print"
+        }
+        return LAUNCHD_DOMAIN + "launchctl $verb \"\$d\"/$quotedName 2>&1"
+    }
+
+    private fun windowsServiceAction(name: String, action: String): String {
+        // Inside cmd's double quotes only `"` and `%` are still special, and no service name needs them.
+        if (name.any { it == '"' || it == '%' }) return "echo This service name cannot be passed to PowerShell safely."
+        val n = "'" + name.replace("'", "''") + "'"
+        val ps = when (action) {
+            "start" -> "Start-Service -Name $n"
+            "stop" -> "Stop-Service -Name $n -Force"
+            "restart" -> "Restart-Service -Name $n -Force"
+            "enable" -> "Set-Service -Name $n -StartupType Automatic"
+            "disable" -> "Set-Service -Name $n -StartupType Disabled"
+            else -> "Get-Service -Name $n"
+        }
+        return "powershell -NoProfile -Command \"$ps\""
+    }
+
+    /**
+     * Reboot the host: try sudo first, then the bare command (already root / NOPASSWD wrappers).
+     * BSD and macOS use `shutdown -r now`, because their `reboot` skips the shutdown scripts.
+     */
+    fun reboot(sudoPassword: String = "", os: String = ""): String {
+        if (normaliseOs(os) == "Windows") return "shutdown /r /t 0 2>&1"
+        val command = rebootCommand(os)
+        return "${sudoWrap(command, sudoPassword)} || $command 2>&1"
+    }
+
+    /** What [reboot] runs, as the confirmation names it. */
+    fun rebootLabel(os: String): String =
+        if (normaliseOs(os) == "Windows") "shutdown /r /t 0" else "sudo ${rebootCommand(os)}"
+
+    fun rebootUsesSudo(os: String): Boolean = normaliseOs(os) != "Windows"
+
+    private fun rebootCommand(os: String) = when (normaliseOs(os)) {
+        "FreeBSD", "Darwin" -> "shutdown -r now"
+        else -> "reboot"
+    }
+
+    /**
+     * End process [pid]: [signal] 15 asks it to exit and 9 forces it. Windows has no signals, so
+     * those become taskkill and taskkill /F.
+     */
+    fun killProcess(pid: Int, signal: Int, os: String): String =
+        if (normaliseOs(os) == "Windows") "taskkill /PID $pid" + (if (signal == 9) " /F" else "")
+        else "kill -$signal $pid"
+
+    /**
+     * False for Windows: cron, tmux, sudo, the container commands and Files' search, archives,
+     * folder sizes and same-host paste are all Unix shell scripts it cannot run.
+     */
+    fun hasUnixShell(os: String): Boolean = normaliseOs(os) != "Windows"
+
+    /** The Fleet screen's one-tap checks. */
+    enum class QuickCheck(val label: String) { Uptime("Uptime"), Disk("DF"), Processes("PS") }
+
+    fun quickCheck(check: QuickCheck, os: String): String = if (normaliseOs(os) == "Windows") {
+        val ps = when (check) {
+            QuickCheck.Uptime ->
+                "(Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime | Format-Table Days,Hours,Minutes -AutoSize"
+            QuickCheck.Disk ->
+                "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Format-Table DeviceID," +
+                    "@{n='Size GB';e={[math]::Round(\$_.Size/1GB,1)}},@{n='Free GB';e={[math]::Round(\$_.FreeSpace/1GB,1)}} -AutoSize"
+            QuickCheck.Processes ->
+                "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | Format-Table Id,ProcessName,CPU,WS -AutoSize"
+        }
+        "powershell -NoProfile -Command \"$ps\""
+    } else {
+        when (check) {
+            QuickCheck.Uptime -> "uptime"
+            QuickCheck.Disk -> "df -h"
+            QuickCheck.Processes -> "ps aux | head -5"
+        }
+    }
 
     fun dockerAction(id: String, action: String, runtime: String = ""): String {
         val cr = runtimeCommand(runtime)
@@ -933,8 +1185,8 @@ object RemoteCommands {
         append("echo free \$(sysctl -n vm.stats.vm.v_free_count 2>/dev/null); ")
         append("echo inactive \$(sysctl -n vm.stats.vm.v_inactive_count 2>/dev/null); ")
         append("echo cache \$(sysctl -n vm.stats.vm.v_cache_count 2>/dev/null); ")
-        append("echo '@DISK'; df -k / 2>/dev/null | tail -1 || true; ")
-        append("echo '@DISKS'; df -k 2>/dev/null | tail -n +2 || true; ")
+        append("echo '@DISK'; df -Pk / 2>/dev/null | tail -1 || true; ")
+        append("echo '@DISKS'; df -Pk 2>/dev/null | tail -n +2 || true; ")
         append("echo '@LOADAVG'; sysctl -n vm.loadavg 2>/dev/null || true; ")
         append("echo '@BOOT'; sysctl -n kern.boottime 2>/dev/null || true; ")
         append("echo '@NOW'; date +%s 2>/dev/null || true; ")
@@ -949,8 +1201,9 @@ object RemoteCommands {
         append("echo '@CPU'; top -l1 -n0 2>/dev/null | grep -i 'CPU usage' | head -1 || true; ")
         append("echo '@MEMSIZE'; sysctl -n hw.memsize 2>/dev/null || true; ")
         append("echo '@VMSTAT'; vm_stat 2>/dev/null || true; ")
-        append("echo '@DISK'; df -k / 2>/dev/null | tail -1 || true; ")
-        append("echo '@DISKS'; df -k 2>/dev/null | tail -n +2 || true; ")
+        // -P: without it macOS adds inode columns, which would end up in the mount point.
+        append("echo '@DISK'; df -Pk / 2>/dev/null | tail -1 || true; ")
+        append("echo '@DISKS'; df -Pk 2>/dev/null | tail -n +2 || true; ")
         append("echo '@LOADAVG'; sysctl -n vm.loadavg 2>/dev/null || true; ")
         append("echo '@BOOT'; sysctl -n kern.boottime 2>/dev/null || true; ")
         append("echo '@NOW'; date +%s 2>/dev/null || true; ")
@@ -1173,7 +1426,8 @@ object RemoteParsers {
     // or BusyBox's plain `ps w` 4-column form (PID USER TIME COMMAND) from the fallback path.
     // The `ps` header line is skipped because its first column ("PID") isn't an integer.
     fun parseProcesses(output: String): List<SimProcess> =
-        output.lineSequence()
+        output.substringBefore(RemoteCommands.PROCESS_SECTION_PREFIX)
+            .lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .mapNotNull { line ->
@@ -1211,6 +1465,30 @@ object RemoteParsers {
     private val OPENRC_SERVICE_RE = Regex("""^(\S+)\s*\[\s*(\w+)\s*]""")
 
     fun parseServices(output: String): List<SimService> {
+        if (output.contains(RemoteCommands.SERVICE_TABLE_MARKER)) {
+            return output.substringAfter(RemoteCommands.SERVICE_TABLE_MARKER).lineSequence()
+                .mapNotNull { line ->
+                    val t = line.trimEnd('\r').split('\t')
+                    val name = t[0].trim()
+                    if (name.isEmpty() || t.size < 3) return@mapNotNull null
+                    // Windows reports Running/Stopped/Paused/…Pending; the rest already say running/stopped/failed.
+                    val state = t[1].trim().lowercase()
+                    // Windows says when a service starts (Automatic, AutomaticDelayedStart, Manual, Disabled).
+                    val boot = t[2].trim().lowercase()
+                    SimService(
+                        name = name,
+                        desc = t.getOrNull(3)?.trim().orEmpty(),
+                        status = when (state) {
+                            "running" -> "running"
+                            "failed" -> "failed"
+                            else -> "dead"
+                        },
+                        subState = state,
+                        enabled = boot == "enabled" || boot.startsWith("automatic") || boot == "boot" || boot == "system",
+                    )
+                }
+                .toList()
+        }
         if (output.contains("---OPENRC---")) {
             return output.substringAfter("---OPENRC---").lineSequence()
                 .map { it.trim() }
@@ -1641,43 +1919,36 @@ object RemoteParsers {
 
     /** FreeBSD/OpenBSD metrics (sysctl/df -k/netstat). Per-core/temp/disk-I/O/SMART are not collected. */
     private fun parseMetricsBsd(sections: Map<String, String>, os: String): HostMetrics {
-        val cpu = sections["CPU"]?.let { line ->
-            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
-                ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
-        } ?: 0f
         val mem = sections["SYSMEM"].orEmpty()
         fun sm(key: String): Long = Regex("""^$key\s+(\d+)""", RegexOption.MULTILINE)
             .find(mem)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val pageSize = sm("pagesize").takeIf { it > 0 } ?: 4096L
-        val memTotal = sm("phys")
         val freeBytes = (sm("free") + sm("inactive") + sm("cache")) * pageSize
-        val memUsed = (memTotal - freeBytes).coerceAtLeast(0L)
-        val disks = parseDisks(sections["DISKS"].orEmpty(), blockBytes = 1024L)
-        val root = disks.firstOrNull { it.mount == "/" }
-        val load = sections["LOADAVG"].orEmpty().let { Regex("""[\d.]+""").findAll(it).map { m -> m.value.toFloat() }.toList() }
-        val boot = Regex("""sec\s*=\s*(\d+)""").find(sections["BOOT"].orEmpty())?.groupValues?.get(1)?.toLongOrNull()
-        val now = sections["NOW"]?.trim()?.toLongOrNull()
-        val uptime = if (boot != null && now != null) (now - boot).coerceAtLeast(0L) else 0L
-        val tcp = sections["TCP"]?.trim()?.toIntOrNull() ?: 0
-        val procCount = sections["PROC"]?.trim()?.toIntOrNull() ?: 0
-        return HostMetrics(
-            cpu, memUsed, memTotal, root?.usedBytes ?: 0L, root?.totalBytes ?: 0L,
-            load.getOrElse(0) { 0f }, load.getOrElse(1) { 0f }, load.getOrElse(2) { 0f }, uptime, procCount,
-            tcpConnections = tcp, disks = disks, netInterfaces = parseBsdNetstat(sections["NETSTAT"].orEmpty()), os = os, platforms = setOf("freebsd"),
-        )
+        return bsdFamilyMetrics(sections, memTotal = sm("phys"), freeBytes = freeBytes, os = os, platform = "freebsd")
     }
 
     /** macOS metrics: like BSD but memory from vm_stat + hw.memsize. */
     private fun parseMetricsDarwin(sections: Map<String, String>): HostMetrics {
-        val cpu = sections["CPU"]?.let { line ->
-            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
-                ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
-        } ?: 0f
         val memTotal = sections["MEMSIZE"]?.trim()?.toLongOrNull() ?: 0L
         val vmstat = sections["VMSTAT"].orEmpty()
         val pageSize = Regex("""page size of (\d+) bytes""").find(vmstat)?.groupValues?.get(1)?.toLongOrNull() ?: 4096L
         fun pages(label: String): Long = Regex("""$label:\s+(\d+)""").find(vmstat)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val freeBytes = (pages("Pages free") + pages("Pages inactive") + pages("Pages speculative")) * pageSize
+        return bsdFamilyMetrics(sections, memTotal = memTotal, freeBytes = freeBytes, os = "Darwin", platform = "darwin")
+    }
+
+    /** What BSD and macOS report the same way (top, df -k, sysctl boot time, netstat); only memory differs. */
+    private fun bsdFamilyMetrics(
+        sections: Map<String, String>,
+        memTotal: Long,
+        freeBytes: Long,
+        os: String,
+        platform: String,
+    ): HostMetrics {
+        val cpu = sections["CPU"]?.let { line ->
+            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
+                ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
+        } ?: 0f
         val memUsed = (memTotal - freeBytes).coerceAtLeast(0L)
         val disks = parseDisks(sections["DISKS"].orEmpty(), blockBytes = 1024L)
         val root = disks.firstOrNull { it.mount == "/" }
@@ -1690,7 +1961,7 @@ object RemoteParsers {
         return HostMetrics(
             cpu, memUsed, memTotal, root?.usedBytes ?: 0L, root?.totalBytes ?: 0L,
             load.getOrElse(0) { 0f }, load.getOrElse(1) { 0f }, load.getOrElse(2) { 0f }, uptime, procCount,
-            tcpConnections = tcp, disks = disks, netInterfaces = parseBsdNetstat(sections["NETSTAT"].orEmpty()), os = "Darwin", platforms = setOf("darwin"),
+            tcpConnections = tcp, disks = disks, netInterfaces = parseBsdNetstat(sections["NETSTAT"].orEmpty()), os = os, platforms = setOf(platform),
         )
     }
 
@@ -1772,7 +2043,7 @@ object RemoteParsers {
 
     /**
      * Parse `df` (all mounts) into per-partition usage, excluding pseudo filesystems. [blockBytes]
-     * scales the size columns: 1 for `df -PB1` (Linux, already bytes), 1024 for `df -k` (BSD/macOS).
+     * scales the size columns: 1 for `df -PB1` (Linux, already bytes), 1024 for `df -Pk` (BSD/macOS).
      */
     fun parseDisks(output: String, blockBytes: Long = 1L): List<DiskUsage> =
         output.lineSequence()
@@ -1792,7 +2063,7 @@ object RemoteParsers {
                 val used = t[2].toLongOrNull() ?: 0L
                 val mount = t.subList(5, t.size).joinToString(" ")
                 if (mount.startsWith("/proc") || mount.startsWith("/sys") || mount.startsWith("/dev") || mount.startsWith("/run")) return@mapNotNull null
-                DiskUsage(mount = mount, filesystem = fs, totalBytes = total * blockBytes, usedBytes = used * blockBytes)
+                DiskUsage(mount = mount, filesystem = fs, totalBytes = total * scale, usedBytes = used * scale)
             }
             .distinctBy { it.mount }
             .toList()
@@ -1866,7 +2137,7 @@ object RemoteParsers {
 
     internal const val UNAVAILABLE_MARKER = "!UNAVAILABLE"
 
-    private fun splitSections(output: String): Map<String, String> {
+    internal fun splitSections(output: String): Map<String, String> {
         val map = HashMap<String, String>()
         var key: String? = null
         val sb = StringBuilder()
@@ -1903,6 +2174,176 @@ object RemoteParsers {
             Regex("\\b(warn|warning|deprecat|timeout|retry)").containsMatchIn(l) -> "WARN"
             else -> "INFO"
         }
+    }
+
+    /**
+     * Disk and GPU use per process from the samples [RemoteCommands.PROCESSES] appends. Rates are
+     * the difference between the two samples over the time between them; Windows sends its own
+     * rates instead ([RemoteCommands.PROCESSES_WINDOWS]). A process whose counters
+     * could not be read is absent rather than zero. [ProcessUsage.gpuReported] is true when the
+     * host reported any GPU use source at all, so the GPU column only shows where it applies.
+     */
+    fun parseProcessUsage(output: String): ProcessUsage {
+        val nvidia = output.substringAfter(RemoteCommands.PROCESS_NVIDIA_MARKER, "")
+        val samples = output.substringBefore(RemoteCommands.PROCESS_NVIDIA_MARKER)
+            .split(RemoteCommands.PROCESS_SAMPLE_MARKER).drop(1).map(::parseProcessSample)
+        val disk = mutableMapOf<Int, DiskRate>()
+        val gpu = mutableMapOf<Int, Float>()
+        var gpuReported = false
+        if (samples.size >= 2) {
+            val (first, second) = samples[0] to samples[1]
+            val seconds = if (first.atNanos != null && second.atNanos != null && second.atNanos > first.atNanos) {
+                (second.atNanos - first.atNanos) / 1e9
+            } else {
+                1.0
+            }
+            second.io.forEach { (pid, after) ->
+                val before = first.io[pid] ?: return@forEach
+                disk[pid] = DiskRate(
+                    readBytesPerSecond = ((after.first - before.first).coerceAtLeast(0) / seconds).toLong(),
+                    writeBytesPerSecond = ((after.second - before.second).coerceAtLeast(0) / seconds).toLong(),
+                )
+            }
+            gpuReported = listOf(first, second).any { it.engineNanos.isNotEmpty() || it.cycles.isNotEmpty() }
+            // Busiest engine: adding engines up (render + video + copy) can pass 100%.
+            fun busy(pid: Int, engine: String, used: Long, available: Double): Double {
+                val capacity = second.capacity[pid]?.get(engine) ?: 1
+                return if (available > 0) used.coerceAtLeast(0) / (available * capacity) else 0.0
+            }
+            (second.engineNanos.keys + second.cycles.keys).forEach { pid ->
+                val byTime = second.engineNanos[pid].orEmpty().mapNotNull { (engine, nanos) ->
+                    val start = first.engineNanos[pid]?.get(engine) ?: return@mapNotNull null
+                    busy(pid, engine, nanos - start, seconds * 1e9)
+                }
+                // xe counts cycles; its share of the GPU's total cycles over the same span.
+                val byCycles = second.cycles[pid].orEmpty().mapNotNull { (engine, cycles) ->
+                    val start = first.cycles[pid]?.get(engine) ?: return@mapNotNull null
+                    val total = second.totalCycles[pid]?.get(engine) ?: return@mapNotNull null
+                    val totalStart = first.totalCycles[pid]?.get(engine) ?: return@mapNotNull null
+                    busy(pid, engine, cycles - start, (total - totalStart).toDouble())
+                }
+                val busiest = (byTime + byCycles).maxOrNull() ?: return@forEach
+                gpu[pid] = (busiest * 100).coerceIn(0.0, 100.0).toFloat()
+            }
+        }
+        // `nvidia-smi pmon` columns: gpu pid type sm mem ... command; "-" means idle.
+        nvidia.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.forEach { line ->
+            val t = line.split(Regex("\\s+"))
+            val pid = t.getOrNull(1)?.toIntOrNull() ?: return@forEach
+            gpuReported = true
+            val sm = t.getOrNull(3)?.toFloatOrNull() ?: 0f
+            gpu[pid] = maxOf(gpu[pid] ?: 0f, sm.coerceIn(0f, 100f))
+        }
+        // pmon prints its "# gpu  pid ..." header only when the driver answered.
+        if (nvidia.lineSequence().any { it.trimStart().startsWith("#") }) gpuReported = true
+        // Windows works the rates out itself (see [RemoteCommands.PROCESSES_WINDOWS]).
+        processSection(output, RemoteCommands.PROCESS_RATES_MARKER).forEach { t ->
+            val pid = t.getOrNull(0)?.toIntOrNull() ?: return@forEach
+            val read = t.getOrNull(1)?.toLongOrNull() ?: return@forEach
+            val write = t.getOrNull(2)?.toLongOrNull() ?: return@forEach
+            disk[pid] = DiskRate(read.coerceAtLeast(0), write.coerceAtLeast(0))
+        }
+        if (output.contains(RemoteCommands.PROCESS_GPU_MARKER)) {
+            gpuReported = true
+            processSection(output, RemoteCommands.PROCESS_GPU_MARKER).forEach { t ->
+                val pid = t.getOrNull(0)?.toIntOrNull() ?: return@forEach
+                val busiest = t.getOrNull(1)?.toFloatOrNull() ?: return@forEach
+                gpu[pid] = maxOf(gpu[pid] ?: 0f, busiest.coerceIn(0f, 100f))
+            }
+        }
+        return ProcessUsage(disk, gpu, gpuReported)
+    }
+
+    /**
+     * The sessions [RemoteCommands.TMUX_LIST_SESSIONS] listed, oldest first, or null when the host
+     * has no tmux. No running tmux server is simply no sessions.
+     */
+    fun parseTmuxSessions(output: String): List<RemoteTmuxSession>? {
+        if (output.contains(RemoteCommands.TMUX_MISSING_MARKER)) return null
+        return output.lineSequence().map { it.trimEnd('\r') }.mapNotNull { line ->
+            val t = line.split(' ', limit = 4)
+            val created = t.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+            val name = t.getOrNull(3)?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            RemoteTmuxSession(
+                name = name,
+                windows = t[2].toIntOrNull() ?: 0,
+                attachedClients = t[1].toIntOrNull() ?: 0,
+                createdAtMs = created * 1000,
+            )
+        }.sortedBy { it.createdAtMs }.toList()
+    }
+
+    /** The whitespace-split lines of the section [marker] starts, up to the next one. */
+    private fun processSection(output: String, marker: String): List<List<String>> =
+        output.substringAfter(marker, "").substringBefore(RemoteCommands.PROCESS_SECTION_PREFIX)
+            .lineSequence().map { it.trim() }.filter { it.isNotEmpty() }
+            .map { it.split(Regex("\\s+")) }.toList()
+
+    private class ProcessSample(
+        val atNanos: Long?,
+        /** pid → (read bytes, write bytes). */
+        val io: Map<Int, Pair<Long, Long>>,
+        /** pid → engine key → busy nanoseconds, summed over the process's distinct DRM clients. */
+        val engineNanos: Map<Int, Map<String, Long>>,
+        /** pid → engine key → busy cycles, for drivers that count cycles instead of time (xe). */
+        val cycles: Map<Int, Map<String, Long>>,
+        /** pid → engine key → the GPU's total cycles at the moment [cycles] was read. */
+        val totalCycles: Map<Int, Map<String, Long>>,
+        /** pid → engine key → how many engines of that class the device has. */
+        val capacity: Map<Int, Map<String, Int>>,
+    )
+
+    // Lines look like "/proc/123/io:read_bytes: 4096" and "/proc/123/fdinfo/7:drm-engine-gfx: 1234 ns".
+    private fun parseProcessSample(block: String): ProcessSample {
+        val lines = block.lines()
+        val atNanos = lines.firstOrNull()?.trim()?.toLongOrNull()
+        val read = mutableMapOf<Int, Long>()
+        val written = mutableMapOf<Int, Long>()
+        // One DRM client can sit behind several file descriptors; count each client once.
+        val clients = mutableMapOf<Pair<Int, String>, MutableMap<String, String>>()
+        lines.drop(1).forEach { line ->
+            val path = line.substringBefore(':')
+            val pid = path.removePrefix("/proc/").substringBefore('/').toIntOrNull() ?: return@forEach
+            val key = line.substringAfter(':').substringBefore(':').trim()
+            val value = line.substringAfter(':').substringAfter(':').trim()
+            when {
+                path.endsWith("/io") && key == "read_bytes" -> value.toLongOrNull()?.let { read[pid] = it }
+                path.endsWith("/io") && key == "write_bytes" -> value.toLongOrNull()?.let { written[pid] = it }
+                key.startsWith("drm-") -> clients.getOrPut(pid to path) { mutableMapOf() }[key] = value
+            }
+        }
+        val io = read.keys.intersect(written.keys).associateWith { read.getValue(it) to written.getValue(it) }
+        val engineNanos = mutableMapOf<Int, MutableMap<String, Long>>()
+        val cycles = mutableMapOf<Int, MutableMap<String, Long>>()
+        // A device's total is the same for each of its clients, so it is kept, not added up.
+        val totalCycles = mutableMapOf<Int, MutableMap<String, Long>>()
+        val capacity = mutableMapOf<Int, MutableMap<String, Int>>()
+        fun add(into: MutableMap<Int, MutableMap<String, Long>>, pid: Int, engine: String, amount: Long) {
+            val engines = into.getOrPut(pid) { mutableMapOf() }
+            engines[engine] = (engines[engine] ?: 0L) + amount
+        }
+        clients.entries
+            .distinctBy { (fd, fields) -> Triple(fd.first, fields["drm-pdev"], fields["drm-client-id"] ?: fd.second) }
+            .forEach { (fd, fields) ->
+                val device = fields["drm-pdev"].orEmpty()
+                fields.forEach { (key, value) ->
+                    when {
+                        key.startsWith("drm-engine-capacity-") ->
+                            capacity.getOrPut(fd.first) { mutableMapOf() }["$device/${key.removePrefix("drm-engine-capacity-")}"] =
+                                value.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                        key.startsWith("drm-engine-") -> value.substringBefore(' ').toLongOrNull()?.let { nanos ->
+                            add(engineNanos, fd.first, "$device/${key.removePrefix("drm-engine-")}", nanos)
+                        }
+                        key.startsWith("drm-total-cycles-") -> value.toLongOrNull()?.let { total ->
+                            totalCycles.getOrPut(fd.first) { mutableMapOf() }["$device/${key.removePrefix("drm-total-cycles-")}"] = total
+                        }
+                        key.startsWith("drm-cycles-") -> value.toLongOrNull()?.let { used ->
+                            add(cycles, fd.first, "$device/${key.removePrefix("drm-cycles-")}", used)
+                        }
+                    }
+                }
+            }
+        return ProcessSample(atNanos, io, engineNanos, cycles, totalCycles, capacity)
     }
 
     fun humanBytes(bytes: Long): String {

@@ -66,6 +66,11 @@ if [[ -d "$ROOT/flutter_app" ]]; then
   # Flutter's text is generated from the Kotlin string resources; stale means the apps can differ.
   python3 ./scripts/generate-flutter-strings.py --check
 fi
+# A copy-pasted block is extracted into shared code instead of kept twice. The baseline lists the
+# known copies, so only a new one fails; CI runs the same check.
+./scripts/test-check-duplicates.sh
+python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json \
+  app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
 ./scripts/test-release-engine.sh
 ./scripts/test-change-detectors.sh
@@ -153,8 +158,8 @@ run_flutter_checks() {
     flutter analyze --fatal-infos
     # A copy-pasted block is extracted into shared code instead of kept twice. The baseline lists the
     # known copies, so only a new one fails; CI runs the same check.
+    # The checker's own tests already ran at the top of this script.
     echo "Checking for new duplicated code"
-    ../scripts/test-check-duplicates.sh
     (cd .. && python3 scripts/check-duplicates.py --baseline scripts/flutter-duplicate-code-baseline.json \
       --exclude '*.g.dart' --exclude '*.freezed.dart' --exclude '*/l10n/*' flutter_app/lib)
     echo "Running the Flutter test suite"

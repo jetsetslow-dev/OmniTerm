@@ -37,7 +37,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -268,21 +267,7 @@ fun AlertsPopup(
                     onDismiss = onDismiss,
                 )
 
-                viewModel.manualRefreshError?.let { message ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp)
-                            .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                            .padding(start = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(message, color = OmniColors.red, fontSize = OmniTextSize.Meta, modifier = Modifier.weight(1f))
-                        IconButton(onClick = viewModel::dismissManualRefreshError) {
-                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss_refresh_error), tint = OmniColors.red)
-                        }
-                    }
-                }
+                ManualRefreshErrorBanner(viewModel, Modifier.padding(vertical = 6.dp))
 
                 if (active.isEmpty() && muted.isEmpty()) {
                     Box(
@@ -581,21 +566,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
 
             AlertNotificationBlockedNote(viewModel.alertsEnabled, notificationsAllowed)
 
-            viewModel.manualRefreshError?.let { message ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                        .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                        .padding(start = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(message, color = OmniColors.red, fontSize = OmniTextSize.Meta, modifier = Modifier.weight(1f))
-                    IconButton(onClick = viewModel::dismissManualRefreshError) {
-                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss_refresh_error), tint = OmniColors.red)
-                    }
-                }
-            }
+            ManualRefreshErrorBanner(viewModel, Modifier.padding(bottom = 8.dp))
 
             val visibleAlerts = alerts.filter { !it.acknowledged && it.mutedUntil < now }
             val acknowledgedAlerts = alerts.filter { it.acknowledged && it.mutedUntil < now }
@@ -1235,119 +1206,6 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
     }
 }
 
-// Shared add/edit dialog for quick scripts. `existing == null` means "add", otherwise "edit".
-@Composable
-private fun QuickScriptEditorDialog(
-    existing: QuickScriptEntity?,
-    knownCategories: List<String>,
-    onDismiss: () -> Unit,
-    onSave: (emoji: String, name: String, command: String, category: String, availableForQuick: Boolean, availableForFleet: Boolean, targetOs: String, targetSystem: String) -> Unit
-) {
-    var nameInput by remember { mutableStateOf(existing?.name ?: "") }
-    var emojiInput by remember { mutableStateOf(existing?.emoji ?: "LIN") }
-    var cmdInput by remember { mutableStateOf(existing?.command ?: "") }
-    var categoryInput by remember { mutableStateOf(existing?.category?.ifBlank { "General" } ?: "General") }
-    var availableForQuick by remember { mutableStateOf(existing?.availableForQuick ?: true) }
-    var availableForFleet by remember { mutableStateOf(existing?.availableForFleet ?: false) }
-    var targetOs by remember { mutableStateOf(existing?.targetOs?.ifBlank { "Any" } ?: "Any") }
-    var targetSystem by remember { mutableStateOf(existing?.targetSystem?.ifBlank { "Any" } ?: "Any") }
-    var categoryMenuExpanded by remember { mutableStateOf(false) }
-    var osMenuExpanded by remember { mutableStateOf(false) }
-    var systemMenuExpanded by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (existing != null) stringResource(R.string.edit_script) else stringResource(R.string.add_script)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = emojiInput, onValueChange = { emojiInput = it.take(6).uppercase() }, label = { Text(stringResource(R.string.shortcut_label)) }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = nameInput, onValueChange = { nameInput = it }, label = { Text(stringResource(R.string.script_name)) }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = cmdInput, onValueChange = { cmdInput = it }, label = { Text(stringResource(R.string.command)) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = availableForQuick, onCheckedChange = { availableForQuick = it })
-                        Text(stringResource(R.string.quick))
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = availableForFleet, onCheckedChange = { availableForFleet = it })
-                        Text(stringResource(R.string.fleet))
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        OutlinedTextField(
-                            value = targetOs,
-                            onValueChange = { targetOs = it },
-                            label = { Text(stringResource(R.string.quick_os)) },
-                            enabled = availableForQuick,
-                            modifier = Modifier.fillMaxWidth(),
-                            trailingIcon = {
-                                IconButton(onClick = { osMenuExpanded = true }, enabled = availableForQuick) {
-                                    Icon(Icons.Filled.ArrowDropDown, "Pick OS")
-                                }
-                            }
-                        )
-                        OverflowDropdownMenu(expanded = osMenuExpanded, onDismissRequest = { osMenuExpanded = false }) {
-                            quickScriptOsOptions.forEach { os ->
-                                DropdownMenuItem(text = { Text(os) }, onClick = { targetOs = os; osMenuExpanded = false })
-                            }
-                        }
-                    }
-                    Box(modifier = Modifier.weight(1f)) {
-                        OutlinedTextField(
-                            value = targetSystem,
-                            onValueChange = { targetSystem = it },
-                            label = { Text(stringResource(R.string.quick_system)) },
-                            enabled = availableForQuick,
-                            modifier = Modifier.fillMaxWidth(),
-                            trailingIcon = {
-                                IconButton(onClick = { systemMenuExpanded = true }, enabled = availableForQuick) {
-                                    Icon(Icons.Filled.ArrowDropDown, "Pick system")
-                                }
-                            }
-                        )
-                        OverflowDropdownMenu(expanded = systemMenuExpanded, onDismissRequest = { systemMenuExpanded = false }) {
-                            quickScriptSystemOptions.forEach { system ->
-                                DropdownMenuItem(text = { Text(system) }, onClick = { targetSystem = system; systemMenuExpanded = false })
-                            }
-                        }
-                    }
-                }
-                // Free-text category with a dropdown of existing categories for convenience.
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = categoryInput,
-                        onValueChange = { categoryInput = it },
-                        label = { Text(stringResource(R.string.category_group_2)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = {
-                            IconButton(onClick = { categoryMenuExpanded = true }) {
-                                Icon(Icons.Filled.ArrowDropDown, "Pick existing category")
-                            }
-                        }
-                    )
-                    OverflowDropdownMenu(expanded = categoryMenuExpanded, onDismissRequest = { categoryMenuExpanded = false }) {
-                        knownCategories.forEach { cat ->
-                            DropdownMenuItem(text = { Text(cat) }, onClick = { categoryInput = cat; categoryMenuExpanded = false })
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                enabled = nameInput.isNotBlank() && cmdInput.isNotBlank() && (availableForQuick || availableForFleet),
-                onClick = { onSave(emojiInput, nameInput, cmdInput, categoryInput, availableForQuick, availableForFleet, targetOs.ifBlank { "Any" }, targetSystem.ifBlank { "Any" }) }
-            ) {
-                Text(if (existing != null) stringResource(R.string.save_changes_2) else stringResource(R.string.add_script))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
-        }
-    )
-}
-
 // 7.2 UNIFIED NETWORK TOOLS (Host Scan · Ping · Traceroute · Port Scan · Wake-on-LAN)
 //
 // One tabbed screen for all device-side network utilities. The target host is shared across the
@@ -1700,21 +1558,27 @@ private fun LanHostPickerDialog(
     )
 }
 
+/** Ping and Traceroute's target: pick a LAN host or type one. Shared with Port Scan's target. */
+@Composable
+private fun TargetHostFields(viewModel: AppViewModel) {
+    LanHostPicker(viewModel)
+    OutlinedTextField(
+        value = viewModel.portScannerTarget,
+        onValueChange = { viewModel.portScannerTarget = it },
+        label = { Text(stringResource(R.string.hostname_or_ip_address)) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+    )
+}
+
 // ── Ping (device-side ICMP) ──
 @Composable
 private fun PingTab(viewModel: AppViewModel) {
     var pingTries by remember { mutableStateOf("4") }
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        LanHostPicker(viewModel)
-        OutlinedTextField(
-            value = viewModel.portScannerTarget,
-            onValueChange = { viewModel.portScannerTarget = it },
-            label = { Text(stringResource(R.string.hostname_or_ip_address)) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-        )
+        TargetHostFields(viewModel)
         // 0 is meaningful here (ping until stopped), so the floor is 0 rather than 1.
         val pingTriesError = countError(pingTries, min = 0, max = 9_999)
         OutlinedTextField(
@@ -1753,27 +1617,11 @@ private fun PingTab(viewModel: AppViewModel) {
         )
         if (viewModel.pingLines.isNotEmpty()) {
             OmniCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                val pingListState = rememberLazyListState()
-                LaunchedEffect(viewModel.pingLines.size) {
-                    if (viewModel.pingLines.isNotEmpty()) pingListState.animateScrollToItem(viewModel.pingLines.size - 1)
-                }
-                SelectionContainer {
-                    OverflowLazyColumn(
-                        state = pingListState,
-                        modifier = Modifier.fillMaxSize().padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        items(viewModel.pingLines) { line ->
-                            Text(
-                                line,
-                                fontSize = 11.sp,
-                                fontFamily = OmniFonts.mono,
-                                color = if (line.contains("failed", true) || line.contains("unreachable", true) || line.contains("100% packet loss"))
-                                    OmniColors.red else MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                    }
-                }
+                StreamOutputBox(
+                    failureHighlighted(viewModel.pingLines, ::isPingFailureLine),
+                    modifier = Modifier.fillMaxSize(),
+                    look = StreamOutputLook.Plain,
+                )
             }
         }
     }
@@ -1783,15 +1631,7 @@ private fun PingTab(viewModel: AppViewModel) {
 @Composable
 private fun TracerouteTab(viewModel: AppViewModel) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        LanHostPicker(viewModel)
-        OutlinedTextField(
-            value = viewModel.portScannerTarget,
-            onValueChange = { viewModel.portScannerTarget = it },
-            label = { Text(stringResource(R.string.hostname_or_ip_address)) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-        )
+        TargetHostFields(viewModel)
         Button(
             onClick = {
                 if (viewModel.tracerouteRunning) viewModel.stopTraceroute()
@@ -1814,27 +1654,11 @@ private fun TracerouteTab(viewModel: AppViewModel) {
         )
         if (viewModel.tracerouteLines.isNotEmpty()) {
             OmniCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                val listState = rememberLazyListState()
-                LaunchedEffect(viewModel.tracerouteLines.size) {
-                    if (viewModel.tracerouteLines.isNotEmpty()) listState.animateScrollToItem(viewModel.tracerouteLines.size - 1)
-                }
-                SelectionContainer {
-                    OverflowLazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize().padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        items(viewModel.tracerouteLines) { line ->
-                            Text(
-                                line,
-                                fontSize = 11.sp,
-                                fontFamily = OmniFonts.mono,
-                                color = if (line.contains("not available", true) || line.contains("failed", true))
-                                    OmniColors.red else MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                    }
-                }
+                StreamOutputBox(
+                    failureHighlighted(viewModel.tracerouteLines, ::isTracerouteFailureLine),
+                    modifier = Modifier.fillMaxSize(),
+                    look = StreamOutputLook.Plain,
+                )
             }
         }
     }
@@ -1974,22 +1798,7 @@ private fun WolTab(viewModel: AppViewModel) {
                                 // A magic packet is a single UDP send, so a spinner would only
                                 // flash; disabling while in flight is enough to stop double-taps.
                                 enabled = !viewModel.wolSendRunning,
-                                onClick = {
-                                    confirm.ask(
-                                        confirm.str(R.string.send_wake_packet),
-                                        confirm.str(R.string.send_a_wake_on_lan_magic, target.name, target.macAddress),
-                                        confirmLabel = confirm.str(R.string.wake),
-                                    ) {
-                                        viewModel.triggerWol(target) { sent ->
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                if (sent) "Magic packet sent to ${target.name}"
-                                                else "Failed to send magic packet to ${target.name}",
-                                                android.widget.Toast.LENGTH_SHORT,
-                                            ).show()
-                                        }
-                                    }
-                                },
+                                onClick = { confirmAndWake(confirm, viewModel, target, context) },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                 modifier = Modifier.height(36.dp),
@@ -2161,6 +1970,27 @@ private fun WolLanScanner(viewModel: AppViewModel, onPick: (AppViewModel.Scanned
 }
 
 // 7.5 CREDENTIAL KEYCHAINS PANEL
+
+/** Opens the system file picker for an SSH key file and hands over its text; an unreadable file says so. */
+@Composable
+private fun rememberKeyFilePicker(onRead: (String) -> Unit): () -> Unit {
+    val context = LocalContext.current
+    val resources = LocalResources.current
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { onRead(it.reader().readText()) }
+            } catch (e: Exception) {
+                android.util.Log.w("ToolsScreen", "Failed to read key file", e)
+                android.widget.Toast.makeText(context, resources.getString(R.string.could_not_read_file, e.message), android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    return { launcher.launch(arrayOf("*/*")) }
+}
+
 @Composable
 fun AuthKeysToolView(viewModel: AppViewModel) {
     val confirm = rememberConfirm()
@@ -2431,24 +2261,8 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         // Shown inside the dialog: the screen's feedback line sits behind it, so a failed import
         // otherwise looked like a Save button that did nothing.
         var importError by remember { mutableStateOf<String?>(null) }
-        val context = LocalContext.current
-        val resources = LocalResources.current
-        var pickTarget by remember { mutableStateOf("private") }
-        val keyFileLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri != null) {
-                try {
-                    context.contentResolver.openInputStream(uri)?.use {
-                        val text = it.reader().readText()
-                        if (pickTarget == "public") importedPublicKey = text else importedPrivateKey = text
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.w("ToolsScreen", "Failed to read key file", e)
-                    android.widget.Toast.makeText(context, resources.getString(R.string.could_not_read_file, e.message), android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
+        val pickPrivateKey = rememberKeyFilePicker { importedPrivateKey = it }
+        val pickPublicKey = rememberKeyFilePicker { importedPublicKey = it }
 
         AlertDialog(
             onDismissRequest = { showImportKeyDialog = false },
@@ -2474,7 +2288,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         maxLines = 6,
                     )
                     OutlinedButton(
-                        onClick = { pickTarget = "private"; keyFileLauncher.launch(arrayOf("*/*")) },
+                        onClick = pickPrivateKey,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Filled.Folder, contentDescription = null)
@@ -2491,7 +2305,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         maxLines = 3,
                     )
                     OutlinedButton(
-                        onClick = { pickTarget = "public"; keyFileLauncher.launch(arrayOf("*/*")) },
+                        onClick = pickPublicKey,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Filled.Folder, contentDescription = null)
@@ -2585,24 +2399,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var alias by remember(key.id) { mutableStateOf(key.alias) }
         var newPrivate by remember(key.id) { mutableStateOf("") }
         var newPublic by remember(key.id) { mutableStateOf("") }
-        val context = LocalContext.current
-        val resources = LocalResources.current
-        var pickTarget by remember(key.id) { mutableStateOf("private") }
-        val keyFileLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri != null) {
-                try {
-                    context.contentResolver.openInputStream(uri)?.use {
-                        val text = it.reader().readText()
-                        if (pickTarget == "public") newPublic = text else newPrivate = text
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.w("ToolsScreen", "Failed to read key file", e)
-                    android.widget.Toast.makeText(context, resources.getString(R.string.could_not_read_file_2, e.message), android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
+        val pickPrivateKey = rememberKeyFilePicker { newPrivate = it }
         AlertDialog(
             onDismissRequest = { editKey = null },
             title = { Text(stringResource(R.string.edit_ssh_key)) },
@@ -2626,7 +2423,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         maxLines = 6,
                     )
                     OutlinedButton(
-                        onClick = { pickTarget = "private"; keyFileLauncher.launch(arrayOf("*/*")) },
+                        onClick = pickPrivateKey,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(Icons.Filled.Folder, contentDescription = null)
@@ -4126,23 +3923,10 @@ private fun SettingsSaveAuthDialog(
     onCancel: () -> Unit,
     onAuthenticated: () -> Unit,
 ) {
-    val context = LocalContext.current
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
-    // If biometrics is the chosen unlock method, present the system prompt immediately.
-    LaunchedEffect(Unit) {
-        if (viewModel.useBiometrics) {
-            context.getActivity()?.let { activity ->
-                BiometricCryptoGate.authenticate(
-                    activity = activity,
-                    title = activity.getString(R.string.authenticate_to_save_settings),
-                    subtitle = activity.getString(R.string.confirm_it_s_you),
-                    onAuthenticated = onAuthenticated,
-                )
-            }
-        }
-    }
+    BiometricPromptOnShow(viewModel, R.string.authenticate_to_save_settings, R.string.confirm_it_s_you, onAuthenticated)
 
     AlertDialog(
         onDismissRequest = onCancel,
@@ -4151,16 +3935,7 @@ private fun SettingsSaveAuthDialog(
             Column {
                 Text(stringResource(R.string.enter_your_app_pin_to_apply), fontSize = 14.sp)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { pin = it; error = null },
-                    label = { Text(stringResource(R.string.pin)) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                error?.let { Text(it, color = Color.Red, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+                AppPinField(pin, onPinChange = { pin = it; error = null }, error = error)
             }
         },
         confirmButton = {

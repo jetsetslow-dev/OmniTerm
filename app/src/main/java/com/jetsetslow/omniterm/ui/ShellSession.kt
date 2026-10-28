@@ -105,11 +105,13 @@ internal fun CoroutineScope.launchTerminalResizeConsumer(
  */
 class ShellSession(
     val serverId: Int,
-    val serverName: String,
+    serverName: String,
     session: SshSession,
     val emulator: TerminalEmulator,
     val id: String = UUID.randomUUID().toString(),
 ) {
+    /** The host's name as shown on this session's tab and picker card; follows a rename. */
+    var serverName by mutableStateOf(serverName)
     // The live SSH channel. Swapped out by auto-reconnect, so it's a var (not val).
     var session: SshSession = session
     /** Coordinates reconnect ownership transfer with user/lifecycle cleanup. */
@@ -135,6 +137,14 @@ class ShellSession(
      * arm the control on the other. Mirrors the old global terminalTmuxScrolledBack flag.
      */
     var tmuxScrolledBack by mutableStateOf(false)
+    /**
+     * Key-bar Ctrl, Alt and Shift armed on this terminal. Kept per session: armed on one host and
+     * carried to another, the next key there would become, say, Ctrl+C on a machine the user never
+     * meant it for. Switching back finds them as they were left.
+     */
+    var ctrlArmed by mutableStateOf(false)
+    var altArmed by mutableStateOf(false)
+    var shiftArmed by mutableStateOf(false)
     /** Incremented by terminal chrome to ask this pane to open its session options. */
     var terminalOptionsRequestGeneration by mutableStateOf(0L)
     /**
@@ -234,6 +244,11 @@ class ShellSession(
      * re-attach their own session rather than colliding on one shared name.
      */
     var tmuxName: String = generateTmuxSessionName()
+    /**
+     * The tmux session was already running on the host and the user attached to it by its own
+     * name; its options are left alone (see [com.jetsetslow.omniterm.data.PersistentSessionEntity.adopted]).
+     */
+    var adopted: Boolean = false
     /** Reconnect coroutine in flight (backoff retry loop); cancelled on manual disconnect. */
     var reconnectJob: Job? = null
     /** True while the auto-reconnect backoff loop is running (drives the "Reconnecting…" UI). */
