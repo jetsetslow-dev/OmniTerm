@@ -444,6 +444,7 @@ class OmniTermApp extends StatelessWidget {
             transport: context.read<SshTransport>(),
             shortcuts: context.read<ShortcutHelper>(),
             probeHost: context.read<HostStatusProbe>().probeOne,
+            pollHost: context.read<TelemetryPoller>().pollOne,
             shell: () => context.read<ShellViewModel>(),
             tunnels: context.read<SshTunnelManager>(),
             hostKeyTrust: context.read<SshHostKeyTrust>(),

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'popup_scroll_behavior.dart';
 
 import '../../data/app_database.dart';
 import '../../domain/host_display.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../view_model/app_state.dart';
 
 /// Picks which host a screen is about.
 ///
@@ -159,6 +161,16 @@ class HostSelectorBar extends StatelessWidget {
     );
   }
 
+  /// Kotlin's `isPickableHost`, from the app's host state. A bar built on its own, as in a widget
+  /// test, has none, and each host is as online as its status says.
+  static bool _isPickable(BuildContext context, Server host) {
+    try {
+      return context.read<AppState>().isPickableHost(host);
+    } on ProviderNotFoundException {
+      return host.status == 'online';
+    }
+  }
+
   Widget _closedLabel(
     BuildContext context,
     Server host,
@@ -167,13 +179,19 @@ class HostSelectorBar extends StatelessWidget {
     Color muted,
   ) {
     // "offline" rather than a stale number: a latency from before the host went quiet reads as if it
-    // were still answering.
-    final latency = host.status == 'online' ? '${host.lastLatency}ms' : 'offline';
+    // were still answering. A host being re-checked shows "…", as on the Hosts list, rather than a
+    // moment of "offline".
+    final pickable = _isPickable(context, host);
+    final latency = host.status == 'online'
+        ? '${host.lastLatency}ms'
+        : pickable
+        ? '…'
+        : 'offline';
     return Row(
       key: ValueKey('$keyPrefix.label.${host.id}'),
       children: [
         if (leading != null) ...[leading!, const SizedBox(width: 8)],
-        _StatusDot(online: host.status == 'online', color: accent),
+        _StatusDot(online: pickable, color: accent),
         const SizedBox(width: 8),
         Flexible(
           child: Text(

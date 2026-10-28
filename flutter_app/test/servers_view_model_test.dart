@@ -508,4 +508,113 @@ void main() {
       expect(vm.servers, hasLength(2));
     });
   });
+
+  group('retrying one host', () {
+    // Kotlin's `refreshServer`: the host reads as being checked while it runs, the tabs that pick
+    // from online hosts keep it, and one sentence says what is still wrong.
+    Future<int> host({String status = 'online'}) async {
+      final id = await repo.insertServer(hostFixture(name: 'nas').copyWith(status: status));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+      return id;
+    }
+
+    void retryWith({
+      required Future<void> Function(Server server) probe,
+      Future<String?> Function(Server server)? poll,
+    }) {
+      vm.dispose();
+      vm = ServersViewModel(app, probeHost: probe, pollHost: poll);
+    }
+
+    test('an online host is checked but stays pickable, and answering reports nothing', () async {
+      final id = await host();
+      String? statusWhileChecked;
+      bool? pickableWhileChecked;
+      retryWith(
+        probe: (server) async {
+          final row = (await repo.getServerById(id))!;
+          statusWhileChecked = row.status;
+          pickableWhileChecked = app.isPickableHost(row);
+          await repo.updateReachability(id, 'online', 5);
+        },
+        poll: (server) async {
+          await repo.updateHealthScore(id, 80);
+          return null;
+        },
+      );
+
+      expect(await vm.refreshServer(id), isNull);
+      expect(statusWhileChecked, 'connecting');
+      expect(pickableWhileChecked, isTrue);
+    });
+
+    test('an offline host being checked is not offered as online', () async {
+      final id = await host(status: 'offline');
+      bool? pickableWhileChecked;
+      retryWith(
+        probe: (server) async {
+          pickableWhileChecked = app.isPickableHost((await repo.getServerById(id))!);
+          await repo.updateReachability(id, 'offline', 0);
+        },
+      );
+
+      await vm.refreshServer(id);
+      expect(pickableWhileChecked, isFalse);
+    });
+
+    test('Monitor re-checks its host without showing it as being checked', () async {
+      final id = await host();
+      String? statusWhileChecked;
+      retryWith(
+        probe: (server) async => statusWhileChecked = (await repo.getServerById(id))!.status,
+      );
+
+      await vm.refreshServer(id, markChecking: false);
+      expect(statusWhileChecked, 'online');
+    });
+
+    test("each failure is said in Kotlin's words", () async {
+      final id = await host();
+      var polled = 0;
+      Future<void> Function(Server) probe = (_) async {};
+      retryWith(
+        probe: (server) => probe(server),
+        poll: (server) async {
+          polled++;
+          return null;
+        },
+      );
+
+      probe = (_) => repo.updateReachability(id, 'offline', 0);
+      expect(
+        await vm.refreshServer(id),
+        'Refresh failed for nas: the host did not respond on its configured SSH route.',
+      );
+      expect(polled, 0, reason: 'an offline host has nothing to measure');
+
+      probe = (_) async {
+        await repo.updateReachability(id, 'online', 5);
+        await repo.updateAuthState(id, 'failed', 'Permission denied (publickey).');
+      };
+      expect(await vm.refreshServer(id), 'Refresh failed for nas: Permission denied (publickey).');
+
+      probe = (_) async {
+        await repo.updateAuthState(id, 'ok', null);
+        await app.invalidateCurrentHealth(id, 'Metrics are incomplete. Retry metrics.');
+      };
+      expect(
+        await vm.refreshServer(id),
+        'Refresh failed for nas: Metrics are incomplete. Retry metrics.',
+      );
+
+      probe = (_) async {};
+      app.clearMetricsError(id);
+      expect(
+        await vm.refreshServer(id),
+        'Refresh failed for nas: Current metrics could not be verified.',
+      );
+      expect(await vm.refreshServer(id + 1), 'Refresh failed: host was removed.');
+    });
+  });
 }

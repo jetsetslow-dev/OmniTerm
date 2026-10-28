@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:drift/native.dart';
 import 'package:omniterm/data/app_database.dart';
+import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/platform/secret_store.dart';
+import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:provider/provider.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/widgets/host_selector_bar.dart';
 import 'package:omniterm/ui/widgets/popup_scroll_behavior.dart';
+
+import 'support/fake_secure_storage.dart';
 
 /// The shared host picker, ported from `ServerSelectorBar` (`ui/AppUi.kt:83`).
 ///
@@ -98,6 +105,39 @@ void main() {
     final detail = tester.widget<Text>(find.byKey(const ValueKey('test.picker.detail.1')));
     expect(detail.data, contains('offline'));
     expect(detail.data, isNot(contains('42ms')));
+  });
+
+  testWidgets('a host a refresh is re-checking reads "…", not offline', (tester) async {
+    final db = AppDatabase(NativeDatabase.memory());
+    final app = AppState(
+      AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{}))),
+    );
+    addTearDown(() async {
+      app.dispose();
+      await db.close();
+    });
+    final online = host(id: 1, name: 'web-1', latency: 42);
+    await tester.runAsync(() => app.markChecking([online]));
+    final checking = online.copyWith(status: 'connecting', lastLatency: 0);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: app,
+        child: MaterialApp(
+          home: Scaffold(
+            body: HostSelectorBar(
+              keyPrefix: 'test.picker',
+              hosts: [checking],
+              selected: checking,
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final detail = tester.widget<Text>(find.byKey(const ValueKey('test.picker.detail.1')));
+    expect(detail.data, endsWith('· …'));
   });
 
   testWidgets('a label prefix is applied without losing the detail line', (tester) async {

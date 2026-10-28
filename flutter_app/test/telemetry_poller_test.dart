@@ -156,6 +156,31 @@ void main() {
     expect(app.metricsErrorFor(id), 'Connection lost. Waiting for current metrics.');
   });
 
+  test('a host a refresh is re-checking keeps its reading until the check answers', () async {
+    final id = await repo.insertServer(server(name: 'rechecked'));
+    await app.start();
+    await settle();
+    final poller = TelemetryPoller(
+      app,
+      transport: RecordingTransport(fallback: metricsReply(memUsedPct: 20)),
+    );
+    addTearDown(poller.dispose);
+    Future<void> until(bool Function() ready) => Future<void>(() async {
+      while (!ready()) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }).timeout(const Duration(seconds: 5));
+    await poller.cycle();
+    await until(() => poller.metricsForServer(id) != null);
+
+    await app.markChecking(app.servers);
+    await until(() => app.servers.single.status == 'connecting');
+    expect(poller.metricsForServer(id), isNotNull);
+
+    app.doneRechecking([id]);
+    expect(poller.metricsForServer(id), isNull, reason: 'no longer known to be online');
+  });
+
   test('only validated metrics provide fresh reachability evidence', () async {
     final id = await repo.insertServer(server(name: 'evidence'));
     await app.start();

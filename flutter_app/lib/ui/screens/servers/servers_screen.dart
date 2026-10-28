@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -13,6 +15,7 @@ import '../../../platform/distribution.dart';
 import '../../../platform/license_controller.dart';
 import '../../../platform/shortcut_helper.dart';
 import '../../navigation.dart';
+import '../../shell_state.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/servers_view_model.dart';
@@ -137,7 +140,6 @@ class ServersScreen extends StatelessWidget {
                       vm: vm,
                       navigation: navigation,
                       metrics: telemetry?.metricsForServer(filtered[index].id),
-                      telemetry: telemetry,
                       hostProbe: hostProbe,
                       shell: shell,
                       sftp: sftp,
@@ -616,7 +618,6 @@ class _ServerCard extends StatelessWidget {
     required this.vm,
     this.navigation,
     this.metrics,
-    this.telemetry,
     this.hostProbe,
     this.shell,
     this.sftp,
@@ -628,7 +629,6 @@ class _ServerCard extends StatelessWidget {
   final ServersViewModel vm;
   final NavigationController? navigation;
   final HostMetrics? metrics;
-  final TelemetryPoller? telemetry;
   final HostStatusProbe? hostProbe;
   final ShellViewModel? shell;
   final SftpViewModel? sftp;
@@ -779,7 +779,16 @@ class _ServerCard extends StatelessWidget {
                   vm.metricsErrorFor(server.id) ?? 'Waiting for verified metrics…',
                   style: const TextStyle(color: OmniColors.textMuted, fontSize: 12),
                 ),
-                _MetricRetryButton(server: server, telemetry: telemetry, probe: hostProbe),
+                OmniButton(
+                  key: ValueKey('servers.metricsRetry.${server.id}'),
+                  label: AppLocalizations.of(context).retry,
+                  small: true,
+                  // Kotlin's `refreshServer`: the card shows "Checking host…" until the host
+                  // answers, and anything still wrong is said in the refresh banner.
+                  onPressed: () => unawaited(
+                    context.read<ShellState>().reportRefresh(() => vm.refreshServer(server.id)),
+                  ),
+                ),
               ] else
                 Row(
                   children: [
@@ -1036,7 +1045,7 @@ class _ServerCard extends StatelessWidget {
               value: 'attachTmux',
               icon: Icons.terminal,
               label: 'Attach existing tmux…',
-              enabled: server.status == 'online',
+              enabled: vm.isPickableHost(server),
             ),
           if (network != null) ...[
             _DialogAction(value: 'ping', icon: Icons.network_check, label: 'Ping from this device'),
@@ -1051,7 +1060,7 @@ class _ServerCard extends StatelessWidget {
             value: 'specs',
             icon: Icons.developer_board,
             label: 'System specs',
-            enabled: server.status == 'online',
+            enabled: vm.isPickableHost(server),
           ),
           _DialogAction(value: 'monitor', icon: Icons.speed, label: 'Monitor live metrics'),
           _DialogAction(value: 'infra', icon: Icons.layers, label: 'Infrastructure / containers'),
@@ -1159,48 +1168,6 @@ class _DialogAction extends StatelessWidget {
       ),
     );
   }
-}
-
-class _MetricRetryButton extends StatefulWidget {
-  const _MetricRetryButton({required this.server, this.telemetry, this.probe});
-  final Server server;
-  final TelemetryPoller? telemetry;
-  final HostStatusProbe? probe;
-  @override
-  State<_MetricRetryButton> createState() => _MetricRetryButtonState();
-}
-
-class _MetricRetryButtonState extends State<_MetricRetryButton> {
-  bool _busy = false;
-  Future<void> _refresh() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    String? failure;
-    try {
-      await widget.probe?.probeOne(widget.server);
-      failure =
-          await widget.telemetry?.pollOne(widget.server) ??
-          (widget.telemetry == null ? 'Metrics are unavailable in this build.' : null);
-    } catch (error) {
-      failure = '$error';
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(failure ?? 'Metrics refreshed.')));
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => TextButton.icon(
-    onPressed: _busy ? null : _refresh,
-    icon: _busy
-        ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-        : const Icon(Icons.refresh, size: 16),
-    label: Text(_busy ? 'Refreshing metrics…' : 'Refresh metrics'),
-  );
 }
 
 class _MiniMetric extends StatelessWidget {

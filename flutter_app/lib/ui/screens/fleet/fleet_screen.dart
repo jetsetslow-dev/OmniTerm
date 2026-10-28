@@ -759,7 +759,7 @@ class _BroadcastTargetPicker extends StatelessWidget {
                 servers: servers,
                 selectedIds: vm.targetServerIds,
                 onToggle: vm.toggleTargetServer,
-                isSelectable: (s) => s.status == 'online',
+                isSelectable: vm.isPickableHost,
                 onSelectAll: vm.selectAllTargets,
                 onClear: vm.clearTargets,
               ),

@@ -10,6 +10,7 @@ import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/servers/servers_screen.dart';
+import 'package:omniterm/ui/shell_state.dart';
 import 'package:omniterm/ui/theme/colors.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
@@ -61,12 +62,14 @@ void main() {
   late AppRepository repo;
   late AppState app;
   late ServersViewModel vm;
+  late ShellState shellState;
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
     repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     app = AppState(repo);
     vm = ServersViewModel(app);
+    shellState = ShellState();
     HostDisplay.instance.hideSensitiveInfo = false;
   });
 
@@ -122,6 +125,7 @@ void main() {
         providers: [
           ChangeNotifierProvider<AppState>.value(value: app),
           ChangeNotifierProvider<ServersViewModel>.value(value: vm),
+          ChangeNotifierProvider<ShellState>.value(value: shellState),
         ],
         child: MaterialApp(
           localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -159,6 +163,33 @@ void main() {
     // As Kotlin: a waiting line rather than a row of empty gauges.
     expect(find.text('Waiting for verified metrics…'), findsOneWidget);
     expect(find.text('CPU'), findsNothing);
+  });
+
+  testWidgets("an online row's Retry re-checks it and says what is still wrong", (tester) async {
+    final id = await repo.insertServer(server(name: 'moved', status: 'online', authStatus: 'ok'));
+    await app.invalidateCurrentHealth(id, 'Connection lost. Waiting for current metrics.');
+    final checked = <String>[];
+    vm.dispose();
+    vm = ServersViewModel(
+      app,
+      probeHost: (host) async {
+        checked.add((await repo.getServerById(host.id))!.status);
+        await repo.updateReachability(host.id, 'online', 5);
+      },
+    );
+    await pump(tester);
+
+    final retry = find.byKey(ValueKey('servers.metricsRetry.$id'));
+    expect(find.descendant(of: retry, matching: find.text('Retry')), findsOneWidget);
+    await tester.tap(retry);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester.pumpAndSettle();
+
+    expect(checked, ['connecting'], reason: 'the card reads "Checking host…" meanwhile');
+    expect(
+      shellState.refreshError,
+      'Refresh failed for moved: Connection lost. Waiting for current metrics.',
+    );
   });
 
   testWidgets('an online row without metrics says why when there is a reason', (tester) async {

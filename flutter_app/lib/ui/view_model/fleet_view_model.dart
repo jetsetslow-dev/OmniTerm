@@ -173,6 +173,9 @@ class FleetViewModel extends ChangeNotifier {
 
   List<Server> get onlineServers => _app.onlineServers;
 
+  /// Whether Fleet may target [server]; see [AppState.isPickableHost].
+  bool isPickableHost(Server server) => _app.isPickableHost(server);
+
   /// Distinct non-empty group names among online hosts, sorted.
   List<String> get groups {
     final names =

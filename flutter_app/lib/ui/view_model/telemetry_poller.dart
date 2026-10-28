@@ -103,8 +103,11 @@ class TelemetryPoller extends ChangeNotifier {
   HostMetrics? metricsForServer(int serverId) {
     final at = sampledAtFor(serverId);
     final server = _app.servers.where((s) => s.id == serverId).firstOrNull;
-    if (server?.status != 'online' ||
-        server!.healthScore < 0 ||
+    // A host a manual refresh is re-checking keeps its reading until the check answers, as Kotlin's
+    // `hostMetricsById` does.
+    if (server == null ||
+        !_app.isPickableHost(server) ||
+        server.healthScore < 0 ||
         at == null ||
         _clock().difference(at) >= freshnessWindow) {
       return null;

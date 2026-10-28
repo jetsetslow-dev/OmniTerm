@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/app_database.dart';
-import '../data/app_repository.dart';
 import '../domain/alert_evaluation.dart';
 import '../domain/external_ui_requests.dart';
 import '../domain/refresh_outcome.dart';
@@ -39,6 +38,7 @@ import 'view_model/host_status_probe.dart';
 import 'view_model/infra_view_model.dart';
 import 'view_model/monitor_view_model.dart';
 import 'view_model/network_view_model.dart';
+import 'view_model/servers_view_model.dart';
 import 'view_model/system_specs_view_model.dart';
 import 'view_model/scripts_view_model.dart';
 import 'view_model/sftp_view_model.dart';
@@ -362,18 +362,38 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
       case Screen.alerts:
         final probe = context.read<HostStatusProbe>();
         final poller = context.read<TelemetryPoller>();
-        final repository = context.read<AppState>().repository;
-        // `sweep()` and `cycle()` return immediately when one is already in flight, so awaiting
-        // them alone can report success on a pull that did nothing. Report on the state the rows
-        // actually end up in instead.
-        await probe.sweep();
-        await poller.cycle();
-        return _describeHostRefresh(repository, probe);
+        final app = context.read<AppState>();
+        final repository = app.repository;
+        final hosts = await repository.getAllServers();
+        // Kotlin's `refreshAllServers`: every host reads "Checking host…" until it answers, while
+        // the tabs that pick from online hosts keep those that were online.
+        await app.markChecking(hosts);
+        try {
+          // A sweep already running may have passed a host before it was marked. Wait it out, so
+          // this pull's own sweep checks every host.
+          final deadline = DateTime.now().add(_refreshReportTimeout);
+          while (probe.isRunning && DateTime.now().isBefore(deadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+          // `sweep()` and `cycle()` return immediately when one is already in flight, so awaiting
+          // them alone can report success on a pull that did nothing. Report on the state the rows
+          // actually end up in instead.
+          await probe.sweep();
+          await poller.cycle();
+          return await _describeHostRefresh(app, probe);
+        } finally {
+          app.doneRechecking(hosts.map((s) => s.id));
+        }
       case Screen.monitor:
         final monitor = context.read<MonitorViewModel>();
         final server = monitor.monitoredServer;
         if (monitor.activeTab == MonitorTab.specs && server != null) {
           await context.read<SystemSpecsViewModel>().load(server);
+        } else if (server != null &&
+            (monitor.activeTab == MonitorTab.overview || monitor.activeTab == MonitorTab.scripts)) {
+          // Kotlin's `refreshServer(markChecking = false)`: Monitor lists only online hosts, so the
+          // one on screen is not shown as being checked; what is still wrong goes in the banner.
+          return context.read<ServersViewModel>().refreshServer(server.id, markChecking: false);
         } else {
           await monitor.loadActiveTab();
         }
@@ -400,17 +420,25 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
   }
 
   /// Waits for every host to leave the "Checking host…" state, then says what is still wrong.
-  Future<String?> _describeHostRefresh(AppRepository repository, HostStatusProbe probe) async {
-    Future<List<RefreshHostState>> current() async => [
-      for (final s in await repository.getAllServers())
-        RefreshHostState(
-          name: s.name,
-          status: s.status,
-          probed: probe.hasProbed(s.id),
-          authStatus: s.authStatus,
-          authError: s.authError,
-        ),
-    ];
+  Future<String?> _describeHostRefresh(AppState app, HostStatusProbe probe) async {
+    Future<List<RefreshHostState>> current() async {
+      final servers = await app.repository.getAllServers();
+      // A host that has answered is judged by its answer again, not by its old status.
+      app.doneRechecking([
+        for (final s in servers)
+          if (s.status != 'connecting') s.id,
+      ]);
+      return [
+        for (final s in servers)
+          RefreshHostState(
+            name: s.name,
+            status: s.status,
+            probed: probe.hasProbed(s.id),
+            authStatus: s.authStatus,
+            authError: s.authError,
+          ),
+      ];
+    }
 
     final deadline = DateTime.now().add(_refreshReportTimeout);
     var hosts = await current();

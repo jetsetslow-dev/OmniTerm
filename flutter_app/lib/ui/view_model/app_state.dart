@@ -60,13 +60,41 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The hosts that are online now.
-  List<Server> get onlineServers => _servers.where((s) => s.status == 'online').toList();
+  /// The hosts a tab that needs a live connection offers: those online now, and those a manual
+  /// refresh is re-checking that were online when it began ([isPickableHost]).
+  List<Server> get onlineServers => _servers.where(isPickableHost).toList();
+
+  final Set<int> _recheckingOnline = {};
+
+  /// Kotlin's `isPickableHost`: online, or online until a manual refresh began re-checking it. The
+  /// Hosts list shows a re-checked host as being checked, but the tabs that pick from online hosts
+  /// keep it: dropping it moved Monitor and Terminal to another host on every pull.
+  bool isPickableHost(Server server) =>
+      server.status == 'online' ||
+      (server.status == 'connecting' && _recheckingOnline.contains(server.id));
+
+  /// Shows [hosts] as being checked, remembering which of them were online. Kotlin's
+  /// `markChecking`.
+  Future<void> markChecking(Iterable<Server> hosts) async {
+    final list = hosts.toList();
+    _recheckingOnline.addAll(list.where((s) => s.status == 'online').map((s) => s.id));
+    notifyListeners();
+    for (final server in list) {
+      await _repository.updateReachability(server.id, 'connecting', 0);
+    }
+  }
+
+  /// [serverIds] have answered, or the refresh is over: each is judged by its own status again.
+  void doneRechecking(Iterable<int> serverIds) {
+    final before = _recheckingOnline.length;
+    _recheckingOnline.removeAll(serverIds);
+    if (!_disposed && _recheckingOnline.length != before) notifyListeners();
+  }
 
   /// The selected host while it is online, else the first online host, else none: the host of a
   /// screen that needs a live connection.
   Server? get selectedOnlineServer {
-    final online = _servers.where((s) => s.status == 'online');
+    final online = _servers.where(isPickableHost);
     for (final server in online) {
       if (server.id == _selectedServerId) return server;
     }

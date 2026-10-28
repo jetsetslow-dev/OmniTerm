@@ -227,6 +227,17 @@ class ShellState extends ChangeNotifier {
   Future<void> refreshCurrentScreen([Future<String?> Function()? refresh]) async {
     if (_isRefreshing || refresh == null) return;
     _isRefreshing = true;
+    try {
+      await reportRefresh(refresh);
+    } finally {
+      _isRefreshing = false;
+      notifyListeners();
+    }
+  }
+
+  /// Runs a refresh the user asked for without the pull's spinner, such as a host card's Retry
+  /// (Kotlin's `refreshServer`), and shows what it returns in the same banner.
+  Future<void> reportRefresh(Future<String?> Function() refresh) async {
     _refreshError = null;
     notifyListeners();
     try {
@@ -236,7 +247,6 @@ class ShellState extends ChangeNotifier {
       // here is what made a failing pull indistinguishable from a successful one.
       _refreshError = 'Refresh failed: $error';
     } finally {
-      _isRefreshing = false;
       notifyListeners();
     }
   }

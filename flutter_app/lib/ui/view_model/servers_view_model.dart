@@ -30,6 +30,7 @@ class ServersViewModel extends ChangeNotifier {
     this.transport,
     this.shortcuts,
     this.probeHost,
+    this.pollHost,
     this.shell,
     this.tunnels,
     this.hostKeyTrust,
@@ -47,6 +48,9 @@ class ServersViewModel extends ChangeNotifier {
   /// Checks one host through its configured route. Kotlin's `addServer` probes a new host as soon as
   /// it is saved; without that the card sits on its stored `offline` until the next sweep.
   final Future<void> Function(Server server)? probeHost;
+
+  /// Takes one metrics sample from a host now ([TelemetryPoller.pollOne]), for [refreshServer].
+  final Future<String?> Function(Server server)? pollHost;
 
   /// The Shell tab, which a deleted host's terminals and tmux sessions belong to. Read when needed
   /// because its view model is created after this one.
@@ -366,6 +370,42 @@ class ServersViewModel extends ChangeNotifier {
 
   /// Why online [serverId] has no current metrics, if there is a reason to give.
   String? metricsErrorFor(int serverId) => _app.metricsErrorFor(serverId);
+
+  /// Whether the tabs that need a live connection offer [server]; see [AppState.isPickableHost].
+  bool isPickableHost(Server server) => _app.isPickableHost(server);
+
+  /// Re-checks one host, as Kotlin's `refreshServer` (a card's Retry, or a pull on Monitor's
+  /// Overview): shown as being checked unless [markChecking] is false, then probed and measured.
+  /// Returns why the host still has no current metrics, or null when it has them.
+  Future<String?> refreshServer(int serverId, {bool markChecking = true}) async {
+    final before = await _app.repository.getServerById(serverId);
+    if (before == null) return 'Refresh failed: host was removed.';
+    // Without a probe nothing would answer, and the host would read "Checking host…" for good.
+    if (markChecking && probeHost != null) await _app.markChecking([before]);
+    try {
+      await probeHost?.call(before);
+      final probed = await _app.repository.getServerById(serverId);
+      final poll = pollHost;
+      if (probed != null && probed.status == 'online' && poll != null) await poll(probed);
+    } finally {
+      _app.doneRechecking([serverId]);
+    }
+    final refreshed = await _app.repository.getServerById(serverId);
+    if (refreshed == null) return 'Refresh failed: host was removed.';
+    if (refreshed.status == 'offline') {
+      return 'Refresh failed for ${before.name}: the host did not respond on its configured SSH '
+          'route.';
+    }
+    if (refreshed.authStatus == 'failed') {
+      return 'Refresh failed for ${before.name}: '
+          '${refreshed.authError ?? 'SSH authentication failed.'}';
+    }
+    if (refreshed.healthScore < 0) {
+      return 'Refresh failed for ${before.name}: '
+          '${_app.metricsErrorFor(serverId) ?? 'Current metrics could not be verified.'}';
+    }
+    return null;
+  }
 
   /// [server]'s SSH credentials, or null when its saved settings cannot make any.
   Future<SshCredentials?> _credentialsOrNull(Server server) async {

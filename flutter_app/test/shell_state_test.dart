@@ -203,6 +203,18 @@ void main() {
       expect(state.isRefreshing, isFalse);
     });
 
+    test("a host's Retry reports in the same banner, without the pull's spinner", () async {
+      final state = ShellState();
+      await state.refreshCurrentScreen(() async => 'boom');
+      final answer = Completer<String?>();
+      final retry = state.reportRefresh(() => answer.future);
+      expect(state.refreshError, isNull, reason: 'a new attempt clears the old failure');
+      expect(state.isRefreshing, isFalse);
+      answer.complete('Refresh failed for nas: Metrics are stale.');
+      await retry;
+      expect(state.refreshError, 'Refresh failed for nas: Metrics are stale.');
+    });
+
     test('the error can be dismissed', () async {
       final state = ShellState();
       await state.refreshCurrentScreen(() async => 'boom');
