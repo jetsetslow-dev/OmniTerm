@@ -15,14 +15,12 @@ import com.jetsetslow.omniterm.ui.FleetTargetMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -73,7 +71,7 @@ class FleetDiagnosticStreamingRobolectricTest {
             ).toInt()
             val model = withContext(main) { AppViewModel(application, transport) }
             store.put("test", model)
-            withTimeout(10_000) { while (model.servers.value.none { it.id == id }) delay(10) }
+            waitWhileOnMain(main, 10_000) { model.servers.value.none { it.id == id } }
             val server = checkNotNull(model.servers.value.first { it.id == id })
 
             // Broadcast state the diagnostic must not touch, set to something recognisable first.
@@ -86,7 +84,7 @@ class FleetDiagnosticStreamingRobolectricTest {
             withContext(main) { model.runQuickCheck(server, check) }
 
             // Output appears as it arrives, not only once the command finishes.
-            withTimeout(5_000) { while (!model.actionStreamOutput.contains("first chunk")) delay(10) }
+            waitWhileOnMain(main) { !model.actionStreamOutput.contains("first chunk") }
             assertTrue("a running diagnostic must show it is running", model.actionStreamRunning)
             assertFalse(
                 "output must stream rather than appear only at completion",
@@ -95,7 +93,7 @@ class FleetDiagnosticStreamingRobolectricTest {
             assertTrue("the popup must name the host it dialled", model.actionStreamTitle.contains(server.name))
 
             transport.release.complete(Unit)
-            withTimeout(5_000) { while (model.actionStreamRunning) delay(10) }
+            waitWhileOnMain(main) { model.actionStreamRunning }
             assertTrue(model.actionStreamOutput.contains("last chunk"))
 
             assertEquals(

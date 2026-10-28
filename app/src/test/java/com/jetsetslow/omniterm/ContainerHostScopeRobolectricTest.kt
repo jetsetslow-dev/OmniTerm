@@ -51,7 +51,7 @@ class ContainerHostScopeRobolectricTest {
     fun oneHostsContainerListsAreClearedWhenAnotherIsSelected() = withHosts { model, transport, a, b ->
         transport.volumes = "docker\tdata\tlocal\t/var/lib/docker/volumes/data\t1.2GB\t0"
         withContext(main) { model.loadDocker() }
-        withTimeout(5_000) { while (model.dockerLoading || model.dockerVolumes.isEmpty()) delay(10) }
+        waitWhileOnMain(main) { model.dockerLoading || model.dockerVolumes.isEmpty() }
 
         withContext(main) { model.selectedServerId = b }
         // Until b's own load lands, a's `data` volume sat under b's name beside a live Remove.
@@ -88,8 +88,8 @@ class ContainerHostScopeRobolectricTest {
             model.imageSelection.toggle(a, "docker:sha256:1")
             model.deleteServer(model.servers.value.single { it.id == a })
         }
-        withTimeout(5_000) { while (model.servers.value.any { it.id == a }) delay(10) }
-        withTimeout(5_000) { while (model.imageSelection.isSelecting(a)) delay(10) }
+        waitWhileOnMain(main) { model.servers.value.any { it.id == a } }
+        waitWhileOnMain(main) { model.imageSelection.isSelecting(a) }
         assertTrue(model.imageSelection.picked(a).isEmpty())
     }
 
@@ -142,7 +142,7 @@ class ContainerHostScopeRobolectricTest {
             val b = repository.insertServer(ServerEntity(name = "b", host = "b.invalid", username = "fixture")).toInt()
             val model = withContext(executor) { AppViewModel(application, transport) }
             store.put("test", model)
-            withTimeout(10_000) { while (model.servers.value.count { it.id == a || it.id == b } < 2) delay(10) }
+            waitWhileOnMain(main, 10_000) { model.servers.value.count { it.id == a || it.id == b } < 2 }
             withContext(executor) { model.selectedServerId = a }
             body(model, transport, a, b)
         } finally {

@@ -34,9 +34,7 @@ class BackupSelectionPersistenceRobolectricTest {
         }
         val desired = BackupSelection(crashLogs = true)
         withContext(main) { model.updateBackupExportSelection(desired) }
-        withTimeout(5_000) {
-            while (model.backupSelectionError == null && uncaught.isEmpty()) delay(10)
-        }
+        waitWhileOnMain(main) { model.backupSelectionError == null && uncaught.isEmpty() }
         assertTrue("Selection errors need feedback instead of escaping the UI: $uncaught", uncaught.isEmpty())
         assertFalse(model.backupSelectionSaving)
         assertTrue(checkNotNull(model.backupSelectionError).contains("could not be remembered"))
@@ -46,10 +44,10 @@ class BackupSelectionPersistenceRobolectricTest {
             db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_backup_selection")
         }
         repo.insertSetting("telemetry_interval", "80")
-        withTimeout(5_000) { while (model.telemetryIntervalMs != 80_000L) delay(10) }
+        waitWhileOnMain(main) { model.telemetryIntervalMs != 80_000L }
         assertEquals("Another settings emission cannot silently replace a failed draft", desired, model.backupExportSelection)
         withContext(main) { model.updateBackupExportSelection(desired) }
-        withTimeout(5_000) { while (model.backupSelectionSaving) delay(10) }
+        waitWhileOnMain(main) { model.backupSelectionSaving }
         assertNull(model.backupSelectionError)
         assertEquals(desired, decodeBackupSelection(repo.getSetting("backup_export_selection")))
     }
@@ -71,7 +69,7 @@ class BackupSelectionPersistenceRobolectricTest {
                 }
             } finally { release.complete(Unit); transaction.await() }
         }
-        withTimeout(5_000) { while (model.backupSelectionSaving) delay(10) }
+        waitWhileOnMain(main) { model.backupSelectionSaving }
         assertTrue(uncaught.isEmpty())
         assertNull(model.backupSelectionError)
         assertEquals(BackupSelection(), decodeBackupSelection(repo.getSetting("backup_export_selection")))
@@ -97,7 +95,7 @@ class BackupSelectionPersistenceRobolectricTest {
             repo.insertSetting("telemetry_interval", "70")
             val model = withContext(main) { AppViewModel(application) }
             store.put("backup", model)
-            withTimeout(5_000) { while (model.telemetryIntervalMs != 70_000L) delay(10) }
+            waitWhileOnMain(main) { model.telemetryIntervalMs != 70_000L }
             block(model, repo, db, main, uncaught)
         } finally {
             withContext(Dispatchers.IO) { db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS reject_backup_selection") }

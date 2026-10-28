@@ -76,9 +76,7 @@ class TelemetryReliabilityRobolectricTest {
             val transport = MetricsTransport(initialReply)
             val model = withContext(main) { AppViewModel(application, transport) }
             store.put("test", model)
-            withTimeout(10_000) {
-                while (!model.probedServerIds.containsKey(id)) delay(10)
-            }
+            waitWhileOnMain(main, 10_000) { !model.probedServerIds.containsKey(id) }
             check(model, repository, id, transport)
         } finally {
             try {

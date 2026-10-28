@@ -86,6 +86,10 @@ state that a screen reads.
   assumption inside the class is too late because Robolectric fails before `@Before` runs.
 - Android-framework behavior may remain in Robolectric/instrumentation tests, but required PR CI
   must exercise it on a supported x86_64 runner.
+- In tests with a real Main dispatcher, wait on ViewModel state with `waitWhileOnMain`, never a
+  loop on the test thread: the ViewModel writes related state together on main, and an off-main
+  poll can land between those writes. Such a test passes on the pull request and fails later by
+  chance, so `RealMainPollingPolicyTest` rejects the loop instead.
 - Required CI runs the Room migration matrix on API 29 only. On a KVM-capable x86_64 host, also run
   it locally against **API 35**, the newest level the current stable emulator can boot, so the
   modern end of the supported range (`targetSdk` 37, `minSdk` 24) is exercised and not just the
