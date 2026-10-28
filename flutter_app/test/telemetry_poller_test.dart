@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/health_scoring.dart';
+import 'package:omniterm/domain/ssh_failure.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
@@ -97,6 +98,62 @@ void main() {
     expect(poller.metricsForServer(id), isNull);
     expect(await repo.getMetricsForServer(id), hasLength(1));
     poller.dispose();
+  });
+
+  test('a failed or incomplete reply says why, and only a login failure blames the login', () async {
+    final id = await repo.insertServer(server(name: 'nfs'));
+    await app.start();
+    await settle();
+    final replies = <String, String>{'': 'SSH Error: command timed out'};
+    final poller = TelemetryPoller(app, transport: RecordingTransport(replies: replies));
+    addTearDown(poller.dispose);
+    Future<String?> poll({String? incompleteReason}) => incompleteReason == null
+        ? poller.pollOne(app.servers.single)
+        : poller.pollOne(app.servers.single, incompleteReason: incompleteReason);
+
+    // A metrics command only runs after the login worked, so its timing out is a wedged mount or a
+    // slow host, not a bad key.
+    final timedOut = describeSshFailure('SSH Error: command timed out');
+    expect(await poll(), timedOut);
+    expect(app.metricsErrorFor(id), timedOut);
+    expect((await repo.getServerById(id))!.authStatus, 'ok');
+
+    replies[''] = 'SSH Error: Authentication failed';
+    await poll();
+    expect((await repo.getServerById(id))!.authStatus, 'failed');
+
+    replies[''] = '@OS\nLinux\n';
+    const incomplete =
+        'The host did not return complete CPU, memory and disk readings. Retry metrics.';
+    expect(await poll(), incomplete);
+    expect(app.metricsErrorFor(id), incomplete);
+    // Monitor's own fetch words it as Kotlin's `loadHostMetrics` does.
+    const monitorIncomplete = 'Metrics are incomplete. Retry metrics.';
+    expect(await poll(incompleteReason: monitorIncomplete), monitorIncomplete);
+    expect(app.metricsErrorFor(id), monitorIncomplete);
+  });
+
+  test('health invalidated elsewhere drops the current reading but keeps history', () async {
+    final id = await repo.insertServer(server(name: 'dropped'));
+    await app.start();
+    await settle();
+    final poller = TelemetryPoller(
+      app,
+      transport: RecordingTransport(fallback: metricsReply(memUsedPct: 20)),
+    );
+    addTearDown(poller.dispose);
+    await poller.cycle();
+    await Future<void>(() async {
+      while (app.servers.single.healthScore < 0 || poller.metricsForServer(id) == null) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }).timeout(const Duration(seconds: 5));
+
+    await app.invalidateCurrentHealth(id, 'Connection lost. Waiting for current metrics.');
+
+    expect(poller.metricsForServer(id), isNull);
+    expect(poller.historyForServer(id), hasLength(1));
+    expect(app.metricsErrorFor(id), 'Connection lost. Waiting for current metrics.');
   });
 
   test('only validated metrics provide fresh reachability evidence', () async {
@@ -255,13 +312,20 @@ void main() {
         expect(poller.historyForServer(id), hasLength(1));
 
         await repo.saveUniqueServer(app.servers.single.copyWith(host: '10.0.0.2'), update: true);
-        app.setMetricsError(id, 'Host address changed. Waiting for current metrics.');
-        await settle();
+        await app.invalidateCurrentHealth(id, 'Host address changed. Waiting for current metrics.');
+        // Both writes, and the next sample's health, reach AppState on the host watch.
+        Future<void> until(bool Function(Server host) ready) => Future<void>(() async {
+          while (!ready(app.servers.single)) {
+            await Future<void>.delayed(const Duration(milliseconds: 5));
+          }
+        }).timeout(const Duration(seconds: 5));
+        await until((host) => host.host == '10.0.0.2' && host.healthScore == -1);
         expect(poller.metricsForServer(id), isNull);
         expect(poller.historyForServer(id), isEmpty);
         expect(app.metricsErrorFor(id), 'Host address changed. Waiting for current metrics.');
 
         await poller.cycle();
+        await until((host) => host.healthScore >= 0);
         expect(poller.metricsForServer(id), isNotNull);
         expect(app.metricsErrorFor(id), isNull);
         poller.dispose();

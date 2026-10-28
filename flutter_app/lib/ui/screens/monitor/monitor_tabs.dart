@@ -62,7 +62,7 @@ class _OverviewTabState extends State<OverviewTab> {
             children: [
               if (vm.metricsLoading) const LinearProgressIndicator(),
               Text(
-                vm.error ?? 'Waiting for verified CPU, memory and disk metrics.',
+                vm.metricsError ?? 'Waiting for verified CPU, memory and disk metrics.',
                 style: composeBody(),
               ),
               TextButton(

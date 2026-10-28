@@ -163,7 +163,7 @@ void main() {
 
   testWidgets('an online row without metrics says why when there is a reason', (tester) async {
     final id = await repo.insertServer(server(name: 'moved', status: 'online', authStatus: 'ok'));
-    app.setMetricsError(id, 'Host address changed. Waiting for current metrics.');
+    await app.invalidateCurrentHealth(id, 'Host address changed. Waiting for current metrics.');
     await pump(tester);
     expect(find.text('Host address changed. Waiting for current metrics.'), findsOneWidget);
     expect(find.text('Waiting for verified metrics…'), findsNothing);

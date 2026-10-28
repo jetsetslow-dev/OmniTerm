@@ -291,6 +291,7 @@ class OmniTermApp extends StatelessWidget {
             context.read<AppState>().repository,
             transport: context.read<SshTransport>(),
             onSeen: context.read<AppState>().noteSeen,
+            invalidateHealth: context.read<AppState>().invalidateCurrentHealth,
           )..start(),
         ),
         // Declared after AppState because it reads the same repository, and loaded eagerly: the

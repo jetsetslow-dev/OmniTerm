@@ -38,6 +38,7 @@ class TelemetryPoller extends ChangeNotifier {
     _lastConfiguredInterval = effectiveInterval;
     _app.addListener(_onAppChanged);
     _app.onHostForgotten.add(_forgetHost);
+    _app.onHealthInvalidated.add(_dropCurrent);
   }
 
   final AppState _app;
@@ -134,7 +135,7 @@ class TelemetryPoller extends ChangeNotifier {
       unawaited(
         _withHostLock(id, () async {
           if (!_disposed && sampledAtFor(id) == at && _clock().difference(at) >= freshnessWindow) {
-            await _invalidate(id);
+            await _invalidate(id, 'Metrics are stale. Refresh to obtain current health.');
           }
         }),
       );
@@ -270,10 +271,23 @@ class TelemetryPoller extends ChangeNotifier {
   ///
   /// Background cycles intentionally ignore the return value so one host cannot stop the fleet,
   /// while buttons can surface the same failure instead of completing as if refresh succeeded.
-  Future<String?> pollOne(Server server, {int? workGeneration}) =>
-      _withHostLock(server.id, () => _pollOne(server, workGeneration: workGeneration));
+  /// [incompleteReason] is what a reply missing CPU, memory or disk readings is reported as: Kotlin
+  /// words it differently for the poller and for Monitor's own fetch.
+  Future<String?> pollOne(
+    Server server, {
+    int? workGeneration,
+    String incompleteReason =
+        'The host did not return complete CPU, memory and disk readings. Retry metrics.',
+  }) => _withHostLock(
+    server.id,
+    () => _pollOne(server, workGeneration: workGeneration, incompleteReason: incompleteReason),
+  );
 
-  Future<String?> _pollOne(Server server, {int? workGeneration}) async {
+  Future<String?> _pollOne(
+    Server server, {
+    int? workGeneration,
+    required String incompleteReason,
+  }) async {
     final ssh = transport;
     if (ssh == null) return 'SSH is unavailable in this build.';
     final generation = workGeneration ?? _workGeneration;
@@ -303,16 +317,25 @@ class TelemetryPoller extends ChangeNotifier {
         // and the words "authentication failed". Nothing in this port ever wrote the column, so a
         // host with a wrong key looked identical to a healthy one no matter how often it failed.
         // `serversStream` is a drift watch, so the write reaches AppState on its own.
+        //
+        // A metrics command that timed out says nothing about authentication, though: it only ran
+        // because an authenticated exec succeeded. As Kotlin, one wedged mount must not make the
+        // host read "authentication failed" while SSH to it works.
         final failure = describeSshFailure(raw);
-        await _invalidate(server.id);
-        await _app.repository.updateAuthState(server.id, 'failed', failure);
+        await _invalidate(server.id, failure);
+        final timedOut = raw.trimRight().endsWith('command timed out');
+        await _app.repository.updateAuthState(
+          server.id,
+          timedOut ? 'ok' : 'failed',
+          timedOut ? null : failure,
+        );
         return failure;
       }
 
       final parsed = parseMetrics(raw, host: server.host);
       if (!hasReliableHealthMetrics(raw, parsed: parsed)) {
-        await _invalidate(server.id);
-        return 'CPU, memory or disk metrics are incomplete. Retry when the host is available.';
+        await _invalidate(server.id, incompleteReason);
+        return incompleteReason;
       }
       final now = _clock();
       final sample = enrichMetrics(
@@ -358,17 +381,23 @@ class TelemetryPoller extends ChangeNotifier {
       // says nothing certain about reachability, and marking the host offline from here would fight
       // the probe that actually measured it.
       final failure = describeSshFailure(error.toString());
-      await _invalidate(server.id);
+      await _invalidate(server.id, failure);
       await _app.repository.updateAuthState(server.id, 'failed', failure);
       return failure;
     }
   }
 
-  Future<void> _invalidate(int serverId) async {
+  /// No current reading for [serverId], and [reason] says why. The rate baselines go too: the next
+  /// sample after a failure is not a continuation of the last one.
+  Future<void> _invalidate(int serverId, String reason) async {
+    _baselines.remove(serverId);
+    await _app.invalidateCurrentHealth(serverId, reason);
+  }
+
+  /// [serverId]'s health was invalidated, here or elsewhere: its reading is no longer current.
+  void _dropCurrent(int serverId) {
     _expiryTimers.remove(serverId)?.cancel();
     _metrics.remove(serverId);
-    _baselines.remove(serverId);
-    await _app.repository.updateHealthScore(serverId, -1);
     _safeNotify();
   }
 
@@ -431,6 +460,7 @@ class TelemetryPoller extends ChangeNotifier {
     stop();
     _app.removeListener(_onAppChanged);
     _app.onHostForgotten.remove(_forgetHost);
+    _app.onHealthInvalidated.remove(_dropCurrent);
     super.dispose();
   }
 }

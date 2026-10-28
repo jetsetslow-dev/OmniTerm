@@ -834,10 +834,9 @@ void main() {
         '—',
       );
       expect(find.byKey(const ValueKey('monitor.overview.retry')), findsOneWidget);
-      expect(
-        find.text('CPU, memory or disk metrics are incomplete. Refresh to retry.'),
-        findsWidgets,
-      );
+      // Said once, on the waiting card, as Kotlin's `metricsErrorsById`; not in a banner as well.
+      expect(find.text('Metrics are incomplete. Retry metrics.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('monitor.error')), findsNothing);
       expect(vm.hasCurrentMetrics, isFalse);
       vm.dispose();
     });

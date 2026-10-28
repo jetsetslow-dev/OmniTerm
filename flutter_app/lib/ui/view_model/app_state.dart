@@ -189,6 +189,10 @@ class AppState extends ChangeNotifier {
   /// readings (system specs, notably) drop them, as the OS cache below does.
   final List<void Function(int serverId)> onHostForgotten = [];
 
+  /// Called with a host's id when its current health stops being current, so whoever holds its
+  /// live reading drops it, as Kotlin's `invalidateCurrentHealth` drops `hostMetricsById`.
+  final List<void Function(int serverId)> onHealthInvalidated = [];
+
   final Map<int, int> _lastSeenAt = {};
 
   final Map<int, String> _metricsErrors = {};
@@ -197,14 +201,22 @@ class AppState extends ChangeNotifier {
   /// shows it in place of "Waiting for verified metrics…". Kotlin's `metricsErrorsById`.
   String? metricsErrorFor(int serverId) => _metricsErrors[serverId];
 
-  void setMetricsError(int serverId, String reason) {
+  /// Kotlin's `invalidateCurrentHealth`: [serverId]'s health is unknown until a fresh sample
+  /// arrives, and [reason] is shown wherever its metrics would be.
+  Future<void> invalidateCurrentHealth(int serverId, String reason) async {
+    // A probe or poll still in flight when the app shuts down has nothing left to tell.
+    if (_disposed) return;
     _metricsErrors[serverId] = reason;
+    for (final listener in onHealthInvalidated.toList()) {
+      listener(serverId);
+    }
     notifyListeners();
+    await _repository.updateHealthScore(serverId, -1);
   }
 
   /// Called when a sample arrives, which answers whatever was being waited for.
   void clearMetricsError(int serverId) {
-    if (_metricsErrors.remove(serverId) != null) notifyListeners();
+    if (!_disposed && _metricsErrors.remove(serverId) != null) notifyListeners();
   }
 
   /// When OmniTerm last had metrics or a working SSH connection from [serverId], in epoch
@@ -275,8 +287,11 @@ class AppState extends ChangeNotifier {
     await loadSettings();
   }
 
+  bool _disposed = false;
+
   @override
   void dispose() {
+    _disposed = true;
     _serversSub?.cancel();
     super.dispose();
   }

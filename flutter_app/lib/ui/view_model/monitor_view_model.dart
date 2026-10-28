@@ -12,6 +12,7 @@ import '../../domain/health_scoring.dart';
 import '../../domain/measurement_units.dart';
 import '../../domain/monitor_history.dart';
 import '../../domain/server_credentials.dart';
+import '../../domain/ssh_failure.dart';
 import '../../domain/operation_generation.dart';
 import 'app_state.dart';
 import 'telemetry_poller.dart';
@@ -287,6 +288,14 @@ class MonitorViewModel extends ChangeNotifier {
             : poller!.metricsForServer(monitoredServer!.id) ?? HostMetrics.empty);
   bool get metricsLoading => _metricsLoading;
 
+  static const _incompleteMetrics = 'Metrics are incomplete. Retry metrics.';
+
+  /// Why the monitored host has no current metrics, when there is a reason to give.
+  String? get metricsError {
+    final server = monitoredServer;
+    return server == null ? null : _app.metricsErrorFor(server.id);
+  }
+
   /// One round trip returning every section Overview needs.
   ///
   /// The reply also carries the host's OS family, which is cached in [AppState] so the process,
@@ -298,12 +307,13 @@ class MonitorViewModel extends ChangeNotifier {
       setLoading: (v) => _metricsLoading = v,
       run: (server, exec) async {
         final livePoller = poller;
+        // A failure is said on the waiting card, from [metricsError], as Kotlin's
+        // `metricsErrorsById`, not in the error banner as well.
         if (livePoller != null) {
-          final failure = await livePoller.pollOne(server);
+          final failure = await livePoller.pollOne(server, incompleteReason: _incompleteMetrics);
           return () {
             _metrics = livePoller.metricsForServer(server.id) ?? HostMetrics.empty;
             _metricsAt = failure == null ? livePoller.sampledAtFor(server.id) : null;
-            _error = failure;
           };
         }
         final out = await exec(metricsFor(await _hostOs(server, exec)));
@@ -312,15 +322,18 @@ class MonitorViewModel extends ChangeNotifier {
           return () {
             _metrics = HostMetrics.empty;
             _metricsAt = null;
-            _error = out.startsWith('SSH Error')
-                ? out
-                : 'CPU, memory or disk metrics are incomplete. Refresh to retry.';
-            unawaited(_app.repository.updateHealthScore(server.id, -1));
+            unawaited(
+              _app.invalidateCurrentHealth(
+                server.id,
+                out.startsWith('SSH Error') ? describeSshFailure(out) : _incompleteMetrics,
+              ),
+            );
           };
         }
         return () {
           _metrics = parsed;
           _metricsAt = DateTime.now();
+          _app.clearMetricsError(server.id);
           if (parsed.os.isNotEmpty) {
             _app.recordOsForServer(server.id, parsed.os);
           }

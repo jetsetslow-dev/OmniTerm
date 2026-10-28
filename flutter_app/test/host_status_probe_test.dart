@@ -171,13 +171,19 @@ void main() {
     },
   );
 
-  test('an unreachable host becomes offline', () async {
-    await repo.insertServer(server(name: 'nas', status: 'online'));
-    final probe = HostStatusProbe(repo, probe: _FakeProbe());
+  test('an unreachable host becomes offline, and says why it has no metrics', () async {
+    final id = await repo.insertServer(server(name: 'nas', status: 'online'));
+    final reasons = <(int, String)>[];
+    final probe = HostStatusProbe(
+      repo,
+      probe: _FakeProbe(),
+      invalidateHealth: (serverId, reason) async => reasons.add((serverId, reason)),
+    );
 
     await probe.sweep();
 
     expect((await only()).status, 'offline');
+    expect(reasons, [(id, 'The host could not be reached. Retry when it is available.')]);
     probe.dispose();
   });
 
@@ -208,11 +214,13 @@ void main() {
   });
 
   test('an authentication failure proves the SSH endpoint is online', () async {
-    await repo.insertServer(server(name: 'nas'));
+    final id = await repo.insertServer(server(name: 'nas'));
+    final reasons = <(int, String)>[];
     final probe = HostStatusProbe(
       repo,
       probe: _FakeProbe(),
       transport: _FakeSshTransport(failure: 'SSHAuthFailError'),
+      invalidateHealth: (serverId, reason) async => reasons.add((serverId, reason)),
     );
 
     await probe.sweep();
@@ -220,6 +228,8 @@ void main() {
     final row = await only();
     expect(row.status, 'online');
     expect(row.authStatus, 'failed');
+    // The card says what failed where its metrics would be, as Kotlin does.
+    expect(reasons, [(id, row.authError)]);
     probe.dispose();
   });
 

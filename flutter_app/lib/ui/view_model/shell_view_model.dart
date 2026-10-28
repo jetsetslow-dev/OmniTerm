@@ -146,6 +146,14 @@ class ShellViewModel extends ChangeNotifier {
           !session.reconnecting &&
           session.reconnectError == null) {
         retrySession(session);
+        if (session.reconnecting) {
+          unawaited(
+            _app.invalidateCurrentHealth(
+              session.serverId,
+              'Connection lost. Waiting for current metrics.',
+            ),
+          );
+        }
       }
     }
     _safeNotify();
@@ -702,7 +710,7 @@ class ShellViewModel extends ChangeNotifier {
       if (present == null) throw SshConnectException(raw);
       if (!present) {
         await _app.repository.deletePersistentSession(server.id, session.tmuxName!);
-        await _app.repository.updateHealthScore(server.id, -1);
+        await _app.invalidateCurrentHealth(server.id, _tmuxSessionGone);
         await markReachable?.call(server);
         await _reloadSaved();
         if (_disposed || generation != _connectGeneration) return;
@@ -726,7 +734,7 @@ class ShellViewModel extends ChangeNotifier {
             'retry when the host is available.';
         if (server != null) {
           if (sshFailureProvesEndpointUnreachable('$error')) session.markTransportUnavailable();
-          await _app.repository.updateHealthScore(server.id, -1);
+          await _app.invalidateCurrentHealth(server.id, _error!);
           unawaited(recheckHost?.call(server) ?? Future<void>.value());
         }
       }
@@ -1100,12 +1108,21 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  void _recordConnectFailure(Server server, String message) {
+  /// Kotlin's health reasons for a host a shell could not be opened on.
+  static const _tmuxSessionGone =
+      'The tmux session no longer exists. Waiting for current host metrics.';
+  static const _connectFailed = 'Connection failed. Retry when the host is available.';
+
+  void _recordConnectFailure(
+    Server server,
+    String message, {
+    String healthReason = _connectFailed,
+  }) {
     _failedConnectTarget = server;
     _failedConnectRequest = _activeConnectRequest;
     _error = message.contains('recovery entry') ? message : describeSshFailure(message);
     _rememberPaneFailure(_activeConnectRequest, _error!);
-    unawaited(_app.repository.updateHealthScore(server.id, -1));
+    unawaited(_app.invalidateCurrentHealth(server.id, healthReason));
     unawaited(recheckHost?.call(server) ?? Future<void>.value());
   }
 
@@ -1651,14 +1668,14 @@ class ShellViewModel extends ChangeNotifier {
           if (generation != _connectGeneration || !_requestStillValid(request)) return;
           final presence = parseTmuxSessionProbe(rawPresence);
           if (presence == null) {
-            throw SshConnectException(
+            throw _TmuxUnverified(
               'Could not verify the saved tmux session. The recovery entry was kept; retry when '
               'the connection is available. ${describeSshFailure(rawPresence)}',
             );
           }
           if (!presence) {
             await _app.repository.deletePersistentSession(server.id, remembered);
-            await _app.repository.updateHealthScore(server.id, -1);
+            await _app.invalidateCurrentHealth(server.id, _tmuxSessionGone);
             await _reloadSaved();
             if (generation != _connectGeneration || !_requestStillValid(request)) return;
             unawaited(markReachable?.call(server) ?? Future<void>.value());
@@ -1825,7 +1842,13 @@ class ShellViewModel extends ChangeNotifier {
       }
     } on SshConnectException catch (e) {
       if (generation == _connectGeneration) {
-        _recordConnectFailure(server, e.message);
+        _recordConnectFailure(
+          server,
+          e.message,
+          healthReason: e is _TmuxUnverified
+              ? 'Could not verify the saved tmux session. Retry when the host is available.'
+              : _connectFailed,
+        );
       }
     } catch (e) {
       if (generation == _connectGeneration) {
@@ -2633,6 +2656,11 @@ class ShellViewModel extends ChangeNotifier {
     unawaited(sessionService?.stop());
     super.dispose();
   }
+}
+
+/// A saved tmux session whose presence tmux would neither confirm nor deny.
+class _TmuxUnverified extends SshConnectException {
+  _TmuxUnverified(super.message);
 }
 
 class _ReconnectRun {

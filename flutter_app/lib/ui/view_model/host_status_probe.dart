@@ -27,6 +27,7 @@ class HostStatusProbe extends ChangeNotifier {
     this.transport,
     this.interval = const Duration(seconds: 45),
     this.onSeen,
+    this.invalidateHealth,
   }) : probe = probe ?? const SocketNetworkProbe();
 
   final AppRepository _repository;
@@ -38,6 +39,10 @@ class HostStatusProbe extends ChangeNotifier {
 
   /// Told when a real shell reached a host, for its "Last seen" line ([AppState.noteSeen]).
   final void Function(int serverId, int atMs)? onSeen;
+
+  /// [AppState.invalidateCurrentHealth], so a host this probe could not use says why it has no
+  /// metrics. Without it, only the health score is reset.
+  final Future<void> Function(int serverId, String reason)? invalidateHealth;
 
   /// Long enough for a busy host on a slow link, short enough that a sweep of a large fleet does not
   /// take minutes when most of it is down.
@@ -260,7 +265,7 @@ class HostStatusProbe extends ChangeNotifier {
         // Auth/host-key failures prove that an SSH server answered. Ambiguous transport errors do
         // not justify hiding the host from online-only screens or preventing a manual attempt.
         await Future.wait([
-          _repository.updateHealthScore(server.id, -1),
+          _invalidateHealth(server.id, failure),
           _repository.updateReachability(server.id, 'online', stopwatch.elapsedMilliseconds),
           _repository.updateAuthState(server.id, 'failed', failure),
         ]);
@@ -312,6 +317,10 @@ class HostStatusProbe extends ChangeNotifier {
       await _preserveInteractiveSuccess(server);
       return;
     }
+    await _invalidateHealth(
+      server.id,
+      'The host could not be reached. Retry when it is available.',
+    );
     await _repository.updateConnectionState(server.id, 'offline', -1, 0);
     // Database writes yield. Reconcile once more in case a shell opened while the offline write was
     // being committed; the successful SSH result must be the final visible state.
@@ -320,6 +329,9 @@ class HostStatusProbe extends ChangeNotifier {
       await _preserveInteractiveSuccess(server);
     }
   }
+
+  Future<void> _invalidateHealth(int serverId, String reason) =>
+      invalidateHealth?.call(serverId, reason) ?? _repository.updateHealthScore(serverId, -1);
 
   Future<void> _preserveInteractiveSuccess(Server server) =>
       _repository.updateReachability(server.id, 'online', server.lastLatency);

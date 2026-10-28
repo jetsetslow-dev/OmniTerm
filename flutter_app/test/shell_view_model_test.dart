@@ -386,6 +386,7 @@ void main() {
       gate.complete();
       await until(() => !vm.isConnecting);
       expect(vm.error, contains('recovery entry was kept'));
+      expect(app.metricsErrorFor(session.serverId), vm.error, reason: "Kotlin's health reason");
       expect(
         session.isOpen,
         isFalse,
@@ -2267,6 +2268,62 @@ void main() {
   /// user believed their work survived a dropped link, and it did not.
   /// Who owns the SSH channel between `openShell` returning it and a `ShellSession` taking it.
   /// Disconnect all, which is seconds of SSH work over however many hosts are open.
+  group('why a host has no metrics after a shell failure', () {
+    // Kotlin's `invalidateCurrentHealth` reasons, shown where the host's metrics would be.
+    Future<int> rememberedHost(String probeAnswer) async {
+      final id = await repo.insertServer(server(name: 'nas', persistent: true));
+      await repo.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: 'omniterm-$id-kept',
+          serverId: id,
+          serverName: 'nas',
+          createdAt: 1,
+          backgroundedAt: 2,
+        ),
+      );
+      transport.execAnswers[tmuxCheckCommand] = 'yes';
+      transport.execAnswers[tmuxSessionProbeCommand('omniterm-$id-kept')] = probeAnswer;
+      await start();
+      return id;
+    }
+
+    test('a shell that could not be opened', () async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      transport.failure = SshConnectException('Connection refused');
+      await start();
+      await vm.connect(vm.server!);
+      expect(app.metricsErrorFor(id), 'Connection failed. Retry when the host is available.');
+      expect((await repo.getServerById(id))!.healthScore, -1);
+    });
+
+    test('a saved tmux session tmux would not confirm either way', () async {
+      final id = await rememberedHost('garbage');
+      await vm.connect(vm.server!);
+      expect(
+        app.metricsErrorFor(id),
+        'Could not verify the saved tmux session. Retry when the host is available.',
+      );
+    });
+
+    test('a saved tmux session that is gone', () async {
+      final id = await rememberedHost(tmuxSessionAbsentMarker);
+      await vm.connect(vm.server!);
+      expect(
+        app.metricsErrorFor(id),
+        'The tmux session no longer exists. Waiting for current host metrics.',
+      );
+    });
+
+    test('a connection that dropped', () async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      await transport.opened.single.dropConnection();
+      await until(() => vm.current!.reconnecting);
+      expect(app.metricsErrorFor(id), 'Connection lost. Waiting for current metrics.');
+    });
+  });
+
   group('disconnect all', () {
     Server persistent({required String name}) =>
         server(name: name, persistent: true).copyWith(persistentSession: true);

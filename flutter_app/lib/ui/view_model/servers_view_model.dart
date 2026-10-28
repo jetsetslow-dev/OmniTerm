@@ -339,8 +339,10 @@ class ServersViewModel extends ChangeNotifier {
     await shell?.call().hostEdited(server, moved: moved);
     if (moved) {
       // Health, metrics and sparklines describe the old address. Measure the new one.
-      _app.setMetricsError(server.id, 'Host address changed. Waiting for current metrics.');
-      await _app.repository.updateHealthScore(server.id, -1);
+      await _app.invalidateCurrentHealth(
+        server.id,
+        'Host address changed. Waiting for current metrics.',
+      );
       await _app.repository.updateReachability(server.id, 'connecting', 0);
       final updated = await _app.repository.getServerById(server.id);
       final probe = probeHost;
