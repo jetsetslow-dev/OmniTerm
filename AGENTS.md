@@ -162,6 +162,12 @@ state that a screen reads.
   PR without executing untrusted PR code under `pull_request_target`. Keep it scoped to Gradle
   Dependabot branches. It requires the repository Actions setting that permits PR creation, but
   must never approve its own PR; independent review and normal branch protections still apply.
+  It commits through the Git Data API so GitHub signs the commit, and fails rather than publish
+  an unsigned one; keep it that way.
+- main requires every commit in a PR to be signed, and GitHub enforces that only at merge time.
+  Before merging another branch into a PR branch, check each incoming commit with
+  `gh api repos/{owner}/{repo}/commits/<sha> --jq .commit.verification.verified`. An unsigned
+  commit can only be removed by rewriting the PR branch, which dismisses its approval.
 - Use `./scripts/refresh-verification-metadata.sh --write` for checksum regeneration and
   `--verify` for a non-mutating forced-refresh check. Keep local and CI dependency resolution
   aligned through this script rather than adding partial one-off Gradle commands.

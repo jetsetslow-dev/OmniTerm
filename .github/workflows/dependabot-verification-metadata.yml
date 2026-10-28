@@ -17,8 +17,12 @@ env:
 # with elevated permissions). This workflow deliberately never does that: it never checks out
 # Dependabot's branch or ref at all. Instead it reads only gradle/libs.versions.toml from the PR
 # head via the read-only Contents API, applies that file on top of a fresh checkout of main,
-# regenerates checksums there, and pushes the result to a brand-new branch + PR — so no
+# regenerates checksums there, and commits the result to a brand-new branch + PR — so no
 # PR-supplied executable code or checksum assertions are ever trusted when ./gradlew runs.
+#
+# The commit is made through the Git Data API, not `git push`: GitHub signs a commit the workflow
+# token creates there, and main requires signed commits. A runner-side `git commit` is unsigned,
+# and merging one into a PR's branch blocks that PR from ever merging (#126 into #128).
 on:
   pull_request_target:
     branches:
@@ -50,7 +54,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          persist-credentials: true
+          persist-credentials: false
 
       # Pull only the version catalog through the read-only Contents API — never a checkout of the
       # PR's ref/branch. Metadata starts from trusted main and is regenerated locally.
@@ -96,12 +100,36 @@ jobs:
           fi
 
           fixup_branch="dependabot-verification-metadata/pr-${PR_NUMBER}"
-          git checkout -b "$fixup_branch"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add gradle/libs.versions.toml gradle/verification-metadata.xml
-          git commit -m "chore: regenerate verification-metadata.xml for dependency bump (#${PR_NUMBER})"
-          git push --force origin "$fixup_branch"
+          repo="repos/${GITHUB_REPOSITORY}"
+          blob() {
+            jq -n --rawfile content <(base64 -w0 "$1") '{content: $content, encoding: "base64"}' |
+              gh api "$repo/git/blobs" --input - --jq '.sha'
+          }
+          catalog="$(blob gradle/libs.versions.toml)"
+          metadata="$(blob gradle/verification-metadata.xml)"
+          tree="$(
+            jq -n --arg base "$(git rev-parse 'HEAD^{tree}')" --arg catalog "$catalog" \
+              --arg metadata "$metadata" '{base_tree: $base, tree: [
+                {path: "gradle/libs.versions.toml", mode: "100644", type: "blob", sha: $catalog},
+                {path: "gradle/verification-metadata.xml", mode: "100644", type: "blob", sha: $metadata}
+              ]}' | gh api "$repo/git/trees" --input - --jq '.sha'
+          )"
+          # No author or committer: GitHub signs only a commit it attributes to the token itself.
+          commit="$(
+            jq -n --arg tree "$tree" --arg parent "$(git rev-parse HEAD)" \
+              --arg message "chore: regenerate verification-metadata.xml for dependency bump (#${PR_NUMBER})" \
+              '{message: $message, tree: $tree, parents: [$parent]}' |
+              gh api "$repo/git/commits" --input - --jq '.sha'
+          )"
+          if [ "$(gh api "$repo/git/commits/$commit" --jq '.verification.verified')" != "true" ]; then
+            echo "::error::GitHub did not sign fixup commit $commit, so it was not published."
+            exit 1
+          fi
+          if gh api "$repo/git/ref/heads/$fixup_branch" >/dev/null 2>&1; then
+            gh api -X PATCH "$repo/git/refs/heads/$fixup_branch" -f sha="$commit" -F force=true >/dev/null
+          else
+            gh api "$repo/git/refs" -f ref="refs/heads/$fixup_branch" -f sha="$commit" >/dev/null
+          fi
 
           existing="$(gh pr list --head "$fixup_branch" --json number --jq '.[0].number' || true)"
           if [ -n "$existing" ]; then
