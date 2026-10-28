@@ -50,14 +50,14 @@ class TerminalPasteReceiptRobolectricTest {
             serverId = id
             val model = withContext(main) { AppViewModel(application, transport) }
             store.put("test", model)
-            withTimeout(10_000) { while (model.servers.value.none { it.id == id }) delay(10) }
+            waitWhileOnMain(main, 10_000) { model.servers.value.none { it.id == id } }
             withContext(main) {
                 model.saveTmuxControlMode(false)
                 model.updateTerminalReadOnly(false)
                 model.selectedServerId = id
                 model.connectTerminal()
             }
-            withTimeout(10_000) { while (model.currentSession?.isConnected != true || model.isTerminalConnecting) delay(10) }
+            waitWhileOnMain(main, 10_000) { model.currentSession?.isConnected != true || model.isTerminalConnecting }
             val shell = checkNotNull(model.currentSession)
             transport.shell.armed = true
             val payload = "a".repeat(if (oversized) 2_000_000 else 9_000)

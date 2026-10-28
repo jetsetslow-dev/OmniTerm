@@ -98,7 +98,7 @@ class BackupExportOutcomeRobolectricTest {
             val (ok, message) = result.await()
             assertEquals(1, calls.get())
             assertTrue("No backup operation may escape without feedback: $uncaught", uncaught.isEmpty())
-            withTimeout(5_000) { while (model.backupExportRunning) delay(10) }
+            waitWhileOnMain(main) { model.backupExportRunning }
             assertEquals(!rejectFile, ok)
             val recorded = repo.getSetting("backup_last_export_time")
             if (rejectFile) {
@@ -113,7 +113,7 @@ class BackupExportOutcomeRobolectricTest {
                     assertTrue(message, message.contains("record", ignoreCase = true))
                     val writtenAt = model.lastBackupExportTime
                     repo.insertSetting("telemetry_interval", "70")
-                    withTimeout(5_000) { while (model.telemetryIntervalMs != 70_000L) delay(10) }
+                    waitWhileOnMain(main) { model.telemetryIntervalMs != 70_000L }
                     assertEquals("Other settings must not erase a backup actually written in this run", writtenAt, model.lastBackupExportTime)
                 } else {
                     assertEquals(model.lastBackupExportTime.toString(), recorded)

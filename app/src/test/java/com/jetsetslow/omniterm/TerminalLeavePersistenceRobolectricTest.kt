@@ -24,7 +24,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
@@ -150,11 +149,10 @@ class TerminalLeavePersistenceRobolectricTest {
                 release.complete(Unit)
                 transaction.join()
             }
-            withTimeout(5_000) {
-                while (model.currentScreen != Screen.Monitor || model.activeSessions.contains(shell)) {
-                    check(model.terminalLeaveError == null) { model.terminalLeaveError.orEmpty() }
-                    delay(10)
-                }
+            waitWhileOnMain(main) {
+                val leaving = model.currentScreen != Screen.Monitor || model.activeSessions.contains(shell)
+                if (leaving) check(model.terminalLeaveError == null) { model.terminalLeaveError.orEmpty() }
+                leaving
             }
             assertTrue(model.restorablePersistentSessions.any { it.tmuxName == shell.tmuxName })
         } finally {
@@ -192,7 +190,7 @@ class TerminalLeavePersistenceRobolectricTest {
                 model.navigateTo(Screen.Monitor)
                 model.completeTerminalNavigation(disconnect = false)
             }
-            withTimeout(5_000) { while (model.isLeavingTerminalSessions) delay(10) }
+            waitWhileOnMain(main) { model.isLeavingTerminalSessions }
             assertEquals(Screen.Shell, model.currentScreen)
             assertTrue(model.showDisconnectTerminalDialog)
             assertTrue(model.terminalLeaveError.orEmpty().contains("fixture storage unavailable"))
@@ -211,7 +209,7 @@ class TerminalLeavePersistenceRobolectricTest {
             withContext(Dispatchers.IO) { db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_leave") }
         }
         withContext(main) { model.completeTerminalNavigation(disconnect = false) }
-        withTimeout(5_000) { while (model.isLeavingTerminalSessions || model.currentScreen != Screen.Monitor) delay(10) }
+        waitWhileOnMain(main) { model.isLeavingTerminalSessions || model.currentScreen != Screen.Monitor }
         assertTrue(model.activeSessions.isEmpty())
         assertNull(model.terminalLeaveError)
         assertEquals(1234L, repository.getPersistentSessions().single { it.tmuxName == first.tmuxName }.createdAt)

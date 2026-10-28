@@ -14,14 +14,12 @@ import com.jetsetslow.omniterm.ui.NetworkShareScanHit
 import com.jetsetslow.omniterm.ui.scanPrefixOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -46,7 +44,7 @@ class NetworkShareMessagesRobolectricTest {
     fun savingAndDeletingAShareSayWhatHappened() = withModel { model, main ->
         val share = NetworkShareEntity(name = "media", protocol = "FTP", address = "192.0.2.9", port = 21)
         withContext(main) { model.saveNetworkShare(share) }
-        withTimeout(5_000) { while (model.networkShareMessage == null) delay(10) }
+        waitWhileOnMain(main) { model.networkShareMessage == null }
         assertEquals("Saved media.", model.networkShareMessage)
         assertFalse(model.networkShareMessageIsError)
         assertNull("the scan dialog's line is the scan's alone", model.networkShareScanStatus)
@@ -54,7 +52,7 @@ class NetworkShareMessagesRobolectricTest {
         val repository = AppRepository(AppDatabase.getDatabase(ApplicationProvider.getApplicationContext<Application>()))
         val saved = repository.getAllNetworkShares().single { it.name == "media" && it.address == "192.0.2.9" }
         withContext(main) { model.deleteNetworkShare(saved) }
-        withTimeout(5_000) { while (model.networkShareMessage != "Deleted media.") delay(10) }
+        waitWhileOnMain(main) { model.networkShareMessage != "Deleted media." }
 
         withContext(main) { model.dismissNetworkShareMessage() }
         assertNull(model.networkShareMessage)
@@ -63,7 +61,7 @@ class NetworkShareMessagesRobolectricTest {
     @Test
     fun aShareThatCannotBeSavedSaysWhyOnTheTab() = withModel { model, main ->
         withContext(main) { model.saveNetworkShare(NetworkShareEntity(name = "office", protocol = "SMB", address = "192.0.2.10")) }
-        withTimeout(5_000) { while (model.networkShareMessage == null) delay(10) }
+        waitWhileOnMain(main) { model.networkShareMessage == null }
         assertEquals("SMB shares need a Share/path value such as Public or Media.", model.networkShareMessage)
         assertTrue(model.networkShareMessageIsError)
         assertNull("the scan dialog's line is the scan's alone", model.networkShareScanStatus)
@@ -77,7 +75,7 @@ class NetworkShareMessagesRobolectricTest {
             model.addNetworkShareFromScan(hit)
         }
         // Saved hits leave the list, so the dialog only offers what is not saved yet.
-        withTimeout(5_000) { while (hit in withContext(main) { model.networkShareScanHits.toList() }) delay(10) }
+        waitWhileOnMain(main) { hit in model.networkShareScanHits }
         assertEquals("Saved FTP on 192.0.2.11:21.", withContext(main) { model.networkShareScanStatus })
     }
 
