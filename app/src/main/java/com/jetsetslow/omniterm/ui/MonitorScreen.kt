@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -88,7 +89,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
             AlertDialog(
                 onDismissRequest = { showRebootDialog = false },
                 title = { Text(stringResource(R.string.reboot_2, srv.name)) },
-                text = { Text(stringResource(R.string.this_runs_sudo_reboot_on_the, HostDisplay.host(srv))) },
+                text = { Text(stringResource(R.string.reboot_runs_on, RemoteCommands.rebootLabel(viewModel.knownOs(srv)), HostDisplay.host(srv))) },
                 confirmButton = {
                     TextButton(onClick = {
                         showRebootDialog = false
@@ -331,7 +332,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                             Spacer(Modifier.width(6.dp))
                             Text(stringResource(R.string.reload), fontSize = 12.sp)
                         }
-                        Button(onClick = { createNew = true }, enabled = !viewModel.cronLoading) {
+                        Button(onClick = { createNew = true }, enabled = !viewModel.cronLoading && viewModel.cronReadable) {
                             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(stringResource(R.string.add), fontSize = 12.sp)
@@ -942,6 +943,24 @@ private fun ProcessStat(value: String, label: String, busy: Boolean) {
     }
 }
 
+private class KillWording(
+    val signal: Int,
+    @StringRes val button: Int,
+    @StringRes val title: Int,
+    @StringRes val message: Int,
+    @StringRes val confirm: Int,
+    val color: Color,
+)
+
+/** The gentle and the forced way to end a process; Windows has no signals, so it says taskkill. */
+private fun killWordings(windows: Boolean): List<KillWording> = if (windows) listOf(
+    KillWording(15, R.string.end_process_button, R.string.end_process_q, R.string.ask_pid_to_close_with_taskkill, R.string.end_process, OmniColors.amber),
+    KillWording(9, R.string.force_end_process_button, R.string.force_end_process_q, R.string.force_end_pid_with_taskkill, R.string.force_end_process, OmniColors.red),
+) else listOf(
+    KillWording(15, R.string.kill_15, R.string.send_sigterm, R.string.gracefully_terminate_pid_with_kill_15, R.string.kill_15_2, OmniColors.amber),
+    KillWording(9, R.string.kill_9, R.string.force_kill_sigkill, R.string.forcibly_kill_pid_with_kill_9, R.string.kill_9_2, OmniColors.red),
+)
+
 @Composable
 fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
     // Real process list from `ps` over SSH, with a second of disk and GPU sampling; reloads on
@@ -950,6 +969,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
     val simProcesses = viewModel.processes
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
+    val windows = RemoteCommands.normaliseOs(viewModel.knownOs(srv)) == "Windows"
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (viewModel.processesLoading && simProcesses.isEmpty()) {
@@ -1068,36 +1088,23 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
                             ) {
-                                OmniButton(
-                                    label = stringResource(R.string.kill_15),
-                                    onClick = {
-                                        confirm.ask(
-                                            confirm.str(R.string.send_sigterm),
-                                            confirm.str(R.string.gracefully_terminate_pid_with_kill_15, proc.pid, proc.name),
-                                            confirmLabel = confirm.str(R.string.kill_15_2),
-                                        ) {
-                                            viewModel.killProcess(proc.pid, 15)
-                                            viewModel.expandedProcessPid = null
-                                        }
-                                    },
-                                    color = OmniColors.amber,
-                                    small = true
-                                )
-                                OmniButton(
-                                    label = stringResource(R.string.kill_9),
-                                    onClick = {
-                                        confirm.ask(
-                                            confirm.str(R.string.force_kill_sigkill),
-                                            confirm.str(R.string.forcibly_kill_pid_with_kill_9, proc.pid, proc.name),
-                                            confirmLabel = confirm.str(R.string.kill_9_2),
-                                        ) {
-                                            viewModel.killProcess(proc.pid, 9)
-                                            viewModel.expandedProcessPid = null
-                                        }
-                                    },
-                                    color = OmniColors.red,
-                                    small = true
-                                )
+                                killWordings(windows).forEach { kill ->
+                                    OmniButton(
+                                        label = stringResource(kill.button),
+                                        onClick = {
+                                            confirm.ask(
+                                                confirm.str(kill.title),
+                                                confirm.str(kill.message, proc.pid, proc.name),
+                                                confirmLabel = confirm.str(kill.confirm),
+                                            ) {
+                                                viewModel.killProcess(proc.pid, kill.signal)
+                                                viewModel.expandedProcessPid = null
+                                            }
+                                        },
+                                        color = kill.color,
+                                        small = true
+                                    )
+                                }
                             }
                         }
                 }
@@ -1192,7 +1199,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 onClick = {
                                     confirm.ask(
                                         confirm.str(R.string.restart_3, svc.name),
-                                        confirm.str(R.string.run_systemctl_restart_on_the_service, svc.name),
+                                        confirm.str(R.string.service_restart_explained, svc.name),
                                         confirmLabel = confirm.str(R.string.restart),
                                     ) { viewModel.runServiceCommand(svc.name, "restart") }
                                 },
@@ -1205,7 +1212,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     onClick = {
                                         confirm.ask(
                                             confirm.str(R.string.stop_3, svc.name),
-                                            confirm.str(R.string.run_systemctl_stop_on_it_will, svc.name),
+                                            confirm.str(R.string.service_stop_explained, svc.name),
                                             confirmLabel = confirm.str(R.string.stop),
                                         ) { viewModel.runServiceCommand(svc.name, "stop") }
                                     },

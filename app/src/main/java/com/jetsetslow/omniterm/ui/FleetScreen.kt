@@ -188,14 +188,11 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                 .padding(top = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            val targetLabelAction = listOf("Uptime" to "uptime", "DF" to "df -h", "PS" to "ps aux | head -5")
-                            targetLabelAction.forEach { (lbl, cmd) ->
+                            RemoteCommands.QuickCheck.entries.forEach { check ->
                                 OmniButton(
-                                    label = lbl,
-                                    modifier = Modifier.testTag("fleet.host.${s.id}.${lbl.lowercase()}"),
-                                    onClick = {
-                                        viewModel.runStreamingAction("$lbl · ${s.name}", cmd, server = s)
-                                    },
+                                    label = check.label,
+                                    modifier = Modifier.testTag("fleet.host.${s.id}.${check.label.lowercase()}"),
+                                    onClick = { viewModel.runQuickCheck(s, check) },
                                     color = accentColor,
                                     small = true
                                 )

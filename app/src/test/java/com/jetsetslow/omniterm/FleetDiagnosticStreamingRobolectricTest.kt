@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
+import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshTransport
@@ -50,15 +51,15 @@ import java.util.concurrent.Executors
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class FleetDiagnosticStreamingRobolectricTest {
     @Test
-    fun uptimeStreamsWithoutDisturbingBroadcast() = checkDiagnostic("Uptime", "uptime")
+    fun uptimeStreamsWithoutDisturbingBroadcast() = checkDiagnostic(RemoteCommands.QuickCheck.Uptime, "uptime")
 
     @Test
-    fun diskFreeStreamsWithoutDisturbingBroadcast() = checkDiagnostic("DF", "df -h")
+    fun diskFreeStreamsWithoutDisturbingBroadcast() = checkDiagnostic(RemoteCommands.QuickCheck.Disk, "df -h")
 
     @Test
-    fun processListStreamsWithoutDisturbingBroadcast() = checkDiagnostic("PS", "ps aux | head -5")
+    fun processListStreamsWithoutDisturbingBroadcast() = checkDiagnostic(RemoteCommands.QuickCheck.Processes, "ps aux | head -5")
 
-    private fun checkDiagnostic(label: String, expectedCommand: String) = runBlocking {
+    private fun checkDiagnostic(check: RemoteCommands.QuickCheck, expectedCommand: String) = runBlocking {
         // Real time: AppViewModel deliberately does database work on Dispatchers.IO.
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
@@ -81,7 +82,8 @@ class FleetDiagnosticStreamingRobolectricTest {
                 model.broadcastTargetMode = FleetTargetMode.Servers
             }
 
-            withContext(main) { model.runStreamingAction("$label · ${server.name}", expectedCommand, server = server) }
+            // The fixture answers the OS probe with nothing, which reads as Linux.
+            withContext(main) { model.runQuickCheck(server, check) }
 
             // Output appears as it arrives, not only once the command finishes.
             withTimeout(5_000) { while (!model.actionStreamOutput.contains("first chunk")) delay(10) }

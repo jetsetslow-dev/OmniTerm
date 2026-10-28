@@ -113,6 +113,8 @@ Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, proc
 
 The **Specs** tab (also under **⋮ → System specs** on the Hosts list) lists the host's hardware and software in collapsible sections: system and firmware, processor, memory, storage, graphics and network. It works on Linux, FreeBSD, macOS and Windows hosts, and the copy button copies the whole sheet. A few details — each memory module's size, speed and part number, and each drive's health, temperature and wear — can only be read with administrator rights, so OmniTerm never asks for them on its own: tap **Read with sudo** to fetch them using the sudo password saved for that host.
 
+Monitoring uses each host's own tools. Services are listed and managed through systemd or OpenRC on Linux, rc.d or `rcctl` on the BSDs, launchd on macOS (the jobs your SSH user can manage), and Windows services on Windows. **Reboot** runs `sudo reboot` on Linux, `sudo shutdown -r now` on BSD and macOS, and `shutdown /r` on Windows, and ending a process uses `kill` or, on Windows, `taskkill`. Windows hosts have no cron, tmux or sudo, so the Cron tab, persistent terminal sessions, sudo mode, container management, and Files' search, archives, folder sizes and same-host paste need a Linux, macOS or BSD host; on Windows they say so instead of failing.
+
 ### Docker, Podman & stacks
 Open **Infra** to manage containers, compose stacks, images, and volumes (Docker and Podman are detected automatically).
 - **Containers & stacks** — summary health; expand for ports, streaming **logs**, per-container **stats** (CPU/memory/network/block I/O), one-tap **exec-into-shell**, start/stop/restart/pause, and full stack lifecycle actions.
@@ -158,7 +160,7 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 ## Troubleshooting
 - **Host offline** — check hostname/IP, SSH port, network route, and firewalls.
 - **Auth fails** — verify username, password/key, and proxy/jump-host config.
-- **Empty monitoring** — confirm the host has the expected platform tools (Linux gives the richest metrics).
+- **Empty monitoring** — confirm the host has the expected platform tools (Linux gives the richest metrics). Windows hosts need OpenSSH Server with its default `cmd` shell, because OmniTerm runs its Windows checks through `powershell` from there.
 - **Infra issues** — confirm Docker/Podman is installed and the SSH user may run it.
 - **Tunnel won't start** — confirm the bind port is free and the destination is reachable *from the SSH host* (for `-L`) or *from this device* (for `-R`).
 

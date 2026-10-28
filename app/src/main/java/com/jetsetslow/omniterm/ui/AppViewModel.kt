@@ -1657,7 +1657,14 @@ class AppViewModel @JvmOverloads constructor(
      */
     var sftpSudo by mutableStateOf(false)
     var sftpSudoConfirmDismissed by mutableStateOf(false)
-    fun toggleSftpSudo() { sftpSudo = !sftpSudo }
+    fun toggleSftpSudo() {
+        val srv = selectedServer
+        if (!sftpSudo && srv != null && !RemoteCommands.hasUnixShell(knownOs(srv))) {
+            sftpError = "Sudo mode needs a Linux, macOS or BSD host; Windows has no sudo."
+            return
+        }
+        sftpSudo = !sftpSudo
+    }
 
     // ── In-directory search ──
     /** True while the search bar is shown in the Files tab. */
@@ -2965,6 +2972,14 @@ class AppViewModel @JvmOverloads constructor(
         if (needsGate) pendingSudoAction = block else block()
     }
 
+    /**
+     * Run [block] with a command that elevates with sudo only when [usesSudo] says so for the host's
+     * OS: the saved password is then gated and sent, otherwise neither happens.
+     */
+    private fun withSudoIfUsed(srv: ServerEntity, usesSudo: Boolean, block: (stdin: String?) -> Unit) {
+        if (usesSudo) withSudoAuth(srv) { block(RemoteCommands.sudoStdin(srv.sudoPassword)) } else block(null)
+    }
+
     /** Confirm the staged privileged action (called by the UI after successful biometric/PIN auth). */
     fun confirmPendingSudoAction() {
         val action = pendingSudoAction
@@ -2980,13 +2995,29 @@ class AppViewModel @JvmOverloads constructor(
     /** Reboot the selected host (sudo). Streams output; the connection drops as it goes down. */
     fun rebootSelectedServer() {
         val srv = selectedServer ?: return
-        withSudoAuth(srv) {
-            runStreamingAction(
-                "reboot · ${srv.name}",
-                RemoteCommands.reboot(srv.sudoPassword),
-                stdin = RemoteCommands.sudoStdin(srv.sudoPassword),
-            )
+        viewModelScope.launch {
+            val os = hostOs(srv)
+            withSudoIfUsed(srv, RemoteCommands.rebootUsesSudo(os)) { stdin ->
+                runStreamingAction("reboot · ${srv.name}", RemoteCommands.reboot(srv.sudoPassword, os), stdin = stdin, server = srv)
+            }
         }
+    }
+
+    /**
+     * The host's OS family as far as it is already known, for wording that differs per OS. Commands
+     * use [hostOs] instead, which asks the host when nothing is known yet.
+     */
+    fun knownOs(srv: ServerEntity): String =
+        hostMetricsById[srv.id]?.os?.takeIf { it.isNotBlank() } ?: osByServer[srv.id].orEmpty()
+
+    /**
+     * False, after passing the reason to [report], when [srv] is a Windows host: [feature] is a Unix
+     * shell script there would be nothing to run.
+     */
+    private suspend fun requireUnixShell(srv: ServerEntity, feature: String, report: (String) -> Unit): Boolean {
+        if (RemoteCommands.hasUnixShell(hostOs(srv))) return true
+        report("$feature needs a Linux, macOS or BSD host; Windows hosts have no Unix shell to run it on.")
+        return false
     }
 
     /** Retry a single host (used by the per-host RETRY button) without touching other hosts. */
@@ -5454,7 +5485,7 @@ class AppViewModel @JvmOverloads constructor(
             var setupComplete = false
             try {
                 val creds = buildCredentials(srv)
-                val usePersistence = srv.persistentSession && !forceDisablePersistence
+                var usePersistence = srv.persistentSession && !forceDisablePersistence
 
                 // Persistent sessions need tmux on the host. On the first connect where it's missing,
                 // stop and ask the user to install it (rather than silently falling back to a normal,
@@ -5467,6 +5498,9 @@ class AppViewModel @JvmOverloads constructor(
                     }.getOrDefault(true) // on probe failure, don't block the connect
                     if (present) {
                         tmuxVerifiedServerIds.add(srv.id)
+                    } else if (!RemoteCommands.hasUnixShell(hostOs(srv))) {
+                        // Windows has no tmux: an ordinary shell, not an offer to install the impossible.
+                        usePersistence = false
                     } else {
                         isTerminalConnecting = false
                         _terminalConnectionState.value = TerminalConnectionState.Idle
@@ -7465,6 +7499,7 @@ class AppViewModel @JvmOverloads constructor(
             dockerLoading = true
             dockerError = null
             try {
+                if (!requireUnixShell(srv, "Container management") { if (srv.id == selectedServerId) showDockerError(it) }) return@launch
                 coroutineScope {
                     val outAsync = async { executeSshCommand(srv, RemoteCommands.DOCKER_PS) }
                     val restartsAsync = async { executeSshCommand(srv, RemoteCommands.DOCKER_RESTARTS) }
@@ -7476,15 +7511,7 @@ class AppViewModel @JvmOverloads constructor(
                     val out = outAsync.await()
                     if (srv.id != selectedServerId) return@coroutineScope
                     if (out.startsWith("SSH Error")) {
-                        dockerError = out
-                        dockerContainers = emptyList()
-                        dockerImages = emptyList()
-                        dockerVolumes = emptyList()
-                        dockerNetworks = emptyList()
-                        availableContainerRuntimes = emptySet()
-                        // A transport failure says nothing about stack state — don't present
-                        // registry rows as "down" (or keep another host's list) on no evidence.
-                        downedStacks = emptyList()
+                        showDockerError(out)
                     } else {
                         val restarts = runCatching { RemoteParsers.parseDockerRestartCounts(restartsAsync.await()) }.getOrDefault(emptyMap())
                         if (srv.id != selectedServerId) return@coroutineScope
@@ -7516,19 +7543,24 @@ class AppViewModel @JvmOverloads constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (srv.id == selectedServerId) {
-                    dockerError = e.message ?: "Could not query containers."
-                    dockerContainers = emptyList()
-                    dockerImages = emptyList()
-                    dockerVolumes = emptyList()
-                    dockerNetworks = emptyList()
-                    availableContainerRuntimes = emptySet()
-                    downedStacks = emptyList()
-                }
+                if (srv.id == selectedServerId) showDockerError(e.message ?: "Could not query containers.")
             } finally {
                 if (dockerJob == coroutineContext[Job]) dockerLoading = false
             }
         }
+    }
+
+    /** Show [message] in place of every container list, so none is left over from another host. */
+    private fun showDockerError(message: String) {
+        dockerError = message
+        dockerContainers = emptyList()
+        dockerImages = emptyList()
+        dockerVolumes = emptyList()
+        dockerNetworks = emptyList()
+        availableContainerRuntimes = emptySet()
+        // A failure says nothing about stack state — don't present registry rows as "down" (or
+        // keep another host's list) on no evidence.
+        downedStacks = emptyList()
     }
 
     fun dockerAction(containerId: String, action: String, runtime: String = "", expectedServerId: Int? = null) {
@@ -7801,6 +7833,7 @@ class AppViewModel @JvmOverloads constructor(
         val srv = servers.value.find { it.id == expectedServerId }
             ?: return onResult(false, "The Compose file's host is no longer available.")
         viewModelScope.launch {
+            if (!requireUnixShell(srv, "Deploying a Compose stack") { onResult(false, it) }) return@launch
             val operationId = "compose-deploy-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
@@ -7908,14 +7941,14 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    // ── SYSTEMD SERVICES (real `systemctl` over SSH) ──
+    // ── SERVICES (systemd, OpenRC, rc.d, launchd or Windows services over SSH) ──
     fun loadServices() {
         val srv = selectedServer ?: return
         servicesJob?.cancel()
         servicesJob = viewModelScope.launch {
             servicesLoading = true
             try {
-                val output = executeSshCommand(srv, RemoteCommands.SERVICES)
+                val output = executeSshCommand(srv, RemoteCommands.servicesFor(hostOs(srv)))
                 val parsed = RemoteParsers.parseServices(output)
                 if (srv.id != selectedServerId) return@launch
                 services = parsed
@@ -7935,12 +7968,16 @@ class AppViewModel @JvmOverloads constructor(
 
     fun runServiceCommand(serviceName: String, action: String) {
         val srv = selectedServer ?: return
-        withSudoAuth(srv) {
-            runStreamingAction(
-                "service $action $serviceName",
-                RemoteCommands.serviceAction(serviceName, action, srv.sudoPassword),
-                stdin = RemoteCommands.sudoStdin(srv.sudoPassword),
-            ) { loadServices() }
+        viewModelScope.launch {
+            val os = hostOs(srv)
+            withSudoIfUsed(srv, RemoteCommands.serviceActionUsesSudo(os)) { stdin ->
+                runStreamingAction(
+                    "service $action $serviceName",
+                    RemoteCommands.serviceAction(serviceName, action, srv.sudoPassword, os),
+                    stdin = stdin,
+                    server = srv,
+                ) { loadServices() }
+            }
         }
     }
 
@@ -8080,8 +8117,19 @@ class AppViewModel @JvmOverloads constructor(
         systemSpecsHost = null
     }
 
+    /** One of the Fleet screen's quick checks on [srv], in its OS's own command. */
+    fun runQuickCheck(srv: ServerEntity, check: RemoteCommands.QuickCheck) {
+        viewModelScope.launch {
+            runStreamingAction("${check.label} · ${srv.name}", RemoteCommands.quickCheck(check, hostOs(srv)), server = srv)
+        }
+    }
+
     fun killProcess(pid: Int, signal: Int = 15) {
-        runStreamingAction("kill -$signal $pid", "kill -$signal $pid 2>&1") { loadProcesses() }
+        val srv = selectedServer ?: return
+        viewModelScope.launch {
+            val command = RemoteCommands.killProcess(pid, signal, hostOs(srv))
+            runStreamingAction(command, "$command 2>&1", server = srv) { loadProcesses() }
+        }
     }
 
     // ── CRON (real `crontab -l`) ──
@@ -8093,6 +8141,13 @@ class AppViewModel @JvmOverloads constructor(
             cronLoading = true
             try {
                 cronStatus = ""
+                if (!RemoteCommands.hasUnixShell(hostOs(srv))) {
+                    if (srv.id != selectedServerId) return@launch
+                    cronReadable = false
+                    cronText = ""
+                    cronStatus = "Windows has no cron. Schedule tasks on this host with Task Scheduler."
+                    return@launch
+                }
                 // Keep stderr and the exit status. `crontab -l 2>/dev/null || true` collapses three
                 // different answers into one empty string -- this user has no crontab, this user is
                 // not allowed one, and this host has no cron at all -- and the CRON tab then offers
@@ -10144,7 +10199,7 @@ class AppViewModel @JvmOverloads constructor(
         listing: List<SftpFile>,
     ): List<SftpFile> {
         val directories = listing.filter { it.isDirectory }
-        if (directories.isEmpty()) return listing
+        if (directories.isEmpty() || !RemoteCommands.hasUnixShell(hostOs(srv))) return listing
 
         val paths = directories.map { joinPath(currentPath, it.name) }
         val script = buildString {
@@ -10230,6 +10285,7 @@ class AppViewModel @JvmOverloads constructor(
         if (q.isEmpty()) return
         sftpSearchJob?.cancel()
         sftpSearchJob = viewModelScope.launch {
+            if (!requireUnixShell(srv, "Searching files") { sftpError = it }) return@launch
             val operationId = "file-search-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
@@ -10511,6 +10567,7 @@ class AppViewModel @JvmOverloads constructor(
         val base = if (names.size == 1) names.first().substringBeforeLast('.', names.first()) else "archive-$stamp"
         val archiveName = "$base.$ext"
         viewModelScope.launch {
+            if (!requireUnixShell(srv, "Creating archives") { sftpError = it }) return@launch
             val operationId = "archive-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
@@ -10540,6 +10597,7 @@ class AppViewModel @JvmOverloads constructor(
     fun sftpExtractArchive(file: SftpFile) {
         val srv = selectedServer ?: return
         viewModelScope.launch {
+            if (!requireUnixShell(srv, "Extracting archives") { sftpError = it }) return@launch
             val operationId = "extract-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
@@ -10575,6 +10633,7 @@ class AppViewModel @JvmOverloads constructor(
     fun measureSftpFolderSize(file: SftpFile) {
         val srv = selectedServer ?: return
         viewModelScope.launch {
+            if (!requireUnixShell(srv, "Measuring folder sizes") { sftpError = it }) return@launch
             val operationId = "measure-${UUID.randomUUID()}"
             LongOperationNotifications.start(getApplication(), operationId, "Measuring ${file.name}")
             var succeeded = false
@@ -10769,6 +10828,7 @@ class AppViewModel @JvmOverloads constructor(
         sftpError = null
         viewModelScope.launch {
             try {
+                if (!requireUnixShell(context.server, "Pasting within a host") { sftpError = it }) return@launch
                 val script = RemoteCommands.compareForConflicts(context.destDir, context.sources)
                 val out = if (context.sudo) {
                     executeSshCommand(

@@ -606,7 +606,7 @@
     <string name="gw">"GW: %1$s"</string>
     <string name="container">"%1$s container%2$s"</string>
     <string name="reboot_2">"Reboot %1$s?"</string>
-    <string name="this_runs_sudo_reboot_on_the">"This runs `sudo reboot` on %1$s. The host will drop offline until it comes back up. Requires passwordless sudo for the SSH user."</string>
+    <string name="reboot_runs_on">"This runs `%1$s` on %2$s. The host will drop offline until it comes back up."</string>
     <string name="no_crontab_entries_for">"No crontab entries for %1$s."</string>
     <string name="preview_2">"Preview: %1$s"</string>
     <string name="retry_metrics">"Retry metrics"</string>
@@ -620,7 +620,7 @@
     <string name="the_process_list_came_back_empty">"The process list came back empty — this host may not support the command, or its output was not understood."</string>
     <string name="pid">"PID %1$s · %2$s"</string>
     <string name="virtual_memory_size_vms">"Virtual Memory Size (VMS): %1$s"</string>
-    <string name="this_host_runs_neither_systemd_nor">"This host runs neither systemd nor OpenRC, so its services cannot be listed."</string>
+    <string name="this_host_runs_neither_systemd_nor">"This host has no service manager OmniTerm can read (systemd, OpenRC, BSD rc.d, launchd or Windows services), so its services cannot be listed."</string>
     <string name="no_hosts_match">"No hosts match “%1$s”."</string>
     <string name="you_selected_file_s_about_this">"You selected %1$s file(s), about %2$s. This meets your configured large-transfer warning threshold. It downloads file-by-file into a folder without zipping. For reliability on slow links, consider smaller batches."</string>
     <string name="you_selected_file_s_they_will">"You selected %1$s file(s). They will upload one at a time so failures are isolated. This meets your configured large-transfer warning threshold. For very large batches, smaller groups are easier to retry."</string>
@@ -1027,10 +1027,18 @@
     <string name="force_kill_sigkill">"Force kill (SIGKILL)?"</string>
     <string name="forcibly_kill_pid_with_kill_9">"Forcibly kill PID %1$s (%2$s) with kill -9? Unsaved work in that process is lost."</string>
     <string name="kill_9_2">"Kill -9"</string>
+    <string name="end_process_button">"END"</string>
+    <string name="force_end_process_button">"FORCE END"</string>
+    <string name="end_process_q">"End this process?"</string>
+    <string name="ask_pid_to_close_with_taskkill">"Ask PID %1$s (%2$s) to close with taskkill?"</string>
+    <string name="end_process">"End"</string>
+    <string name="force_end_process_q">"Force this process to end?"</string>
+    <string name="force_end_pid_with_taskkill">"Force PID %1$s (%2$s) to end with taskkill /F? Unsaved work in that process is lost."</string>
+    <string name="force_end_process">"Force end"</string>
     <string name="restart_3">"Restart %1$s?"</string>
-    <string name="run_systemctl_restart_on_the_service">"Run systemctl restart on %1$s? The service will briefly stop and start again."</string>
+    <string name="service_restart_explained">"%1$s will briefly stop and start again."</string>
     <string name="stop_3">"Stop %1$s?"</string>
-    <string name="run_systemctl_stop_on_it_will">"Run systemctl stop on %1$s? It will remain down until started again."</string>
+    <string name="service_stop_explained">"%1$s will stay down until it is started again."</string>
     <string name="disable_2">"Disable %1$s?"</string>
     <string name="stop_from_starting_at_boot">"Stop %1$s from starting at boot."</string>
     <string name="disable_keep_screen_on">"Disable keep screen on"</string>
@@ -1145,6 +1153,7 @@
     <string name="also_end_the_tmux_session_on_the_removed_hosts">"Also end the tmux session running on a removed host"</string>
     <string name="also_end_the_tmux_sessions_on_the_removed_hosts">"Also end the %1$d tmux sessions running on the removed hosts"</string>
     <string name="delete_n_hosts">"Delete %1$d hosts?"</string>
+    <string name="delete_one_host">"Delete 1 host?"</string>
     <string name="remove_these_host_connections_and_their">"Remove these host connections (and their saved credentials) from OmniTerm? This does not affect the remote machines, but cannot be undone here."</string>
     <string name="ping_2">"PING"</string>
     <string name="ping_host">"Ping %1$s"</string>

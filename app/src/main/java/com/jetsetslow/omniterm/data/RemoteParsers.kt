@@ -367,6 +367,9 @@ object RemoteCommands {
         "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; " +
         "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }"
 
+    private val WINDOWS_SHELL_ERRORS =
+        listOf("not recognized", "CommandNotFound", "is not a valid statement separator", "ParserError")
+
     /** Normalise raw [OS_PROBE] output to a family token used to pick command/parse variants. */
     fun normaliseOs(raw: String): String {
         val s = raw.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
@@ -375,8 +378,10 @@ object RemoteCommands {
             s.startsWith("FreeBSD", true) || s.startsWith("OpenBSD", true) ||
                 s.startsWith("NetBSD", true) || s.startsWith("DragonFly", true) -> "FreeBSD"
             s.startsWith("Darwin", true) -> "Darwin"
-            s.contains("Windows", true) || s.contains("not recognized", true) ||
-                s.contains("CommandNotFound", true) -> "Windows"
+            // cmd.exe answers `uname` with "not recognized"; Windows PowerShell 5.1 as the SSH shell
+            // rejects the probe's `||` before running anything, so its first line is only "At line:1".
+            s.contains("Windows", true) ||
+                WINDOWS_SHELL_ERRORS.any { raw.contains(it, ignoreCase = true) } -> "Windows"
             // Empty (missing @OS section) or unknown Unix-like → Linux, the safest superset.
             else -> "Linux"
         }
@@ -443,6 +448,63 @@ object RemoteCommands {
         "echo '---ENABLED---'; ot 15 systemctl list-unit-files --type=service --no-pager --no-legend --plain 2>/dev/null; }; " +
         "elif command -v rc-status >/dev/null 2>&1; then echo '---OPENRC---'; rc-status -a 2>/dev/null; " +
         "else echo '---NOSYSTEMD---'; fi"
+
+    /**
+     * Heads the service list of every host that is neither systemd nor OpenRC: one tab-separated
+     * line per service of name, state (running/stopped/failed, or Windows' own), start-at-boot
+     * (enabled/disabled, or Windows' start type) and description.
+     */
+    const val SERVICE_TABLE_MARKER = "---SERVICE-TABLE---"
+
+    /**
+     * OpenBSD's rcctl or the rc.d `service` of FreeBSD/NetBSD. Each `onestatus` is bounded: an rc
+     * script is arbitrary shell, and one that hangs must not take the whole list with it.
+     */
+    const val SERVICES_BSD =
+        OT_HELPER +
+        "if command -v rcctl >/dev/null 2>&1; then echo '$SERVICE_TABLE_MARKER'; " +
+        "on=\" \$(rcctl ls on 2>/dev/null | tr '\\n' ' ') \"; up=\" \$(rcctl ls started 2>/dev/null | tr '\\n' ' ') \"; " +
+        "for svc in \$(rcctl ls all 2>/dev/null); do " +
+        "case \"\$up\" in *\" \$svc \"*) s=running;; *) s=stopped;; esac; " +
+        "case \"\$on\" in *\" \$svc \"*) e=enabled;; *) e=disabled;; esac; " +
+        "printf '%s\\t%s\\t%s\\t\\n' \"\$svc\" \"\$s\" \"\$e\"; done; " +
+        "elif command -v service >/dev/null 2>&1; then echo '$SERVICE_TABLE_MARKER'; " +
+        "on=\" \$(service -e 2>/dev/null | sed 's|.*/||' | tr '\\n' ' ') \"; " +
+        // Upper-case entries (FILESYSTEMS, LOGIN, …) are rcorder checkpoints, not services.
+        "for svc in \$(service -l 2>/dev/null | grep -v '^[A-Z_]*\$'); do " +
+        "if ot 5 service \"\$svc\" onestatus >/dev/null 2>&1; then s=running; else s=stopped; fi; " +
+        "case \"\$on\" in *\" \$svc \"*) e=enabled;; *) e=disabled;; esac; " +
+        "printf '%s\\t%s\\t%s\\t\\n' \"\$svc\" \"\$s\" \"\$e\"; done; " +
+        "else echo '---NOSYSTEMD---'; fi"
+
+    /**
+     * launchd jobs in the domain the SSH user can manage without sudo: the system domain as root,
+     * otherwise the user's GUI session (or the background `user/` domain when nobody is logged in
+     * at the screen). [serviceAction] computes the same domain, so a listed job can be acted on.
+     */
+    private const val LAUNCHD_DOMAIN =
+        "u=\$(id -u); if [ \"\$u\" = 0 ]; then d=system; else d=gui/\$u; launchctl print \"\$d\" >/dev/null 2>&1 || d=user/\$u; fi; "
+
+    const val SERVICES_DARWIN =
+        LAUNCHD_DOMAIN +
+        "off=\" \$(launchctl print-disabled \"\$d\" 2>/dev/null | awk -F'\"' '/=> (true|disabled)/{print \$2}' | tr '\\n' ' ') \"; " +
+        "echo '$SERVICE_TABLE_MARKER'; " +
+        "launchctl list 2>/dev/null | awk 'NR>1' | while IFS=\"\$(printf '\\t')\" read -r pid st label; do " +
+        "if [ \"\$pid\" != - ]; then s=running; elif [ \"\$st\" = 0 ]; then s=stopped; else s=failed; fi; " +
+        "case \"\$off\" in *\" \$label \"*) e=disabled;; *) e=enabled;; esac; " +
+        "printf '%s\\t%s\\t%s\\t\\n' \"\$label\" \"\$s\" \"\$e\"; done"
+
+    const val SERVICES_WINDOWS =
+        "powershell -NoProfile -Command \"'$SERVICE_TABLE_MARKER'; Get-Service | ForEach-Object { " +
+            "\$_.Name + [char]9 + \$_.Status + [char]9 + \$_.StartType + [char]9 + \$_.DisplayName }\""
+
+    /** Per-OS service list; [RemoteParsers.parseServices] reads every variant. */
+    fun servicesFor(os: String): String = when (normaliseOs(os)) {
+        "FreeBSD" -> SERVICES_BSD
+        "Darwin" -> SERVICES_DARWIN
+        "Windows" -> SERVICES_WINDOWS
+        else -> SERVICES
+    }
 
     /**
      * Host logs. `journalctl` only exists on systemd hosts, so fall through the same way [SERVICES]
@@ -528,8 +590,13 @@ object RemoteCommands {
     fun sudoStdin(sudoPassword: String): String? =
         if (sudoPassword.isNotBlank()) sudoPassword + "\n" else null
 
-    fun serviceAction(name: String, action: String, sudoPassword: String = ""): String {
+    fun serviceAction(name: String, action: String, sudoPassword: String = "", os: String = ""): String {
         val quotedName = shellQuote(name)
+        when (normaliseOs(os)) {
+            "Windows" -> return windowsServiceAction(name, action)
+            "Darwin" -> return darwinServiceAction(quotedName, action)
+            "FreeBSD" -> return sudoShWrap(bsdServiceScript(quotedName, action), sudoPassword)
+        }
         val openRc = when (action) {
             "start", "stop", "restart", "status" -> "rc-service $quotedName $action"
             "enable" -> "rc-update add $quotedName default"
@@ -543,9 +610,102 @@ object RemoteCommands {
         return sudoShWrap(script, sudoPassword)
     }
 
-    /** Reboot the host: try sudo first, then a bare `reboot` (already root / NOPASSWD wrappers). */
-    fun reboot(sudoPassword: String = "") =
-        "${sudoWrap("reboot", sudoPassword)} || reboot 2>&1"
+    /** False where [serviceAction] runs without sudo, so no password is sent along with it. */
+    fun serviceActionUsesSudo(os: String): Boolean = normaliseOs(os) !in setOf("Windows", "Darwin")
+
+    private fun bsdServiceScript(quotedName: String, action: String): String {
+        // `onestart` and friends work whether or not rc.conf enables the service, as the Start
+        // button must; `service X enable` (FreeBSD 12+) finds the service's own rcvar.
+        val rc = if (action in setOf("start", "stop", "restart", "status")) "one$action" else action
+        val rcctl = if (action == "status") "check" else action
+        return "if command -v rcctl >/dev/null 2>&1; then rcctl $rcctl $quotedName; " +
+            "elif command -v service >/dev/null 2>&1; then service $quotedName $rc; " +
+            "else echo 'No supported service manager found' >&2; exit 1; fi"
+    }
+
+    /** Acts in the same launchd domain [SERVICES_DARWIN] listed, which is why it needs no sudo. */
+    private fun darwinServiceAction(quotedName: String, action: String): String {
+        val verb = when (action) {
+            "start" -> "kickstart"
+            "restart" -> "kickstart -k"
+            "stop" -> "kill TERM"
+            "enable", "disable" -> action
+            else -> "print"
+        }
+        return LAUNCHD_DOMAIN + "launchctl $verb \"\$d\"/$quotedName 2>&1"
+    }
+
+    private fun windowsServiceAction(name: String, action: String): String {
+        // Inside cmd's double quotes only `"` and `%` are still special, and no service name needs them.
+        if (name.any { it == '"' || it == '%' }) return "echo This service name cannot be passed to PowerShell safely."
+        val n = "'" + name.replace("'", "''") + "'"
+        val ps = when (action) {
+            "start" -> "Start-Service -Name $n"
+            "stop" -> "Stop-Service -Name $n -Force"
+            "restart" -> "Restart-Service -Name $n -Force"
+            "enable" -> "Set-Service -Name $n -StartupType Automatic"
+            "disable" -> "Set-Service -Name $n -StartupType Disabled"
+            else -> "Get-Service -Name $n"
+        }
+        return "powershell -NoProfile -Command \"$ps\""
+    }
+
+    /**
+     * Reboot the host: try sudo first, then the bare command (already root / NOPASSWD wrappers).
+     * BSD and macOS use `shutdown -r now`, because their `reboot` skips the shutdown scripts.
+     */
+    fun reboot(sudoPassword: String = "", os: String = ""): String {
+        if (normaliseOs(os) == "Windows") return "shutdown /r /t 0 2>&1"
+        val command = rebootCommand(os)
+        return "${sudoWrap(command, sudoPassword)} || $command 2>&1"
+    }
+
+    /** What [reboot] runs, as the confirmation names it. */
+    fun rebootLabel(os: String): String =
+        if (normaliseOs(os) == "Windows") "shutdown /r /t 0" else "sudo ${rebootCommand(os)}"
+
+    fun rebootUsesSudo(os: String): Boolean = normaliseOs(os) != "Windows"
+
+    private fun rebootCommand(os: String) = when (normaliseOs(os)) {
+        "FreeBSD", "Darwin" -> "shutdown -r now"
+        else -> "reboot"
+    }
+
+    /**
+     * End process [pid]: [signal] 15 asks it to exit and 9 forces it. Windows has no signals, so
+     * those become taskkill and taskkill /F.
+     */
+    fun killProcess(pid: Int, signal: Int, os: String): String =
+        if (normaliseOs(os) == "Windows") "taskkill /PID $pid" + (if (signal == 9) " /F" else "")
+        else "kill -$signal $pid"
+
+    /**
+     * False for Windows: cron, tmux, sudo, the container commands and Files' search, archives,
+     * folder sizes and same-host paste are all Unix shell scripts it cannot run.
+     */
+    fun hasUnixShell(os: String): Boolean = normaliseOs(os) != "Windows"
+
+    /** The Fleet screen's one-tap checks. */
+    enum class QuickCheck(val label: String) { Uptime("Uptime"), Disk("DF"), Processes("PS") }
+
+    fun quickCheck(check: QuickCheck, os: String): String = if (normaliseOs(os) == "Windows") {
+        val ps = when (check) {
+            QuickCheck.Uptime ->
+                "(Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime | Format-Table Days,Hours,Minutes -AutoSize"
+            QuickCheck.Disk ->
+                "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Format-Table DeviceID," +
+                    "@{n='Size GB';e={[math]::Round(\$_.Size/1GB,1)}},@{n='Free GB';e={[math]::Round(\$_.FreeSpace/1GB,1)}} -AutoSize"
+            QuickCheck.Processes ->
+                "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | Format-Table Id,ProcessName,CPU,WS -AutoSize"
+        }
+        "powershell -NoProfile -Command \"$ps\""
+    } else {
+        when (check) {
+            QuickCheck.Uptime -> "uptime"
+            QuickCheck.Disk -> "df -h"
+            QuickCheck.Processes -> "ps aux | head -5"
+        }
+    }
 
     fun dockerAction(id: String, action: String, runtime: String = ""): String {
         val cr = runtimeCommand(runtime)
@@ -1230,6 +1390,30 @@ object RemoteParsers {
     private val OPENRC_SERVICE_RE = Regex("""^(\S+)\s*\[\s*(\w+)\s*]""")
 
     fun parseServices(output: String): List<SimService> {
+        if (output.contains(RemoteCommands.SERVICE_TABLE_MARKER)) {
+            return output.substringAfter(RemoteCommands.SERVICE_TABLE_MARKER).lineSequence()
+                .mapNotNull { line ->
+                    val t = line.trimEnd('\r').split('\t')
+                    val name = t[0].trim()
+                    if (name.isEmpty() || t.size < 3) return@mapNotNull null
+                    // Windows reports Running/Stopped/Paused/…Pending; the rest already say running/stopped/failed.
+                    val state = t[1].trim().lowercase()
+                    // Windows says when a service starts (Automatic, AutomaticDelayedStart, Manual, Disabled).
+                    val boot = t[2].trim().lowercase()
+                    SimService(
+                        name = name,
+                        desc = t.getOrNull(3)?.trim().orEmpty(),
+                        status = when (state) {
+                            "running" -> "running"
+                            "failed" -> "failed"
+                            else -> "dead"
+                        },
+                        subState = state,
+                        enabled = boot == "enabled" || boot.startsWith("automatic") || boot == "boot" || boot == "system",
+                    )
+                }
+                .toList()
+        }
         if (output.contains("---OPENRC---")) {
             return output.substringAfter("---OPENRC---").lineSequence()
                 .map { it.trim() }

@@ -1962,7 +1962,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                 enabled = viewModel.selectedServerIdsForBulk.isNotEmpty(),
                                 onClick = {
                                     val ids = viewModel.selectedServerIdsForBulk.toSet()
-                                    val title = confirm.str(R.string.delete_n_hosts, ids.size)
+                                    val title = if (ids.size == 1) confirm.str(R.string.delete_one_host) else confirm.str(R.string.delete_n_hosts, ids.size)
                                     val message = confirm.str(R.string.remove_these_host_connections_and_their)
                                     // As for one host: offer to end tmux sessions only when there are some.
                                     val tmuxCount = viewModel.tmuxSessionsOnHosts(ids).size
