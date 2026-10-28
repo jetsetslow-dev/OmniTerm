@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/network/network_probe.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/domain/network_share_form.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/sftp/shares_tab.dart';
 import 'package:omniterm/ui/theme/theme.dart';
@@ -84,6 +86,7 @@ void main() {
       expect(draft.effectivePort, 22);
     });
 
+    // Kotlin's `validateDraft`: one message at a time, in Kotlin's order.
     group('validation', () {
       NetworkShareDraft valid() => const NetworkShareDraft(
         name: 'nas',
@@ -96,123 +99,154 @@ void main() {
 
       test('a complete draft is valid', () => expect(valid().isValid, isTrue));
 
-      test('a name and address are required', () {
-        expect(valid().copyWith(name: ' ').errors, contains('name'));
-        expect(valid().copyWith(address: '').errors, contains('address'));
+      test('a name is optional, an address is not', () {
+        expect(valid().copyWith(name: ' ').isValid, isTrue);
+        expect(valid().copyWith(address: '').validationError, 'Address is required.');
       });
 
       test('a port outside the range is refused', () {
-        expect(valid().copyWith(port: '0').errors, contains('port'));
-        expect(valid().copyWith(port: '70000').errors, contains('port'));
-        expect(valid().copyWith(port: 'abc').errors, contains('port'));
-        expect(valid().copyWith(port: '445').errors, isNot(contains('port')));
+        for (final port in ['0', '70000', 'abc', '']) {
+          expect(
+            valid().copyWith(port: port).validationError,
+            'Port must be between 1 and 65535.',
+            reason: port,
+          );
+        }
+        expect(valid().copyWith(port: '445').isValid, isTrue);
       });
 
-      test('a custom share must name its port, since it has no default', () {
-        expect(
-          valid().withProtocol(ShareProtocol.custom).copyWith(port: '').errors,
-          contains('port'),
-        );
+      test('a custom share needs no port', () {
+        expect(valid().withProtocol(ShareProtocol.custom).copyWith(port: '').isValid, isTrue);
       });
 
-      test('SMB needs a share name', () {
+      test('SMB needs a share path', () {
         // SMB connects to a share, not to a host; without one there is nothing to open.
-        expect(valid().copyWith(sharePath: '').errors, contains('sharePath'));
         expect(
-          valid().withProtocol(ShareProtocol.sftp).copyWith(sharePath: '').errors,
-          isNot(contains('sharePath')),
+          valid().copyWith(sharePath: ' / ').validationError,
+          'SMB needs a Share/path value such as Public or Media.',
         );
+        expect(valid().withProtocol(ShareProtocol.sftp).copyWith(sharePath: '').isValid, isTrue);
       });
 
       test('SFTP cannot be anonymous, because SSH has no anonymous mode', () {
-        // The form hides the username fields once anonymous is on, so a share saved this way has
-        // no credentials and can never connect. Compose refuses the same pair at
-        // `ui/SftpScreen.kt:1351` and disables the toggle outright.
         final sftp = valid().withProtocol(ShareProtocol.sftp).copyWith(anonymous: true);
-
-        expect(sftp.errors, contains('anonymous'));
-        expect(sftp.isValid, isFalse);
-        expect(
-          valid().copyWith(anonymous: true).errors,
-          isNot(contains('anonymous')),
-          reason: 'SMB guest access is a real thing',
-        );
+        expect(sftp.validationError, 'SFTP needs a username or credential profile.');
+        expect(valid().copyWith(anonymous: true).isValid, isTrue, reason: 'SMB guest access');
       });
 
       test('switching to SFTP clears anonymous rather than trapping the draft', () {
-        // The toggle is disabled for SFTP, so a draft that arrived here with anonymous still set
-        // could not be repaired without switching protocol back.
         final trapped = valid().copyWith(anonymous: true).withProtocol(ShareProtocol.sftp);
-
         expect(trapped.anonymous, isFalse);
-        expect(trapped.errors, isNot(contains('anonymous')));
+        expect(trapped.isValid, isTrue);
+      });
+
+      test('switching to WebDAV turns HTTPS on', () {
+        final webdav = valid().copyWith(useHttps: false).withProtocol(ShareProtocol.webdav);
+        expect(webdav.useHttps, isTrue);
       });
 
       test('some way to authenticate is required', () {
-        expect(valid().copyWith(username: '').errors, contains('username'));
-        expect(valid().copyWith(username: '', anonymous: true).errors, isNot(contains('username')));
         expect(
-          valid().copyWith(username: '', authProfileId: 3).errors,
-          isNot(contains('username')),
+          valid().copyWith(username: '').validationError,
+          'Username is required when anonymous login is off and no profile is selected.',
         );
+        expect(valid().copyWith(username: '', anonymous: true).isValid, isTrue);
+        expect(valid().copyWith(username: '', authProfileId: 3).isValid, isTrue);
       });
     });
 
-    group('warnings advise, never block (§17)', () {
-      test('FTP says the password travels in clear text', () {
+    group('warnings advise, never block', () {
+      test('FTP with credentials warns', () {
         const draft = NetworkShareDraft(
-          name: 'n',
           protocol: ShareProtocol.ftp,
           address: 'a',
           port: '21',
           username: 'u',
         );
-        expect(draft.warnings.single, contains('clear text'));
+        expect(draft.warnsFtpCleartext, isTrue);
+        expect(draft.copyWith(anonymous: true).warnsFtpCleartext, isFalse);
         expect(draft.isValid, isTrue, reason: 'the user chose this server');
       });
 
-      test('WebDAV without HTTPS says the same', () {
+      test('WebDAV without HTTPS warns when a password would be sent', () {
         const draft = NetworkShareDraft(
-          name: 'n',
           protocol: ShareProtocol.webdav,
           address: 'a',
-          port: '443',
+          port: '80',
           username: 'u',
           useHttps: false,
         );
-        expect(draft.warnings.single, contains('clear text'));
+        expect(draft.warnsWebDavCleartext, isTrue);
+        expect(draft.copyWith(useHttps: true).warnsWebDavCleartext, isFalse);
+        expect(draft.copyWith(anonymous: true).warnsWebDavCleartext, isFalse);
         expect(draft.isValid, isTrue);
-      });
-
-      test('a well-formed SFTP share warns about nothing', () {
-        const draft = NetworkShareDraft(
-          name: 'n',
-          protocol: ShareProtocol.sftp,
-          address: 'a',
-          port: '22',
-          username: 'u',
-        );
-        expect(draft.warnings, isEmpty);
       });
     });
 
-    test('anonymous clears the credentials rather than storing unused ones', () {
-      // Leaving them on the row would keep a password stored for a share that never sends one.
-      const draft = NetworkShareDraft(
-        name: 'n',
-        protocol: ShareProtocol.smb,
-        address: 'a',
-        port: '445',
-        sharePath: 's',
-        username: 'sam',
-        password: 'hunter2',
-        authProfileId: 4,
-        anonymous: true,
-      );
-      final row = draft.toShare();
-      expect(row.username, isEmpty);
-      expect(row.password, isEmpty);
-      expect(row.authProfileId, isNull);
+    group('saving, as Kotlin\'s persistNetworkShare', () {
+      test('anonymous clears the credentials rather than storing unused ones', () {
+        const draft = NetworkShareDraft(
+          name: 'n',
+          protocol: ShareProtocol.smb,
+          address: 'a',
+          port: '445',
+          sharePath: 's',
+          username: 'sam',
+          password: 'hunter2',
+          authProfileId: 4,
+          anonymous: true,
+        );
+        final row = draft.toShare();
+        expect(row.username, isEmpty);
+        expect(row.password, isEmpty);
+        expect(row.authProfileId, isNull);
+        expect(draft.profileToCreate, isNull);
+      });
+
+      test('a blank name becomes the share URI, and the path loses its leading slash', () {
+        const draft = NetworkShareDraft(
+          protocol: ShareProtocol.smb,
+          address: ' 10.0.0.5 ',
+          port: '445',
+          sharePath: '/media',
+          anonymous: true,
+        );
+        final row = draft.toShare();
+        expect(row.name, 'smb://10.0.0.5');
+        expect(row.sharePath, 'media');
+      });
+
+      test('typed credentials become a reusable profile the share points at', () {
+        const draft = NetworkShareDraft(
+          name: 'NAS',
+          protocol: ShareProtocol.smb,
+          address: '10.0.0.5',
+          port: '445',
+          sharePath: 'media',
+          username: 'sam',
+          password: 'pw',
+        );
+        final profile = draft.profileToCreate!;
+        expect(profile.profileName, 'Network Share - NAS');
+        expect(profile.groupName, 'Network Shares');
+        expect(profile.username, 'sam');
+        expect(profile.password, 'pw');
+
+        final row = draft.toShare(createdProfileId: 7);
+        expect(row.authProfileId, 7);
+        expect(row.username, isEmpty, reason: 'the profile holds the credentials now');
+        expect(row.password, isEmpty);
+      });
+
+      test('HTTPS is stored only for WebDAV', () {
+        const ftp = NetworkShareDraft(
+          protocol: ShareProtocol.ftp,
+          address: 'a',
+          port: '21',
+          anonymous: true,
+        );
+        expect(ftp.toShare().useHttps, isFalse);
+      });
     });
 
     group('browsability', () {
@@ -223,15 +257,6 @@ void main() {
         expect(shareIsBrowsable(ShareProtocol.ftp), isTrue);
         expect(shareIsBrowsable(ShareProtocol.webdav), isTrue);
         expect(shareIsBrowsable(ShareProtocol.nfs), isFalse);
-      });
-
-      test('each unavailable protocol explains itself differently', () {
-        // "Not built yet" and "the OS does this, not us" send the user to different places.
-        expect(shareBrowseUnavailableReason(ShareProtocol.smb), isNull);
-        expect(shareBrowseUnavailableReason(ShareProtocol.ftp), isNull);
-        expect(shareBrowseUnavailableReason(ShareProtocol.webdav), isNull);
-        expect(shareBrowseUnavailableReason(ShareProtocol.nfs), contains('operating system'));
-        expect(shareBrowseUnavailableReason(ShareProtocol.custom), contains('no protocol'));
       });
     });
   });
@@ -352,6 +377,44 @@ void main() {
       expect(vm.shares.single.name, 'nas');
       expect(vm.shares.single.port, 445, reason: 'the default filled itself in');
       expect(vm.draft, isNull);
+      expect(vm.status, 'Saved nas.');
+    });
+
+    test('a new share starts as Kotlin\'s: SMB on 445, anonymous, HTTPS off', () async {
+      await boot();
+      vm.startAdd();
+
+      expect(vm.draft!.protocol, ShareProtocol.smb);
+      expect(vm.draft!.port, '445');
+      expect(vm.draft!.anonymous, isTrue);
+      expect(vm.draft!.useHttps, isFalse);
+    });
+
+    test('typed credentials are saved as a Network Shares profile', () async {
+      await boot();
+      vm.startAdd();
+      vm.updateDraft(
+        (d) => d.copyWith(
+          name: 'nas',
+          address: '10.0.0.5',
+          sharePath: 'media',
+          anonymous: false,
+          username: 'sam',
+          password: 'pw',
+        ),
+      );
+
+      expect(await vm.saveDraft(), isTrue);
+      await settle();
+
+      final profile = (await repo.getAllProfiles()).single;
+      expect(profile.profileName, 'Network Share - nas');
+      expect(profile.groupName, 'Network Shares');
+      expect(profile.password, 'pw');
+      final share = vm.shares.single;
+      expect(share.authProfileId, profile.id);
+      expect(share.username, isEmpty);
+      expect(share.password, isEmpty);
     });
 
     test('an invalid draft is not saved and stays open', () async {
@@ -561,6 +624,16 @@ void main() {
       expect(vm.draft!.sharePath, isEmpty);
       expect(vm.draft!.username, isEmpty);
       expect(vm.draft!.password, isEmpty);
+      expect(vm.draft!.anonymous, isTrue, reason: "Kotlin's scan draft starts as guest access");
+    });
+
+    test('an SFTP hit is never anonymous', () async {
+      await boot(reachable: {'192.168.1.20:22'});
+      await vm.scanForShares('192.168.1.0/24');
+
+      vm.startAddFromScan(vm.scanHits.single);
+
+      expect(vm.draft!.anonymous, isFalse);
     });
 
     test('a WebDAV hit on 443 comes back with HTTPS on', () async {
@@ -595,6 +668,7 @@ void main() {
     late AppState app;
     late SharesViewModel vm;
     late SftpViewModel sftp;
+    late _FakeProbe probe;
 
     setUp(() {
       db = AppDatabase(NativeDatabase.memory());
@@ -616,7 +690,8 @@ void main() {
       addTearDown(tester.view.reset);
 
       await app.start();
-      vm = SharesViewModel(app, probe: _FakeProbe());
+      probe = _FakeProbe();
+      vm = SharesViewModel(app, probe: probe);
       sftp = SftpViewModel(app, shareClientFor: (_) async => _FakeShareClient());
       await tester.pumpWidget(
         MultiProvider(
@@ -627,6 +702,8 @@ void main() {
           ],
           child: MaterialApp(
             theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
             home: const Scaffold(body: SharesTab()),
           ),
         ),
@@ -682,11 +759,63 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('an unbrowsable protocol says why on the card', (tester) async {
+    testWidgets('an unbrowsable protocol disables Browse and says why', (tester) async {
       await repo.insertNetworkShare(row(protocol: 'NFS'));
       await pump(tester);
+      final id = vm.shares.single.id;
 
-      expect(find.textContaining('mounted by the operating system'), findsOneWidget);
+      final browse = tester.widget<IconButton>(find.byKey(ValueKey('shares.card.$id.browse')));
+      expect(browse.onPressed, isNull, reason: 'disabled, not hidden, as in Kotlin');
+      expect(browse.tooltip, 'Browsing not supported for NFS');
+      await finish(tester);
+    });
+
+    testWidgets('the card reads as Kotlin\'s: path, protocol, sign-in and status', (tester) async {
+      await repo.insertNetworkShare(row(protocol: 'SMB'));
+      await pump(tester);
+      final id = vm.shares.single.id;
+
+      expect(find.text('media · SMB · sam'), findsOneWidget);
+      expect(find.text('Unknown'), findsOneWidget, reason: 'never checked');
+      expect(
+        tester.widget<IconButton>(find.byKey(ValueKey('shares.card.$id.edit'))).tooltip,
+        'Edit share',
+      );
+      await finish(tester);
+    });
+
+    testWidgets('a share signing in with a profile names it', (tester) async {
+      final profileId = await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'NAS admin',
+          username: 'sam',
+          authType: 'password',
+          password: 'pw',
+          groupName: 'Network Shares',
+        ),
+      );
+      await repo.insertNetworkShare(
+        row(protocol: 'SMB').copyWith(authProfileId: Value(profileId), username: '', password: ''),
+      );
+      await pump(tester);
+
+      expect(find.text('media · SMB · profile: NAS admin'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('pulling the list down checks every share', (tester) async {
+      await repo.insertNetworkShare(row(protocol: 'SMB'));
+      await pump(tester);
+      final id = vm.shares.single.id;
+
+      // RefreshIndicator arms after about a sixth of the viewport; this one is 2200px tall.
+      await tester.fling(find.byKey(const ValueKey('shares.list')), const Offset(0, 900), 1000);
+      await tester.pumpAndSettle();
+
+      expect(probe.probed, ['10.0.0.5:445']);
+      expect(find.byKey(ValueKey('shares.card.$id.status')), findsOneWidget);
+      expect(find.text('Unavailable'), findsOneWidget);
       await finish(tester);
     });
 
@@ -711,41 +840,120 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('the form refuses to save until it is complete', (tester) async {
-      await pump(tester);
+    Future<void> openForm(WidgetTester tester) async {
       await tester.tap(find.byKey(const ValueKey('shares.add')));
       await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shares.form.dialog')), findsOneWidget);
+    }
 
-      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('shares.form.save')));
-      expect(save.onPressed, isNull);
-
-      await tester.enterText(find.byKey(const ValueKey('shares.form.name')), 'nas');
-      await tester.enterText(find.byKey(const ValueKey('shares.form.address')), '10.0.0.9');
-      await tester.enterText(find.byKey(const ValueKey('shares.form.sharePath')), 'media');
-      await tester.enterText(find.byKey(const ValueKey('shares.form.username')), 'sam');
+    Future<void> pickProtocol(WidgetTester tester, String id) async {
+      await tester.tap(find.byKey(const ValueKey('shares.form.protocol')));
       await tester.pumpAndSettle();
+      // The open menu holds a second copy of each item; the last one is the tappable entry.
+      await tester.tap(find.byKey(ValueKey('shares.form.protocol.$id')).last);
+      await tester.pumpAndSettle();
+    }
 
-      final ready = tester.widget<FilledButton>(find.byKey(const ValueKey('shares.form.save')));
-      expect(ready.onPressed, isNotNull);
+    VoidCallback? saveButton(WidgetTester tester) =>
+        tester.widget<FilledButton>(find.byKey(const ValueKey('shares.form.save'))).onPressed;
+
+    Checkbox anonymousBox(WidgetTester tester) => tester.widget<Checkbox>(
+      find.descendant(
+        of: find.byKey(const ValueKey('shares.form.anonymous')),
+        matching: find.byType(Checkbox),
+      ),
+    );
+
+    testWidgets('the form opens as Kotlin\'s: anonymous, so no credential fields', (tester) async {
+      await pump(tester);
+      await openForm(tester);
+
+      expect(find.text('Add network share'), findsOneWidget);
+      expect(anonymousBox(tester).value, isTrue);
+      expect(find.byKey(const ValueKey('shares.form.username')), findsNothing);
+      expect(find.byKey(const ValueKey('shares.form.profile.new')), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('the form refuses to save until it is complete', (tester) async {
+      await pump(tester);
+      await openForm(tester);
+      expect(saveButton(tester), isNull);
+
+      await tester.enterText(find.byKey(const ValueKey('shares.form.address')), '10.0.0.9');
+      await tester.pumpAndSettle();
+      expect(saveButton(tester), isNull, reason: 'SMB still needs a share path');
+
+      await tester.enterText(find.byKey(const ValueKey('shares.form.sharePath')), 'media');
+      await tester.pumpAndSettle();
+      expect(saveButton(tester), isNotNull, reason: 'a name is optional');
+
+      await tester.tap(find.byKey(const ValueKey('shares.form.save')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shares.form.dialog')), findsNothing);
+      expect(vm.shares.single.name, 'smb://10.0.0.9', reason: "Kotlin's blank-name default");
+      await finish(tester);
+    });
+
+    testWidgets('turning anonymous off asks for credentials, from the box or the row', (
+      tester,
+    ) async {
+      await pump(tester);
+      await openForm(tester);
+
+      // The checkbox itself, not only its row: a tap on the box must not be swallowed.
+      await tester.tap(find.byType(Checkbox));
+      await tester.pumpAndSettle();
+      expect(vm.draft!.anonymous, isFalse);
+      expect(find.byKey(const ValueKey('shares.form.username')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shares.form.profile.new')), findsOneWidget);
+
+      await tester.tap(find.text('Anonymous / guest login'));
+      await tester.pumpAndSettle();
+      expect(vm.draft!.anonymous, isTrue);
       await finish(tester);
     });
 
     testWidgets('an FTP share warns but still saves', (tester) async {
       // §17: warn, do not block. The user picked this server.
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('shares.add')));
-      await tester.pumpAndSettle();
+      await openForm(tester);
 
-      await tester.tap(find.byKey(const ValueKey('shares.form.protocol.FTP')));
+      await pickProtocol(tester, 'FTP');
+      await tester.tap(find.byType(Checkbox));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const ValueKey('shares.form.name')), 'ftp');
       await tester.enterText(find.byKey(const ValueKey('shares.form.address')), '10.0.0.9');
       await tester.enterText(find.byKey(const ValueKey('shares.form.username')), 'sam');
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('shares.form.warning.0')), findsOneWidget);
-      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('shares.form.save')));
-      expect(save.onPressed, isNotNull, reason: 'a warning is advice, not a veto');
+      expect(find.byKey(const ValueKey('shares.form.warning.ftp')), findsOneWidget);
+      expect(saveButton(tester), isNotNull, reason: 'a warning is advice, not a veto');
+      await finish(tester);
+    });
+
+    testWidgets('WebDAV turns HTTPS on, and turning it off warns', (tester) async {
+      await pump(tester);
+      await openForm(tester);
+      await pickProtocol(tester, 'WEBDAV');
+      await tester.tap(find.byType(Checkbox));
+      await tester.pumpAndSettle();
+
+      final toggle = find.descendant(
+        of: find.byKey(const ValueKey('shares.form.useHttps')),
+        matching: find.byType(Switch),
+      );
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      expect(
+        tester.widget<Switch>(toggle).onChanged,
+        isNotNull,
+        reason: 'a switch without a callback paints disabled',
+      );
+      expect(find.byKey(const ValueKey('shares.form.warning.webdav')), findsNothing);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(vm.draft!.useHttps, isFalse);
+      expect(find.byKey(const ValueKey('shares.form.warning.webdav')), findsOneWidget);
       await finish(tester);
     });
 
@@ -753,24 +961,19 @@ void main() {
       // Refusing on save would be too late and too confusing: the form hides the username fields
       // the moment anonymous goes on, so the user is told to fix a field they can no longer see.
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('shares.add')));
-      await tester.pumpAndSettle();
+      await openForm(tester);
 
-      await tester.tap(find.byKey(const ValueKey('shares.form.protocol.SFTP')));
-      await tester.pumpAndSettle();
+      await pickProtocol(tester, 'SFTP');
+      expect(anonymousBox(tester).value, isFalse, reason: 'picking SFTP clears it');
+      expect(anonymousBox(tester).onChanged, isNull);
       expect(
-        tester
-            .widget<SwitchListTile>(find.byKey(const ValueKey('shares.form.anonymous')))
-            .onChanged,
+        tester.widget<InkWell>(find.byKey(const ValueKey('shares.form.anonymous'))).onTap,
         isNull,
       );
 
-      await tester.tap(find.byKey(const ValueKey('shares.form.protocol.SMB')));
-      await tester.pumpAndSettle();
+      await pickProtocol(tester, 'SMB');
       expect(
-        tester
-            .widget<SwitchListTile>(find.byKey(const ValueKey('shares.form.anonymous')))
-            .onChanged,
+        anonymousBox(tester).onChanged,
         isNotNull,
         reason: 'SMB guest access is real, and the toggle must come back',
       );
@@ -779,13 +982,13 @@ void main() {
 
     testWidgets('picking a protocol moves the port with it', (tester) async {
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('shares.add')));
-      await tester.pumpAndSettle();
+      await openForm(tester);
 
-      await tester.tap(find.byKey(const ValueKey('shares.form.protocol.SFTP')));
-      await tester.pumpAndSettle();
+      await pickProtocol(tester, 'SFTP');
 
       expect(vm.draft!.port, '22');
+      final port = tester.widget<TextField>(find.byKey(const ValueKey('shares.form.port')));
+      expect(port.controller!.text, '22', reason: 'the field shows the port it moved to');
       await finish(tester);
     });
   });

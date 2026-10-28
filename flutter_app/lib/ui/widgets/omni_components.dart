@@ -1191,6 +1191,7 @@ class OmniPasswordField extends StatefulWidget {
     required this.onChanged,
     this.fieldKey,
     this.autofocus = false,
+    this.initialValue = '',
   });
 
   final String label;
@@ -1198,16 +1199,27 @@ class OmniPasswordField extends StatefulWidget {
   final Key? fieldKey;
   final bool autofocus;
 
+  /// The text the field opens with, for forms that edit a stored value (Kotlin's `value`).
+  final String initialValue;
+
   @override
   State<OmniPasswordField> createState() => _OmniPasswordFieldState();
 }
 
 class _OmniPasswordFieldState extends State<OmniPasswordField> {
   bool _visible = false;
+  late final TextEditingController _controller = TextEditingController(text: widget.initialValue);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => TextField(
     key: widget.fieldKey,
+    controller: _controller,
     autofocus: widget.autofocus,
     obscureText: !_visible,
     keyboardType: TextInputType.visiblePassword,

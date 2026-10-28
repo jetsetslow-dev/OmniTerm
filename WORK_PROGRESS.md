@@ -1,5 +1,56 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 27: queued at the user's request — saved-session cleanup, host-delete parity, behaviour checks
+
+The standard (user, 2026-10-27): both apps are the same app, written in two languages. Behaviour, features, UI, text and performance must all match.
+
+- **Saved sessions can't be removed.** Kotlin keeps a saved (resumable) tmux session until its host answers and tmux confirms the session is gone, so an entry for a machine that no longer exists stays forever. Its session picker, the OPEN ▾ switcher and the split-pane picker only offer Resume. Flutter has a local-only Forget, but in its own "Left running" list; Kotlin's session picker was never ported.
+  Plan, both apps: a remove action on saved sessions. Forget it on this device, or end it on the server, and if the server can't be reached say so and still offer Forget. Port Kotlin's session picker to Flutter in the same slice.
+- **Host delete differs between the apps.** Both clear the database rows (metrics, host-scoped alerts and history, tunnels, stacks, saved sessions, SFTP bookmarks) and the launcher shortcuts.
+  - Flutter only: does not close the host's open sessions or stop their tmux on the server, does not stop live tunnels, drop cached credentials, remove the trusted host key, refresh home widgets, or clear per-host metric caches. A deleted host's ID can be reused by the next one.
+  - Flutter's `keepOnlyServers` (restore and host-limit pruning) leaves `stack_registry` rows behind; Kotlin's clears them.
+  - Both apps: saved-but-not-open tmux sessions are not stopped on the server when their host is deleted.
+  - Kotlin: removing the trusted host key ignores another saved host on the same host:port.
+- **Behaviour parity checks.** The string audit cannot see the above. Add checks that fail CI: compare the delete-host and keep-only cascade table sets between the two apps, and share test cases between them.
+- **New machine (2026-10-27).** i5-10400, 60 GiB RAM, KVM. Toolchain reinstalled: Temurin 17.0.21, Android SDK packages, Flutter cache and pub cache, with Gradle caches wiped. One copied Gradle jar was corrupt. One JVM C2 crash (SIGSEGV in Guava code) occurred during a build; a 16 GB memtester run was started to rule out this machine's RAM.
+  - The RAM is faulty: one DRAM chip corrupts two 32 KiB blocks (physical `0x6ADCD0000` and `0x6AF018000`), the same blocks on every run. Linux is kept off the 64 MiB around them: `memmap` on the kernel command line from the next boot, and soft-offlined pages until then. A full retest then passed. Anything built or copied while those blocks were in use is re-verified before it is trusted. The stick should be replaced.
+  - JDK 21 (`openjdk-21-jdk-headless`) is installed for the gate's Flutter Android build.
+- **Decisions (user, 2026-10-27).**
+  - Deleting a host, one or several at once: when it has tmux sessions, the dialog offers an unticked "Also end N tmux sessions on the server". Unticked, nothing on the server is touched.
+  - A saved session can be removed. Forget removes it on this device; End session ends it on the server, and if the server can't be reached the app says so and still offers Forget.
+  - Editing a host: Reconnect and Retry use the host's current settings. Renaming a host updates its name in every session list, while the tmux session names on the server stay as they are. Changing the address resets health and metrics.
+  - Running tunnels keep their old connection, and the app shows a notice to restart them.
+  - "Attach existing tmux…" comes after these fixes.
+  - Kotlin fixes and the Dependabot PRs (#125–#127) go into `kotlin-bug-fixes` first.
+- **Kotlin progress.**
+  - Dependabot #125–#127 are merged into `kotlin-bug-fixes` locally, keeping the bot commits and their signatures. #126's checksum file missed the Develocity 4.6.1 plugin from #125, so it is being regenerated.
+  - 46ebf20 on PR #128: saved-session removal, the host-delete checkbox, bulk delete, host edit/rename, Ping/Traceroute pop-ups, host sort, last seen, WAKE, Copy SSH command, per-process disk and GPU, and shared stream boxes. CI is green on that head.
+  - October 28, pushed to PR #128 as 94268d4 and f2e9f2e (CI on f2e9f2e being watched). Both passed the full gate; f2e9f2e's run had the API 35 emulator attached, with 25 device tests passing and 40 lab-only E2E suites skipping. Both were checked on the emulator against the Docker fixture host.
+  - 94268d4, System specs (Hosts ⋮ and a Monitor tab). Collapsible system, processor, memory, storage, graphics and network sections for Linux, FreeBSD, macOS and Windows; memory modules and drive health only through "Read with sudo". Also fixes BusyBox `df -Pk` sizes (1024× too small) and macOS/BSD `df` without `-P`.
+  - f2e9f2e, OS-specific host commands. Also disables Cron's Add while the crontab is unreadable, and "Delete 1 hosts?" now reads "Delete 1 host?". Services list and act through systemd/OpenRC, BSD rc.d or rcctl, launchd, or Windows services. Reboot uses `shutdown -r now` on BSD/macOS and `shutdown /r` on Windows, and process kill uses taskkill on Windows. The Fleet quick checks run in PowerShell on Windows, and a PowerShell login shell is now detected as Windows. On Windows, cron, tmux persistence, sudo mode, containers, Compose deploy, and Files search/archives/folder sizes/same-host paste say they need a Linux, macOS or BSD host instead of running Linux commands.
+  - Still Linux-only and next: Windows per-process disk/GPU, and macOS Homebrew tmux (the side-channel tmux commands run without Homebrew on PATH). Every item above still needs its Flutter port.
+- **Flutter follow-ups.** These are in the parity findings doc under "Host edit/delete and saved tmux sessions":
+  - Kotlin's session picker and Remove dialog.
+  - Full host-delete cleanup, single and bulk.
+  - `keepOnlyServers` must also delete stacks.
+  - The edit-host fixes.
+  - Kotlin's tmux session names: Flutter uses `omniterm-<id>-<millis>`.
+
+## October 20: Kotlin's network share form and share cards — validated October 28
+
+- Adding or editing a share opens Kotlin's "Add network share" / "Edit network share" dialog instead of a bottom sheet: optional custom name, a protocol menu, address beside a narrow digits-only port, "Share/path", the WebDAV "Use HTTPS" row, the "Anonymous / guest login" checkbox, then (signed in) the FTP cleartext note, "Credential profile" chips with "New profile", and workgroup, username and password. A new share starts as Kotlin's does: SMB on 445, anonymous, HTTPS off until WebDAV is picked.
+- Validation is Kotlin's `validateDraft`, one message at a time and Save disabled until it passes. A name is no longer required (a blank one saves as `smb://address`), a custom share needs no port, and SMB needs a share path. Typed credentials are saved as a reusable "Network Share - <name>" profile in the Network Shares group and the share points at it, as Kotlin's `persistNetworkShare` does; the share row no longer holds the password itself.
+- A share added from a scan hit starts as Kotlin's `shareDraftFromScan`: anonymous unless SFTP, HTTPS for WebDAV on 443 or 8443.
+- Cards are Kotlin's `NetworkShareCard`: shared-folder icon, name with an Available / Checking / Unavailable / Unknown dot, host line, Browse / Test / Edit / Delete icon buttons (Browse disabled, not hidden, with "Browsing not supported for NFS"), then "path · PROTOCOL · sign-in" naming a credential profile as "profile: <name>", and the URI. Pulling the list down checks every share, as Kotlin's pull-to-refresh does; Flutter's "Check all" button is gone. The header, empty text and delete confirmation use Kotlin's strings.
+- Two Flutter widget bugs fixed on the way: the WebDAV switch painted disabled (a Flutter switch without a callback is greyed, where Compose's only hands the tap to its row), and a tap on the anonymous checkbox itself was swallowed.
+- Controls: tests fail with the switch's callback removed, the checkbox tap swallowed, no profile created, the scan draft not anonymous, SMB's path check removed, pull-to-refresh disconnected, and the profile name dropped from the card.
+- Parity baseline: 397 known differences (17 fixed).
+- Still Flutter's own here: the inline LAN scan panel (Kotlin opens a scan dialog) and the save/test message card. Both are next.
+- **Validated 2026-10-28.** The full gate passed on the final tree. The API 35 core profile passed (`artifacts/device-tests/20261028T041458Z_android_emulator-5554_core`).
+  - The host profile's first run timed out resuming the saved tmux session into a split pane (`host_backed_e2e_test.dart:468`), with only one of the two fixture host-key approvals logged. A serial re-run passed (`artifacts/device-tests/20261028T075335Z_android_emulator-5554_host`), and nothing in this slice touches the terminal, so it is recorded as a flake to watch, not fixed.
+  - Two fixture fixes ride along in their own commit: `test-hosts.sh up` rebuilds the fixture images (a stale image kept failing after a fixture fix), and the Podman runtime host clears Podman's runtime state on a restarted container (Podman refused every command with "current system boot ID differs from cached boot ID", so the fixture looked like a host without Podman).
+  - CI on #92 head `313ae1f`: Flutter PR Check failed in the emulator job, in `backup_file_picker_test` "cancelling the save claims nothing was written": the DocumentsUI save picker did not appear within the 20 s budget. The same test failed in CI on `4479de3` and `d43c22a` and passed locally on `313ae1f`, so it is an intermittent CI failure, not this commit. It still needs a real fix (budget or readiness signal) before it hides a genuine failure.
+
 ## October 20: Kotlin's host-key prompts — local/runtime complete
 
 - The first-connect prompt uses Kotlin's text: "Trust This Server?", "Verify this fingerprint matches the server before trusting. Once trusted, it will be stored and checked on future connections.", and a plain "Trust & Connect" (it was amber). The host, fingerprint and command stay selectable; Kotlin gains that in #124.

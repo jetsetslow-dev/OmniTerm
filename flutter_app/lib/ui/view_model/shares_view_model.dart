@@ -22,6 +22,8 @@ class SharesViewModel extends ChangeNotifier {
       _shares = rows;
       _safeNotify();
     });
+    // The cards name a share's credential profile, so the list is needed before any form opens.
+    unawaited(_loadProfiles());
   }
 
   final AppState _app;
@@ -79,16 +81,45 @@ class SharesViewModel extends ChangeNotifier {
   NetworkShareDraft? get draft => _draft;
 
   void startAdd() {
-    // Seeded with the default port for the default protocol, so the commonest case needs no typing.
-    _draft = NetworkShareDraft(port: '${ShareProtocol.smb.defaultPort}');
+    // Kotlin's new share: SMB on its default port, anonymous, HTTPS off until WebDAV is picked.
+    _draft = NetworkShareDraft(
+      port: '${ShareProtocol.smb.defaultPort}',
+      anonymous: true,
+      useHttps: false,
+    );
     _error = null;
+    unawaited(_loadProfiles());
     _safeNotify();
   }
 
   void startEdit(NetworkShare share) {
     _draft = NetworkShareDraft.fromShare(share);
     _error = null;
+    unawaited(_loadProfiles());
     _safeNotify();
+  }
+
+  List<CredentialProfile> _profiles = const [];
+
+  /// Saved credential profiles, offered as chips beside "New profile" in the form.
+  List<CredentialProfile> get profiles => List.unmodifiable(_profiles);
+
+  /// How a share signs in, as Kotlin's card words it.
+  String authLabel(NetworkShare share) {
+    if (share.anonymous) return 'anonymous';
+    final profile = _profiles.where((p) => p.id == share.authProfileId).firstOrNull;
+    if (profile != null) return 'profile: ${profile.profileName}';
+    final parts = [share.workgroup, share.username].where((p) => p.trim().isNotEmpty);
+    return parts.isEmpty ? 'credentials' : parts.join(r'\');
+  }
+
+  Future<void> _loadProfiles() async {
+    try {
+      _profiles = await _app.repository.getAllProfiles();
+      _safeNotify();
+    } catch (_) {
+      // The form still works with "New profile"; a profile list that fails to load costs a chip.
+    }
   }
 
   void updateDraft(NetworkShareDraft Function(NetworkShareDraft) change) {
@@ -116,14 +147,19 @@ class SharesViewModel extends ChangeNotifier {
       // The existing status is carried over rather than reset: editing a share's notes should not
       // make a host that was reachable a moment ago suddenly read as unknown.
       final existing = _shares.where((s) => s.id == current.id).firstOrNull;
-      await _app.repository.insertNetworkShare(
-        current.toShare(
-          lastChecked: existing?.lastChecked ?? 0,
-          lastStatus: existing?.lastStatus ?? 'unknown',
-        ),
+      // Kotlin's `persistNetworkShare`: typed credentials become a reusable profile in the "Network
+      // Shares" group, and the share points at it instead of holding the password itself.
+      final newProfile = current.profileToCreate;
+      final profileId = newProfile == null ? null : await _app.repository.insertProfile(newProfile);
+      final share = current.toShare(
+        lastChecked: existing?.lastChecked ?? 0,
+        lastStatus: existing?.lastStatus ?? 'unknown',
+        createdProfileId: profileId,
       );
+      await _app.repository.insertNetworkShare(share);
+      if (profileId != null) await _loadProfiles();
       _draft = null;
-      _status = 'Saved "${current.name.trim()}".';
+      _status = 'Saved ${share.name}.';
       _error = null;
       _safeNotify();
       return true;
@@ -331,14 +367,18 @@ class SharesViewModel extends ChangeNotifier {
   /// that fails on first use with no clue why.
   void startAddFromScan(ShareScanHit hit) {
     final protocol = ShareProtocol.fromId(hit.protocol);
+    // Kotlin's `shareDraftFromScan`: anonymous unless SSH, which has no anonymous mode, and HTTPS on
+    // the two TLS ports a WebDAV server answers on.
     _draft = NetworkShareDraft(
       name: hit.address,
       protocol: protocol,
       address: hit.address,
       port: '${hit.port}',
-      useHttps: hit.port == 443,
+      anonymous: protocol != ShareProtocol.sftp,
+      useHttps: protocol == ShareProtocol.webdav && (hit.port == 443 || hit.port == 8443),
     );
     _error = null;
+    unawaited(_loadProfiles());
     _safeNotify();
   }
 

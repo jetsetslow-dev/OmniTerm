@@ -29,26 +29,14 @@ enum ShareProtocol {
   }
 }
 
-/// Whether OmniTerm can open a file browser on this protocol.
-///
-/// **Narrower than the Kotlin's list on purpose.** The Kotlin browsed SMB, FTP, SFTP and WebDAV;
-/// this port has clients for SMB (native, §7.1) and SFTP only. Offering Browse for FTP or WebDAV
-/// here would be a button that fails on tap, which is worse than one that is honestly absent
-/// (Convention 4). The gap is recorded in §18 rather than papered over.
+/// Whether OmniTerm can open a file browser on this protocol: Kotlin's `isShareBrowsable`. NFS
+/// mounting is a kernel operation an unprivileged app cannot do, and a custom share has no protocol
+/// to speak, so neither is browsable in either app.
 bool shareIsBrowsable(ShareProtocol protocol) =>
     protocol == ShareProtocol.smb ||
     protocol == ShareProtocol.ftp ||
     protocol == ShareProtocol.sftp ||
     protocol == ShareProtocol.webdav;
-
-/// Why a protocol cannot be browsed, in the user's terms.
-String? shareBrowseUnavailableReason(ShareProtocol protocol) => switch (protocol) {
-  ShareProtocol.smb || ShareProtocol.ftp || ShareProtocol.sftp || ShareProtocol.webdav => null,
-  // NFS mounting is a kernel operation, not something an unprivileged app can do — this was
-  // never browsable in the Kotlin either.
-  ShareProtocol.nfs => 'NFS shares are mounted by the operating system, not by OmniTerm.',
-  ShareProtocol.custom => 'A custom share has no protocol for OmniTerm to speak.',
-};
 
 /// A share as the form holds it: strings, because that is what text fields produce.
 class NetworkShareDraft {
@@ -143,6 +131,8 @@ class NetworkShareDraft {
       // that is disabled for SFTP — unfixable without switching protocol back. Compose clears it on
       // the same transition (`ui/SftpScreen.kt:1389`).
       anonymous: next == ShareProtocol.sftp ? false : null,
+      // Kotlin turns HTTPS on when WebDAV is picked; it stays the user's to change.
+      useHttps: next == ShareProtocol.webdav ? true : null,
     );
   }
 
@@ -152,81 +142,82 @@ class NetworkShareDraft {
     return protocol.defaultPort;
   }
 
-  /// Validation messages keyed by field, empty when the draft can be saved.
-  Map<String, String> get errors {
-    final found = <String, String>{};
-    if (name.trim().isEmpty) found['name'] = 'Give this share a name.';
-    if (address.trim().isEmpty) {
-      found['address'] = 'An address or hostname is required.';
+  /// Why the draft cannot be saved, in Kotlin's words and order (`validateDraft` in
+  /// `ui/SftpScreen.kt`), or null. The form shows the first problem only, as Kotlin does.
+  String? get validationError {
+    final typedPort = int.tryParse(port.trim());
+    if (address.trim().isEmpty) return 'Address is required.';
+    if (protocol != ShareProtocol.custom &&
+        (typedPort == null || typedPort < 1 || typedPort > 65535)) {
+      return 'Port must be between 1 and 65535.';
     }
-
-    final typed = port.trim();
-    if (typed.isNotEmpty) {
-      final parsed = int.tryParse(typed);
-      if (parsed == null || parsed < 1 || parsed > 65535) {
-        found['port'] = 'A port is a number from 1 to 65535.';
-      }
-    } else if (protocol.defaultPort == 0) {
-      // Only CUSTOM has no default to fall back on.
-      found['port'] = 'A custom share needs an explicit port.';
+    if (protocol == ShareProtocol.smb &&
+        sharePath.trim().replaceAll(RegExp(r'^/+|/+$'), '').isEmpty) {
+      return 'SMB needs a Share/path value such as Public or Media.';
     }
-
-    if (protocol == ShareProtocol.smb && sharePath.trim().isEmpty) {
-      // SMB connects to a *share*, not to a host; without one there is nothing to open.
-      found['sharePath'] = 'SMB needs a share name.';
-    }
-    // SFTP is SSH, and SSH has no anonymous mode: a share saved this way can never connect, and
-    // the form has just hidden the username field that would have fixed it. Compose refuses the
-    // same combination at `ui/SftpScreen.kt:1351`.
+    // SFTP is SSH, and SSH has no anonymous mode: a share saved this way could never connect.
     if (protocol == ShareProtocol.sftp && anonymous) {
-      found['anonymous'] = 'SFTP needs a username or credential profile.';
+      return 'SFTP needs a username or credential profile.';
     }
     if (!anonymous && authProfileId == null && username.trim().isEmpty) {
-      found['username'] = 'Enter a username, pick a credential profile, or tick anonymous.';
+      return 'Username is required when anonymous login is off and no profile is selected.';
     }
-    return found;
+    return null;
   }
 
-  bool get isValid => errors.isEmpty;
+  bool get isValid => validationError == null;
 
-  /// Advisory notes — true, worth saying, and never a reason to refuse the save (§17).
-  List<String> get warnings {
-    final notes = <String>[];
-    if (protocol == ShareProtocol.ftp && !anonymous) {
-      notes.add(
-        'FTP sends the password in clear text. Anyone on the path between this device and the '
-        'server can read it. Prefer SFTP where the server offers it.',
-      );
-    }
-    if (protocol == ShareProtocol.webdav && !useHttps) {
-      notes.add('Without HTTPS, WebDAV sends the password in clear text on every request.');
-    }
-    if (protocol == ShareProtocol.smb && anonymous) {
-      notes.add('Anonymous SMB only works where the server has guest access enabled.');
-    }
-    return notes;
+  /// Kotlin's FTP note, shown when credentials will be sent: advice, never a reason to refuse.
+  bool get warnsFtpCleartext => protocol == ShareProtocol.ftp && !anonymous;
+
+  /// Kotlin's WebDAV note for "Use HTTPS" off with a password to send.
+  bool get warnsWebDavCleartext => protocol == ShareProtocol.webdav && !useHttps && !anonymous;
+
+  /// Kotlin's `persistNetworkShare` normalisation. The repository encrypts the password.
+  NetworkShare toShare({
+    int lastChecked = 0,
+    String lastStatus = 'unknown',
+    int? createdProfileId,
+  }) {
+    final name = this.name.trim().isEmpty
+        ? '${protocol.id.toLowerCase()}://${address.trim()}'
+        : this.name.trim();
+    final profileId = anonymous ? null : (createdProfileId ?? authProfileId);
+    // Anonymous, or a credential profile, means the row itself keeps no username or password.
+    final keepsCredentials = !anonymous && profileId == null;
+    return NetworkShare(
+      id: id,
+      name: name,
+      protocol: protocol.id,
+      address: address.trim(),
+      port: effectivePort,
+      sharePath: sharePath.trim().replaceAll(RegExp(r'^/+'), ''),
+      workgroup: workgroup.trim(),
+      username: keepsCredentials ? username.trim() : '',
+      password: keepsCredentials ? password : '',
+      authProfileId: profileId,
+      anonymous: anonymous,
+      useHttps: protocol == ShareProtocol.webdav && useHttps,
+      notes: notes.trim(),
+      lastChecked: lastChecked,
+      lastStatus: lastStatus,
+    );
   }
 
-  /// The row to persist. The repository encrypts the password on the way down.
-  NetworkShare toShare({int lastChecked = 0, String lastStatus = 'unknown'}) => NetworkShare(
-    id: id,
-    name: name.trim(),
-    protocol: protocol.id,
-    address: address.trim(),
-    port: effectivePort,
-    sharePath: sharePath.trim(),
-    workgroup: workgroup.trim(),
-    // Anonymous means anonymous: keeping the typed credentials on the row would leave a
-    // password stored for a share that never sends one.
-    username: anonymous ? '' : username.trim(),
-    password: anonymous ? '' : password,
-    authProfileId: anonymous ? null : authProfileId,
-    anonymous: anonymous,
-    useHttps: useHttps,
-    notes: notes.trim(),
-    lastChecked: lastChecked,
-    lastStatus: lastStatus,
-  );
+  /// Kotlin saves typed credentials as a reusable profile in the "Network Shares" group and points
+  /// the share at it. Null when nothing is typed or a profile is already chosen.
+  CredentialProfile? get profileToCreate {
+    if (anonymous || authProfileId != null || username.trim().isEmpty) return null;
+    final label = name.trim().isEmpty ? '${protocol.id} ${address.trim()}' : name.trim();
+    return CredentialProfile(
+      id: 0,
+      profileName: 'Network Share - $label',
+      username: username.trim(),
+      authType: 'password',
+      password: password,
+      groupName: 'Network Shares',
+    );
+  }
 }
 
 /// A display URI for a saved share, e.g. `smb://nas.local:445/media`.
