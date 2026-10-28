@@ -17,6 +17,8 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import 'pbkdf2.dart';
+
 const pinHashV1Prefix = 'pin:v1:';
 const pinHashV2Prefix = 'pin:v2:';
 
@@ -86,7 +88,7 @@ bool isHashedPin(String? stored) => stored != null && stored.startsWith('pin:');
 Future<String> hashPinForStorage(String pin, {Random? random}) async {
   final rng = random ?? Random.secure();
   final salt = Uint8List.fromList(List.generate(pinSaltBytes, (_) => rng.nextInt(256)));
-  final hash = await _derive(pin, salt, pinPbkdf2Iterations);
+  final hash = _derive(pin, salt, pinPbkdf2Iterations);
   return [
     'pin',
     'v2',
@@ -118,7 +120,7 @@ Future<bool> verifyStoredPin(String? stored, String pin) async {
       final salt = base64.decode(parts[3]);
       final expected = base64.decode(parts[4]);
       if (salt.length != pinSaltBytes || expected.length != pinHashBytes) return false;
-      return _constantTimeEquals(expected, await _derive(pin, salt, iterations));
+      return _constantTimeEquals(expected, _derive(pin, salt, iterations));
     }
 
     if (stored.startsWith(pinHashV1Prefix) && parts.length == 5) {
@@ -146,15 +148,8 @@ bool pinNeedsRehash(String? stored) {
   return iterations == null || iterations < pinPbkdf2Iterations;
 }
 
-Future<List<int>> _derive(String pin, List<int> salt, int iterations) async {
-  final pbkdf2 = Pbkdf2(
-    macAlgorithm: Hmac.sha256(),
-    iterations: iterations,
-    bits: pinHashBytes * 8,
-  );
-  final key = await pbkdf2.deriveKey(secretKey: SecretKey(utf8.encode(pin)), nonce: salt);
-  return key.extractBytes();
-}
+List<int> _derive(String pin, List<int> salt, int iterations) =>
+    pbkdf2HmacSha256(utf8.encode(pin), salt, iterations, pinHashBytes);
 
 /// Length-independent comparison.
 ///

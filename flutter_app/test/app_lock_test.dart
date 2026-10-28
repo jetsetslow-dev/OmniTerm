@@ -682,8 +682,8 @@ void main() {
         tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       }
       // A legacy plaintext PIN on purpose: these tests are about the screen, and a real PBKDF2
-      // verification costs most of a second each, which a five-attempt throttle test multiplies
-      // into a timeout. The hashed path has its own tests above.
+      // verification costs about a third of a second each, which a five-attempt throttle test
+      // multiplies. The hashed path has its own tests above.
       await repo.insertSetting('app_pin', '1234');
       await repo.insertSetting('app_lock_enabled', 'true');
       if (biometrics != null) {

@@ -95,10 +95,11 @@ void main() {
   Future<void> waitForSavePicker(PatrolIntegrationTester $) async {
     final context = $.tester.element($(const ValueKey('backup.list')).finder);
     final vm = context.read<BackupViewModel>();
-    // One budget per phase. Building the encrypted backup is the app's own work: its PBKDF2 key
-    // takes the hosted emulator 23-32 s from the passphrase tap. Sharing one 20 s budget with the
-    // picker failed #92 twice. Run 39203550831 ran out before the export finished. Run 39391764284
-    // left DocumentsUI 6 s, while the next test in that run, given 10 s, saw it open in under 3.
+    // One budget per phase. Building the encrypted backup is the app's own work: before PBKDF2 was
+    // rewritten, its key took the hosted emulator 23-32 s from the passphrase tap. Sharing one 20 s
+    // budget with the picker failed #92 twice. Run 39203550831 ran out before the export finished.
+    // Run 39391764284 left DocumentsUI 6 s, while the next test in that run, given 10 s, saw it
+    // open in under 3.
     // The export now has its own deadline, which still catches a hang, and the picker its whole
     // twenty seconds from when the app asks for it.
     final exportDeadline = DateTime.now().add(const Duration(seconds: 60));

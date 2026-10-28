@@ -40,13 +40,26 @@ The standard (user, 2026-10-27): both apps are the same app, written in two lang
   - The edit-host fixes.
   - Kotlin's tmux session names: Flutter uses `omniterm-<id>-<millis>`.
 
+## October 28: PIN and backup keys as fast as Kotlin — validated October 28
+
+- **PBKDF2 parity (performance).** Kotlin derives the app PIN hash and the backup key with `javax.crypto` PBKDF2WithHmacSHA256. On Android that is BouncyCastle in Java, not native code. Flutter used `package:cryptography`'s pure-Dart `Pbkdf2`, which rebuilds the HMAC key state on every round. Release builds on the API 35 emulator:
+
+  | | Kotlin | Flutter before | Flutter now |
+  |---|---|---|---|
+  | PIN, 210,000 rounds | 0.38 s | 1.9 s | 0.30 s |
+  | Backup key, 600,000 rounds | 1.06 s | 5.4 s | 0.85 s |
+
+  `lib/domain/pbkdf2.dart` computes the HMAC's inner and outer key states once per key, and both callers use it. Formats, round counts and dependencies are unchanged; pointycastle's PBKDF2 was slower still.
+  - `test/pbkdf2_test.dart` checks the RFC 7914 vectors and 168 shapes against `package:cryptography`. Two deliberate breakages each failed it.
+  - Backup encryption already ran on a worker isolate. The PIN is checked on the UI isolate, as Kotlin checks it on the main thread, now for 0.30 s instead of 1.9 s.
+
 ## October 28: duplicate-code check, Kotlin's share wording, Homebrew tmux, backup picker flake — validated October 28
 
 - **One copy of each block (user, 2026-10-28: "write once, reuse").** `scripts/check-duplicates.py` (the same file as on `kotlin-bug-fixes`) now runs in the Flutter gate and in Flutter PR Check. It fails on any run of 70 identical tokens found twice in `flutter_app/lib`, generated files excluded. The baseline `scripts/flutter-duplicate-code-baseline.json` lists one known copy: `backup_payload.dart` maps the same alert fields onto two different Drift companions. Changing the checker or the baseline now triggers the Flutter job (`test-change-detectors.sh` pins that).
   - Moved onto shared code: the five colour schemes' common Compose defaults; the proxy and SOCKS handshake readers (`SocketByteReader`); the exec and streamed-exec channel lifecycle; FTP and WebDAV text editing (`StreamedTextEditing`); BSD and macOS metrics; the key-alias rename cascade; "selected host while online" in Monitor, Files, Infra, Fleet and Term; the text-controller bookkeeping of the WOL, tunnel and script dialogs; the Infra container/service confirm dialog; and Fleet's output list.
 - **Share messages in Kotlin's words** (Kotlin side in #128). A failed save says "Save failed: …", a delete "Deleted <name>.", and saving a scan hit says "Saved <name>." in the scan dialog.
 - **Homebrew tmux on a Mac** (Kotlin side in #128). A command sent without a terminal gets macOS's bare PATH, so Homebrew's tmux was reported missing. Every tmux command now starts with Kotlin's `TMUX_PATH` line, which adds the Homebrew, MacPorts and Linuxbrew directories only when tmux is not already on PATH. The installer falls back to `brew install tmux`. The test fakes key on the exact check command, since every tmux command now starts with `command -v tmux`.
-- **`backup_file_picker_test` CI flake fixed.** The test gave the notification prompt, the backup export and DocumentsUI one shared 20 s budget. On the hosted emulator the export alone takes 23–32 s from the passphrase tap, because PBKDF2 runs in pure Dart. Run 39203550831 ran out before the export finished; run 39391764284 left the picker 6 s. The export now has its own 60 s deadline and the picker its full 20 s. The slow key derivation is a performance gap with Kotlin, which uses native PBKDF2; it is recorded in the parity findings doc as its own slice. The app PIN uses the same code path.
+- **`backup_file_picker_test` CI flake fixed.** The test gave the notification prompt, the backup export and DocumentsUI one shared 20 s budget. On the hosted emulator the export alone takes 23–32 s from the passphrase tap, because PBKDF2 runs in pure Dart. Run 39203550831 ran out before the export finished; run 39391764284 left the picker 6 s. The export now has its own 60 s deadline and the picker its full 20 s. The slow key derivation was a performance gap with Kotlin, fixed in the next entry. The app PIN used the same code path.
 - **Validated 2026-10-28.** The full gate passed on the final tree: 3,005 Flutter tests with seven optional skips, the duplicate check (one known copy), and API 35 instrumentation (25 passing, 42 lab-only). The API 35 core profile passed (10 plain and 5 native suites, all four backup picker tests included, no unexpected warnings: `artifacts/device-tests/20261028T145137Z_android_emulator-5554_core`). Controls: the new tmux test fails when the kill command loses the PATH line.
   - The host profile's first run timed out resuming a closed split pane from its saved-tmux list (`host_backed_e2e_test.dart:468`). The same failure happened this morning on the tree before these changes. Both failing runs logged one fixture host-key approval, every passing run two. The rerun passed in full (`artifacts/device-tests/20261028T152000Z_android_emulator-5554_host`). The wait now reports the sessions, connecting state and error when it times out. The stall is recorded in the parity findings as a bug to fix, since a user resuming a split pane could hit it.
 

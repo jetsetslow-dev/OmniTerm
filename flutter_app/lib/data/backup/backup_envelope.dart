@@ -20,6 +20,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import '../../domain/pbkdf2.dart';
 import 'android_json.dart';
 
 /// Raised for a backup that cannot be read, with a message meant for the user.
@@ -82,7 +83,7 @@ Future<String> encryptBackup(String json, String passphrase) async {
     List.generate(BackupLimits.saltBytes, (_) => random.nextInt(256)),
   );
 
-  final secretKey = await _deriveKey(passphrase, salt, BackupLimits.kdfIterations);
+  final secretKey = _deriveKey(passphrase, salt, BackupLimits.kdfIterations);
   final box = await AesGcm.with256bits().encrypt(compressed, secretKey: secretKey);
 
   // Written by org.json in Kotlin, so the envelope uses the same serializer (`\/` in base64).
@@ -153,7 +154,7 @@ Future<String> decryptBackup(String envelopeText, String passphrase) async {
   final cipherText = payload.sublist(0, payload.length - 16);
   final mac = Mac(payload.sublist(payload.length - 16));
 
-  final secretKey = await _deriveKey(passphrase, salt, iterations);
+  final secretKey = _deriveKey(passphrase, salt, iterations);
   final List<int> compressed;
   try {
     compressed = await AesGcm.with256bits().decrypt(
@@ -282,7 +283,5 @@ void validateBackupJsonDepth(String text, {int maxDepth = BackupLimits.maxJsonDe
   }
 }
 
-Future<SecretKey> _deriveKey(String passphrase, Uint8List salt, int iterations) async {
-  final pbkdf2 = Pbkdf2(macAlgorithm: Hmac.sha256(), iterations: iterations, bits: 256);
-  return pbkdf2.deriveKeyFromPassword(password: passphrase, nonce: salt);
-}
+SecretKey _deriveKey(String passphrase, Uint8List salt, int iterations) =>
+    SecretKey(pbkdf2HmacSha256(utf8.encode(passphrase), salt, iterations, 32));

@@ -133,8 +133,9 @@ void main() {
         SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
       ),
       operationNotifications: notifications,
-      // Kotlin encrypts every export. Real PBKDF2 cannot finish on the widget clock, so the
-      // screen flow gets an envelope-shaped stand-in; the cipher has its own tests.
+      // Kotlin encrypts every export. The real export runs on a worker isolate, which cannot
+      // finish on the widget clock, so the screen flow gets an envelope-shaped stand-in; the
+      // cipher has its own tests.
       encrypt: (json, passphrase) async => encodeAndroidJson({
         'v': 2,
         'salt': 'test',

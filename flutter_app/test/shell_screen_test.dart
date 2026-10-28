@@ -1474,12 +1474,8 @@ void main() {
       // (`ShellScreen.kt:1905`).
       await repo.insertServer(server(name: 'nas'));
       final lock = AppLockController(repo);
-      // PBKDF2 yields to the event loop between chunks, and a widget test's fake-async zone never
-      // advances it, so both PIN operations have to run in the real one or the test hangs.
-      await tester.runAsync(() async {
-        await lock.load();
-        await lock.setPin('1234');
-      });
+      await lock.load();
+      await lock.setPin('1234');
       await pump(tester, lock: lock);
       await connect(tester);
       expect(keyboardIsUp(tester), isTrue);
@@ -1490,7 +1486,7 @@ void main() {
       await tester.pump();
       expect(keyboardIsUp(tester), isFalse, reason: 'no keyboard over the unlock screen');
 
-      final outcome = await tester.runAsync(() => lock.unlockWithPin('1234'));
+      final outcome = await lock.unlockWithPin('1234');
       expect(outcome, UnlockOutcome.unlocked);
       await tester.pump();
       await tester.pump();
