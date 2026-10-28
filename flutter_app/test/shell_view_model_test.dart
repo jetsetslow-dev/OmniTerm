@@ -37,14 +37,18 @@ class _RecordingShortcuts extends ShortcutHelper {
   }
 }
 
-/// Records which tunnels were stopped instead of tearing any down.
+/// Records which tunnels were stopped instead of tearing any down, and reports [active] as running.
 class _RecordingTunnels extends SshTunnelManager {
   _RecordingTunnels() : super((_) => throw UnimplementedError('no tunnel connects in this test'));
 
   final List<int> stopped = [];
+  final Set<int> active = {};
 
   @override
   Future<void> stop(int id) async => stopped.add(id);
+
+  @override
+  bool isActive(int tunnelId) => active.contains(tunnelId);
 }
 
 /// An [AppRepository] whose persistent-session reads start failing once one has been written.
@@ -321,15 +325,15 @@ void main() {
     expect(channel.writes.map(utf8.decode).join(), contains('send-keys -t %9'));
   });
 
-  group('automatic reconnect preserves the terminal', () {
-    Future<void> until(bool Function() ready) async {
-      await Future<void>(() async {
-        while (!ready()) {
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-        }
-      }).timeout(const Duration(seconds: 5));
-    }
+  Future<void> until(bool Function() ready) async {
+    await Future<void>(() async {
+      while (!ready()) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }).timeout(const Duration(seconds: 5));
+  }
 
+  group('automatic reconnect preserves the terminal', () {
     test('a socket drop replaces only the channel and keeps scrollback and selection', () async {
       await repo.insertServer(server(name: 'nas'));
       await start();
@@ -1671,17 +1675,17 @@ void main() {
       });
     });
 
-    group('deleting a host', () {
-      // Kotlin's `removeServer`: everything that still points at the host lets go of it, and its
-      // tmux sessions keep running on the server unless the user asked for them to end.
+    group('a host in use', () {
       late _RecordingTunnels tunnels;
       late SshHostKeyTrust trust;
       late ServersViewModel servers;
       late FakeShellTransport ssh;
+      late List<Server> probed;
 
       setUp(() {
         tunnels = _RecordingTunnels();
         trust = SshHostKeyTrust(InMemoryHostKeyStore());
+        probed = [];
       });
 
       tearDown(() => servers.dispose());
@@ -1696,6 +1700,7 @@ void main() {
           shell: () => vm,
           tunnels: tunnels,
           hostKeyTrust: trust,
+          probeHost: (host) async => probed.add(host),
         );
         await repo.insertServer(server(name: name, persistent: true));
         await Future<void>.delayed(Duration.zero);
@@ -1713,125 +1718,211 @@ void main() {
 
       List<String> kills() => ssh.commands.where((c) => c.contains('kill-session')).toList();
 
-      test('its tmux sessions are counted once, open or left running', () async {
-        final host = await hostInUse();
+      group('deleting it', () {
+        // Kotlin's `removeServer`: everything that still points at the host lets go of it, and its
+        // tmux sessions keep running on the server unless the user asked for them to end.
+        test('its tmux sessions are counted once, open or left running', () async {
+          final host = await hostInUse();
 
-        final sessions = vm.tmuxSessionsOnHosts({host.id});
-        expect(sessions, hasLength(2));
-        expect(sessions.map((s) => s.tmuxName).toSet(), hasLength(2));
-        expect(servers.tmuxSessionCount({host.id}), 2);
-        expect(servers.tmuxSessionCount({host.id + 1}), 0);
-      });
+          final sessions = vm.tmuxSessionsOnHosts({host.id});
+          expect(sessions, hasLength(2));
+          expect(sessions.map((s) => s.tmuxName).toSet(), hasLength(2));
+          expect(servers.tmuxSessionCount({host.id}), 2);
+          expect(servers.tmuxSessionCount({host.id + 1}), 0);
+        });
 
-      test('everything here lets go of it, and tmux keeps running unless asked', () async {
-        final host = await hostInUse();
-        final tunnel = (await repo.getAllPortForwards()).single;
-        app.selectedServerId = host.id;
+        test('everything here lets go of it, and tmux keeps running unless asked', () async {
+          final host = await hostInUse();
+          final tunnel = (await repo.getAllPortForwards()).single;
+          app.selectedServerId = host.id;
 
-        await servers.deleteServer(host.id);
-        await Future<void>.delayed(Duration.zero);
+          await servers.deleteServer(host.id);
+          await Future<void>.delayed(Duration.zero);
 
-        expect(kills(), isEmpty);
-        expect(vm.sessions, isEmpty);
-        expect(vm.resumableSessions, isEmpty);
-        expect(await repo.getPersistentSessions(), isEmpty);
-        expect(await repo.getAllServers(), isEmpty);
-        expect(tunnels.stopped, [tunnel.id]);
-        expect(ssh.forgotten.single.host, host.host);
-        expect(await trust.hasPinnedKey(host.host, host.port), isFalse);
-        expect(app.selectedServerId, isNull);
-        expect(vm.error, isNull);
-      });
+          expect(kills(), isEmpty);
+          expect(vm.sessions, isEmpty);
+          expect(vm.resumableSessions, isEmpty);
+          expect(await repo.getPersistentSessions(), isEmpty);
+          expect(await repo.getAllServers(), isEmpty);
+          expect(tunnels.stopped, [tunnel.id]);
+          expect(ssh.forgotten.single.host, host.host);
+          expect(await trust.hasPinnedKey(host.host, host.port), isFalse);
+          expect(app.selectedServerId, isNull);
+          expect(vm.error, isNull);
+        });
 
-      test('asked to, it ends each of its tmux sessions on the server', () async {
-        final host = await hostInUse();
-        final names = vm.tmuxSessionsOnHosts({host.id}).map((s) => s.tmuxName).toList();
-        ssh.execAnswers['kill-session'] = '';
-        ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionAbsentMarker;
+        test('asked to, it ends each of its tmux sessions on the server', () async {
+          final host = await hostInUse();
+          final names = vm.tmuxSessionsOnHosts({host.id}).map((s) => s.tmuxName).toList();
+          ssh.execAnswers['kill-session'] = '';
+          ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionAbsentMarker;
 
-        await servers.deleteServer(host.id, endTmuxSessions: true);
+          await servers.deleteServer(host.id, endTmuxSessions: true);
 
-        expect(kills(), hasLength(2));
-        for (final name in names) {
-          expect(kills().where((c) => c.contains(name)), hasLength(1));
-        }
-        expect(vm.error, isNull);
-      });
+          expect(kills(), hasLength(2));
+          for (final name in names) {
+            expect(kills().where((c) => c.contains(name)), hasLength(1));
+          }
+          expect(vm.error, isNull);
+        });
 
-      test('a session tmux will not confirm gone is reported on the Shell tab', () async {
-        final host = await hostInUse();
-        ssh.execAnswers['kill-session'] = '';
-        ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionPresentMarker;
+        test('a session tmux will not confirm gone is reported on the Shell tab', () async {
+          final host = await hostInUse();
+          ssh.execAnswers['kill-session'] = '';
+          ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionPresentMarker;
 
-        await servers.deleteServer(host.id, endTmuxSessions: true);
+          await servers.deleteServer(host.id, endTmuxSessions: true);
 
-        expect(await repo.getAllServers(), isEmpty, reason: 'the host is deleted regardless');
-        expect(
-          vm.error,
-          'Host deleted locally, but at least one remote tmux session could not be confirmed '
-          'stopped.',
-        );
-      });
-
-      test('a bulk delete says hosts, and leaves multi-select', () async {
-        final host = await hostInUse();
-        ssh.execAnswers['kill-session'] = 'SSH Error: connection refused';
-        servers.isMultiSelectMode = true;
-        servers.toggleBulkSelection(host.id);
-
-        await servers.deleteSelectedServers(endTmuxSessions: true);
-
-        expect(servers.isMultiSelectMode, isFalse);
-        expect(await repo.getAllServers(), isEmpty);
-        expect(
-          vm.error,
-          'Hosts deleted locally, but at least one remote tmux session could not be confirmed '
-          'stopped.',
-        );
-      });
-
-      test('another host at the same address keeps the trusted keys', () async {
-        final host = await hostInUse();
-        await repo.insertServer(server(name: 'nas-admin'));
-
-        await servers.deleteServer(host.id);
-
-        expect(await trust.hasPinnedKey(host.host, host.port), isTrue);
-      });
-
-      test('keeping one host for the free plan ends the others\' tmux when asked', () async {
-        final host = await hostInUse();
-        final keep = await repo.insertServer(
-          server(name: 'kept', authType: 'key', authKeyAlias: 'kept-key'),
-        );
-        for (final alias in ['kept-key', 'orphan-key']) {
-          await repo.insertKey(
-            SshKey(
-              id: 0,
-              alias: alias,
-              keyType: 'ed25519',
-              privateKey: 'k',
-              publicKey: 'p',
-              fingerprint: '',
-            ),
+          expect(await repo.getAllServers(), isEmpty, reason: 'the host is deleted regardless');
+          expect(
+            vm.error,
+            'Host deleted locally, but at least one remote tmux session could not be confirmed '
+            'stopped.',
           );
-        }
-        await Future<void>.delayed(Duration.zero);
-        ssh.execAnswers['kill-session'] = '';
-        ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionPresentMarker;
+        });
 
-        expect(await servers.reconcileHostLimit({keep}, endTmuxSessions: true), 1);
+        test('a bulk delete says hosts, and leaves multi-select', () async {
+          final host = await hostInUse();
+          ssh.execAnswers['kill-session'] = 'SSH Error: connection refused';
+          servers.isMultiSelectMode = true;
+          servers.toggleBulkSelection(host.id);
 
-        expect((await repo.getAllServers()).map((s) => s.id), [keep]);
-        expect((await repo.getAllKeys()).map((k) => k.alias), ['kept-key']);
-        expect(kills(), hasLength(2));
-        expect(app.selectedServerId, keep);
-        expect(await trust.hasPinnedKey(host.host, host.port), isTrue, reason: 'same address');
-        expect(
-          vm.error,
-          'Hosts removed locally, but at least one remote tmux session could not be confirmed '
-          'stopped.',
+          await servers.deleteSelectedServers(endTmuxSessions: true);
+
+          expect(servers.isMultiSelectMode, isFalse);
+          expect(await repo.getAllServers(), isEmpty);
+          expect(
+            vm.error,
+            'Hosts deleted locally, but at least one remote tmux session could not be confirmed '
+            'stopped.',
+          );
+        });
+
+        test('another host at the same address keeps the trusted keys', () async {
+          final host = await hostInUse();
+          await repo.insertServer(server(name: 'nas-admin'));
+
+          await servers.deleteServer(host.id);
+
+          expect(await trust.hasPinnedKey(host.host, host.port), isTrue);
+        });
+
+        test('keeping one host for the free plan ends the others\' tmux when asked', () async {
+          final host = await hostInUse();
+          final keep = await repo.insertServer(
+            server(name: 'kept', authType: 'key', authKeyAlias: 'kept-key'),
+          );
+          for (final alias in ['kept-key', 'orphan-key']) {
+            await repo.insertKey(
+              SshKey(
+                id: 0,
+                alias: alias,
+                keyType: 'ed25519',
+                privateKey: 'k',
+                publicKey: 'p',
+                fingerprint: '',
+              ),
+            );
+          }
+          await Future<void>.delayed(Duration.zero);
+          ssh.execAnswers['kill-session'] = '';
+          ssh.execAnswers[tmuxSessionUnknownMarker] = tmuxSessionPresentMarker;
+
+          expect(await servers.reconcileHostLimit({keep}, endTmuxSessions: true), 1);
+
+          expect((await repo.getAllServers()).map((s) => s.id), [keep]);
+          expect((await repo.getAllKeys()).map((k) => k.alias), ['kept-key']);
+          expect(kills(), hasLength(2));
+          expect(app.selectedServerId, keep);
+          expect(await trust.hasPinnedKey(host.host, host.port), isTrue, reason: 'same address');
+          expect(
+            vm.error,
+            'Hosts removed locally, but at least one remote tmux session could not be confirmed '
+            'stopped.',
+          );
+        });
+      });
+
+      group('editing it', () {
+        // Kotlin's `updateServer`: a new name shows everywhere the host is named, and a host now at
+        // another address is measured afresh and reached there from then on.
+        test(
+          'a new name shows on its sessions and saved rows, and nothing is remeasured',
+          () async {
+            final host = await hostInUse();
+            tunnels.active.add((await repo.getAllPortForwards()).single.id);
+
+            final notice = await servers.updateServer(host.copyWith(name: 'vault'));
+
+            expect(notice, isNull, reason: 'the tunnel connects exactly as before');
+            expect(vm.sessions.map((s) => s.serverName), everyElement('vault'));
+            expect(vm.resumableSessions.map((r) => r.serverName), everyElement('vault'));
+            expect(
+              (await repo.getPersistentSessions()).map((r) => r.serverName),
+              everyElement('vault'),
+            );
+            final saved = (await repo.getAllServers()).single;
+            expect(saved.healthScore, host.healthScore);
+            expect(saved.status, host.status);
+            expect(app.metricsErrorFor(host.id), isNull);
+            expect(probed, isEmpty);
+          },
         );
+
+        test('a new address is measured afresh, not shown with the old one\'s health', () async {
+          final host = await hostInUse();
+
+          await servers.updateServer(host.copyWith(host: '10.0.0.2'));
+
+          final saved = (await repo.getAllServers()).single;
+          expect(saved.healthScore, -1);
+          expect(saved.status, 'connecting');
+          expect(
+            app.metricsErrorFor(host.id),
+            'Host address changed. Waiting for current metrics.',
+          );
+          expect(probed.single.host, '10.0.0.2');
+          expect(ssh.forgotten.single.host, '10.0.0.1', reason: 'the old pooled connection');
+        });
+
+        test('running tunnels still on the old settings are pointed out', () async {
+          final host = await hostInUse();
+          await repo.insertPortForward(
+            PortForwardsCompanion.insert(serverId: host.id, name: 'db', bindPort: 5432),
+          );
+          final forwards = await repo.getAllPortForwards();
+          tunnels.active.add(forwards.first.id);
+
+          expect(
+            await servers.updateServer(host.copyWith(username: 'admin')),
+            '1 running tunnel still uses the previous connection settings. Restart it to apply '
+            'the changes.',
+          );
+          tunnels.active.addAll(forwards.map((f) => f.id));
+          expect(
+            await servers.updateServer(host.copyWith(username: 'root')),
+            '2 running tunnels still use the previous connection settings. Restart them to apply '
+            'the changes.',
+          );
+        });
+
+        test('a dropped session reconnects to where the host is now', () async {
+          ssh = FakeShellTransport();
+          vm = await start(ssh: ssh);
+          servers = ServersViewModel(app, transport: ssh, shell: () => vm);
+          await repo.insertServer(server(name: 'nas'));
+          await Future<void>.delayed(Duration.zero);
+          final host = (await repo.getAllServers()).single;
+          await vm.connect(host);
+          final session = vm.current!;
+
+          await servers.updateServer(host.copyWith(port: 2222));
+          await ssh.opened.single.dropConnection();
+          await until(() => ssh.opened.length == 2 && session.isOpen);
+
+          expect(ssh.openedWith.last.port, 2222);
+          expect(vm.current, same(session));
+        });
       });
     });
 

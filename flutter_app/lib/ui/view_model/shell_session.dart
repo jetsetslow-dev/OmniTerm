@@ -54,7 +54,9 @@ class ShellSession extends ChangeNotifier {
 
   final String id;
   final int serverId;
-  final String serverName;
+
+  /// The host's name, kept current when the host is renamed.
+  String serverName;
 
   /// When this session was opened, for the age shown beside it.
   ///

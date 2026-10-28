@@ -322,9 +322,60 @@ class ServersViewModel extends ChangeNotifier {
     return id;
   }
 
-  Future<void> updateServer(Server server) async {
+  /// Saves an edited host, as Kotlin's `updateServer`. Its sessions show its new name, and its
+  /// pooled connection is dropped so the next one uses the new settings. A host now at another
+  /// address or port is measured afresh rather than showing the old machine's health. Returns a
+  /// notice when running tunnels still use the previous settings.
+  Future<String?> updateServer(Server server) async {
+    final previous = await _app.repository.getServerById(server.id);
+    final previousCreds = previous == null ? null : await _credentialsOrNull(previous);
     await _app.repository.saveUniqueServer(server, update: true);
+    // Keeps a launcher shortcut's label in step with a rename.
     await shortcuts?.pushServer(server);
+    if (previousCreds != null) transport?.forgetCredentials(previousCreds);
+    final creds = await _credentialsOrNull(server);
+    final moved =
+        previous != null && (previous.host != server.host || previous.port != server.port);
+    await shell?.call().hostEdited(server, moved: moved);
+    if (moved) {
+      // Health, metrics and sparklines describe the old address. Measure the new one.
+      _app.setMetricsError(server.id, 'Host address changed. Waiting for current metrics.');
+      await _app.repository.updateHealthScore(server.id, -1);
+      await _app.repository.updateReachability(server.id, 'connecting', 0);
+      final updated = await _app.repository.getServerById(server.id);
+      final probe = probeHost;
+      if (updated != null && probe != null) unawaited(probe(updated));
+    }
+    final tunnels = this.tunnels;
+    if (creds == previousCreds || tunnels == null) return null;
+    final running = (await _app.repository.getAllPortForwards())
+        .where((forward) => forward.serverId == server.id && tunnels.isActive(forward.id))
+        .length;
+    return switch (running) {
+      0 => null,
+      1 =>
+        '1 running tunnel still uses the previous connection settings. Restart it to apply the '
+            'changes.',
+      _ =>
+        '$running running tunnels still use the previous connection settings. Restart them to '
+            'apply the changes.',
+    };
+  }
+
+  /// Why online [serverId] has no current metrics, if there is a reason to give.
+  String? metricsErrorFor(int serverId) => _app.metricsErrorFor(serverId);
+
+  /// [server]'s SSH credentials, or null when its saved settings cannot make any.
+  Future<SshCredentials?> _credentialsOrNull(Server server) async {
+    try {
+      return resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+    } on CredentialResolutionException {
+      return null;
+    }
   }
 
   /// How many tmux sessions deleting [serverIds] would leave running, for the delete dialog's
@@ -377,16 +428,8 @@ class ServersViewModel extends ChangeNotifier {
     required bool endTmuxSessions,
     required List<Server> remaining,
   }) async {
-    SshCredentials? creds;
-    try {
-      creds = resolveCredentials(
-        server,
-        keys: await _app.repository.getAllKeys(),
-        profiles: await _app.repository.getAllProfiles(),
-      );
-    } on CredentialResolutionException {
-      // Nothing can have connected without credentials, so there is nothing pooled to drop.
-    }
+    // Nothing can have connected without credentials, so without any there is nothing to drop.
+    final creds = await _credentialsOrNull(server);
     final unconfirmed =
         await shell?.call().releaseHost(server, endTmuxSessions: endTmuxSessions) ?? false;
     final tunnels = this.tunnels;

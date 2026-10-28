@@ -156,8 +156,17 @@ void main() {
     await repo.insertServer(server(name: 'unmeasured', status: 'online', authStatus: 'ok'));
     await pump(tester);
     expect(find.text('100'), findsNothing);
-    expect(find.text('—'), findsWidgets);
-    expect(find.text('Metrics unavailable · Refresh to retry'), findsOneWidget);
+    // As Kotlin: a waiting line rather than a row of empty gauges.
+    expect(find.text('Waiting for verified metrics…'), findsOneWidget);
+    expect(find.text('CPU'), findsNothing);
+  });
+
+  testWidgets('an online row without metrics says why when there is a reason', (tester) async {
+    final id = await repo.insertServer(server(name: 'moved', status: 'online', authStatus: 'ok'));
+    app.setMetricsError(id, 'Host address changed. Waiting for current metrics.');
+    await pump(tester);
+    expect(find.text('Host address changed. Waiting for current metrics.'), findsOneWidget);
+    expect(find.text('Waiting for verified metrics…'), findsNothing);
   });
 
   // Bulk delete removes host connections *and their saved credentials*, and the screen says it

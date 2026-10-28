@@ -235,6 +235,8 @@ Future<void> openServerForm(
   final aliases = (await vm.savedKeyAliases()).toList();
   final profiles = await vm.savedProfiles();
   if (!context.mounted) return;
+  // Captured now: the sheet has closed by the time an edit's notice is ready to show.
+  final messenger = ScaffoldMessenger.maybeOf(context);
   // Kotlin's free-tier credential limit (profiles + keys) also gates "Save securely to Credential
   // Store". Absent in tests and source builds, where there is no limit.
   bool credentialLimitReached() {
@@ -260,13 +262,18 @@ Future<void> openServerForm(
       existingServers: vm.servers,
       savedKeyAliases: aliases,
       savedProfiles: profiles,
-      onSave: (server, {createProfile = false}) => mode == ServerFormMode.edit
-          ? vm.updateServer(server)
-          : vm.saveServer(
-              server,
-              createProfile: createProfile,
-              credentialLimitReached: credentialLimitReached(),
-            ),
+      onSave: (server, {createProfile = false}) async {
+        if (mode != ServerFormMode.edit) {
+          await vm.saveServer(
+            server,
+            createProfile: createProfile,
+            credentialLimitReached: credentialLimitReached(),
+          );
+          return;
+        }
+        final notice = await vm.updateServer(server);
+        if (notice != null) messenger?.showSnackBar(SnackBar(content: Text(notice)));
+      },
       onTestConnection: vm.canTestConnections ? vm.testConnection : null,
     ),
   );
@@ -766,40 +773,41 @@ class _ServerCard extends StatelessWidget {
             if (server.status == 'online' && server.authStatus == 'failed')
               _AuthFailure(server: server, onRetry: () => hostProbe?.probeOne(server))
             else if (server.status == 'online') ...[
+              // Kotlin draws no metric row until there are metrics to put in it.
               if (metrics == null) ...[
-                const Text(
-                  'Metrics unavailable · Refresh to retry',
-                  style: TextStyle(color: OmniColors.textMuted),
+                Text(
+                  vm.metricsErrorFor(server.id) ?? 'Waiting for verified metrics…',
+                  style: const TextStyle(color: OmniColors.textMuted, fontSize: 12),
                 ),
                 _MetricRetryButton(server: server, telemetry: telemetry, probe: hostProbe),
-              ],
-              Row(
-                children: [
-                  Expanded(
-                    child: _MiniMetric(label: 'CPU', value: metrics?.cpuPercent),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _MiniMetric(label: 'RAM', value: metrics?.memPercent),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _MiniMetric(label: 'DISK', value: metrics?.diskPercent),
-                  ),
-                  if (metrics?.cpuTempC case final temp?) ...[
+              ] else
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MiniMetric(label: 'CPU', value: metrics?.cpuPercent),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: _MiniMetric(
-                        label: 'TEMP',
-                        value: temp,
-                        display:
-                            '${celsiusToDisplay(temp, vm.measurementSystem).round()}'
-                            '${temperatureUnit(vm.measurementSystem)}',
-                      ),
+                      child: _MiniMetric(label: 'RAM', value: metrics?.memPercent),
                     ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _MiniMetric(label: 'DISK', value: metrics?.diskPercent),
+                    ),
+                    if (metrics?.cpuTempC case final temp?) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _MiniMetric(
+                          label: 'TEMP',
+                          value: temp,
+                          display:
+                              '${celsiusToDisplay(temp, vm.measurementSystem).round()}'
+                              '${temperatureUnit(vm.measurementSystem)}',
+                        ),
+                      ),
+                    ],
                   ],
-                ],
-              ),
+                ),
               const SizedBox(height: 8),
               Wrap(
                 alignment: WrapAlignment.spaceBetween,

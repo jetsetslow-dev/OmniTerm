@@ -399,6 +399,9 @@ class AppRepository {
   Future<void> deletePersistentSessionsForServer(int serverId) =>
       _db.appDataDao.deletePersistentSessionsForServer(serverId);
 
+  Future<void> renamePersistentSessionsForServer(int serverId, String serverName) =>
+      _db.appDataDao.renamePersistentSessionsForServer(serverId, serverName);
+
   // ── the encrypt/decrypt boundary ───────────────────────────────────────────
   //
   // `decrypt` returns null for a value that is not encrypted at all, which the `?? ''` fallbacks

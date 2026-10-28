@@ -183,7 +183,9 @@ class ShellViewModel extends ChangeNotifier {
     TerminalSession? replacement;
     var adopted = false;
     try {
-      final creds = _sessionCredentials[session]!;
+      final creds = await _reconnectCredentials(session);
+      if (!_ownsReconnect(session, run)) return;
+      if (creds == null) throw StateError('No credentials to reconnect with.');
       final ssh = transport!;
       final name = session.tmuxName;
       if (name != null) {
@@ -232,6 +234,8 @@ class ShellViewModel extends ChangeNotifier {
       _reconnectRuns.remove(session);
       adopted = session.reconnectWith(replacement);
       if (!adopted) return;
+      // Side channels now reach the machine this shell reconnected to.
+      _sessionCredentials[session] = creds;
       final server = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
       if (server != null) unawaited(markReachable?.call(server) ?? Future<void>.value());
       _syncReachabilityEvidence();
@@ -256,6 +260,56 @@ class ShellViewModel extends ChangeNotifier {
         }
       }
     }
+  }
+
+  /// Credentials a reconnect uses: the host's current settings, so an edit made while the session
+  /// was connected applies on its next reconnect. Falls back to what it connected with when the
+  /// host has no saved entry to read. Kotlin's `reconnectCredentials`.
+  Future<SshCredentials?> _reconnectCredentials(ShellSession session) async {
+    final server = await _app.repository.getServerById(session.serverId);
+    if (server != null) {
+      try {
+        return resolveCredentials(
+          server,
+          keys: await _app.repository.getAllKeys(),
+          profiles: await _app.repository.getAllProfiles(),
+        );
+      } on CredentialResolutionException {
+        // Fall back to what the session connected with, as Kotlin does.
+      }
+    }
+    return _sessionCredentials[session];
+  }
+
+  /// The terminal half of Kotlin's `updateServer` after [server] was edited. Its open sessions,
+  /// their notification and its saved tmux sessions show its new name; the tmux sessions on the
+  /// server keep their own names, which never contain the host's and are what other devices
+  /// reattach by. Side channels (tmux history, copy mode) take its new credentials only when it
+  /// has not [moved], since its shells are still on the old machine; reconnects read the host's
+  /// current settings either way.
+  Future<void> hostEdited(Server server, {required bool moved}) async {
+    final open = _sessions.where((s) => s.serverId == server.id).toList();
+    final renamed = open.where((s) => s.serverName != server.name).toList();
+    for (final session in renamed) {
+      session.serverName = server.name;
+    }
+    await _app.repository.renamePersistentSessionsForServer(server.id, server.name);
+    if (!moved) {
+      try {
+        final creds = resolveCredentials(
+          server,
+          keys: await _app.repository.getAllKeys(),
+          profiles: await _app.repository.getAllProfiles(),
+        );
+        for (final session in open) {
+          if (_sessionCredentials.containsKey(session)) _sessionCredentials[session] = creds;
+        }
+      } on CredentialResolutionException {
+        // Nothing usable to switch to; the sessions keep what they connected with.
+      }
+    }
+    if (renamed.isNotEmpty) unawaited(_syncBackgroundSessions());
+    await _reloadSaved();
   }
 
   void _finishReconnect(ShellSession session, _ReconnectRun run, String message) {

@@ -210,6 +210,12 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   Future<void> deletePersistentSessionsForServer(int serverId) =>
       (delete(persistentSessions)..where((s) => s.serverId.equals(serverId))).go();
 
+  /// Kotlin's `PersistentSessionDao.renameServer`: the host name each saved session shows.
+  Future<void> renamePersistentSessionsForServer(int serverId, String serverName) =>
+      (update(persistentSessions)..where((s) => s.serverId.equals(serverId))).write(
+        PersistentSessionsCompanion(serverName: Value(serverName)),
+      );
+
   Future<void> deletePersistentSessionsExceptServers(List<int> keepServerIds) =>
       (delete(persistentSessions)..where((s) => s.serverId.isNotIn(keepServerIds))).go();
 }

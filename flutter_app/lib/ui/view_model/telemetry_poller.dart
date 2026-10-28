@@ -37,6 +37,7 @@ class TelemetryPoller extends ChangeNotifier {
        _clock = clock ?? DateTime.now {
     _lastConfiguredInterval = effectiveInterval;
     _app.addListener(_onAppChanged);
+    _app.onHostForgotten.add(_forgetHost);
   }
 
   final AppState _app;
@@ -245,6 +246,17 @@ class TelemetryPoller extends ChangeNotifier {
   /// Without this, deleting a host leaves its counters, samples and history in memory for the life
   /// of the process, and a **new host that reuses the freed row id inherits them** — its first
   /// sample would be measured against a machine it has never met.
+  /// Drops what was measured on a host that was deleted or now points at another machine, so its
+  /// next sample is not measured against counters from a machine it has never met. Kotlin's
+  /// `forgetTelemetryFor`.
+  void _forgetHost(int serverId) {
+    _expiryTimers.remove(serverId)?.cancel();
+    _metrics.remove(serverId);
+    _baselines.remove(serverId);
+    _history.remove(serverId);
+    _safeNotify();
+  }
+
   void _forgetVanishedHosts() {
     final live = _app.servers.map((s) => s.id).toSet();
     _metrics.removeWhere((id, _) => !live.contains(id));
@@ -376,6 +388,7 @@ class TelemetryPoller extends ChangeNotifier {
     );
 
     _app.noteSeen(server.id, at.millisecondsSinceEpoch);
+    _app.clearMetricsError(server.id);
     await _app.repository.insertMetric(
       MetricHistoryCompanion.insert(
         serverId: server.id,
@@ -417,6 +430,7 @@ class TelemetryPoller extends ChangeNotifier {
     _expiryTimers.clear();
     stop();
     _app.removeListener(_onAppChanged);
+    _app.onHostForgotten.remove(_forgetHost);
     super.dispose();
   }
 }

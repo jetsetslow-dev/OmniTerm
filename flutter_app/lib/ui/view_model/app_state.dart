@@ -191,6 +191,22 @@ class AppState extends ChangeNotifier {
 
   final Map<int, int> _lastSeenAt = {};
 
+  final Map<int, String> _metricsErrors = {};
+
+  /// Why online [serverId] has no current metrics, when there is a reason to give; the Hosts card
+  /// shows it in place of "Waiting for verified metrics…". Kotlin's `metricsErrorsById`.
+  String? metricsErrorFor(int serverId) => _metricsErrors[serverId];
+
+  void setMetricsError(int serverId, String reason) {
+    _metricsErrors[serverId] = reason;
+    notifyListeners();
+  }
+
+  /// Called when a sample arrives, which answers whatever was being waited for.
+  void clearMetricsError(int serverId) {
+    if (_metricsErrors.remove(serverId) != null) notifyListeners();
+  }
+
   /// When OmniTerm last had metrics or a working SSH connection from [serverId], in epoch
   /// milliseconds, for an offline host's "Last seen" line; null when it never has. Kotlin's
   /// `lastSeenAt`: seeded from stored metrics, so it survives a restart for as long as they are kept.
@@ -219,6 +235,8 @@ class AppState extends ChangeNotifier {
     for (final before in previous) {
       final after = now[before.id];
       if (after != null && after.host == before.host && after.port == before.port) continue;
+      // A moved host keeps the reason it is waiting for metrics; a deleted one has nothing left.
+      if (after == null) _metricsErrors.remove(before.id);
       _osByServer.remove(before.id);
       _lastSeenAt.remove(before.id);
       for (final listener in onHostForgotten) {

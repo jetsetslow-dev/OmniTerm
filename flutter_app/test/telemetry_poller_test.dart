@@ -241,6 +241,33 @@ void main() {
   });
 
   group('what a cycle produces', () {
+    test(
+      'a host moved to another address starts over, and its first sample ends the wait',
+      () async {
+        final id = await repo.insertServer(server(name: 'a'));
+        await app.start();
+        await settle();
+        final poller = TelemetryPoller(
+          app,
+          transport: RecordingTransport(fallback: metricsReply(memUsedPct: 50)),
+        );
+        await poller.cycle();
+        expect(poller.historyForServer(id), hasLength(1));
+
+        await repo.saveUniqueServer(app.servers.single.copyWith(host: '10.0.0.2'), update: true);
+        app.setMetricsError(id, 'Host address changed. Waiting for current metrics.');
+        await settle();
+        expect(poller.metricsForServer(id), isNull);
+        expect(poller.historyForServer(id), isEmpty);
+        expect(app.metricsErrorFor(id), 'Host address changed. Waiting for current metrics.');
+
+        await poller.cycle();
+        expect(poller.metricsForServer(id), isNotNull);
+        expect(app.metricsErrorFor(id), isNull);
+        poller.dispose();
+      },
+    );
+
     test('a sample the screens can read, and a history row for the charts', () async {
       final id = await repo.insertServer(server(name: 'a'));
       await app.start();
