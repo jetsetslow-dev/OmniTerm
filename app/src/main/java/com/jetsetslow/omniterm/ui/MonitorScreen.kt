@@ -105,12 +105,11 @@ fun MonitorScreen(viewModel: AppViewModel) {
             edgePadding = 12.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
-            val tabs = listOf("Overview", "Processes", "Services", "Logs", "Scripts", "CRON")
-            tabs.forEachIndexed { idx, title ->
+            MonitorTab.entries.forEachIndexed { idx, tab ->
                 Tab(
                     selected = viewModel.activeMonitorTab == idx,
                     onClick = { viewModel.activeMonitorTab = idx }
-                ) { Text(title, fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp), fontWeight = FontWeight.SemiBold) }
+                ) { Text(tab.label, fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp), fontWeight = FontWeight.SemiBold) }
             }
         }
 
@@ -121,13 +120,14 @@ fun MonitorScreen(viewModel: AppViewModel) {
                 .weight(1f)
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            when (viewModel.activeMonitorTab) {
-                0 -> OverviewTab(viewModel, srv)
-                1 -> ProcessesTab(viewModel, srv)
-                2 -> ServicesTab(viewModel, srv)
-                3 -> LogsTab(viewModel)
-                4 -> QuickScriptsMonitorTab(viewModel, srv)
-                5 -> CronMonitorTab(viewModel, srv)
+            when (MonitorTab.entries.getOrNull(viewModel.activeMonitorTab)) {
+                MonitorTab.Overview, null -> OverviewTab(viewModel, srv)
+                MonitorTab.Specs -> SpecsTab(viewModel, srv)
+                MonitorTab.Processes -> ProcessesTab(viewModel, srv)
+                MonitorTab.Services -> ServicesTab(viewModel, srv)
+                MonitorTab.Logs -> LogsTab(viewModel)
+                MonitorTab.Scripts -> QuickScriptsMonitorTab(viewModel, srv)
+                MonitorTab.Cron -> CronMonitorTab(viewModel, srv)
             }
         }
 

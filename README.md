@@ -9,7 +9,7 @@ OmniTerm is a native Android app for running your homelab and servers from a pho
 - **Network shares** — browse and manage files on **SMB, FTP, SFTP, and WebDAV** shares with LAN discovery and saved profiles, at full parity with the SFTP tab (multi-select, search, sort, in-app editing). **Cross-protocol copy/paste** streams multi-GB files between shares, or between a share and an SSH host, in either direction.
 - **Network tools** — one tabbed screen: Host Scan, Wake-on-LAN, Ping, Traceroute, Port Scanner, **DNS Lookup**, **WHOIS**, **Speed Test**, and **SSH Tunnels** (port forwarding).
 - **Docker & Podman** — containers, stacks, images, and volumes; per-container **live stats** and one-tap **exec-into-shell**; a visual **Compose Builder** with validate-before-deploy.
-- **Live monitoring** — CPU, memory, disk, load, uptime, temperature, per-core usage, network/disk I/O rates, SMART health, and process/service/log/cron views.
+- **Live monitoring** — CPU, memory, disk, load, uptime, temperature, per-core usage, network/disk I/O rates, SMART health, a detailed hardware and software spec sheet, and process/service/log/cron views.
 - **Fleet Broadcast** — run a command across many hosts or groups at once with live per-host output.
 - **Scripts, alerts, cron, and Wake-on-LAN** management.
 - **Encrypted, selective backups** (AES-256-GCM) of your app data.
@@ -59,7 +59,7 @@ The first-run flow walks you through creating a server. Authenticate with a pass
 
 Groups make Fleet Broadcast targeting easier; host colors help you tell servers apart across sessions and dashboards. Use the host picker on operational screens to switch the active server, or **swipe left/right** to move between tabs and subtabs outside the terminal. A pull-to-refresh re-checks hosts without moving the picker off the one you are looking at.
 
-The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), and **Copy SSH command** (including its jump host or proxy). Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Select several hosts to delete them together, optionally ending their tmux sessions too.
+The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), **Copy SSH command** (including its jump host or proxy), and **System specs**. Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Select several hosts to delete them together, optionally ending their tmux sessions too.
 
 ### Terminal
 Open **Term** for an interactive SSH shell on the selected host.
@@ -110,6 +110,8 @@ Open **Network** for a tabbed suite of diagnostics:
 
 ### Monitoring
 Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, process count, temperature, per-core usage, and network/disk I/O rates — plus disk mounts with SMART health, and process/service/log/scripts/cron views (including visual cron schedule management). On Linux hosts the process list also shows how fast each process is reading and writing to disk and, on hosts with an AMD, Intel or NVIDIA graphics card, how much of the GPU it is using. You can sort by either.
+
+The **Specs** tab (also under **⋮ → System specs** on the Hosts list) lists the host's hardware and software in collapsible sections: system and firmware, processor, memory, storage, graphics and network. It works on Linux, FreeBSD, macOS and Windows hosts, and the copy button copies the whole sheet. A few details — each memory module's size, speed and part number, and each drive's health, temperature and wear — can only be read with administrator rights, so OmniTerm never asks for them on its own: tap **Read with sudo** to fetch them using the sudo password saved for that host.
 
 ### Docker, Podman & stacks
 Open **Infra** to manage containers, compose stacks, images, and volumes (Docker and Podman are detected automatically).

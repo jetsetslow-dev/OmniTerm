@@ -330,6 +330,26 @@ internal fun sshCommandFor(srv: ServerEntity, username: String): String {
 }
 
 data class HostCheckRequest(val server: ServerEntity, val kind: HostCheck)
+
+/** Monitor's sub-tabs in the order shown. [AppViewModel.activeMonitorTab] indexes this list. */
+enum class MonitorTab(val label: String) {
+    Overview("Overview"),
+    Specs("Specs"),
+    Processes("Processes"),
+    Services("Services"),
+    Logs("Logs"),
+    Scripts("Scripts"),
+    Cron("CRON"),
+}
+
+/** What the specs screens show for one host: the last read, and whether another is under way. */
+data class SystemSpecsState(
+    val specs: SystemSpecs? = null,
+    val loading: Boolean = false,
+    val error: String? = null,
+    /** The last read used sudo, so a refresh does too. */
+    val elevated: Boolean = false,
+)
 private const val RECONNECT_MAX_DELAY_MS = 30_000L
 private const val RECONNECT_MAX_ATTEMPTS = 12
 
@@ -1232,7 +1252,8 @@ class AppViewModel @JvmOverloads constructor(
     var selectedGroupChip by mutableStateOf<String?>("All")
 
     // MONITOR SCREEN METRIC HISTORY & EXPANSION STATE
-    var activeMonitorTab by mutableStateOf(0) // 0: Overview, 1: Process, 2: Services, 3: Logs
+    /** Index into [MonitorTab.entries]. */
+    var activeMonitorTab by mutableStateOf(0)
     var processSort by mutableStateOf(ProcessSort.Cpu)
     var expandedProcessPid by mutableStateOf<Int?>(null)
     var logFilterType by mutableStateOf("ALL")
@@ -1271,7 +1292,7 @@ class AppViewModel @JvmOverloads constructor(
                     fleetLogSemaphore.withPermit {
                         val srv = repository.getServerById(srvId) ?: return@launch
                         if (srv.status != "online") return@launch
-                        val out = executeSshCommand(srv, RemoteCommands.journal(200, osByServer[srv.id].orEmpty()))
+                        val out = executeSshCommand(srv, RemoteCommands.journal(200, hostOs(srv)))
                         val entries = RemoteParsers.parseFleetJournal(out, srv.name, srv.id)
                         allEntries.addAll(entries)
                     }
@@ -2525,6 +2546,19 @@ class AppViewModel @JvmOverloads constructor(
     // Per-host caches touched by the concurrent telemetry probes (distinct keys per host, but
     // concurrent resizes still demand thread-safe maps).
     private val osByServer = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /**
+     * The host's OS family ([RemoteCommands.normaliseOs]), asked once and then cached. Every
+     * command that differs per OS picks its variant from this, so none runs a Linux command on a
+     * BSD, macOS or Windows host just because the first metrics probe has not finished yet.
+     */
+    private suspend fun hostOs(srv: ServerEntity, preloadedProbe: String? = null): String =
+        osByServer[srv.id] ?: run {
+            val probe = preloadedProbe ?: executeSshCommand(srv, RemoteCommands.OS_PROBE)
+            val detected = RemoteCommands.normaliseOs(probe)
+            if (!probe.startsWith("SSH Error")) osByServer[srv.id] = detected
+            detected
+        }
     // Previous-poll raw counters per host, used to derive per-core CPU%, network, and disk-I/O rates.
     private val prevStatByServer = java.util.concurrent.ConcurrentHashMap<Int, Map<String, Pair<Long, Long>>>()
     private val prevNetByServer = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Map<String, Pair<Long, Long>>>>()
@@ -2771,12 +2805,7 @@ class AppViewModel @JvmOverloads constructor(
         // host happens to be selected when the (slow) probe finally completes.
         val activeServerId = selectedServerId
         // Detect the remote OS once per host (cached), then run the matching metrics probe.
-            val os = osByServer[srv.id] ?: run {
-                val probe = preloadedOsProbe ?: executeSshCommand(srv, RemoteCommands.OS_PROBE)
-                val detected = RemoteCommands.normaliseOs(probe)
-                if (!probe.startsWith("SSH Error")) osByServer[srv.id] = detected
-                detected
-            }
+            val os = hostOs(srv, preloadedOsProbe)
             val raw = executeSshCommand(srv, RemoteCommands.metricsFor(os))
             if (raw.startsWith("SSH Error")) {
                 // A metrics command that timed out says nothing about authentication: this line is
@@ -3334,7 +3363,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Number of inner subtabs for a screen that supports horizontal subtab paging (0 = none). */
     private fun subtabCount(screen: Screen): Int = when (screen) {
-        Screen.Monitor -> if (servers.value.any { it.status == "online" }) 6 else 0
+        Screen.Monitor -> if (servers.value.any { it.status == "online" }) MonitorTab.entries.size else 0
         Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) 5 else 0
         Screen.Fleet -> 3
         Screen.SFTP -> 4
@@ -3511,12 +3540,13 @@ class AppViewModel @JvmOverloads constructor(
             Screen.Servers, Screen.Fleet -> refreshAllServers()
             // Monitor refreshes what the active subtab is actually showing, not just host metrics.
             Screen.Monitor -> pullSpin {
-                when (activeMonitorTab) {
-                    1 -> loadProcesses()
-                    2 -> loadServices()
-                    3 -> loadLogs(logFilterType)
-                    5 -> loadCron()
-                    else -> selectedServer?.let { refreshServer(it.id, markChecking = false) } // Overview / Scripts
+                when (MonitorTab.entries.getOrNull(activeMonitorTab)) {
+                    MonitorTab.Specs -> selectedServer?.let { loadSystemSpecs(it) }
+                    MonitorTab.Processes -> loadProcesses()
+                    MonitorTab.Services -> loadServices()
+                    MonitorTab.Logs -> loadLogs(logFilterType)
+                    MonitorTab.Cron -> loadCron()
+                    MonitorTab.Overview, MonitorTab.Scripts, null -> selectedServer?.let { refreshServer(it.id, markChecking = false) }
                 }
             }
             Screen.Infra -> pullSpin { loadDocker() }
@@ -4002,6 +4032,8 @@ class AppViewModel @JvmOverloads constructor(
         prevNetByServer.remove(serverId)
         prevDiskByServer.remove(serverId)
         osByServer.remove(serverId)
+        systemSpecsJobs.remove(serverId)?.cancel()
+        systemSpecs.remove(serverId)
         probedServerIds.remove(serverId)
         telemetryProbeMutexes.remove(serverId)
         activeProbes.remove(serverId)?.cancel()
@@ -7921,7 +7953,7 @@ class AppViewModel @JvmOverloads constructor(
             try {
                 // journalctl only exists on systemd hosts; pass the probed OS so BSD/macOS/Windows
                 // and non-systemd Linux get their own log source instead of silent empty output.
-                val raw = executeSshCommand(srv, RemoteCommands.journal(os = osByServer[srv.id].orEmpty()))
+                val raw = executeSshCommand(srv, RemoteCommands.journal(os = hostOs(srv)))
                 val all = RemoteParsers.parseJournal(raw)
                 if (srv.id != selectedServerId) return@launch
                 logsUnsupported = RemoteParsers.journalUnsupported(raw)
@@ -7940,7 +7972,7 @@ class AppViewModel @JvmOverloads constructor(
             metricsLoading = true
             try {
                 telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
-                val raw = executeSshCommand(srv, RemoteCommands.metricsFor(osByServer[srv.id].orEmpty()))
+                val raw = executeSshCommand(srv, RemoteCommands.metricsFor(hostOs(srv)))
                 val parsed = RemoteParsers.parseMetrics(raw, srv.name)
                 if (srv.id != selectedServerId) return@launch
                 if (!RemoteParsers.hasReliableHealthMetrics(raw, parsed)) {
@@ -7975,7 +8007,7 @@ class AppViewModel @JvmOverloads constructor(
         processesJob = viewModelScope.launch {
             processesLoading = true
             try {
-                val output = executeSshCommand(srv, RemoteCommands.processesFor(osByServer[srv.id].orEmpty()))
+                val output = executeSshCommand(srv, RemoteCommands.processesFor(hostOs(srv)))
                 val usage = RemoteParsers.parseProcessUsage(output)
                 val list = RemoteParsers.parseProcesses(output).map {
                     it.copy(disk = usage.disk[it.pid], gpu = usage.gpu[it.pid] ?: if (usage.gpuReported) 0f else null)
@@ -7998,6 +8030,54 @@ class AppViewModel @JvmOverloads constructor(
     fun sortProcessesBy(sort: ProcessSort) {
         processSort = sort
         processes = sortProcesses(processes, sort)
+    }
+
+    // ── SYSTEM SPECS (Monitor › Specs and the Hosts ⋮ menu) ──
+
+    /** Per host, kept for the session: specs change only when hardware or the OS does. */
+    val systemSpecs = mutableStateMapOf<Int, SystemSpecsState>()
+
+    /** The host whose specs the Hosts tab's pop-up shows, or null when it is closed. */
+    var systemSpecsHost by mutableStateOf<ServerEntity?>(null)
+        private set
+
+    private val systemSpecsJobs = mutableMapOf<Int, Job>()
+
+    /**
+     * Reads [srv]'s specs. [withSudo] also reads what needs root (memory modules, drive health)
+     * through sudo; a refresh after that keeps doing so, so the detail does not vanish again.
+     */
+    fun loadSystemSpecs(srv: ServerEntity, withSudo: Boolean = systemSpecs[srv.id]?.elevated == true) {
+        systemSpecsJobs[srv.id]?.cancel()
+        systemSpecs[srv.id] = (systemSpecs[srv.id] ?: SystemSpecsState()).copy(loading = true, error = null)
+        systemSpecsJobs[srv.id] = viewModelScope.launch {
+            try {
+                val os = hostOs(srv)
+                val password = if (withSudo) srv.sudoPassword else null
+                val output = executeSshCommand(srv, SystemSpecsCommands.forOs(os, password), stdin = password?.let { RemoteCommands.sudoStdin(it) })
+                systemSpecs[srv.id] = if (output.startsWith("SSH Error")) {
+                    (systemSpecs[srv.id] ?: SystemSpecsState()).copy(loading = false, error = output.removePrefix("SSH Error:").trim())
+                } else {
+                    SystemSpecsState(SystemSpecsParser.parse(os, output), elevated = withSudo)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                systemSpecs[srv.id] = (systemSpecs[srv.id] ?: SystemSpecsState()).copy(loading = false, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** Reads again with sudo, behind the same app-lock check as every other use of the saved password. */
+    fun readSystemSpecsWithSudo(srv: ServerEntity) = withSudoAuth(srv) { loadSystemSpecs(srv, withSudo = true) }
+
+    fun openSystemSpecs(srv: ServerEntity) {
+        systemSpecsHost = srv
+        if (systemSpecs[srv.id]?.specs == null && systemSpecs[srv.id]?.loading != true) loadSystemSpecs(srv)
+    }
+
+    fun closeSystemSpecs() {
+        systemSpecsHost = null
     }
 
     fun killProcess(pid: Int, signal: Int = 15) {

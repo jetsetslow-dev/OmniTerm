@@ -1169,4 +1169,26 @@
     <string name="gpu_2">"GPU"</string>
     <string name="disk_read_write_per_second">"Disk: read %1$s/s · write %2$s/s"</string>
     <string name="pinging">"Pinging %1$s…"</string>
+    <string name="system_specs">"System specs"</string>
+    <string name="spec_system">"System"</string>
+    <string name="spec_cpu">"Processor"</string>
+    <string name="spec_memory">"Memory"</string>
+    <string name="spec_storage">"Storage"</string>
+    <string name="spec_gpu">"Graphics"</string>
+    <string name="spec_network">"Network"</string>
+    <string name="spec_read_from">"Hardware and software of %1$s"</string>
+    <string name="uptime_label">"Uptime"</string>
+    <string name="copy_all_specs">"Copy all specs"</string>
+    <string name="refresh_specs">"Read specs again"</string>
+    <string name="reading_system_specs">"Reading system specs…"</string>
+    <string name="could_not_read_specs">"Could not read the specs: %1$s"</string>
+    <string name="some_specs_need_root">"Memory modules and drive health can only be read as root."</string>
+    <string name="read_with_sudo">"Read with sudo"</string>
+    <string name="sudo_refused">"sudo said: %1$s"</string>
+    <string name="save_a_sudo_password_for_specs">"No sudo password is saved for this host. Add one under Edit host, or allow dmidecode and smartctl without a password."</string>
+    <string name="spec_modules_need_root">"Each memory module's size, type, speed, maker and part number can only be read as root."</string>
+    <string name="spec_modules_tool_missing">"Install dmidecode on this host to see its memory modules."</string>
+    <string name="spec_no_modules_reported">"This host's firmware lists no memory modules. Virtual machines usually don't."</string>
+    <string name="spec_drive_health_needs_root">"Drive health, temperature, hours in use and wear can only be read as root."</string>
+    <string name="spec_drive_health_tool_missing">"Install smartmontools on this host to see drive health, temperature and wear."</string>
 </resources>

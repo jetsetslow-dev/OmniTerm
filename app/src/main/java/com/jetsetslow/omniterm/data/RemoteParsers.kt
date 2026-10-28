@@ -950,8 +950,8 @@ object RemoteCommands {
         append("echo free \$(sysctl -n vm.stats.vm.v_free_count 2>/dev/null); ")
         append("echo inactive \$(sysctl -n vm.stats.vm.v_inactive_count 2>/dev/null); ")
         append("echo cache \$(sysctl -n vm.stats.vm.v_cache_count 2>/dev/null); ")
-        append("echo '@DISK'; df -k / 2>/dev/null | tail -1 || true; ")
-        append("echo '@DISKS'; df -k 2>/dev/null | tail -n +2 || true; ")
+        append("echo '@DISK'; df -Pk / 2>/dev/null | tail -1 || true; ")
+        append("echo '@DISKS'; df -Pk 2>/dev/null | tail -n +2 || true; ")
         append("echo '@LOADAVG'; sysctl -n vm.loadavg 2>/dev/null || true; ")
         append("echo '@BOOT'; sysctl -n kern.boottime 2>/dev/null || true; ")
         append("echo '@NOW'; date +%s 2>/dev/null || true; ")
@@ -966,8 +966,9 @@ object RemoteCommands {
         append("echo '@CPU'; top -l1 -n0 2>/dev/null | grep -i 'CPU usage' | head -1 || true; ")
         append("echo '@MEMSIZE'; sysctl -n hw.memsize 2>/dev/null || true; ")
         append("echo '@VMSTAT'; vm_stat 2>/dev/null || true; ")
-        append("echo '@DISK'; df -k / 2>/dev/null | tail -1 || true; ")
-        append("echo '@DISKS'; df -k 2>/dev/null | tail -n +2 || true; ")
+        // -P: without it macOS adds inode columns, which would end up in the mount point.
+        append("echo '@DISK'; df -Pk / 2>/dev/null | tail -1 || true; ")
+        append("echo '@DISKS'; df -Pk 2>/dev/null | tail -n +2 || true; ")
         append("echo '@LOADAVG'; sysctl -n vm.loadavg 2>/dev/null || true; ")
         append("echo '@BOOT'; sysctl -n kern.boottime 2>/dev/null || true; ")
         append("echo '@NOW'; date +%s 2>/dev/null || true; ")
@@ -1790,7 +1791,7 @@ object RemoteParsers {
 
     /**
      * Parse `df` (all mounts) into per-partition usage, excluding pseudo filesystems. [blockBytes]
-     * scales the size columns: 1 for `df -PB1` (Linux, already bytes), 1024 for `df -k` (BSD/macOS).
+     * scales the size columns: 1 for `df -PB1` (Linux, already bytes), 1024 for `df -Pk` (BSD/macOS).
      */
     fun parseDisks(output: String, blockBytes: Long = 1L): List<DiskUsage> =
         output.lineSequence()
@@ -1810,7 +1811,7 @@ object RemoteParsers {
                 val used = t[2].toLongOrNull() ?: 0L
                 val mount = t.subList(5, t.size).joinToString(" ")
                 if (mount.startsWith("/proc") || mount.startsWith("/sys") || mount.startsWith("/dev") || mount.startsWith("/run")) return@mapNotNull null
-                DiskUsage(mount = mount, filesystem = fs, totalBytes = total * blockBytes, usedBytes = used * blockBytes)
+                DiskUsage(mount = mount, filesystem = fs, totalBytes = total * scale, usedBytes = used * scale)
             }
             .distinctBy { it.mount }
             .toList()
@@ -1884,7 +1885,7 @@ object RemoteParsers {
 
     internal const val UNAVAILABLE_MARKER = "!UNAVAILABLE"
 
-    private fun splitSections(output: String): Map<String, String> {
+    internal fun splitSections(output: String): Map<String, String> {
         val map = HashMap<String, String>()
         var key: String? = null
         val sb = StringBuilder()

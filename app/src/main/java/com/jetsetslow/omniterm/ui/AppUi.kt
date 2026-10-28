@@ -2377,6 +2377,7 @@ fun ServersMainView(viewModel: AppViewModel) {
         }
 
         HostCheckDialog(viewModel)
+        SystemSpecsDialog(viewModel)
 
         if (showAddSheet) {
             // Non-null only when the sheet was opened from a LAN scan result: seeds the address and
@@ -2485,6 +2486,18 @@ fun ServersMainView(viewModel: AppViewModel) {
                             Icon(Icons.Filled.Route, null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(stringResource(R.string.traceroute_from_this_device))
+                        }
+                        // Read over SSH, so only while the host answers.
+                        TextButton(
+                            onClick = {
+                                selectedForActionSheet = null
+                                viewModel.openSystemSpecs(srv)
+                            },
+                            enabled = viewModel.isPickableHost(srv),
+                        ) {
+                            Icon(Icons.Filled.DeveloperBoard, null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.system_specs))
                         }
                         TextButton(
                             onClick = {
