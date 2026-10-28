@@ -1138,8 +1138,7 @@ SpecSection _linuxGpu(Map<String, String> s, List<_PciDevice> pci) {
           SpecField('PCI slot', p.slot),
         ]),
   ];
-  final all = [...items, ...unbound];
-  return SpecSection(SpecKind.gpu, summary: all.map((i) => i.title).join(', '), items: all);
+  return _gpuSection([...items, ...unbound]);
 }
 
 SpecSection _linuxNetwork(Map<String, String> s, List<_PciDevice> pci) {
@@ -1187,12 +1186,37 @@ SpecSection _linuxNetwork(Map<String, String> s, List<_PciDevice> pci) {
       ),
     );
   }
-  return SpecSection(
-    SpecKind.network,
-    summary: items.isEmpty ? '' : _count(items.length, 'adapter', 'adapters'),
-    items: items,
-  );
+  return _networkSection(items);
 }
+
+/// The graphics section: its cards, named in the summary.
+SpecSection _gpuSection(List<SpecItem> gpus) =>
+    SpecSection(SpecKind.gpu, summary: gpus.map((g) => g.title).join(', '), items: gpus);
+
+/// The network section: its adapters, counted in the summary.
+SpecSection _networkSection(List<SpecItem> nics) => SpecSection(
+  SpecKind.network,
+  summary: nics.isEmpty ? '' : _count(nics.length, 'adapter', 'adapters'),
+  items: nics,
+);
+
+/// A non-Linux host's sections, in the order every OS shows them.
+SystemSpecs _specs(
+  SpecSection system,
+  SpecSection cpu,
+  SpecSection memory,
+  SpecSection storage,
+  List<SpecItem> gpus,
+  List<SpecItem> nics, {
+  int? uptimeSeconds,
+}) => SystemSpecs([
+  system,
+  cpu,
+  memory,
+  storage,
+  _gpuSection(gpus),
+  _networkSection(nics),
+], uptimeSeconds: uptimeSeconds);
 
 // ── FreeBSD / OpenBSD ────────────────────────────────────────────────────────────────────────────
 
@@ -1413,18 +1437,15 @@ SystemSpecs _bsd(Map<String, String> s) {
       p.driver: p.fields['device'] ?? '',
   };
   final nics = ifconfig(s['IFCONFIG'], adapters: adapters);
-  return SystemSpecs([
+  return _specs(
     system,
     cpu,
     memory,
     storage,
-    SpecSection(SpecKind.gpu, summary: gpus.map((g) => g.title).join(', '), items: gpus),
-    SpecSection(
-      SpecKind.network,
-      summary: nics.isEmpty ? '' : _count(nics.length, 'adapter', 'adapters'),
-      items: nics,
-    ),
-  ], uptimeSeconds: _uptimeFrom(sys['kern.boottime'], s['NOW']));
+    gpus,
+    nics,
+    uptimeSeconds: _uptimeFrom(sys['kern.boottime'], s['NOW']),
+  );
 }
 
 /// `geom disk list`: one block per drive, "Geom name: ada0" then "   Key: value" lines.
@@ -1692,18 +1713,15 @@ SystemSpecs _darwin(Map<String, String> s) {
     }
   }
   final nics = ifconfig(s['IFCONFIG'], titles: ports);
-  return SystemSpecs([
+  return _specs(
     system,
     cpu,
     memory,
     storage,
-    SpecSection(SpecKind.gpu, summary: gpus.map((g) => g.title).join(', '), items: gpus),
-    SpecSection(
-      SpecKind.network,
-      summary: nics.isEmpty ? '' : _count(nics.length, 'adapter', 'adapters'),
-      items: nics,
-    ),
-  ], uptimeSeconds: _uptimeFrom(sys['kern.boottime'], s['NOW']));
+    gpus,
+    nics,
+    uptimeSeconds: _uptimeFrom(sys['kern.boottime'], s['NOW']),
+  );
 }
 
 SpecItem _darwinModule(_ProfilerNode bank) {
@@ -1980,18 +1998,7 @@ SystemSpecs _windows(Map<String, String> s) {
       ),
     );
   }
-  return SystemSpecs([
-    system,
-    cpu,
-    memory,
-    storage,
-    SpecSection(SpecKind.gpu, summary: gpus.map((g) => g.title).join(', '), items: gpus),
-    SpecSection(
-      SpecKind.network,
-      summary: nics.isEmpty ? '' : _count(nics.length, 'adapter', 'adapters'),
-      items: nics,
-    ),
-  ]);
+  return _specs(system, cpu, memory, storage, gpus, nics);
 }
 
 SpecItem _windowsModule(Map<String, String> m) {

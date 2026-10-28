@@ -733,6 +733,23 @@ class SftpViewModel extends ChangeNotifier {
   Future<String> _hostOs(Server server, SshTransport ssh, SshCredentials credentials) =>
       _app.hostOs(server.id, (command) => ssh.exec(credentials, command));
 
+  /// [server]'s credentials for running [feature] in its shell, or null, with [error] saying why,
+  /// when the host has no Unix shell to run it in.
+  Future<SshCredentials?> _unixShellCredentials(
+    Server server,
+    SshTransport ssh,
+    String feature,
+  ) async {
+    final creds = resolveCredentials(
+      server,
+      keys: await _app.repository.getAllKeys(),
+      profiles: await _app.repository.getAllProfiles(),
+    );
+    if (hasUnixShell(await _hostOs(server, ssh, creds))) return creds;
+    _error = needsUnixShell(feature);
+    return null;
+  }
+
   Future<FolderSize?> folderSize(SftpFile entry) async {
     final ssh = transport;
     final server = browsedServer;
@@ -744,15 +761,8 @@ class SftpViewModel extends ChangeNotifier {
     _error = null;
     _safeNotify();
     try {
-      final creds = resolveCredentials(
-        server,
-        keys: await _app.repository.getAllKeys(),
-        profiles: await _app.repository.getAllProfiles(),
-      );
-      if (!hasUnixShell(await _hostOs(server, ssh, creds))) {
-        _error = needsUnixShell('Measuring folder sizes');
-        return null;
-      }
+      final creds = await _unixShellCredentials(server, ssh, 'Measuring folder sizes');
+      if (creds == null) return null;
       final output = await ssh.exec(creds, folderSizeCommand(joinPath(_path, entry.name)));
       final size = parseFolderSize(output);
       if (size == null) {
@@ -937,15 +947,8 @@ class SftpViewModel extends ChangeNotifier {
     _error = null;
     _safeNotify();
     try {
-      final creds = resolveCredentials(
-        server,
-        keys: await _app.repository.getAllKeys(),
-        profiles: await _app.repository.getAllProfiles(),
-      );
-      if (!hasUnixShell(await _hostOs(server, ssh, creds))) {
-        _error = needsUnixShell('Searching files');
-        return;
-      }
+      final creds = await _unixShellCredentials(server, ssh, 'Searching files');
+      if (creds == null) return;
       final base = _path.isEmpty ? '/' : _path;
       final script = remoteSearchCommand(base, query);
       final output = await ssh.exec(
@@ -1138,15 +1141,8 @@ class SftpViewModel extends ChangeNotifier {
     _error = null;
     _safeNotify();
     try {
-      final creds = resolveCredentials(
-        server,
-        keys: await _app.repository.getAllKeys(),
-        profiles: await _app.repository.getAllProfiles(),
-      );
-      if (!hasUnixShell(await _hostOs(server, ssh, creds))) {
-        _error = needsUnixShell(feature);
-        return false;
-      }
+      final creds = await _unixShellCredentials(server, ssh, feature);
+      if (creds == null) return false;
       final output = await ssh.exec(
         creds,
         _sudo ? sudoShWrap(command, server.sudoPassword) : command,
