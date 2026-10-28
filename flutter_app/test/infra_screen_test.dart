@@ -375,10 +375,9 @@ void main() {
   });
 
   testWidgets('bulk image delete removes only the ticked images', (tester) async {
-    // Multi-select delete is implemented inline in the tab, not on the view model, so nothing in
-    // `infra_view_model_test` reaches it. The risk it carries is specific: it loops over a
-    // selection, so an off-by-one or a stale set removes images the user never ticked, and images
-    // cannot be recovered.
+    // The tab turns ticks into the batch the view model removes. The risk is specific: an
+    // off-by-one or a stale set removes images the user never ticked, and images cannot be
+    // recovered.
     await repo.insertServer(server(name: 'nas'));
     final transport = RecordingTransport(
       replies: {
@@ -406,6 +405,42 @@ void main() {
     expect(removes, hasLength(1), reason: 'exactly the one ticked image is removed');
     expect(removes.single, contains('dropme'));
     expect(removes.single, isNot(contains('keepme')), reason: 'an unticked image must survive');
+    vm.dispose();
+  });
+
+  testWidgets('a volume ticked on one host is not ticked, or deletable, on another', (
+    tester,
+  ) async {
+    // Both hosts report a volume called `data`, as most hosts do. A tick made on one must not
+    // follow the user to the other, and must still be there when they come back.
+    final aId = await repo.insertServer(server(name: 'a'));
+    final bId = await repo.insertServer(server(name: 'b'));
+    final transport = RecordingTransport(
+      replies: {'ot_vols': 'docker\tdata\tlocal\t/var/lib/docker/volumes/data\t1.2GB\t0'},
+    );
+    await pump(tester, transport: transport);
+    app.selectedServerId = aId;
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.tab.volumes')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Multi-select'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.volume.data.select')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('infra.volumes.deleteSelected')), findsOneWidget);
+
+    app.selectedServerId = bId;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('infra.volume.data.select')), findsNothing);
+    expect(find.byKey(const ValueKey('infra.volumes.deleteSelected')), findsNothing);
+    expect(find.text('Multi-select'), findsOneWidget);
+
+    app.selectedServerId = aId;
+    await tester.pumpAndSettle();
+    final tick = tester.widget<Checkbox>(find.byKey(const ValueKey('infra.volume.data.select')));
+    expect(tick.value, isTrue);
+    expect(find.byKey(const ValueKey('infra.volumes.deleteSelected')), findsOneWidget);
+    expect(transport.commands.where((c) => c.contains('volume rm')), isEmpty);
     vm.dispose();
   });
 

@@ -15,6 +15,7 @@ import '../../platform/long_operation_notifications.dart';
 // directory-layout wrinkle, not a layering inversion.
 import '../screens/infra/compose_builder_logic.dart';
 import 'app_state.dart';
+import 'host_selection.dart';
 
 /// The Infra screen's five sub-tabs, in the Kotlin's order (`ui/InfraScreen.kt` line 71).
 enum InfraTab { stacks, builder, images, volumes, networks }
@@ -26,6 +27,7 @@ class InfraViewModel extends ChangeNotifier {
     // notification (a host's OS being recorded, say) loaded it a second time.
     _lastServerId = inspectedServer?.id;
     _app.addListener(_onAppChanged);
+    _app.onHostForgotten.add(_forgetHost);
   }
 
   final AppState _app;
@@ -82,6 +84,21 @@ class InfraViewModel extends ChangeNotifier {
   void selectServer(int? id) => _app.selectedServerId = id;
 
   int? _lastServerId;
+
+  /// The Images and Volumes tabs' multi-select, and which stacks show their services.
+  ///
+  /// Each is kept per host, unlike the lists themselves, which are refetched: switching hosts and
+  /// back finds them as they were, and nothing picked on one host is acted on while another shows.
+  late final imageSelection = HostSelection(_safeNotify);
+  late final volumeSelection = HostSelection(_safeNotify);
+  late final expandedStacks = HostSelection(_safeNotify);
+
+  /// A deleted host, or one now pointing at another machine, keeps nothing picked.
+  void _forgetHost(int serverId) {
+    for (final kept in [imageSelection, volumeSelection, expandedStacks]) {
+      kept.clear(serverId);
+    }
+  }
 
   void _onAppChanged() {
     final current = inspectedServer?.id;
@@ -532,11 +549,47 @@ class InfraViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  Future<void> imageAction(SimDockerImage image, String action) =>
-      _runAction(dockerImageAction(image.id, action, runtime: image.runtime));
+  /// Whether the host changed since an action meant for [expectedServerId] was asked for, saying
+  /// so in place of running it on the host now shown.
+  bool _skipIfHostChanged(int? expectedServerId, String title) {
+    if (expectedServerId == null || inspectedServer?.id == expectedServerId) return false;
+    _showActionResult(title, 'Action skipped: the selected host changed. Refresh and retry.');
+    return true;
+  }
 
-  Future<void> volumeAction(SimDockerVolume volume, String action) =>
-      _runAction(dockerVolumeAction(volume.name, action, runtime: volume.runtime));
+  Future<void> imageAction(SimDockerImage image, String action, {int? expectedServerId}) =>
+      _runAction(
+        dockerImageAction(image.id, action, runtime: image.runtime),
+        expectedServerId: expectedServerId,
+      );
+
+  Future<void> volumeAction(SimDockerVolume volume, String action, {int? expectedServerId}) =>
+      _runAction(
+        dockerVolumeAction(volume.name, action, runtime: volume.runtime),
+        expectedServerId: expectedServerId,
+      );
+
+  /// Removes [images] from [serverId], the host they were picked on, in one command.
+  ///
+  /// One command rather than an action per image, as Kotlin does: the whole batch runs on the host
+  /// it was confirmed for even if another is selected meanwhile. Per-image actions each looked the
+  /// host up again, and a pulled image has the same id on every host.
+  Future<void> removeImages(int serverId, List<SimDockerImage> images) async {
+    if (images.isEmpty || _skipIfHostChanged(serverId, 'Container action')) return;
+    imageSelection.clear(serverId);
+    await _runAction(
+      images.map((i) => dockerImageAction(i.id, 'remove', runtime: i.runtime)).join('; '),
+    );
+  }
+
+  /// [removeImages] for volumes, where a shared name (`data`, `db`) is the common case.
+  Future<void> removeVolumes(int serverId, List<SimDockerVolume> volumes) async {
+    if (volumes.isEmpty || _skipIfHostChanged(serverId, 'Container action')) return;
+    volumeSelection.clear(serverId);
+    await _runAction(
+      volumes.map((v) => dockerVolumeAction(v.name, 'remove', runtime: v.runtime)).join('; '),
+    );
+  }
 
   Future<void> networkAction(SimDockerNetwork network, String action) =>
       _runAction(dockerNetworkAction(network.id, action, runtime: network.runtime));
@@ -556,13 +609,7 @@ class InfraViewModel extends ChangeNotifier {
     bool removeOrphans = false,
     int? expectedServerId,
   }) async {
-    if (expectedServerId != null && inspectedServer?.id != expectedServerId) {
-      _showActionResult(
-        'Service action',
-        'Action skipped: the selected host changed. Refresh and retry.',
-      );
-      return;
-    }
+    if (_skipIfHostChanged(expectedServerId, 'Service action')) return;
     final verb = switch (action) {
       'serviceRestart' => 'restart',
       'serviceStop' => 'stop',
@@ -702,9 +749,11 @@ class InfraViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  Future<void> _runAction(String command) => _runStreamingAction('Container action', command);
+  Future<void> _runAction(String command, {int? expectedServerId}) =>
+      _runStreamingAction('Container action', command, expectedServerId: expectedServerId);
 
-  Future<void> _runStreamingAction(String title, String command) async {
+  Future<void> _runStreamingAction(String title, String command, {int? expectedServerId}) async {
+    if (_skipIfHostChanged(expectedServerId, title)) return;
     final server = inspectedServer;
     final ssh = transport;
     if (server == null) return;
@@ -805,6 +854,7 @@ class InfraViewModel extends ChangeNotifier {
     _disposed = true;
     _actionCancellation?.cancel();
     _app.removeListener(_onAppChanged);
+    _app.onHostForgotten.remove(_forgetHost);
     super.dispose();
   }
 }

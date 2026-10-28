@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_commands.dart';
+import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/infra_view_model.dart';
@@ -585,6 +586,89 @@ void main() {
     expect(vm.selectableServers.any((s) => s.id == aId), isTrue);
     expect(vm.onlineServers.any((s) => s.id == aId), isFalse);
     vm.dispose();
+  });
+
+  group('state kept per host', () {
+    // Users switch hosts often and do the same or different work on each. A volume called `data`
+    // exists on most hosts, so a pick made on one must never be acted on while another is shown.
+    Future<(InfraViewModel, int, int)> twoHosts({RecordingTransport? transport}) async {
+      final aId = await repo.insertServer(server(name: 'a'));
+      final bId = await repo.insertServer(server(name: 'b'));
+      final vm = await boot(transport: transport ?? RecordingTransport());
+      app.selectedServerId = aId;
+      await Future<void>.delayed(Duration.zero);
+      return (vm, aId, bId);
+    }
+
+    test('multi-select picks and open stacks stay with their host', () async {
+      final (vm, aId, bId) = await twoHosts();
+      vm.volumeSelection.toggleSelecting(aId);
+      vm.volumeSelection.toggle(aId, 'docker:data');
+      vm.expandedStacks.toggle(aId, 'docker:web');
+
+      app.selectedServerId = bId;
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.volumeSelection.isSelecting(bId), isFalse);
+      expect(vm.volumeSelection.isPicked(bId, 'docker:data'), isFalse);
+      expect(vm.expandedStacks.isPicked(bId, 'docker:web'), isFalse);
+
+      app.selectedServerId = aId;
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.volumeSelection.isSelecting(aId), isTrue);
+      expect(vm.volumeSelection.picked(aId), {'docker:data'});
+      expect(vm.expandedStacks.isPicked(aId, 'docker:web'), isTrue);
+      vm.dispose();
+    });
+
+    test('a deleted host keeps nothing picked', () async {
+      final (vm, aId, _) = await twoHosts();
+      vm.imageSelection.toggleSelecting(aId);
+      vm.imageSelection.toggle(aId, 'docker:sha256:1');
+
+      await repo.deleteServerAndDependents(aId);
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.imageSelection.isSelecting(aId), isFalse);
+      expect(vm.imageSelection.picked(aId), isEmpty);
+      vm.dispose();
+    });
+
+    test('a bulk removal is one command, and ends that host\'s multi-select', () async {
+      final transport = RecordingTransport();
+      final (vm, aId, _) = await twoHosts(transport: transport);
+      vm.volumeSelection.toggleSelecting(aId);
+      vm.volumeSelection.toggle(aId, 'docker:data');
+      vm.volumeSelection.toggle(aId, 'podman:db');
+
+      await vm.removeVolumes(aId, [
+        SimDockerVolume(name: 'data', driver: 'local', mountpoint: ''),
+        SimDockerVolume(name: 'db', driver: 'local', mountpoint: '', runtime: 'podman'),
+      ]);
+
+      // One exec is bound to the host it started on; separate ones each looked the host up again.
+      expect(transport.commands.where((c) => c.contains('volume rm')), [
+        "docker volume rm -f 'data' 2>&1; podman volume rm -f 'db' 2>&1",
+      ]);
+      expect(vm.volumeSelection.isSelecting(aId), isFalse);
+      vm.dispose();
+    });
+
+    test('a bulk removal confirmed for one host never runs on another', () async {
+      final transport = RecordingTransport();
+      final (vm, aId, bId) = await twoHosts(transport: transport);
+      vm.imageSelection.toggleSelecting(aId);
+      vm.imageSelection.toggle(aId, 'docker:sha256:1');
+      app.selectedServerId = bId;
+      await Future<void>.delayed(Duration.zero);
+
+      await vm.removeImages(aId, [
+        SimDockerImage(repository: 'nginx', tag: 'latest', id: 'sha256:1', size: '', created: ''),
+      ]);
+
+      expect(transport.commands.where((c) => c.contains('rmi')), isEmpty);
+      expect(vm.actionOutput, 'Action skipped: the selected host changed. Refresh and retry.');
+      expect(vm.imageSelection.picked(aId), {'docker:sha256:1'}, reason: 'kept to retry on a');
+      vm.dispose();
+    });
   });
 
   group('first load versus refresh', () {

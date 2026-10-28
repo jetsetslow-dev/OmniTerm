@@ -66,22 +66,17 @@ class StacksTab extends StatelessWidget {
   }
 }
 
-class _StackCard extends StatefulWidget {
+class _StackCard extends StatelessWidget {
   const _StackCard({required this.vm, required this.stack});
 
   final InfraViewModel vm;
   final StackSummary stack;
 
   @override
-  State<_StackCard> createState() => _StackCardState();
-}
-
-class _StackCardState extends State<_StackCard> {
-  bool _servicesExpanded = false;
-
-  @override
   Widget build(BuildContext context) {
-    final stack = widget.stack;
+    final host = vm.inspectedServer?.id;
+    final expandedKey = '${stack.runtime}:${stack.name}';
+    final servicesExpanded = vm.expandedStacks.isPicked(host, expandedKey);
     final scheme = Theme.of(context).colorScheme;
     final healthy = stack.running == stack.total && stack.unhealthy == 0;
 
@@ -163,7 +158,7 @@ class _StackCardState extends State<_StackCard> {
               width: double.infinity,
               child: OutlinedButton.icon(
                 key: ValueKey('infra.stack.${stack.name}.editBuilder'),
-                onPressed: () => widget.vm.requestComposeEdit(stack),
+                onPressed: () => vm.requestComposeEdit(stack),
                 icon: const Icon(Icons.edit_note, size: 17),
                 label: const Text('Edit in Builder'),
               ),
@@ -200,23 +195,24 @@ class _StackCardState extends State<_StackCard> {
           ],
           TextButton(
             key: ValueKey('infra.stack.${stack.name}.services'),
-            onPressed: () => setState(() => _servicesExpanded = !_servicesExpanded),
+            onPressed: () => vm.expandedStacks.toggle(host, expandedKey),
             child: Text(
-              _servicesExpanded
+              servicesExpanded
                   ? 'Hide services'
                   : 'Show ${stack.services.length} service${stack.services.length == 1 ? '' : 's'}',
               style: const TextStyle(fontSize: 12),
             ),
           ),
-          if (_servicesExpanded)
+          if (servicesExpanded)
             for (final service in stack.services)
-              _ServiceRow(vm: widget.vm, stack: stack, service: service),
+              _ServiceRow(vm: vm, stack: stack, service: service),
         ],
       ),
     );
   }
 
   Future<void> _stackAction(BuildContext context, StackSummary stack, String action) async {
+    final host = vm.inspectedServer?.id;
     final confirmation = switch (action) {
       'build' => (
         'Build ${stack.name}?',
@@ -267,10 +263,11 @@ class _StackCardState extends State<_StackCard> {
       );
       if (accepted != true) return;
     }
-    await widget.vm.stackAction(stack, action);
+    await vm.stackAction(stack, action, expectedServerId: host);
   }
 
   Future<void> _confirmDown(BuildContext context, StackSummary stack) async {
+    final host = vm.inspectedServer?.id;
     // `compose down` stops and removes every container in the stack. It is recoverable — the file
     // stays and the registry remembers it — but it is not what a mis-tap should do.
     final removeOrphans = await showDialog<bool>(
@@ -325,7 +322,7 @@ class _StackCardState extends State<_StackCard> {
       },
     );
     if (removeOrphans != null) {
-      await widget.vm.stackAction(stack, 'down', removeOrphans: removeOrphans);
+      await vm.stackAction(stack, 'down', removeOrphans: removeOrphans, expectedServerId: host);
     }
   }
 }
@@ -981,25 +978,21 @@ class _DownedStackCard extends StatelessWidget {
   }
 }
 
-class ImagesTab extends StatefulWidget {
+class ImagesTab extends StatelessWidget {
   const ImagesTab({super.key, required this.vm});
 
   final InfraViewModel vm;
 
-  @override
-  State<ImagesTab> createState() => _ImagesTabState();
-}
-
-class _ImagesTabState extends State<ImagesTab> {
-  bool _selecting = false;
-  Set<String> _selected = {};
-
-  String _key(SimDockerImage image) => '${image.runtime}:${image.id}';
+  static String _key(SimDockerImage image) => '${image.runtime}:${image.id}';
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final vm = widget.vm;
+    // The picks belong to the host shown: see InfraViewModel.imageSelection.
+    final host = vm.inspectedServer?.id;
+    final selection = vm.imageSelection;
+    final selecting = selection.isSelecting(host);
+    final picked = vm.images.where((image) => selection.isPicked(host, _key(image))).toList();
 
     return Column(
       children: [
@@ -1011,18 +1004,15 @@ class _ImagesTabState extends State<ImagesTab> {
           children: [
             TextButton(
               key: const ValueKey('infra.images.multiSelect'),
-              onPressed: () => setState(() {
-                _selecting = !_selecting;
-                if (!_selecting) _selected = {};
-              }),
-              child: Text(_selecting ? 'Cancel selection' : 'Multi-select'),
+              onPressed: () => selection.toggleSelecting(host),
+              child: Text(selecting ? 'Cancel selection' : 'Multi-select'),
             ),
-            if (_selecting && _selected.isNotEmpty)
+            if (selecting && picked.isNotEmpty)
               TextButton.icon(
                 key: const ValueKey('infra.images.deleteSelected'),
                 icon: const Icon(Icons.delete_outline, size: 16),
-                label: Text('Delete ${_selected.length}'),
-                onPressed: () => _removeSelected(context),
+                label: Text('Delete ${picked.length}'),
+                onPressed: () => _removeSelected(context, host!, picked),
               ),
             _PruneButton(
               keyName: 'infra.images.prune',
@@ -1045,20 +1035,15 @@ class _ImagesTabState extends State<ImagesTab> {
                   separatorBuilder: (_, _) => const SizedBox(height: 6),
                   itemBuilder: (context, index) {
                     final image = vm.images[index];
-                    final selected = _selected.contains(_key(image));
                     return OmniCard(
                       key: ValueKey('infra.image.${image.runtime}.${image.id}'),
                       child: Row(
                         children: [
-                          if (_selecting)
+                          if (selecting)
                             Checkbox(
                               key: ValueKey('infra.image.${image.id}.select'),
-                              value: selected,
-                              onChanged: (value) => setState(() {
-                                value == true
-                                    ? _selected.add(_key(image))
-                                    : _selected.remove(_key(image));
-                              }),
+                              value: picked.contains(image),
+                              onChanged: (_) => selection.toggle(host, _key(image)),
                             ),
                           Expanded(
                             child: Column(
@@ -1076,7 +1061,7 @@ class _ImagesTabState extends State<ImagesTab> {
                             ),
                           ),
                           if (image.inUse) const OmniTag(label: 'IN USE', color: OmniColors.green),
-                          if (!_selecting)
+                          if (!selecting)
                             IconButton(
                               key: ValueKey('infra.image.${image.id}.remove'),
                               tooltip: 'Remove image',
@@ -1098,6 +1083,7 @@ class _ImagesTabState extends State<ImagesTab> {
   }
 
   Future<void> _confirmRemove(BuildContext context, SimDockerImage image) async {
+    final host = vm.inspectedServer?.id;
     final accepted = await _confirmDestructive(
       context,
       keyName: 'infra.image.remove',
@@ -1105,50 +1091,36 @@ class _ImagesTabState extends State<ImagesTab> {
       message: 'Permanently remove ${image.repository}:${image.tag}?',
       confirmLabel: 'Remove',
     );
-    if (accepted) await widget.vm.imageAction(image, 'remove');
+    if (accepted) await vm.imageAction(image, 'remove', expectedServerId: host);
   }
 
-  Future<void> _removeSelected(BuildContext context) async {
+  Future<void> _removeSelected(BuildContext context, int host, List<SimDockerImage> targets) async {
     final accepted = await _confirmDestructive(
       context,
       keyName: 'infra.images.deleteSelected',
       title: 'Remove images?',
-      message: 'Permanently remove ${_selected.length} selected images?',
+      message: 'Permanently remove ${targets.length} selected images?',
       confirmLabel: 'Remove',
     );
-    if (!accepted) return;
-    final targets = widget.vm.images.where((image) => _selected.contains(_key(image))).toList();
-    for (final image in targets) {
-      await widget.vm.imageAction(image, 'remove');
-    }
-    if (mounted) {
-      setState(() {
-        _selected = {};
-        _selecting = false;
-      });
-    }
+    if (accepted) await vm.removeImages(host, targets);
   }
 }
 
-class VolumesTab extends StatefulWidget {
+class VolumesTab extends StatelessWidget {
   const VolumesTab({super.key, required this.vm});
 
   final InfraViewModel vm;
 
-  @override
-  State<VolumesTab> createState() => _VolumesTabState();
-}
-
-class _VolumesTabState extends State<VolumesTab> {
-  bool _selecting = false;
-  Set<String> _selected = {};
-
-  String _key(SimDockerVolume volume) => '${volume.runtime}:${volume.name}';
+  static String _key(SimDockerVolume volume) => '${volume.runtime}:${volume.name}';
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final vm = widget.vm;
+    // The picks belong to the host shown: see InfraViewModel.volumeSelection.
+    final host = vm.inspectedServer?.id;
+    final selection = vm.volumeSelection;
+    final selecting = selection.isSelecting(host);
+    final picked = vm.volumes.where((volume) => selection.isPicked(host, _key(volume))).toList();
 
     return Column(
       children: [
@@ -1160,18 +1132,15 @@ class _VolumesTabState extends State<VolumesTab> {
           children: [
             TextButton(
               key: const ValueKey('infra.volumes.multiSelect'),
-              onPressed: () => setState(() {
-                _selecting = !_selecting;
-                if (!_selecting) _selected = {};
-              }),
-              child: Text(_selecting ? 'Cancel selection' : 'Multi-select'),
+              onPressed: () => selection.toggleSelecting(host),
+              child: Text(selecting ? 'Cancel selection' : 'Multi-select'),
             ),
-            if (_selecting && _selected.isNotEmpty)
+            if (selecting && picked.isNotEmpty)
               TextButton.icon(
                 key: const ValueKey('infra.volumes.deleteSelected'),
                 icon: const Icon(Icons.delete_outline, size: 16),
-                label: Text('Delete ${_selected.length}'),
-                onPressed: () => _removeSelected(context),
+                label: Text('Delete ${picked.length}'),
+                onPressed: () => _removeSelected(context, host!, picked),
               ),
             _PruneButton(
               keyName: 'infra.volumes.prune',
@@ -1200,15 +1169,11 @@ class _VolumesTabState extends State<VolumesTab> {
                       key: ValueKey('infra.volume.${volume.runtime}.${volume.name}'),
                       child: Row(
                         children: [
-                          if (_selecting)
+                          if (selecting)
                             Checkbox(
                               key: ValueKey('infra.volume.${volume.name}.select'),
-                              value: _selected.contains(_key(volume)),
-                              onChanged: (value) => setState(() {
-                                value == true
-                                    ? _selected.add(_key(volume))
-                                    : _selected.remove(_key(volume));
-                              }),
+                              value: picked.contains(volume),
+                              onChanged: (_) => selection.toggle(host, _key(volume)),
                             ),
                           Expanded(
                             child: Column(
@@ -1227,7 +1192,7 @@ class _VolumesTabState extends State<VolumesTab> {
                             ),
                           ),
                           if (volume.inUse) const OmniTag(label: 'IN USE', color: OmniColors.green),
-                          if (!_selecting)
+                          if (!selecting)
                             IconButton(
                               key: ValueKey('infra.volume.${volume.name}.remove'),
                               tooltip: 'Remove volume',
@@ -1254,6 +1219,7 @@ class _VolumesTabState extends State<VolumesTab> {
     SimDockerVolume volume,
   ) async {
     // Unlike a container or an image, a volume is the data. There is nothing to re-pull.
+    final host = vm.inspectedServer?.id;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1274,28 +1240,22 @@ class _VolumesTabState extends State<VolumesTab> {
         ],
       ),
     );
-    if (confirmed ?? false) await vm.volumeAction(volume, 'remove');
+    if (confirmed ?? false) await vm.volumeAction(volume, 'remove', expectedServerId: host);
   }
 
-  Future<void> _removeSelected(BuildContext context) async {
+  Future<void> _removeSelected(
+    BuildContext context,
+    int host,
+    List<SimDockerVolume> targets,
+  ) async {
     final accepted = await _confirmDestructive(
       context,
       keyName: 'infra.volumes.deleteSelected',
       title: 'Remove volumes?',
-      message: 'Permanently remove ${_selected.length} selected volumes and all data they contain?',
+      message: 'Permanently remove ${targets.length} selected volumes and all data they contain?',
       confirmLabel: 'Remove',
     );
-    if (!accepted) return;
-    final targets = widget.vm.volumes.where((volume) => _selected.contains(_key(volume))).toList();
-    for (final volume in targets) {
-      await widget.vm.volumeAction(volume, 'remove');
-    }
-    if (mounted) {
-      setState(() {
-        _selected = {};
-        _selecting = false;
-      });
-    }
+    if (accepted) await vm.removeVolumes(host, targets);
   }
 }
 
