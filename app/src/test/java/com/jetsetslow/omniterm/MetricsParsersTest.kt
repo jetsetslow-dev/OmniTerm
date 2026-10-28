@@ -82,6 +82,23 @@ class MetricsParsersTest {
     }
 
     @Test
+    fun bsdAndMacMetricsAskDfForItsPosixColumns() {
+        // macOS df adds iused/ifree/%iused unless -P, and parseDisks would read them as the mount.
+        for (os in listOf("Darwin", "FreeBSD")) {
+            val command = RemoteCommands.metricsFor(os)
+            assertTrue(os, command.contains("df -Pk /") && command.contains("df -Pk 2>"))
+            assertTrue(os, !command.contains("df -k"))
+        }
+    }
+
+    @Test
+    fun parseDisksScalesTheBusyBoxKilobyteFallback() {
+        // BusyBox df has no -B1, so the probe falls back to df -Pk and tags each line.
+        val df = "KB1024 /dev/root 7340032 2097152 5242880 29% /"
+        assertEquals(7_516_192_768L, RemoteParsers.parseDisks(df).single().totalBytes)
+    }
+
+    @Test
     fun parseProcStatExtractsIdleAndTotalPerCore() {
         val stat = """
             cpu  100 0 100 700 100 0 0 0 0 0

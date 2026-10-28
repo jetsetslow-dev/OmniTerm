@@ -59,6 +59,11 @@ git diff --check
 # workflow: no check run exists, every visible check stays green and a required check never reports.
 # Local-only by necessity — CI's token cannot read that setting — so it warns when it cannot ask.
 python3 ./scripts/check-actions-allowlist.py
+# A copy-pasted block is extracted into shared code instead of kept twice. The baseline lists the
+# known copies, so only a new one fails; CI runs the same check.
+./scripts/test-check-duplicates.sh
+python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json \
+  app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
 ./scripts/test-ci-gradle-gate.sh
 

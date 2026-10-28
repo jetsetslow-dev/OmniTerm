@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm.ui
 
+import androidx.annotation.StringRes
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -102,6 +103,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.rememberUpdatedState
+import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.term.TermRow
 import com.jetsetslow.omniterm.data.term.TerminalEmulator
@@ -119,9 +121,7 @@ import com.jetsetslow.omniterm.R
 private fun SessionPicker(viewModel: AppViewModel) {
     val chrome = shellChromePalette()
     val sessions = viewModel.activeSessions
-    val restorableSessions = viewModel.restorablePersistentSessions.filter { r ->
-        sessions.none { it.tmuxName == r.tmuxName }
-    }
+    val restorableSessions = viewModel.resumableSavedSessions
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text(stringResource(R.string.active_sessions), color = chrome.text, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
@@ -191,10 +191,10 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             modifier = Modifier.padding(top = if (sessions.isEmpty()) 0.dp else 8.dp)
                         )
                     }
-                    items(restorableSessions, key = { it.tmuxName }) { s ->
+                    items(restorableSessions, key = { "${it.serverId}/${it.tmuxName}" }) { s ->
                         OmniCard(
                             modifier = Modifier.fillMaxWidth().clickable {
-                                viewModel.resumePersistentSession(s.tmuxName)
+                                viewModel.resumePersistentSession(s.serverId, s.tmuxName)
                             },
                             leftAccent = OmniColors.amber
                         ) {
@@ -213,8 +213,11 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                     )
                                     Text(stringResource(R.string.tap_to_reattach_tmux_session), fontSize = 12.sp, color = OmniColors.amber)
                                 }
-                                IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
+                                IconButton(onClick = { viewModel.resumePersistentSession(s.serverId, s.tmuxName) }) {
                                     Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.resume), tint = OmniColors.cyan)
+                                }
+                                IconButton(onClick = { viewModel.requestRemoveSavedSession(s.serverId, s.tmuxName) }) {
+                                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
                                 }
                             }
                         }
@@ -359,7 +362,7 @@ fun ShellScreen(viewModel: AppViewModel) {
         currentSession
     }
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = servers.filter { it.status == "online" }
+    val onlineServers = servers.filter { viewModel.isPickableHost(it) }
     // Offline hosts are hidden here like on the other live tabs — new connects only ever offer
     // online hosts. Forcing SSH to an offline host is done from the Hosts tab's connect button,
     // which warns first. A host with an active/connecting session stays visible even if its
@@ -456,9 +459,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                         currentSession != null -> ActiveTerminal(viewModel, confirm)
                         else -> {
                             val activeHasAny = viewModel.activeSessions.isNotEmpty()
-                            val restorableHasAny = viewModel.restorablePersistentSessions.any { r ->
-                                viewModel.activeSessions.none { it.tmuxName == r.tmuxName }
-                            }
+                            val restorableHasAny = viewModel.resumableSavedSessions.isNotEmpty()
                             if (activeHasAny || restorableHasAny) {
                                 SessionPicker(viewModel)
                             } else {
@@ -826,9 +827,7 @@ private fun TerminalOpenPicker(
     val backgroundSessions = viewModel.activeSessions.filter {
         it.id != currentSession?.id && it.id != otherPaneSessionId
     }
-    val resumableSessions = viewModel.restorablePersistentSessions.filter { saved ->
-        viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
-    }
+    val resumableSessions = viewModel.resumableSavedSessions
     var expanded by remember { mutableStateOf(false) }
     // Session ages are minute-resolution, so re-read the clock once a minute while the menu is
     // open rather than recomposing the whole switcher on every frame.
@@ -883,11 +882,7 @@ private fun TerminalOpenPicker(
                 HorizontalDivider()
             }
             if (backgroundSessions.isNotEmpty()) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.background_sessions), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    enabled = false,
-                    onClick = {},
-                )
+                SessionMenuHeader(R.string.background_sessions)
                 backgroundSessions.forEach { session ->
                     DropdownMenuItem(
                         text = {
@@ -898,16 +893,7 @@ private fun TerminalOpenPicker(
                                     fontSize = 10.sp,
                                     color = scheme.onSurfaceVariant,
                                 )
-                                Text(
-                                    buildString {
-                                        append("Started ${formatSessionAge(session.startedAtMs, ageNowMs)} ago")
-                                        session.backgroundedAtMs?.let {
-                                            append(" · backgrounded ${formatSessionAge(it, ageNowMs)} ago")
-                                        }
-                                    },
-                                    fontSize = 10.sp,
-                                    color = scheme.onSurfaceVariant,
-                                )
+                                SessionAgeLine(session.startedAtMs, session.backgroundedAtMs, ageNowMs)
                             }
                         },
                         onClick = {
@@ -920,28 +906,19 @@ private fun TerminalOpenPicker(
             }
             if (resumableSessions.isNotEmpty()) {
                 if (backgroundSessions.isNotEmpty()) HorizontalDivider()
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.resumable_tmux), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    enabled = false,
-                    onClick = {},
-                )
+                SessionMenuHeader(R.string.resumable_tmux)
                 resumableSessions.forEach { saved ->
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
-                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
-                                Text(
-                                    stringResource(R.string.started_ago_backgrounded_ago, formatSessionAge(saved.createdAt, ageNowMs), formatSessionAge(saved.backgroundedAt, ageNowMs)),
-                                    fontSize = 10.sp,
-                                    color = scheme.onSurfaceVariant,
-                                )
-                            }
-                        },
-                        onClick = {
+                    SavedSessionMenuItem(
+                        saved,
+                        ageNowMs,
+                        onResume = {
                             if (viewModel.isMultiSsh) viewModel.setMultiSshFocus(focusedPane)
-                            viewModel.resumePersistentSession(saved.tmuxName)
+                            viewModel.resumePersistentSession(saved.serverId, saved.tmuxName)
                             expanded = false
+                        },
+                        onRemove = {
+                            expanded = false
+                            viewModel.requestRemoveSavedSession(saved.serverId, saved.tmuxName)
                         },
                     )
                 }
@@ -1696,9 +1673,7 @@ private fun MultiSshPanePicker(
     val selectableSessions = viewModel.activeSessions.filter {
         it.id != otherSessionId && it.id != currentSession?.id
     }
-    val resumableSessions = viewModel.restorablePersistentSessions.filter { saved ->
-        viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
-    }
+    val resumableSessions = viewModel.resumableSavedSessions
     var expanded by remember { mutableStateOf(false) }
     val ageNowMs = rememberSessionAgeClock(expanded)
 
@@ -1731,11 +1706,7 @@ private fun MultiSshPanePicker(
             modifier = Modifier.widthIn(min = 240.dp, max = 340.dp).heightIn(max = 420.dp),
         ) {
             if (selectableSessions.isNotEmpty()) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.background_sessions), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    enabled = false,
-                    onClick = {},
-                )
+                SessionMenuHeader(R.string.background_sessions)
                 selectableSessions.forEach { candidate ->
                     val candidateLabel = servers.find { it.id == candidate.serverId }?.name ?: candidate.serverName
                     DropdownMenuItem(
@@ -1747,16 +1718,7 @@ private fun MultiSshPanePicker(
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                Text(
-                                    buildString {
-                                        append("Started ${formatSessionAge(candidate.startedAtMs, ageNowMs)} ago")
-                                        candidate.backgroundedAtMs?.let {
-                                            append(" · backgrounded ${formatSessionAge(it, ageNowMs)} ago")
-                                        }
-                                    },
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                SessionAgeLine(candidate.startedAtMs, candidate.backgroundedAtMs, ageNowMs)
                             }
                         },
                         onClick = {
@@ -1768,41 +1730,28 @@ private fun MultiSshPanePicker(
             }
             if (resumableSessions.isNotEmpty()) {
                 if (selectableSessions.isNotEmpty()) HorizontalDivider()
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.resumable_tmux), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    enabled = false,
-                    onClick = {},
-                )
+                SessionMenuHeader(R.string.resumable_tmux)
                 resumableSessions.forEach { saved ->
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
-                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
-                                Text(
-                                    stringResource(R.string.started_ago_backgrounded_ago_2, formatSessionAge(saved.createdAt, ageNowMs), formatSessionAge(saved.backgroundedAt, ageNowMs)),
-                                    fontSize = 10.sp,
-                                    color = scheme.onSurfaceVariant,
-                                )
-                            }
-                        },
+                    SavedSessionMenuItem(
+                        saved,
+                        ageNowMs,
                         enabled = !viewModel.isTerminalConnecting,
-                        onClick = {
+                        onResume = {
                             currentSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             viewModel.setMultiSshFocus(paneIndex)
-                            viewModel.resumePersistentSession(saved.tmuxName)
+                            viewModel.resumePersistentSession(saved.serverId, saved.tmuxName)
                             expanded = false
+                        },
+                        onRemove = {
+                            expanded = false
+                            viewModel.requestRemoveSavedSession(saved.serverId, saved.tmuxName)
                         },
                     )
                 }
             }
             if ((selectableSessions.isNotEmpty() || resumableSessions.isNotEmpty()) && onlineServers.isNotEmpty()) HorizontalDivider()
             if (onlineServers.isNotEmpty()) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.new_session), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
-                    enabled = false,
-                    onClick = {},
-                )
+                SessionMenuHeader(R.string.new_session)
                 onlineServers.forEach { server ->
                     DropdownMenuItem(
                         text = {
@@ -2716,8 +2665,7 @@ private fun PaneTerminalContent(
         }
 
         copyDialogTitle?.let { title ->
-            val context = LocalContext.current
-            val resources = LocalResources.current
+            val copyWithConfirmation = rememberCopyWithConfirmation()
             fun dismiss() {
                 copyDialogTitle = null
                 copyDialogText = ""
@@ -2819,12 +2767,7 @@ private fun PaneTerminalContent(
                             }
                             Button(
                                 onClick = {
-                                    val cm = context.getSystemService(android.content.ClipboardManager::class.java)
-                                    cm?.setPrimaryClip(
-                                        android.content.ClipData.newPlainText("Terminal", copyDialogText)
-                                    )
-                                    // Android 13+ shows its own copy confirmation; toast covers older.
-                                    android.widget.Toast.makeText(context, resources.getString(R.string.copied_to_clipboard), android.widget.Toast.LENGTH_SHORT).show()
+                                    copyWithConfirmation(copyDialogText)
                                     dismiss()
                                 },
                                 enabled = copyDialogText.isNotBlank(),
@@ -2967,10 +2910,7 @@ private fun TerminalCanvas(
                     paint.isUnderlineText = span.underline
                     paint.alpha = 255
                     val x = col * cellWidthPx
-                    val glyphs = if (span.glyphs.isNotEmpty()) span.glyphs else
-                        span.text.codePoints().toArray().map { String(Character.toChars(it)) }
-                    val glyphWidths = if (span.glyphWidths.size == glyphs.size) span.glyphWidths else
-                        List(glyphs.size) { 1 }
+                    val (glyphs, glyphWidths) = span.cellLayout()
                     val widthCells = glyphWidths.sum()
                     val width = widthCells * cellWidthPx
                     if (bgInt != TerminalEmulator.DEFAULT_BG || span.inverse) {
@@ -3076,9 +3016,7 @@ private fun rowGlyphAt(row: TermRow, targetCol: Int): CursorGlyph? {
     if (targetCol < 0) return null
     var col = 0
     for (span in row.spans) {
-        val glyphs = if (span.glyphs.isNotEmpty()) span.glyphs else
-            span.text.codePoints().toArray().map { String(Character.toChars(it)) }
-        val widths = if (span.glyphWidths.size == glyphs.size) span.glyphWidths else List(glyphs.size) { 1 }
+        val (glyphs, widths) = span.cellLayout()
         for (index in glyphs.indices) {
             val next = col + widths[index].coerceIn(1, 2)
             if (targetCol in col until next) return CursorGlyph(glyphs[index], col, next - col)
@@ -3361,4 +3299,56 @@ internal fun terminalLinkAt(lineText: String, col: Int): String? {
         }
     }
     return null
+}
+
+/** The bold, untappable label above a group of sessions in a session picker. */
+@Composable
+private fun SessionMenuHeader(@StringRes label: Int) {
+    DropdownMenuItem(
+        text = { Text(stringResource(label), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+        enabled = false,
+        onClick = {},
+    )
+}
+
+/** "Started 5m ago · backgrounded 2m ago" under a session in a picker; the second part once it is backgrounded. */
+@Composable
+private fun SessionAgeLine(startedAtMs: Long, backgroundedAtMs: Long?, ageNowMs: Long) {
+    val started = formatSessionAge(startedAtMs, ageNowMs)
+    Text(
+        if (backgroundedAtMs == null) {
+            stringResource(R.string.started_ago, started)
+        } else {
+            stringResource(R.string.started_ago_backgrounded_ago, started, formatSessionAge(backgroundedAtMs, ageNowMs))
+        },
+        fontSize = 10.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** A saved tmux session in a session picker: tap to resume it, ✕ to remove it. */
+@Composable
+private fun SavedSessionMenuItem(
+    saved: PersistentSessionEntity,
+    ageNowMs: Long,
+    onResume: () -> Unit,
+    onRemove: () -> Unit,
+    enabled: Boolean = true,
+) {
+    DropdownMenuItem(
+        text = {
+            Column {
+                Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SessionAgeLine(saved.createdAt, saved.backgroundedAt, ageNowMs)
+            }
+        },
+        enabled = enabled,
+        onClick = onResume,
+        trailingIcon = {
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
+            }
+        },
+    )
 }

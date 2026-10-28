@@ -14,6 +14,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -27,6 +34,45 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+/**
+ * A scroll state for streamed output: it stays at the end as output arrives, stops following while
+ * the user has scrolled up to read, and follows again once they scroll back to the end. Keyed on
+ * the laid-out extent rather than the text, which a LaunchedEffect sees before the new text is
+ * measured, so a scroll-to-end there landed one chunk short.
+ */
+@Composable
+fun rememberTailFollowingScrollState(): ScrollState {
+    val scroll = rememberScrollState()
+    var following by remember { mutableStateOf(true) }
+    // Only the user's own scrolling changes the position without the extent changing.
+    LaunchedEffect(scroll) {
+        snapshotFlow { scroll.value }.collect { following = it >= scroll.maxValue }
+    }
+    LaunchedEffect(scroll.maxValue) {
+        if (following) scroll.scrollTo(scroll.maxValue)
+    }
+    return scroll
+}
+
+/**
+ * The list form of [rememberTailFollowingScrollState], for output that arrives as [items]: each new
+ * list shows its end if the user was at the end of the previous one, so a refreshed log window
+ * stays on the newest entries while someone reading further up is left where they are.
+ */
+@Composable
+fun rememberTailFollowingLazyListState(items: List<*>): LazyListState {
+    val state = rememberLazyListState()
+    var previousCount by remember { mutableIntStateOf(0) }
+    LaunchedEffect(items) {
+        // The layout still describes the previous list here, which is the one the user was reading.
+        val lastVisible = state.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+        val wasAtEnd = previousCount == 0 || lastVisible == null || lastVisible >= previousCount - 1
+        if (wasAtEnd && items.isNotEmpty()) state.scrollToItem(items.size - 1)
+        previousCount = items.size
+    }
+    return state
+}
 
 /** Persistent viewport-edge cues, including before the first drag and after content changes. */
 fun Modifier.verticalScrollWithIndicators(state: ScrollState): Modifier =

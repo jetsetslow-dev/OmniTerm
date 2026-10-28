@@ -50,6 +50,11 @@ class RemoteCommandShellSyntaxTest {
             "DOCKER_VOLUMES" to RemoteCommands.DOCKER_VOLUMES,
             "DOCKER_NETWORKS" to RemoteCommands.DOCKER_NETWORKS,
             "SERVICES" to RemoteCommands.SERVICES,
+            "SERVICES_BSD" to RemoteCommands.SERVICES_BSD,
+            "SERVICES_DARWIN" to RemoteCommands.SERVICES_DARWIN,
+            "serviceAction(FreeBSD)" to RemoteCommands.serviceAction("sshd", "enable", "", "FreeBSD"),
+            "serviceAction(Darwin)" to RemoteCommands.serviceAction("com.example.web", "stop", "", "Darwin"),
+            "reboot(FreeBSD)" to RemoteCommands.reboot("", "FreeBSD"),
             "PROCESSES" to RemoteCommands.PROCESSES,
             "OS_PROBE" to RemoteCommands.OS_PROBE,
             "TMUX_CHECK" to RemoteCommands.TMUX_CHECK,
@@ -61,6 +66,9 @@ class RemoteCommandShellSyntaxTest {
             "tmuxHasSessionCommand" to RemoteCommands.tmuxHasSessionCommand("omniterm-1"),
             "tmuxCaptureHistoryCommand" to RemoteCommands.tmuxCaptureHistoryCommand("omniterm-1", 5_000),
             "tmuxInstallCommand" to RemoteCommands.tmuxInstallCommand(),
+            "tmuxKillCommand" to RemoteCommands.tmuxKillCommand("0"),
+            "tmuxAttachCommand(adopted)" to RemoteCommands.tmuxAttachCommand("main", adopted = true),
+            "TMUX_LIST_SESSIONS" to RemoteCommands.TMUX_LIST_SESSIONS,
         )
 
         commands.forEach { (label, script) -> assertParses(label, script) }
@@ -85,6 +93,7 @@ class RemoteCommandShellSyntaxTest {
             "DOCKER_VOLUMES" to RemoteCommands.DOCKER_VOLUMES,
             "DOCKER_NETWORKS" to RemoteCommands.DOCKER_NETWORKS,
             "SERVICES" to RemoteCommands.SERVICES,
+            "SERVICES_BSD" to RemoteCommands.SERVICES_BSD,
             "journal(Linux)" to RemoteCommands.journal(200, "Linux"),
             "dockerPruneImages" to RemoteCommands.dockerPruneImages(),
             "dockerPruneVolumes" to RemoteCommands.dockerPruneVolumes(),

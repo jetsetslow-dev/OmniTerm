@@ -93,7 +93,7 @@ class E2eTmuxRecoveryRetentionTest {
             runOnUi { vm.navigateTo(Screen.Shell) }
             await("kept row visible", 15_000) { vm.restorablePersistentSessions.any { it.tmuxName == keptName } }
 
-            runOnUi { vm.resumePersistentSession(keptName) }
+            runOnUi { vm.resumePersistentSession(unreachableId, keptName) }
             await("unreachable resume settles", 60_000) { !vm.isTerminalConnecting && vm.terminalConnectError != null }
 
             assertTrue(
@@ -112,7 +112,7 @@ class E2eTmuxRecoveryRetentionTest {
             // ---- Confirmed absence: authenticated, exact-name "no" is the only thing that removes. ----
             await("absent row visible", 15_000) { vm.restorablePersistentSessions.any { it.tmuxName == goneName } }
 
-            runOnUi { vm.resumePersistentSession(goneName) }
+            runOnUi { vm.resumePersistentSession(reachableId, goneName) }
             await("confirmed-absent resume settles", 60_000) {
                 if (vm.pendingHostKeyApproval != null) runOnUi { vm.approveHostKey(true) }
                 !vm.isTerminalConnecting && vm.terminalConnectError != null
@@ -138,8 +138,8 @@ class E2eTmuxRecoveryRetentionTest {
                 repository.getPersistentSessions().count { it.tmuxName == keptName },
             )
         } finally {
-            repository.deletePersistentSession(keptName)
-            repository.deletePersistentSession(goneName)
+            repository.deletePersistentSession(unreachableId, keptName)
+            repository.deletePersistentSession(reachableId, goneName)
             repository.deleteServerAndDependents(reachableId)
             repository.deleteServerAndDependents(unreachableId)
             scenario.close()

@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -41,7 +42,7 @@ import com.jetsetslow.omniterm.R
 @Composable
 fun MonitorScreen(viewModel: AppViewModel) {
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = serversList.filter { it.status == "online" }
+    val onlineServers = serversList.filter { viewModel.isPickableHost(it) }
     // The explicit selection wins only while it is still online. The selector bar directly below is
     // built with onlineOnly = true, so matching on id alone left the body rendering a host the bar
     // no longer listed: the header and the content disagreed about which machine was on screen, the
@@ -88,7 +89,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
             AlertDialog(
                 onDismissRequest = { showRebootDialog = false },
                 title = { Text(stringResource(R.string.reboot_2, srv.name)) },
-                text = { Text(stringResource(R.string.this_runs_sudo_reboot_on_the, HostDisplay.host(srv))) },
+                text = { Text(stringResource(R.string.reboot_runs_on, RemoteCommands.rebootLabel(viewModel.knownOs(srv)), HostDisplay.host(srv))) },
                 confirmButton = {
                     TextButton(onClick = {
                         showRebootDialog = false
@@ -105,12 +106,11 @@ fun MonitorScreen(viewModel: AppViewModel) {
             edgePadding = 12.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
-            val tabs = listOf("Overview", "Processes", "Services", "Logs", "Scripts", "CRON")
-            tabs.forEachIndexed { idx, title ->
+            MonitorTab.entries.forEachIndexed { idx, tab ->
                 Tab(
                     selected = viewModel.activeMonitorTab == idx,
                     onClick = { viewModel.activeMonitorTab = idx }
-                ) { Text(title, fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp), fontWeight = FontWeight.SemiBold) }
+                ) { Text(tab.label, fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp), fontWeight = FontWeight.SemiBold) }
             }
         }
 
@@ -121,13 +121,14 @@ fun MonitorScreen(viewModel: AppViewModel) {
                 .weight(1f)
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            when (viewModel.activeMonitorTab) {
-                0 -> OverviewTab(viewModel, srv)
-                1 -> ProcessesTab(viewModel, srv)
-                2 -> ServicesTab(viewModel, srv)
-                3 -> LogsTab(viewModel)
-                4 -> QuickScriptsMonitorTab(viewModel, srv)
-                5 -> CronMonitorTab(viewModel, srv)
+            when (MonitorTab.entries.getOrNull(viewModel.activeMonitorTab)) {
+                MonitorTab.Overview, null -> OverviewTab(viewModel, srv)
+                MonitorTab.Specs -> SpecsTab(viewModel, srv)
+                MonitorTab.Processes -> ProcessesTab(viewModel, srv)
+                MonitorTab.Services -> ServicesTab(viewModel, srv)
+                MonitorTab.Logs -> LogsTab(viewModel)
+                MonitorTab.Scripts -> QuickScriptsMonitorTab(viewModel, srv)
+                MonitorTab.Cron -> CronMonitorTab(viewModel, srv)
             }
         }
 
@@ -331,7 +332,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                             Spacer(Modifier.width(6.dp))
                             Text(stringResource(R.string.reload), fontSize = 12.sp)
                         }
-                        Button(onClick = { createNew = true }, enabled = !viewModel.cronLoading) {
+                        Button(onClick = { createNew = true }, enabled = !viewModel.cronLoading && viewModel.cronReadable) {
                             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(stringResource(R.string.add), fontSize = 12.sp)
@@ -933,13 +934,42 @@ private fun StatRow(label: String, value: String, modifier: Modifier = Modifier)
     }
 }
 
+/** One figure in a process row: the value over its label, red when [busy]. */
+@Composable
+private fun ProcessStat(value: String, label: String, busy: Boolean) {
+    Column(horizontalAlignment = Alignment.End) {
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (busy) Color.Red else MaterialTheme.colorScheme.onSurface)
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private class KillWording(
+    val signal: Int,
+    @StringRes val button: Int,
+    @StringRes val title: Int,
+    @StringRes val message: Int,
+    @StringRes val confirm: Int,
+    val color: Color,
+)
+
+/** The gentle and the forced way to end a process; Windows has no signals, so it says taskkill. */
+private fun killWordings(windows: Boolean): List<KillWording> = if (windows) listOf(
+    KillWording(15, R.string.end_process_button, R.string.end_process_q, R.string.ask_pid_to_close_with_taskkill, R.string.end_process, OmniColors.amber),
+    KillWording(9, R.string.force_end_process_button, R.string.force_end_process_q, R.string.force_end_pid_with_taskkill, R.string.force_end_process, OmniColors.red),
+) else listOf(
+    KillWording(15, R.string.kill_15, R.string.send_sigterm, R.string.gracefully_terminate_pid_with_kill_15, R.string.kill_15_2, OmniColors.amber),
+    KillWording(9, R.string.kill_9, R.string.force_kill_sigkill, R.string.forcibly_kill_pid_with_kill_9, R.string.kill_9_2, OmniColors.red),
+)
+
 @Composable
 fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
-    // Real process list from `ps` over SSH; reloads on host change or sort toggle.
-    LaunchedEffect(srv.id, viewModel.processSortByCpu) { viewModel.loadProcesses() }
+    // Real process list from `ps` over SSH, with a second of disk and GPU sampling; reloads on
+    // host change. A sort change re-sorts what is loaded.
+    LaunchedEffect(srv.id) { viewModel.loadProcesses() }
     val simProcesses = viewModel.processes
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
+    val windows = RemoteCommands.normaliseOs(viewModel.knownOs(srv)) == "Windows"
 
     Column(modifier = Modifier.fillMaxSize()) {
         if (viewModel.processesLoading && simProcesses.isEmpty()) {
@@ -959,16 +989,18 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = viewModel.processSortByCpu,
-                    onClick = { viewModel.processSortByCpu = true },
-                    label = { Text(stringResource(R.string.cpu)) }
-                )
-                FilterChip(
-                    selected = !viewModel.processSortByCpu,
-                    onClick = { viewModel.processSortByCpu = false },
-                    label = { Text(stringResource(R.string.mem)) }
-                )
+                listOfNotNull(
+                    ProcessSort.Cpu to R.string.cpu,
+                    ProcessSort.Mem to R.string.mem,
+                    (ProcessSort.Disk to R.string.sort_disk).takeIf { viewModel.processDiskReported },
+                    (ProcessSort.Gpu to R.string.sort_gpu).takeIf { viewModel.processGpuReported },
+                ).forEach { (sort, label) ->
+                    FilterChip(
+                        selected = viewModel.processSort == sort,
+                        onClick = { viewModel.sortProcessesBy(sort) },
+                        label = { Text(stringResource(label)) }
+                    )
+                }
             }
             Text(stringResource(R.string.procs, simProcesses.size), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -1005,9 +1037,9 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(proc.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 14.sp)
+                                    Text(proc.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     OmniTag(proc.state, color = if (proc.state == "R") OmniColors.green else OmniColors.cyan)
                                 }
@@ -1018,13 +1050,21 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("${proc.cpu}%", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (proc.cpu > 20f) Color.Red else MaterialTheme.colorScheme.onSurface)
-                                    Text(stringResource(R.string.cpu_2), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                ProcessStat("${proc.cpu}%", stringResource(R.string.cpu_2), busy = proc.cpu > 20f)
+                                ProcessStat("${proc.mem}%", stringResource(R.string.mem_2), busy = proc.mem > 20f)
+                                if (viewModel.processDiskReported) {
+                                    ProcessStat(
+                                        proc.disk?.let { "${RemoteParsers.humanBytes(it.totalBytesPerSecond)}/s" } ?: "—",
+                                        stringResource(R.string.disk_2),
+                                        busy = (proc.disk?.totalBytesPerSecond ?: 0L) > 10L * 1024 * 1024,
+                                    )
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("${proc.mem}%", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (proc.mem > 20f) Color.Red else MaterialTheme.colorScheme.onSurface)
-                                    Text(stringResource(R.string.mem_2), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (viewModel.processGpuReported) {
+                                    ProcessStat(
+                                        proc.gpu?.let { "${it.roundToInt()}%" } ?: "—",
+                                        stringResource(R.string.gpu_2),
+                                        busy = (proc.gpu ?: 0f) > 20f,
+                                    )
                                 }
                             }
                         }
@@ -1032,41 +1072,39 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                         if (isExpanded) {
                             androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             Text(stringResource(R.string.virtual_memory_size_vms, proc.vms), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            proc.disk?.let { disk ->
+                                Text(
+                                    stringResource(
+                                        R.string.disk_read_write_per_second,
+                                        RemoteParsers.humanBytes(disk.readBytesPerSecond),
+                                        RemoteParsers.humanBytes(disk.writeBytesPerSecond),
+                                    ),
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
                             ) {
-                                OmniButton(
-                                    label = stringResource(R.string.kill_15),
-                                    onClick = {
-                                        confirm.ask(
-                                            confirm.str(R.string.send_sigterm),
-                                            confirm.str(R.string.gracefully_terminate_pid_with_kill_15, proc.pid, proc.name),
-                                            confirmLabel = confirm.str(R.string.kill_15_2),
-                                        ) {
-                                            viewModel.killProcess(proc.pid, 15)
-                                            viewModel.expandedProcessPid = null
-                                        }
-                                    },
-                                    color = OmniColors.amber,
-                                    small = true
-                                )
-                                OmniButton(
-                                    label = stringResource(R.string.kill_9),
-                                    onClick = {
-                                        confirm.ask(
-                                            confirm.str(R.string.force_kill_sigkill),
-                                            confirm.str(R.string.forcibly_kill_pid_with_kill_9, proc.pid, proc.name),
-                                            confirmLabel = confirm.str(R.string.kill_9_2),
-                                        ) {
-                                            viewModel.killProcess(proc.pid, 9)
-                                            viewModel.expandedProcessPid = null
-                                        }
-                                    },
-                                    color = OmniColors.red,
-                                    small = true
-                                )
+                                killWordings(windows).forEach { kill ->
+                                    OmniButton(
+                                        label = stringResource(kill.button),
+                                        onClick = {
+                                            confirm.ask(
+                                                confirm.str(kill.title),
+                                                confirm.str(kill.message, proc.pid, proc.name),
+                                                confirmLabel = confirm.str(kill.confirm),
+                                            ) {
+                                                viewModel.killProcess(proc.pid, kill.signal)
+                                                viewModel.expandedProcessPid = null
+                                            }
+                                        },
+                                        color = kill.color,
+                                        small = true
+                                    )
+                                }
                             }
                         }
                 }
@@ -1161,7 +1199,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                 onClick = {
                                     confirm.ask(
                                         confirm.str(R.string.restart_3, svc.name),
-                                        confirm.str(R.string.run_systemctl_restart_on_the_service, svc.name),
+                                        confirm.str(R.string.service_restart_explained, svc.name),
                                         confirmLabel = confirm.str(R.string.restart),
                                     ) { viewModel.runServiceCommand(svc.name, "restart") }
                                 },
@@ -1174,7 +1212,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                                     onClick = {
                                         confirm.ask(
                                             confirm.str(R.string.stop_3, svc.name),
-                                            confirm.str(R.string.run_systemctl_stop_on_it_will, svc.name),
+                                            confirm.str(R.string.service_stop_explained, svc.name),
                                             confirmLabel = confirm.str(R.string.stop),
                                         ) { viewModel.runServiceCommand(svc.name, "stop") }
                                     },
@@ -1273,11 +1311,13 @@ fun LogsTab(viewModel: AppViewModel) {
             }
         } else
         SelectionContainer(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // journalctl lists oldest first, so the newest entries are at the end: follow them.
             OverflowLazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
-                    .padding(8.dp)
+                    .padding(8.dp),
+                state = rememberTailFollowingLazyListState(loadedLogs),
             ) {
                 items(loadedLogs) { entry ->
                     Row(

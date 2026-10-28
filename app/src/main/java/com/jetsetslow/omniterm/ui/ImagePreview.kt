@@ -11,19 +11,13 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -41,8 +35,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.ui.theme.OmniColors
@@ -58,35 +50,14 @@ fun ImagePreviewOverlay(preview: AppViewModel.RemoteImagePreview, onClose: () ->
     BackHandler(enabled = true) { onClose() }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_image_preview))
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        preview.name,
-                        fontFamily = OmniFonts.mono,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    val bitmap = preview.bitmap
-                    Text(
-                        if (bitmap != null) "${bitmap.width}×${bitmap.height} · ${formatBytes(preview.sizeBytes)}"
-                        else formatBytes(preview.sizeBytes),
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            val bitmap = preview.bitmap
+            FullScreenTopBar(
+                title = preview.name,
+                closeDescription = stringResource(R.string.close_image_preview),
+                onClose = onClose,
+                subtitle = if (bitmap != null) "${bitmap.width}×${bitmap.height} · ${formatBytes(preview.sizeBytes)}"
+                else formatBytes(preview.sizeBytes),
+            )
             HorizontalDivider()
             Box(
                 modifier = Modifier
@@ -95,7 +66,6 @@ fun ImagePreviewOverlay(preview: AppViewModel.RemoteImagePreview, onClose: () ->
                     .background(Color.Black),
                 contentAlignment = Alignment.Center,
             ) {
-                val bitmap = preview.bitmap
                 when {
                     preview.error != null -> Text(
                         preview.error,

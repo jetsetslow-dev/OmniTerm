@@ -26,6 +26,10 @@ These rules apply to every contributor and automation tool working in this repos
 - Keep `scripts/local-pr-check.sh` aligned with `.github/workflows/android-pr-check.yml` whenever
   build, test, lint, migration, SBOM, signing-input, or dependency-verification behavior changes.
 - Run `git diff --check` and `git diff --cached --check` before committing.
+- Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.
+  `scripts/check-duplicates.py` fails the gate and CI on a new copied block. Its baseline
+  (`scripts/duplicate-code-baseline.json`) is empty; only `--update-baseline` adds to it, and that
+  needs the reviewer's agreement.
 
 ## Open every screen you touched on a real device
 
@@ -158,6 +162,12 @@ state that a screen reads.
   PR without executing untrusted PR code under `pull_request_target`. Keep it scoped to Gradle
   Dependabot branches. It requires the repository Actions setting that permits PR creation, but
   must never approve its own PR; independent review and normal branch protections still apply.
+  It commits through the Git Data API so GitHub signs the commit, and fails rather than publish
+  an unsigned one; keep it that way.
+- main requires every commit in a PR to be signed, and GitHub enforces that only at merge time.
+  Before merging another branch into a PR branch, check each incoming commit with
+  `gh api repos/{owner}/{repo}/commits/<sha> --jq .commit.verification.verified`. An unsigned
+  commit can only be removed by rewriting the PR branch, which dismisses its approval.
 - Use `./scripts/refresh-verification-metadata.sh --write` for checksum regeneration and
   `--verify` for a non-mutating forced-refresh check. Keep local and CI dependency resolution
   aligned through this script rather than adding partial one-off Gradle commands.

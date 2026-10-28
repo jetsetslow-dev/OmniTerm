@@ -431,6 +431,19 @@ fun parseDockerComposeYaml(
     var currentTopNet: TopLevelNetworkDraft? = null
     var serviceIndent = -1            // indent of service-name keys (e.g. 2)
     var topSectionItemIndent = -1     // indent of keys directly under volumes:/networks: (e.g. 2)
+
+    // Whether a "name:" line starts an entry of the top-level volumes:/networks: section. Only LIVE
+    // entries establish the section's indent scale: a manually commented entry ("  # db_storage:")
+    // see-throughs to a shifted indent and used to set a bogus scale, swallowing every live entry
+    // after it. Commented entries are matched by a tolerance window + name check instead.
+    fun isTopSectionEntry(keyName: String, indent: Int, isCommented: Boolean): Boolean =
+        if (!isCommented) {
+            if (topSectionItemIndent == -1) topSectionItemIndent = indent
+            indent == topSectionItemIndent
+        } else {
+            val max = if (topSectionItemIndent == -1) 4 else topSectionItemIndent + 2
+            indent in 1..max && isValidComposeName(keyName) && keyName !in TOP_ENTRY_CONFIG_KEYS
+        }
     var arrayKey = ""                 // current "- " list context (ports/environment/…)
     var arrayKeyLine = -1
     var arrayKeyIndent = -1           // indent of the current array key, to spot its body's shape
@@ -538,18 +551,7 @@ fun parseDockerComposeYaml(
             if (content.contains(":") && !content.startsWith("-")) {
                 val keyName = content.substringBefore(":").trim().unquoteYaml()
                 val inlineValue = content.substringAfter(":").trim().stripYamlInlineComment()
-                // Only LIVE entries establish the section's indent scale: a manually commented
-                // entry ("  # db_storage:") see-throughs to a shifted indent and used to set a
-                // bogus scale, swallowing every live entry after it. Commented entries are
-                // matched by a tolerance window + name check instead.
-                val isEntry = if (!isCommented) {
-                    if (topSectionItemIndent == -1) topSectionItemIndent = indent
-                    indent == topSectionItemIndent
-                } else {
-                    val max = if (topSectionItemIndent == -1) 4 else topSectionItemIndent + 2
-                    indent in 1..max && isValidComposeName(keyName) && keyName !in TOP_ENTRY_CONFIG_KEYS
-                }
-                if (isEntry) {
+                if (isTopSectionEntry(keyName, indent, isCommented)) {
                     finishTopVol()
                     currentTopVol = TopLevelVolumeDraft(
                         name = keyName,
@@ -580,14 +582,7 @@ fun parseDockerComposeYaml(
             if (content.contains(":") && !content.startsWith("-")) {
                 val keyName = content.substringBefore(":").trim().unquoteYaml()
                 val inlineValue = content.substringAfter(":").trim().stripYamlInlineComment()
-                val isEntry = if (!isCommented) {
-                    if (topSectionItemIndent == -1) topSectionItemIndent = indent
-                    indent == topSectionItemIndent
-                } else {
-                    val max = if (topSectionItemIndent == -1) 4 else topSectionItemIndent + 2
-                    indent in 1..max && isValidComposeName(keyName) && keyName !in TOP_ENTRY_CONFIG_KEYS
-                }
-                if (isEntry) {
+                if (isTopSectionEntry(keyName, indent, isCommented)) {
                     finishTopNet()
                     currentTopNet = TopLevelNetworkDraft(
                         name = keyName,
@@ -1878,9 +1873,82 @@ private const val LARGE_VISUAL_SERVICE_THRESHOLD = 40
 
 @Composable
 private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit) {
-    // ── Top-level volumes ──
-    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.amber) {
-        var expanded by remember { mutableStateOf(draft.topVolumes.isNotEmpty()) }
+    fun volumes(change: MutableList<TopLevelVolumeDraft>.() -> Unit) =
+        onChange(draft.copy(topVolumes = draft.topVolumes.toMutableList().apply(change)))
+    fun networks(change: MutableList<TopLevelNetworkDraft>.() -> Unit) =
+        onChange(draft.copy(topNetworks = draft.topNetworks.toMutableList().apply(change)))
+
+    TopLevelSectionCard(
+        accent = OmniColors.amber,
+        title = stringResource(R.string.top_level_volumes),
+        count = draft.topVolumes.size,
+        hint = stringResource(R.string.named_volumes_referenced_by_services_must),
+        addLabel = stringResource(R.string.add_volume),
+        onAdd = { volumes { add(TopLevelVolumeDraft()) } },
+    ) {
+        draft.topVolumes.forEachIndexed { i, vol ->
+            TopLevelEntryRow(
+                name = vol.name,
+                onName = { v -> volumes { this[i] = vol.copy(name = v.trim()) } },
+                nameLabel = stringResource(R.string.volume_name),
+                namePlaceholder = stringResource(R.string.mydata),
+                external = vol.external,
+                onExternal = { v -> volumes { this[i] = vol.copy(external = v) } },
+                commentedOut = vol.isCommentedOut,
+                removeDescription = "Remove volume",
+                onRemove = { volumes { removeAt(i) } },
+            )
+        }
+    }
+
+    TopLevelSectionCard(
+        accent = OmniColors.cyan,
+        title = stringResource(R.string.top_level_networks),
+        count = draft.topNetworks.size,
+        hint = stringResource(R.string.custom_networks_referenced_by_services_must),
+        addLabel = stringResource(R.string.add_network),
+        onAdd = { networks { add(TopLevelNetworkDraft()) } },
+    ) {
+        draft.topNetworks.forEachIndexed { i, net ->
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TopLevelEntryRow(
+                    name = net.name,
+                    onName = { v -> networks { this[i] = net.copy(name = v.trim()) } },
+                    nameLabel = stringResource(R.string.network_name),
+                    namePlaceholder = stringResource(R.string.frontend),
+                    external = net.external,
+                    onExternal = { v -> networks { this[i] = net.copy(external = v) } },
+                    commentedOut = net.isCommentedOut,
+                    removeDescription = "Remove network",
+                    onRemove = { networks { removeAt(i) } },
+                )
+                OutlinedTextField(
+                    value = net.driver,
+                    onValueChange = { v -> networks { this[i] = net.copy(driver = v.trim()) } },
+                    label = { Text(stringResource(R.string.driver_optional)) },
+                    placeholder = { Text(stringResource(R.string.bridge_overlay_macvlan)) },
+                    singleLine = true,
+                    colors = omniTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth().then(if (net.isCommentedOut) Modifier.alpha(0.45f) else Modifier),
+                )
+            }
+        }
+    }
+}
+
+/** A collapsible card for the top-level volumes: or networks: section; open when it has entries. */
+@Composable
+private fun TopLevelSectionCard(
+    accent: Color,
+    title: String,
+    count: Int,
+    hint: String,
+    addLabel: String,
+    onAdd: () -> Unit,
+    entries: @Composable () -> Unit,
+) {
+    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = accent) {
+        var expanded by remember { mutableStateOf(count > 0) }
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 Modifier.fillMaxWidth().clickable { expanded = !expanded },
@@ -1890,158 +1958,59 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = null, tint = OmniColors.amber,
+                        contentDescription = null, tint = accent,
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.top_level_volumes), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                    Text(title, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
                 }
-                if (draft.topVolumes.isNotEmpty()) {
-                    OmniTag("${draft.topVolumes.size}", color = OmniColors.amber)
+                if (count > 0) {
+                    OmniTag("$count", color = accent)
                 }
             }
             if (expanded) {
-                Text(stringResource(R.string.named_volumes_referenced_by_services_must),
-                    fontSize = 11.sp, color = OmniColors.textMuted,
-                )
-                draft.topVolumes.forEachIndexed { i, vol ->
-                    val dimmed = vol.isCommentedOut
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedTextField(
-                            value = vol.name,
-                            onValueChange = { v ->
-                                val list = draft.topVolumes.toMutableList()
-                                list[i] = vol.copy(name = v.trim())
-                                onChange(draft.copy(topVolumes = list))
-                            },
-                            label = { Text(stringResource(R.string.volume_name)) },
-                            placeholder = { Text(stringResource(R.string.mydata)) },
-                            singleLine = true,
-                            colors = omniTextFieldColors(),
-                            modifier = Modifier.weight(1f).then(if (dimmed) Modifier.alpha(0.45f) else Modifier),
-                        )
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(stringResource(R.string.ext), fontSize = 10.sp, color = OmniColors.textMuted)
-                            Switch(
-                                checked = vol.external,
-                                onCheckedChange = { v ->
-                                    val list = draft.topVolumes.toMutableList()
-                                    list[i] = vol.copy(external = v)
-                                    onChange(draft.copy(topVolumes = list))
-                                },
-                            )
-                        }
-                        if (dimmed) {
-                            Text(stringResource(R.string.commented), fontSize = 9.sp, color = OmniColors.textMuted, fontFamily = OmniFonts.mono)
-                        }
-                        IconButton(onClick = {
-                            val list = draft.topVolumes.toMutableList()
-                            list.removeAt(i)
-                            onChange(draft.copy(topVolumes = list))
-                        }) { Icon(Icons.Filled.Delete, "Remove volume", tint = OmniColors.red, modifier = Modifier.size(20.dp)) }
-                    }
-                }
-                TextButton(onClick = {
-                    val list = draft.topVolumes.toMutableList()
-                    list.add(TopLevelVolumeDraft())
-                    onChange(draft.copy(topVolumes = list))
-                }) {
+                Text(hint, fontSize = 11.sp, color = OmniColors.textMuted)
+                entries()
+                TextButton(onClick = onAdd) {
                     Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.add_volume), fontSize = 12.sp)
+                    Text(addLabel, fontSize = 12.sp)
                 }
             }
         }
     }
+}
 
-    // ── Top-level networks ──
-    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
-        var expanded by remember { mutableStateOf(draft.topNetworks.isNotEmpty()) }
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                Modifier.fillMaxWidth().clickable { expanded = !expanded },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = null, tint = OmniColors.cyan,
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.top_level_networks), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
-                }
-                if (draft.topNetworks.isNotEmpty()) {
-                    OmniTag("${draft.topNetworks.size}", color = OmniColors.cyan)
-                }
-            }
-            if (expanded) {
-                Text(stringResource(R.string.custom_networks_referenced_by_services_must),
-                    fontSize = 11.sp, color = OmniColors.textMuted,
-                )
-                draft.topNetworks.forEachIndexed { i, net ->
-                    val dimmed = net.isCommentedOut
-                    val dimMod = if (dimmed) Modifier.alpha(0.45f) else Modifier
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutlinedTextField(
-                                value = net.name,
-                                onValueChange = { v ->
-                                    val list = draft.topNetworks.toMutableList()
-                                    list[i] = net.copy(name = v.trim())
-                                    onChange(draft.copy(topNetworks = list))
-                                },
-                                label = { Text(stringResource(R.string.network_name)) },
-                                placeholder = { Text(stringResource(R.string.frontend)) },
-                                singleLine = true,
-                                colors = omniTextFieldColors(),
-                                modifier = Modifier.weight(1f).then(dimMod),
-                            )
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(stringResource(R.string.ext), fontSize = 10.sp, color = OmniColors.textMuted)
-                                Switch(
-                                    checked = net.external,
-                                    onCheckedChange = { v ->
-                                        val list = draft.topNetworks.toMutableList()
-                                        list[i] = net.copy(external = v)
-                                        onChange(draft.copy(topNetworks = list))
-                                    },
-                                )
-                            }
-                            if (dimmed) {
-                                Text(stringResource(R.string.commented), fontSize = 9.sp, color = OmniColors.textMuted, fontFamily = OmniFonts.mono)
-                            }
-                            IconButton(onClick = {
-                                val list = draft.topNetworks.toMutableList()
-                                list.removeAt(i)
-                                onChange(draft.copy(topNetworks = list))
-                            }) { Icon(Icons.Filled.Delete, "Remove network", tint = OmniColors.red, modifier = Modifier.size(20.dp)) }
-                        }
-                        OutlinedTextField(
-                            value = net.driver,
-                            onValueChange = { v ->
-                                val list = draft.topNetworks.toMutableList()
-                                list[i] = net.copy(driver = v.trim())
-                                onChange(draft.copy(topNetworks = list))
-                            },
-                            label = { Text(stringResource(R.string.driver_optional)) },
-                            placeholder = { Text(stringResource(R.string.bridge_overlay_macvlan)) },
-                            singleLine = true,
-                            colors = omniTextFieldColors(),
-                            modifier = Modifier.fillMaxWidth().then(dimMod),
-                        )
-                    }
-                }
-                TextButton(onClick = {
-                    val list = draft.topNetworks.toMutableList()
-                    list.add(TopLevelNetworkDraft())
-                    onChange(draft.copy(topNetworks = list))
-                }) {
-                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.add_network), fontSize = 12.sp)
-                }
-            }
+/** One top-level volume or network: its name, whether it is external, and remove. Dimmed while commented out. */
+@Composable
+private fun TopLevelEntryRow(
+    name: String,
+    onName: (String) -> Unit,
+    nameLabel: String,
+    namePlaceholder: String,
+    external: Boolean,
+    onExternal: (Boolean) -> Unit,
+    commentedOut: Boolean,
+    removeDescription: String,
+    onRemove: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = onName,
+            label = { Text(nameLabel) },
+            placeholder = { Text(namePlaceholder) },
+            singleLine = true,
+            colors = omniTextFieldColors(),
+            modifier = Modifier.weight(1f).then(if (commentedOut) Modifier.alpha(0.45f) else Modifier),
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(stringResource(R.string.ext), fontSize = 10.sp, color = OmniColors.textMuted)
+            Switch(checked = external, onCheckedChange = onExternal)
         }
+        if (commentedOut) {
+            Text(stringResource(R.string.commented), fontSize = 9.sp, color = OmniColors.textMuted, fontFamily = OmniFonts.mono)
+        }
+        IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, removeDescription, tint = OmniColors.red, modifier = Modifier.size(20.dp)) }
     }
 }
 

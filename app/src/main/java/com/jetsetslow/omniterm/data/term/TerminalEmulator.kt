@@ -1150,7 +1150,16 @@ data class TermSpan(
     /** Grapheme-like terminal glyphs and their display-cell widths; empty for legacy callers. */
     val glyphs: List<String> = emptyList(),
     val glyphWidths: List<Int> = emptyList(),
-)
+) {
+    /**
+     * The span's glyphs and the cells each one takes. A legacy span without glyphs gets one per
+     * code point, and widths that do not line up with the glyphs count one cell each.
+     */
+    fun cellLayout(): Pair<List<String>, List<Int>> {
+        val cells = glyphs.ifEmpty { text.codePoints().toArray().map { String(Character.toChars(it)) } }
+        return cells to if (glyphWidths.size == cells.size) glyphWidths else List(cells.size) { 1 }
+    }
+}
 
 /**
  * One visual row. [softWrap] marks a row whose text ran off the right edge and continues on the

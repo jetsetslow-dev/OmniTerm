@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.ui.AppViewModel
+import com.jetsetslow.omniterm.ui.MonitorTab
 import com.jetsetslow.omniterm.ui.Screen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -51,7 +52,7 @@ class E2eAppSurfaceStressTest {
             // Render every nested tab; this catches tab-specific LaunchedEffect, empty/error state,
             // and compact-layout crashes without duplicating the dedicated network/compose suites.
             renderSubtabs(vm, Screen.Fleet, 3) { vm.fleetTabIndex = it }
-            renderSubtabs(vm, Screen.Monitor, 6) { vm.activeMonitorTab = it }
+            renderSubtabs(vm, Screen.Monitor, MonitorTab.entries.size) { vm.activeMonitorTab = it }
             renderSubtabs(vm, Screen.SFTP, 4) { vm.activeSftpTab = it }
             renderSubtabs(vm, Screen.Infra, 5) { vm.activeInfraTab = it }
             renderSubtabs(vm, Screen.Network, 9) { vm.activeNetworkTab = it }
@@ -121,7 +122,7 @@ class E2eAppSurfaceStressTest {
 
             composeRule.runOnUiThread {
                 vm.navigateTo(Screen.Monitor)
-                vm.activeMonitorTab = 5
+                vm.activeMonitorTab = MonitorTab.entries.lastIndex
                 vm.swipeNavigate(forward = true)
             }
             assertEquals(Screen.Shell, vm.currentScreen)

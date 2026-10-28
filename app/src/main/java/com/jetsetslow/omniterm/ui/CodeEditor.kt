@@ -405,36 +405,14 @@ fun FullScreenCodeEditor(
         androidx.compose.material3.Scaffold(
             topBar = {
                 Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .background(MaterialTheme.colorScheme.surfaceContainer)
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(onClick = onClose) {
-                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_editor))
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                title + if (dirty) " •" else "",
-                                fontFamily = OmniFonts.mono,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            )
-                            if (subtitle != null) {
-                                Text(
-                                    subtitle,
-                                    fontSize = 10.sp,
-                                    color = subtitleColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                        topBarAction?.invoke()
-                    }
+                    FullScreenTopBar(
+                        title = title + if (dirty) " •" else "",
+                        closeDescription = stringResource(R.string.close_editor),
+                        onClose = onClose,
+                        subtitle = subtitle,
+                        subtitleColor = subtitleColor,
+                        action = topBarAction,
+                    )
                     androidx.compose.material3.HorizontalDivider()
                 }
             },
@@ -851,4 +829,46 @@ class FullScreenEditorHost {
 
 val LocalFullScreenEditorHost = staticCompositionLocalOf<FullScreenEditorHost> {
     error("FullScreenEditorHost is not installed")
+}
+
+/** The top bar of a full-screen editor or viewer: close, a one-line title, an optional subtitle and action. */
+@Composable
+internal fun FullScreenTopBar(
+    title: String,
+    closeDescription: String,
+    onClose: () -> Unit,
+    subtitle: String? = null,
+    subtitleColor: androidx.compose.ui.graphics.Color? = null,
+    action: @Composable (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onClose) {
+            Icon(Icons.Filled.Close, contentDescription = closeDescription)
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                fontFamily = OmniFonts.mono,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    fontSize = 10.sp,
+                    color = subtitleColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        action?.invoke()
+    }
 }

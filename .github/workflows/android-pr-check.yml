@@ -106,6 +106,13 @@ jobs:
         run: |
           ./scripts/test-release-version.sh
           ./scripts/test-ci-gradle-gate.sh
+          ./scripts/test-check-duplicates.sh
+
+      # Same check as scripts/local-pr-check.sh: a new copy-pasted block fails the build.
+      - name: Check for new duplicated code
+        run: >-
+          python3 scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json
+          app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 
       # Verification APKs never need signing continuity. Always use an ephemeral key so untrusted
       # build/test code cannot access the stable sideload signing key.

@@ -77,7 +77,7 @@ class TmuxResumeLatencyRobolectricTest {
                 if (fresh) {
                     model.selectedServerId = id
                     model.connectTerminal()
-                } else model.resumePersistentSession("omniterm-latency-fixture")
+                } else model.resumePersistentSession(id, "omniterm-latency-fixture")
             }
             withTimeout(5_000) { transport.opened.await() }
             val usable = withTimeoutOrNull(2_000) {
@@ -91,18 +91,20 @@ class TmuxResumeLatencyRobolectricTest {
             if (reselect) {
                 transport.blockPresence = true
                 transport.presenceReply = if (missing) "no" else "SSH Error: connection refused"
-                withContext(main) { model.resumePersistentSession("omniterm-latency-fixture") }
+                withContext(main) { model.resumePersistentSession(id, "omniterm-latency-fixture") }
                 assertTrue("Selecting an existing tmux must show progress while checking the host", model.isTerminalConnecting)
                 withTimeout(5_000) { transport.presenceStarted.await() }
                 transport.presenceRelease.complete(Unit)
                 withTimeout(5_000) { while (model.isTerminalConnecting) delay(10) }
                 assertTrue("Failed host check must be visible", !model.terminalConnectError.isNullOrBlank())
+                // Saved sessions are keyed by host and name, and the database outlives each test, so
+                // only this host's entry counts: an earlier test's host may still have one by this name.
                 if (missing) {
-                    assertTrue("Confirmed missing work must not leave a recovery pointer", repository.getPersistentSessions().none { it.tmuxName == "omniterm-latency-fixture" })
+                    assertTrue("Confirmed missing work must not leave a recovery pointer", repository.getPersistentSessions().none { it.serverId == id && it.tmuxName == "omniterm-latency-fixture" })
                     assertTrue(checkNotNull(model.currentSession).tmuxSessionMissing)
                     assertTrue("The terminal buffer remains available", model.activeSessions.size == 1)
                 } else {
-                    assertTrue("An unreachable host must not erase tmux recovery", repository.getPersistentSessions().any { it.tmuxName == "omniterm-latency-fixture" })
+                    assertTrue("An unreachable host must not erase tmux recovery", repository.getPersistentSessions().any { it.serverId == id && it.tmuxName == "omniterm-latency-fixture" })
                     assertTrue("Old open flags must not pin a rebooted host online", repository.getServerById(id)?.status == "offline")
                     assertTrue("The selected terminal must also acknowledge connection loss", model.currentSession?.isConnected == false)
                 }
@@ -151,7 +153,7 @@ class TmuxResumeLatencyRobolectricTest {
         val presenceRelease = CompletableDeferred<Unit>()
         override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String {
             if (command == RemoteCommands.TMUX_CHECK) return "yes"
-            if (command.contains("has-session")) {
+            if (command == RemoteCommands.tmuxHasSessionCommand("omniterm-latency-fixture")) {
                 if (blockPresence) {
                     presenceStarted.complete(Unit)
                     presenceRelease.await()
