@@ -139,7 +139,9 @@ case "${1:-}" in
         exit 1
       fi
     done
-    compose up -d
+    # --build: without it an existing image is reused as-is, so a fixture fixed in the repository
+    # keeps failing on every machine that built it before. Cached layers make this cheap.
+    compose up -d --build
     for entry in "${EDGE_HOSTS[@]}"; do
       p="${entry#*:}"; p="${p%%:*}"
       wait_for_port "$p" || exit 1

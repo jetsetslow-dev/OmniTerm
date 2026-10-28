@@ -30,6 +30,16 @@ if [ "$OMNITERM_TEST_RUNTIME" = docker ]; then
   chmod 0666 /var/run/docker.sock
 fi
 
+if [ "$OMNITERM_TEST_RUNTIME" = podman ]; then
+  # Podman records the boot ID under /run, and /run survives when Docker restarts this container
+  # instead of recreating it (as after a host reboot). Every podman command then refuses with
+  # "current system boot ID differs from cached boot ID; an unhandled reboot has occurred", and
+  # the fixture looks like a host without Podman. A container start is a fresh boot as far as
+  # Podman is concerned: nothing it ran survived it. So clear its runtime state, as that message
+  # advises. Images and volumes live in /var/lib/containers and are kept.
+  rm -rf /run/containers/storage /run/libpod
+fi
+
 ssh-keygen -A
 exec /usr/sbin/sshd -D -e -p 2222 \
   -o PasswordAuthentication=yes \
