@@ -253,6 +253,13 @@ if [ -f "$REPO_ROOT/.github/workflows/flutter-pr-check.yml" ]; then
     expect "Flutter shared Android input: $shared_path" true \
       "$(run_detector "$flutter_script" "$WORK/shared-android-input")"
   done
+  # The duplicate check runs in the Flutter job, so its checker and baseline gate that job too.
+  for dup_path in scripts/check-duplicates.py scripts/test-check-duplicates.sh \
+    scripts/flutter-duplicate-code-baseline.json; do
+    printf '%s\n' "$dup_path" > "$WORK/duplicate-check-input"
+    expect "Flutter duplicate check input: $dup_path" true \
+      "$(run_detector "$flutter_script" "$WORK/duplicate-check-input")"
+  done
 fi
 
 # CodeQL only: push and schedule are the prerelease gate and must never skip.

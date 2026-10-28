@@ -151,6 +151,12 @@ run_flutter_checks() {
     dart format --output=none --set-exit-if-changed --line-length 100 "${dart_files[@]}"
     echo "Analyzing the Flutter app"
     flutter analyze --fatal-infos
+    # A copy-pasted block is extracted into shared code instead of kept twice. The baseline lists the
+    # known copies, so only a new one fails; CI runs the same check.
+    echo "Checking for new duplicated code"
+    ../scripts/test-check-duplicates.sh
+    (cd .. && python3 scripts/check-duplicates.py --baseline scripts/flutter-duplicate-code-baseline.json \
+      --exclude '*.g.dart' --exclude '*.freezed.dart' --exclude '*/l10n/*' flutter_app/lib)
     echo "Running the Flutter test suite"
     flutter test
   )

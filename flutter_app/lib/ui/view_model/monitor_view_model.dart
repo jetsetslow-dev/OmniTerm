@@ -195,18 +195,11 @@ class MonitorViewModel extends ChangeNotifier {
   /// bar above it no longer listed that host — so the header disagreed with the body and there was
   /// no way to switch away from it. Every tab also kept issuing SSH commands at a host that was
   /// down.
-  Server? get monitoredServer {
-    final online = _app.servers.where((s) => s.status == 'online');
-    final selectedId = _app.selectedServerId;
-    for (final server in online) {
-      if (server.id == selectedId) return server;
-    }
-    return online.firstOrNull;
-  }
+  Server? get monitoredServer => _app.selectedOnlineServer;
 
   /// The hosts the picker can offer. Only online ones: an SSH command to a host that is down can
   /// only ever time out, and offering it invites the user to blame the app.
-  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.onlineServers;
 
   /// True when there is nothing to monitor, so the screen shows its empty state.
   bool get hasNoOnlineHosts => monitoredServer == null;

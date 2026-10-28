@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
 import 'async_lock.dart';
+import 'socket_byte_reader.dart';
 import 'ssh_transport.dart';
 import 'tunnel_generation.dart';
 
@@ -367,11 +367,11 @@ class SocksForwardServer {
   Future<void> _accept(Socket socket) async {
     _clients.add(socket);
     SSHSocket? channel;
-    _SocketByteReader? reader;
+    SocketByteReader? reader;
     var version = 0;
     try {
       socket.setOption(SocketOption.tcpNoDelay, true);
-      reader = _SocketByteReader(socket);
+      reader = _socksReader(socket);
       version = (await reader.read(1, handshakeTimeout)).single;
       final destination = switch (version) {
         4 => await _readSocks4(reader),
@@ -411,7 +411,7 @@ class SocksForwardServer {
     }
   }
 
-  Future<(String, int)?> _readSocks5(Socket socket, _SocketByteReader reader) async {
+  Future<(String, int)?> _readSocks5(Socket socket, SocketByteReader reader) async {
     final methodCount = (await reader.read(1, handshakeTimeout)).single;
     if (methodCount == 0) {
       socket.add(const [5, 0xff]);
@@ -449,7 +449,7 @@ class SocksForwardServer {
     return (host, await _readPort(reader));
   }
 
-  Future<(String, int)?> _readSocks4(_SocketByteReader reader) async {
+  Future<(String, int)?> _readSocks4(SocketByteReader reader) async {
     if ((await reader.read(1, handshakeTimeout)).single != 1) return null;
     final port = await _readPort(reader);
     final address = await reader.read(4, handshakeTimeout);
@@ -461,7 +461,7 @@ class SocksForwardServer {
     return host.isEmpty ? null : (host, port);
   }
 
-  Future<int> _readPort(_SocketByteReader reader) async {
+  Future<int> _readPort(SocketByteReader reader) async {
     final bytes = await reader.read(2, handshakeTimeout);
     return (bytes[0] << 8) | bytes[1];
   }
@@ -538,7 +538,7 @@ Future<void> _pipe(Socket socket, SSHForwardChannel channel) async {
   }
 }
 
-Future<void> _pipeReader(Socket socket, _SocketByteReader reader, SSHSocket channel) async {
+Future<void> _pipeReader(Socket socket, SocketByteReader reader, SSHSocket channel) async {
   final fromRemote = channel.stream.listen(
     socket.add,
     onError: (_) {},
@@ -554,42 +554,19 @@ Future<void> _pipeReader(Socket socket, _SocketByteReader reader, SSHSocket chan
   }
 }
 
-/// Precise, bounded reads from a socket whose subscription must survive into the forwarded stream.
-class _SocketByteReader {
-  _SocketByteReader(Socket socket) {
-    _subscription = socket.listen(
-      _buffer.add,
-      onError: (Object error) => _error ??= error,
-      onDone: () => _done = true,
-      cancelOnError: false,
-    );
-  }
+/// A handshake reader whose failures are said as the SOCKS client's.
+SocketByteReader _socksReader(Socket socket) => SocketByteReader(
+  socket,
+  (stall, error) => switch (stall) {
+    HandshakeStall.failed => SocketException('SOCKS connection failed: $error'),
+    HandshakeStall.closed => const SocketException('SOCKS client closed during the handshake.'),
+    HandshakeStall.timedOut => const SocketException(
+      'SOCKS client did not finish the handshake in time.',
+    ),
+  },
+);
 
-  late final StreamSubscription<Uint8List> _subscription;
-  final BytesBuilder _buffer = BytesBuilder(copy: true);
-  Object? _error;
-  bool _done = false;
-  bool _released = false;
-
-  Future<Uint8List> read(int count, Duration timeout) async {
-    final deadline = DateTime.now().add(timeout);
-    while (_buffer.length < count) {
-      if (_error != null) {
-        throw SocketException('SOCKS connection failed: $_error');
-      }
-      if (_done) {
-        throw const SocketException('SOCKS client closed during the handshake.');
-      }
-      if (DateTime.now().isAfter(deadline)) {
-        throw const SocketException('SOCKS client did not finish the handshake in time.');
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
-    final all = _buffer.takeBytes();
-    _buffer.add(all.sublist(count));
-    return Uint8List.sublistView(all, 0, count);
-  }
-
+extension on SocketByteReader {
   Future<String> readNullTerminated(Duration timeout, {required int maxBytes}) async {
     final bytes = <int>[];
     while (bytes.length < maxBytes) {
@@ -599,24 +576,4 @@ class _SocketByteReader {
     }
     throw const SocketException('SOCKS field exceeds 1024 bytes.');
   }
-
-  Stream<Uint8List> release() {
-    if (_released) throw StateError('SOCKS socket reader already released.');
-    _released = true;
-    final controller = StreamController<Uint8List>();
-    final surplus = _buffer.takeBytes();
-    if (surplus.isNotEmpty) controller.add(surplus);
-    if (_error != null) {
-      controller.addError(_error!);
-    } else if (_done) {
-      unawaited(controller.close());
-    }
-    _subscription
-      ..onData(controller.add)
-      ..onError(controller.addError)
-      ..onDone(controller.close);
-    return controller.stream;
-  }
-
-  Future<void> cancel() => _released ? Future.value() : _subscription.cancel();
 }

@@ -14,9 +14,42 @@ enum OmniThemeMode { system, light, dark, amoled, highContrastDark, highContrast
 /// separately into [ThemeData.scaffoldBackgroundColor].
 typedef _Scheme = ({ColorScheme scheme, Color background});
 
+/// Fills the colour roles every OmniTerm scheme leaves to Compose's `darkColorScheme` /
+/// `lightColorScheme` defaults (Material3 1.4.0 baseline), as Kotlin's schemes do by omitting them.
+_Scheme _withComposeDefaults(_Scheme s) {
+  final dark = s.scheme.brightness == Brightness.dark;
+  return (
+    background: s.background,
+    scheme: s.scheme.copyWith(
+      tertiaryContainer: dark ? const Color(0xFF633B48) : const Color(0xFFFFD8E4),
+      onTertiaryContainer: dark ? const Color(0xFFFFD8E4) : const Color(0xFF31111D),
+      inversePrimary: dark ? const Color(0xFF6750A4) : const Color(0xFFD0BCFF),
+      inverseSurface: dark ? const Color(0xFFE6E0E9) : const Color(0xFF322F35),
+      onInverseSurface: dark ? const Color(0xFF322F35) : const Color(0xFFF5EFF7),
+      errorContainer: dark ? const Color(0xFF8C1D18) : const Color(0xFFF9DEDC),
+      onErrorContainer: dark ? const Color(0xFFF9DEDC) : const Color(0xFF410E0B),
+      surfaceBright: dark ? const Color(0xFF3B383E) : const Color(0xFFFEF7FF),
+      surfaceDim: dark ? const Color(0xFF141218) : const Color(0xFFDED8E1),
+      scrim: const Color(0xFF000000),
+      primaryFixed: const Color(0xFFEADDFF),
+      primaryFixedDim: const Color(0xFFD0BCFF),
+      onPrimaryFixed: const Color(0xFF21005D),
+      onPrimaryFixedVariant: const Color(0xFF4F378B),
+      secondaryFixed: const Color(0xFFE8DEF8),
+      secondaryFixedDim: const Color(0xFFCCC2DC),
+      onSecondaryFixed: const Color(0xFF1D192B),
+      onSecondaryFixedVariant: const Color(0xFF4A4458),
+      tertiaryFixed: const Color(0xFFFFD8E4),
+      tertiaryFixedDim: const Color(0xFFEFB8C8),
+      onTertiaryFixed: const Color(0xFF31111D),
+      onTertiaryFixedVariant: const Color(0xFF633B48),
+    ),
+  );
+}
+
 // OmniTerm dark scheme — maps the design tokens onto Material 3 colour roles so every screen
 // (cards, bars, chips, buttons) picks up the dark cyberpunk palette automatically.
-const _dark = (
+final _dark = _withComposeDefaults(const (
   background: OmniColors.bg0,
   scheme: ColorScheme.dark(
     primary: OmniColors.cyan,
@@ -43,34 +76,11 @@ const _dark = (
     onError: OmniColors.bg0,
     outline: OmniColors.border,
     outlineVariant: OmniColors.border,
-    // Roles Kotlin leaves to Compose's darkColorScheme defaults (Material3 1.4.0 baseline).
-    tertiaryContainer: Color(0xFF633B48),
-    onTertiaryContainer: Color(0xFFFFD8E4),
-    inversePrimary: Color(0xFF6750A4),
-    inverseSurface: Color(0xFFE6E0E9),
-    onInverseSurface: Color(0xFF322F35),
-    errorContainer: Color(0xFF8C1D18),
-    onErrorContainer: Color(0xFFF9DEDC),
-    scrim: Color(0xFF000000),
-    surfaceBright: Color(0xFF3B383E),
-    surfaceDim: Color(0xFF141218),
-    primaryFixed: Color(0xFFEADDFF),
-    primaryFixedDim: Color(0xFFD0BCFF),
-    onPrimaryFixed: Color(0xFF21005D),
-    onPrimaryFixedVariant: Color(0xFF4F378B),
-    secondaryFixed: Color(0xFFE8DEF8),
-    secondaryFixedDim: Color(0xFFCCC2DC),
-    onSecondaryFixed: Color(0xFF1D192B),
-    onSecondaryFixedVariant: Color(0xFF4A4458),
-    tertiaryFixed: Color(0xFFFFD8E4),
-    tertiaryFixedDim: Color(0xFFEFB8C8),
-    onTertiaryFixed: Color(0xFF31111D),
-    onTertiaryFixedVariant: Color(0xFF633B48),
   ),
-);
+));
 
 // OmniTerm light scheme — same accent identity (cyan/purple/amber) tuned for light surfaces.
-const _light = (
+final _light = _withComposeDefaults(const (
   background: Color(0xFFF6F8FB),
   scheme: ColorScheme.light(
     primary: Color(0xFF0091A7),
@@ -98,36 +108,14 @@ const _light = (
     // why selected chips and segments rendered solid purple instead of Compose's lavender.
     secondaryContainer: Color(0xFFE8DEF8),
     onSecondaryContainer: Color(0xFF1D192B),
-    tertiaryContainer: Color(0xFFFFD8E4),
-    onTertiaryContainer: Color(0xFF31111D),
-    inversePrimary: Color(0xFFD0BCFF),
-    inverseSurface: Color(0xFF322F35),
-    onInverseSurface: Color(0xFFF5EFF7),
-    errorContainer: Color(0xFFF9DEDC),
-    onErrorContainer: Color(0xFF410E0B),
-    scrim: Color(0xFF000000),
-    surfaceBright: Color(0xFFFEF7FF),
-    surfaceDim: Color(0xFFDED8E1),
-    primaryFixed: Color(0xFFEADDFF),
-    primaryFixedDim: Color(0xFFD0BCFF),
-    onPrimaryFixed: Color(0xFF21005D),
-    onPrimaryFixedVariant: Color(0xFF4F378B),
-    secondaryFixed: Color(0xFFE8DEF8),
-    secondaryFixedDim: Color(0xFFCCC2DC),
-    onSecondaryFixed: Color(0xFF1D192B),
-    onSecondaryFixedVariant: Color(0xFF4A4458),
-    tertiaryFixed: Color(0xFFFFD8E4),
-    tertiaryFixedDim: Color(0xFFEFB8C8),
-    onTertiaryFixed: Color(0xFF31111D),
-    onTertiaryFixedVariant: Color(0xFF633B48),
   ),
-);
+));
 
 // AMOLED variant of the OmniTerm dark scheme: every background/surface role is pure black so OLED
 // pixels switch fully off. Element separation comes from the (kept, slightly brightened) borders
 // and the accent colours — without them a pure-black UI collapses into a featureless void. Same
 // accent identity (cyan/purple/amber) and text colours as the dark scheme.
-const _amoled = (
+final _amoled = _withComposeDefaults(const (
   background: Colors.black,
   scheme: ColorScheme.dark(
     primary: OmniColors.cyan,
@@ -153,33 +141,10 @@ const _amoled = (
     // Brighter than the standard border so cards/dividers stay visible against pure black.
     outline: OmniColors.borderHi,
     outlineVariant: OmniColors.border,
-    // Roles Kotlin leaves to Compose's darkColorScheme defaults (Material3 1.4.0 baseline).
-    tertiaryContainer: Color(0xFF633B48),
-    onTertiaryContainer: Color(0xFFFFD8E4),
-    inversePrimary: Color(0xFF6750A4),
-    inverseSurface: Color(0xFFE6E0E9),
-    onInverseSurface: Color(0xFF322F35),
-    errorContainer: Color(0xFF8C1D18),
-    onErrorContainer: Color(0xFFF9DEDC),
-    scrim: Color(0xFF000000),
-    surfaceBright: Color(0xFF3B383E),
-    surfaceDim: Color(0xFF141218),
-    primaryFixed: Color(0xFFEADDFF),
-    primaryFixedDim: Color(0xFFD0BCFF),
-    onPrimaryFixed: Color(0xFF21005D),
-    onPrimaryFixedVariant: Color(0xFF4F378B),
-    secondaryFixed: Color(0xFFE8DEF8),
-    secondaryFixedDim: Color(0xFFCCC2DC),
-    onSecondaryFixed: Color(0xFF1D192B),
-    onSecondaryFixedVariant: Color(0xFF4A4458),
-    tertiaryFixed: Color(0xFFFFD8E4),
-    tertiaryFixedDim: Color(0xFFEFB8C8),
-    onTertiaryFixed: Color(0xFF31111D),
-    onTertiaryFixedVariant: Color(0xFF633B48),
   ),
-);
+));
 
-const _highContrastDark = (
+final _highContrastDark = _withComposeDefaults(const (
   background: Colors.black,
   scheme: ColorScheme.dark(
     primary: Color(0xFF00FFFF),
@@ -205,32 +170,10 @@ const _highContrastDark = (
     surfaceContainerLow: Color(0xFF1D1B20),
     surfaceContainer: Color(0xFF211F26),
     surfaceContainerHigh: Color(0xFF2B2930),
-    tertiaryContainer: Color(0xFF633B48),
-    onTertiaryContainer: Color(0xFFFFD8E4),
-    inversePrimary: Color(0xFF6750A4),
-    inverseSurface: Color(0xFFE6E0E9),
-    onInverseSurface: Color(0xFF322F35),
-    errorContainer: Color(0xFF8C1D18),
-    onErrorContainer: Color(0xFFF9DEDC),
-    scrim: Color(0xFF000000),
-    surfaceBright: Color(0xFF3B383E),
-    surfaceDim: Color(0xFF141218),
-    primaryFixed: Color(0xFFEADDFF),
-    primaryFixedDim: Color(0xFFD0BCFF),
-    onPrimaryFixed: Color(0xFF21005D),
-    onPrimaryFixedVariant: Color(0xFF4F378B),
-    secondaryFixed: Color(0xFFE8DEF8),
-    secondaryFixedDim: Color(0xFFCCC2DC),
-    onSecondaryFixed: Color(0xFF1D192B),
-    onSecondaryFixedVariant: Color(0xFF4A4458),
-    tertiaryFixed: Color(0xFFFFD8E4),
-    tertiaryFixedDim: Color(0xFFEFB8C8),
-    onTertiaryFixed: Color(0xFF31111D),
-    onTertiaryFixedVariant: Color(0xFF633B48),
   ),
-);
+));
 
-const _highContrastLight = (
+final _highContrastLight = _withComposeDefaults(const (
   background: Colors.white,
   scheme: ColorScheme.light(
     primary: Color(0xFF0000EE),
@@ -256,30 +199,8 @@ const _highContrastLight = (
     surfaceContainerLow: Color(0xFFF7F2FA),
     surfaceContainer: Color(0xFFF3EDF7),
     surfaceContainerHigh: Color(0xFFECE6F0),
-    tertiaryContainer: Color(0xFFFFD8E4),
-    onTertiaryContainer: Color(0xFF31111D),
-    inversePrimary: Color(0xFFD0BCFF),
-    inverseSurface: Color(0xFF322F35),
-    onInverseSurface: Color(0xFFF5EFF7),
-    errorContainer: Color(0xFFF9DEDC),
-    onErrorContainer: Color(0xFF410E0B),
-    scrim: Color(0xFF000000),
-    surfaceBright: Color(0xFFFEF7FF),
-    surfaceDim: Color(0xFFDED8E1),
-    primaryFixed: Color(0xFFEADDFF),
-    primaryFixedDim: Color(0xFFD0BCFF),
-    onPrimaryFixed: Color(0xFF21005D),
-    onPrimaryFixedVariant: Color(0xFF4F378B),
-    secondaryFixed: Color(0xFFE8DEF8),
-    secondaryFixedDim: Color(0xFFCCC2DC),
-    onSecondaryFixed: Color(0xFF1D192B),
-    onSecondaryFixedVariant: Color(0xFF4A4458),
-    tertiaryFixed: Color(0xFFFFD8E4),
-    tertiaryFixedDim: Color(0xFFEFB8C8),
-    onTertiaryFixed: Color(0xFF31111D),
-    onTertiaryFixedVariant: Color(0xFF633B48),
   ),
-);
+));
 
 /// Resolve the scheme exactly as the Compose `when` chain did, in the same priority order:
 /// dynamic → high contrast → amoled → dark → light.

@@ -63,15 +63,14 @@ class InfraViewModel extends ChangeNotifier {
   /// require a live connection. The picker includes offline hosts so its label stays consistent.
   /// Without an explicit selection, prefer the first online host.
   Server? get inspectedServer {
-    final online = _app.servers.where((s) => s.status == 'online');
     final selectedId = _app.selectedServerId;
     for (final server in _app.servers) {
       if (server.id == selectedId) return server;
     }
-    return online.firstOrNull;
+    return _app.onlineServers.firstOrNull;
   }
 
-  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.onlineServers;
 
   List<Server> get selectableServers => List.unmodifiable(_app.servers);
 

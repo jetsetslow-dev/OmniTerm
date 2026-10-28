@@ -19,6 +19,7 @@ import '../../view_model/network_view_model.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/omni_confirm.dart';
 import '../../widgets/popup_scroll_behavior.dart';
+import '../../widgets/text_controllers_state.dart';
 
 /// The Network tools, ported from `NetworkToolView` in `ui/ToolsScreen.kt`: nine device-side tools
 /// under one scrollable tab row. Ping, Traceroute and Port Scan share one target.
@@ -1040,7 +1041,7 @@ class _WolDialog extends StatefulWidget {
   State<_WolDialog> createState() => _WolDialogState();
 }
 
-class _WolDialogState extends State<_WolDialog> {
+class _WolDialogState extends State<_WolDialog> with TextControllersState {
   late final WolTarget? _t = widget.existing;
   late final ScannedHost? _s = widget.scanned;
   late final _name = TextEditingController(
@@ -1060,25 +1061,8 @@ class _WolDialogState extends State<_WolDialog> {
   late final _notes = TextEditingController(text: _t?.notes ?? '');
   String? _failure;
 
-  List<TextEditingController> get _all => [_name, _mac, _broadcast, _ip, _port, _notes];
-
   @override
-  void initState() {
-    super.initState();
-    for (final c in _all) {
-      c.addListener(_rebuild);
-    }
-  }
-
-  void _rebuild() => setState(() {});
-
-  @override
-  void dispose() {
-    for (final c in _all) {
-      c.dispose();
-    }
-    super.dispose();
-  }
+  List<TextEditingController> get textControllers => [_name, _mac, _broadcast, _ip, _port, _notes];
 
   Future<void> _save() async {
     final failure = await widget.vm.saveWolTarget(
@@ -1623,7 +1607,7 @@ class _TunnelDialog extends StatefulWidget {
   State<_TunnelDialog> createState() => _TunnelDialogState();
 }
 
-class _TunnelDialogState extends State<_TunnelDialog> {
+class _TunnelDialogState extends State<_TunnelDialog> with TextControllersState {
   late final _name = TextEditingController(text: widget.existing?.name ?? '');
   late final _bindHost = TextEditingController(text: widget.existing?.bindHost ?? '127.0.0.1');
   late final _bindPort = TextEditingController(
@@ -1644,25 +1628,14 @@ class _TunnelDialogState extends State<_TunnelDialog> {
     ('dynamic', 'Dynamic SOCKS (-D)'),
   ];
 
-  List<TextEditingController> get _all => [_name, _bindHost, _bindPort, _destHost, _destPort];
-
   @override
-  void initState() {
-    super.initState();
-    for (final c in _all) {
-      c.addListener(_rebuild);
-    }
-  }
-
-  void _rebuild() => setState(() {});
-
-  @override
-  void dispose() {
-    for (final c in _all) {
-      c.dispose();
-    }
-    super.dispose();
-  }
+  List<TextEditingController> get textControllers => [
+    _name,
+    _bindHost,
+    _bindPort,
+    _destHost,
+    _destPort,
+  ];
 
   Future<void> _save() async {
     final existing = widget.existing;

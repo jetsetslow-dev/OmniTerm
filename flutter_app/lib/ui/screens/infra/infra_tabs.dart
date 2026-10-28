@@ -498,26 +498,21 @@ class _ContainerRow extends StatelessWidget {
   );
 }
 
-Future<void> _confirmContainerAction(
-  BuildContext context,
-  InfraViewModel vm,
-  String runtime,
-  StackContainer container,
-  String action,
-) async {
-  final serverId = vm.inspectedServer?.id;
-  final verb = '${action[0].toUpperCase()}${action.substring(1)}';
+/// Asks before a container or service action; true only when the user confirms with [verb].
+Future<bool> _confirmInfraAction(
+  BuildContext context, {
+  required Key key,
+  required String verb,
+  required String title,
+  required String message,
+}) async {
   final accepted = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      key: ValueKey('infra.container.$runtime.${container.id}.$action.confirm'),
+      key: key,
       scrollable: true,
-      title: Text('$verb ${container.name}?'),
-      content: Text(
-        action == 'remove'
-            ? 'Stop and remove only this container. Other replicas, volumes and the Compose file are kept.'
-            : '$verb only this container. Other containers in this service and stack are kept.',
-      ),
+      title: Text(title),
+      content: Text(message),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, false),
@@ -527,7 +522,28 @@ Future<void> _confirmContainerAction(
       ],
     ),
   );
-  if (accepted == true) {
+  return accepted == true;
+}
+
+Future<void> _confirmContainerAction(
+  BuildContext context,
+  InfraViewModel vm,
+  String runtime,
+  StackContainer container,
+  String action,
+) async {
+  final serverId = vm.inspectedServer?.id;
+  final verb = '${action[0].toUpperCase()}${action.substring(1)}';
+  final accepted = await _confirmInfraAction(
+    context,
+    key: ValueKey('infra.container.$runtime.${container.id}.$action.confirm'),
+    verb: verb,
+    title: '$verb ${container.name}?',
+    message: action == 'remove'
+        ? 'Stop and remove only this container. Other replicas, volumes and the Compose file are kept.'
+        : '$verb only this container. Other containers in this service and stack are kept.',
+  );
+  if (accepted) {
     await vm.containerActionById(
       container.id,
       action,
@@ -578,27 +594,16 @@ Future<void> _confirmServiceAction(
     'serviceRemove' => 'Remove',
     _ => 'Run',
   };
-  final accepted = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      key: ValueKey('infra.service.$action.confirm'),
-      scrollable: true,
-      title: Text('$verb ${service.name}?'),
-      content: Text(
-        action == 'serviceRemove'
-            ? 'Stop and remove all ${service.total} current containers for this service. Volumes and its Compose definition are kept.'
-            : '$verb all ${service.total} current containers for this service in ${stack.name}?',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(verb)),
-      ],
-    ),
+  final accepted = await _confirmInfraAction(
+    context,
+    key: ValueKey('infra.service.$action.confirm'),
+    verb: verb,
+    title: '$verb ${service.name}?',
+    message: action == 'serviceRemove'
+        ? 'Stop and remove all ${service.total} current containers for this service. Volumes and its Compose definition are kept.'
+        : '$verb all ${service.total} current containers for this service in ${stack.name}?',
   );
-  if (accepted == true) {
+  if (accepted) {
     await vm.stackAction(stack, action, service: service.name, expectedServerId: serverId);
   }
 }

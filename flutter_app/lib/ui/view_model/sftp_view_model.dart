@@ -341,16 +341,9 @@ class SftpViewModel extends ChangeNotifier {
 
   /// Same rule as Monitor and Infra: the explicit selection while it is online, else the first
   /// online host.
-  Server? get browsedServer {
-    final online = _app.servers.where((s) => s.status == 'online');
-    final selectedId = _app.selectedServerId;
-    for (final server in online) {
-      if (server.id == selectedId) return server;
-    }
-    return online.firstOrNull;
-  }
+  Server? get browsedServer => _app.selectedOnlineServer;
 
-  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.onlineServers;
 
   bool get hasNoOnlineHosts => browsedServer == null;
 

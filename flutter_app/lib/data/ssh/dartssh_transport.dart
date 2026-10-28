@@ -300,22 +300,21 @@ class DartSshTransport implements SshTransport {
     String command,
     String? stdin,
     SshCommandScope scope,
-  ) async {
-    final lease = await scope.wait(() => _acquire(creds), onLateResult: (lease) => lease.close());
-    SSHSession? session;
-    try {
-      session = await scope.wait<SSHSession>(
-        () => lease.client.execute(command),
-        onLateResult: (session) => session.close(),
-      );
-      scope.check();
-      _writeStdin(session, stdin);
-
+  ) => _onExecChannel(
+    creds,
+    command,
+    stdin,
+    scope,
+    // Only this connection is suspect; passing it as the suspect stops a slow failure from
+    // evicting a healthy replacement that has already taken its place.
+    evictOn: (_, _) => true,
+    (session) async {
       final out = CappedTextBuffer(_execOutputMaxChars);
       final err = CappedTextBuffer(_execOutputMaxChars);
-      final active = session;
-      await scope.wait(() => Future.wait([_drain(active.stdout, out), _drain(active.stderr, err)]));
-      await scope.wait(() => active.done);
+      await scope.wait(
+        () => Future.wait([_drain(session.stdout, out), _drain(session.stderr, err)]),
+      );
+      await scope.wait(() => session.done);
 
       final combined = StringBuffer(out.text());
       final errText = err.text();
@@ -326,16 +325,8 @@ class DartSshTransport implements SshTransport {
         combined.write(errText);
       }
       return _withExitStatus(combined.toString(), session.exitCode);
-    } catch (_) {
-      // Only this connection is suspect; passing it as the suspect stops a slow failure from
-      // evicting a healthy replacement that has already taken its place.
-      _pool.evict(creds, lease.client);
-      rethrow;
-    } finally {
-      session?.close();
-      lease.close();
-    }
-  }
+    },
+  );
 
   @override
   Future<String> execStream(
@@ -382,7 +373,46 @@ class DartSshTransport implements SshTransport {
     String? stdin,
     Future<void> Function(String chunk) onChunk,
     SshCommandScope scope,
-  ) async {
+  ) => _onExecChannel(
+    creds,
+    command,
+    stdin,
+    scope,
+    // Stopping a healthy, already-open stream only needs its channel closed. Retiring the
+    // shared client on every user Stop would force the next probe/action to authenticate again.
+    evictOn: (error, session) => error is! SshCommandCancelled || session == null,
+    (session) async {
+      final accumulated = CappedTextBuffer(_execOutputMaxChars);
+      // stdout and stderr are decoded separately: a multi-byte character split across a read
+      // boundary on one stream must not be reassembled using bytes from the other.
+      Future<void> deliver(String chunk) async {
+        scope.check();
+        await onChunk(chunk);
+      }
+
+      await scope.wait(
+        () => Future.wait([
+          _pump(session.stdout, accumulated, deliver),
+          _pump(session.stderr, accumulated, deliver),
+        ]),
+      );
+      await scope.wait(() => session.done);
+
+      return _withExitStatus(accumulated.text(), session.exitCode);
+    },
+  );
+
+  /// Runs [command] on an exec channel of a pooled connection and hands the channel to [body]. The
+  /// channel and the lease are always released; [evictOn] says whether a failure leaves the
+  /// connection itself suspect (`session` is null when the channel never opened).
+  Future<String> _onExecChannel(
+    SshCredentials creds,
+    String command,
+    String? stdin,
+    SshCommandScope scope,
+    Future<String> Function(SSHSession session) body, {
+    required bool Function(Object error, SSHSession? session) evictOn,
+  }) async {
     final lease = await scope.wait(() => _acquire(creds), onLateResult: (lease) => lease.close());
     SSHSession? session;
     try {
@@ -392,29 +422,9 @@ class DartSshTransport implements SshTransport {
       );
       scope.check();
       _writeStdin(session, stdin);
-
-      final accumulated = CappedTextBuffer(_execOutputMaxChars);
-      // stdout and stderr are decoded separately: a multi-byte character split across a read
-      // boundary on one stream must not be reassembled using bytes from the other.
-      final active = session;
-      Future<void> deliver(String chunk) async {
-        scope.check();
-        await onChunk(chunk);
-      }
-
-      await scope.wait(
-        () => Future.wait([
-          _pump(active.stdout, accumulated, deliver),
-          _pump(active.stderr, accumulated, deliver),
-        ]),
-      );
-      await scope.wait(() => active.done);
-
-      return _withExitStatus(accumulated.text(), session.exitCode);
+      return await body(session);
     } catch (error) {
-      // Stopping a healthy, already-open stream only needs its channel closed. Retiring the
-      // shared client on every user Stop would force the next probe/action to authenticate again.
-      if (error is! SshCommandCancelled || session == null) _pool.evict(creds, lease.client);
+      if (evictOn(error, session)) _pool.evict(creds, lease.client);
       rethrow;
     } finally {
       session?.close();

@@ -592,55 +592,23 @@ HostMetrics _parseMetricsLinux(Map<String, String> sections) {
 
 /// FreeBSD/OpenBSD metrics (sysctl/df -k/netstat). Per-core/temp/disk-I/O/SMART are not collected.
 HostMetrics _parseMetricsBsd(Map<String, String> sections, String os) {
-  var cpu = 0.0;
-  final cpuSection = sections['CPU'];
-  if (cpuSection != null) {
-    final idle = double.tryParse(_bsdIdleRe.firstMatch(cpuSection)?.group(1) ?? '');
-    if (idle != null) cpu = (100 - idle).clamp(0, 100).toDouble();
-  }
-
   final mem = sections['SYSMEM'] ?? '';
   int sm(String key) =>
       int.tryParse(RegExp('^$key\\s+(\\d+)', multiLine: true).firstMatch(mem)?.group(1) ?? '') ?? 0;
   final pageSizeRaw = sm('pagesize');
   final pageSize = pageSizeRaw > 0 ? pageSizeRaw : 4096;
-  final memTotal = sm('phys');
   final freeBytes = (sm('free') + sm('inactive') + sm('cache')) * pageSize;
-  final memUsed = math.max(0, memTotal - freeBytes);
-
-  final disks = parseDisks(sections['DISKS'] ?? '', blockBytes: 1024);
-  final root = disks.where((d) => d.mount == '/').firstOrNull;
-  final load = _loadAverages(sections['LOADAVG'] ?? '');
-  final uptime = _bsdUptime(sections);
-
-  return HostMetrics(
-    cpuPercent: cpu,
-    memUsedBytes: memUsed,
-    memTotalBytes: memTotal,
-    diskUsedBytes: root?.usedBytes ?? 0,
-    diskTotalBytes: root?.totalBytes ?? 0,
-    load1: load.getOrElse(0, 0),
-    load5: load.getOrElse(1, 0),
-    load15: load.getOrElse(2, 0),
-    uptimeSeconds: uptime,
-    procCount: int.tryParse(sections['PROC']?.trim() ?? '') ?? 0,
-    tcpConnections: int.tryParse(sections['TCP']?.trim() ?? '') ?? 0,
-    disks: disks,
-    netInterfaces: _parseBsdNetstat(sections['NETSTAT'] ?? ''),
+  return _bsdFamilyMetrics(
+    sections,
+    memTotal: sm('phys'),
+    freeBytes: freeBytes,
     os: os,
-    platforms: const {'freebsd'},
+    platform: 'freebsd',
   );
 }
 
 /// macOS metrics: like BSD but memory from `vm_stat` + `hw.memsize`.
 HostMetrics _parseMetricsDarwin(Map<String, String> sections) {
-  var cpu = 0.0;
-  final cpuSection = sections['CPU'];
-  if (cpuSection != null) {
-    final idle = double.tryParse(_bsdIdleRe.firstMatch(cpuSection)?.group(1) ?? '');
-    if (idle != null) cpu = (100 - idle).clamp(0, 100).toDouble();
-  }
-
   final memTotal = int.tryParse(sections['MEMSIZE']?.trim() ?? '') ?? 0;
   final vmstat = sections['VMSTAT'] ?? '';
   final pageSize =
@@ -649,15 +617,37 @@ HostMetrics _parseMetricsDarwin(Map<String, String> sections) {
       int.tryParse(RegExp('$label:\\s+(\\d+)').firstMatch(vmstat)?.group(1) ?? '') ?? 0;
   final freeBytes =
       (pages('Pages free') + pages('Pages inactive') + pages('Pages speculative')) * pageSize;
-  final memUsed = math.max(0, memTotal - freeBytes);
+  return _bsdFamilyMetrics(
+    sections,
+    memTotal: memTotal,
+    freeBytes: freeBytes,
+    os: 'Darwin',
+    platform: 'darwin',
+  );
+}
 
+/// What BSD and macOS report the same way (top, df -k, sysctl boot time, netstat); only memory
+/// differs.
+HostMetrics _bsdFamilyMetrics(
+  Map<String, String> sections, {
+  required int memTotal,
+  required int freeBytes,
+  required String os,
+  required String platform,
+}) {
+  var cpu = 0.0;
+  final cpuSection = sections['CPU'];
+  if (cpuSection != null) {
+    final idle = double.tryParse(_bsdIdleRe.firstMatch(cpuSection)?.group(1) ?? '');
+    if (idle != null) cpu = (100 - idle).clamp(0, 100).toDouble();
+  }
   final disks = parseDisks(sections['DISKS'] ?? '', blockBytes: 1024);
   final root = disks.where((d) => d.mount == '/').firstOrNull;
   final load = _loadAverages(sections['LOADAVG'] ?? '');
 
   return HostMetrics(
     cpuPercent: cpu,
-    memUsedBytes: memUsed,
+    memUsedBytes: math.max(0, memTotal - freeBytes),
     memTotalBytes: memTotal,
     diskUsedBytes: root?.usedBytes ?? 0,
     diskTotalBytes: root?.totalBytes ?? 0,
@@ -669,8 +659,8 @@ HostMetrics _parseMetricsDarwin(Map<String, String> sections) {
     tcpConnections: int.tryParse(sections['TCP']?.trim() ?? '') ?? 0,
     disks: disks,
     netInterfaces: _parseBsdNetstat(sections['NETSTAT'] ?? ''),
-    os: 'Darwin',
-    platforms: const {'darwin'},
+    os: os,
+    platforms: {platform},
   );
 }
 

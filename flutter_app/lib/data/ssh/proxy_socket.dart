@@ -15,6 +15,8 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import 'socket_byte_reader.dart';
+
 class ProxyException implements Exception {
   ProxyException(this.message);
 
@@ -40,7 +42,7 @@ Future<SSHSocket> connectThroughProxy({
   // reader that listened for the handshake and then cancelled would leave a stream nobody can
   // listen to again — and any bytes that arrived in the same packet as the proxy's reply would be
   // lost with it, which is exactly the start of the SSH banner.
-  final reader = _SocketReader(socket);
+  final reader = _proxyReader(socket);
   try {
     switch (type.toLowerCase()) {
       case 'socks5':
@@ -67,7 +69,7 @@ const _authUserPass = 0x02;
 
 Future<void> _socks5Handshake(
   Socket socket,
-  _SocketReader reader,
+  SocketByteReader reader,
   String host,
   int port,
   String username,
@@ -136,7 +138,7 @@ Future<void> _socks5Handshake(
 
 Future<void> _socks5Authenticate(
   Socket socket,
-  _SocketReader reader,
+  SocketByteReader reader,
   String username,
   String password,
   Duration timeout,
@@ -170,7 +172,7 @@ String _socksError(int code, String host, int port) => switch (code) {
 
 Future<void> _httpConnect(
   Socket socket,
-  _SocketReader reader,
+  SocketByteReader reader,
   String host,
   int port,
   String username,
@@ -210,59 +212,31 @@ Future<void> _httpConnect(
 
 // ── plumbing ──────────────────────────────────────────────────────────────────
 
-/// Reads a precise number of bytes from a socket during the handshake, then hands the live stream
-/// back untouched.
-///
-/// A single subscription is taken for the whole handshake and any surplus is kept, because the
-/// proxy's reply and the first bytes of the tunnelled stream can arrive in one packet — a reader
-/// that over-read and discarded would eat the start of the SSH banner.
-class _SocketReader {
-  _SocketReader(this._socket) {
-    _subscription = _socket.listen(
-      _buffer.add,
-      onError: (Object e) => _error ??= e,
-      onDone: () => _done = true,
-      cancelOnError: false,
-    );
-  }
+/// A handshake reader whose failures are said as the proxy's.
+SocketByteReader _proxyReader(Socket socket) => SocketByteReader(
+  socket,
+  (stall, error) => switch (stall) {
+    HandshakeStall.failed => ProxyException('The proxy connection failed: $error'),
+    HandshakeStall.closed => ProxyException(
+      'The proxy closed the connection during the handshake.',
+    ),
+    HandshakeStall.timedOut => ProxyException('The proxy did not answer in time.'),
+  },
+);
 
-  final Socket _socket;
-  late final StreamSubscription<Uint8List> _subscription;
-  final BytesBuilder _buffer = BytesBuilder(copy: true);
-  Object? _error;
-  bool _done = false;
-
-  Future<Uint8List> read(int count, Duration timeout) async {
-    final deadline = DateTime.now().add(timeout);
-    while (_buffer.length < count) {
-      if (_error != null) throw ProxyException('The proxy connection failed: $_error');
-      if (_done) throw ProxyException('The proxy closed the connection during the handshake.');
-      if (DateTime.now().isAfter(deadline)) {
-        throw ProxyException('The proxy did not answer in time.');
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
-    final all = _buffer.takeBytes();
-    _buffer.add(all.sublist(count));
-    return Uint8List.sublistView(all, 0, count);
-  }
-
+extension on SocketByteReader {
+  /// Everything up to and including [marker], such as the end of an HTTP response header.
   Future<String> readUntil(String marker, Duration timeout) async {
     final deadline = DateTime.now().add(timeout);
     final bytes = utf8.encode(marker);
     while (true) {
-      final all = _buffer.takeBytes();
-      _buffer.add(all);
+      final all = peek();
       final at = _indexOf(all, bytes);
       if (at >= 0) {
         final consumed = at + bytes.length;
         return utf8.decode(await read(consumed, timeout), allowMalformed: true);
       }
-      if (_error != null) throw ProxyException('The proxy connection failed: $_error');
-      if (_done) throw ProxyException('The proxy closed the connection during the handshake.');
-      if (DateTime.now().isAfter(deadline)) {
-        throw ProxyException('The proxy did not answer in time.');
-      }
+      throwIfStalled(deadline);
       // A proxy that answers with an unbounded header stream must not be able to exhaust memory.
       if (all.length > 64 * 1024) {
         throw ProxyException('The proxy sent an implausibly large response.');
@@ -270,46 +244,25 @@ class _SocketReader {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
   }
+}
 
-  static int _indexOf(List<int> haystack, List<int> needle) {
-    for (var i = 0; i + needle.length <= haystack.length; i++) {
-      var match = true;
-      for (var j = 0; j < needle.length; j++) {
-        if (haystack[i + j] != needle[j]) {
-          match = false;
-          break;
-        }
+int _indexOf(List<int> haystack, List<int> needle) {
+  for (var i = 0; i + needle.length <= haystack.length; i++) {
+    var match = true;
+    for (var j = 0; j < needle.length; j++) {
+      if (haystack[i + j] != needle[j]) {
+        match = false;
+        break;
       }
-      if (match) return i;
     }
-    return -1;
+    if (match) return i;
   }
-
-  /// Hands the live connection on: whatever arrived after the handshake is replayed first, then
-  /// everything the socket produces from here.
-  ///
-  /// The subscription is *kept*, not cancelled — `Socket` is single-subscription, so cancelling
-  /// would leave dartssh2 with a stream it cannot listen to.
-  Stream<Uint8List> release() {
-    final controller = StreamController<Uint8List>();
-    final surplus = _buffer.takeBytes();
-    if (surplus.isNotEmpty) controller.add(surplus);
-    if (_error != null) {
-      controller.addError(_error!);
-    } else if (_done) {
-      unawaited(controller.close());
-    }
-    _subscription
-      ..onData(controller.add)
-      ..onError(controller.addError)
-      ..onDone(controller.close);
-    return controller.stream;
-  }
+  return -1;
 }
 
 /// The tunnelled connection, as dartssh2 wants it.
 class _ProxiedSocket implements SSHSocket {
-  _ProxiedSocket(this._socket, _SocketReader reader) : stream = reader.release();
+  _ProxiedSocket(this._socket, SocketByteReader reader) : stream = reader.release();
 
   final Socket _socket;
 

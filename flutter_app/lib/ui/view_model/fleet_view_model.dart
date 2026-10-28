@@ -149,7 +149,7 @@ class FleetViewModel extends ChangeNotifier {
 
   List<Server> get servers => _app.servers;
 
-  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.onlineServers;
 
   /// Distinct non-empty group names among online hosts, sorted.
   List<String> get groups {

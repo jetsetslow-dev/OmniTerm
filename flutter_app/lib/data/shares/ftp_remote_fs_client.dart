@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -27,7 +26,7 @@ import 'remote_fs_client.dart';
 ///
 /// `ftpconnect` exposes local-file transfers rather than byte streams, so streams are staged in the
 /// app cache and deleted in `finally`. The remote API remains streaming and memory-bounded.
-class FtpRemoteFsClient extends RemoteFsClient {
+class FtpRemoteFsClient extends RemoteFsClient with StreamedTextEditing {
   FtpRemoteFsClient({
     required String host,
     required int port,
@@ -237,31 +236,7 @@ class FtpRemoteFsClient extends RemoteFsClient {
   });
 
   @override
-  bool get supportsTextEditing => true;
-
-  @override
-  Future<String> readText(String path, {int maxBytes = 512 * 1024}) async {
-    final bytes = <int>[];
-    final sink = StreamController<List<int>>();
-    final subscription = sink.stream.listen((chunk) {
-      if (bytes.length + chunk.length > maxBytes) {
-        throw FileSystemException('FTP file is larger than the editor limit', path);
-      }
-      bytes.addAll(chunk);
-    });
-    final completed = subscription.asFuture<void>();
-    await downloadTo(path, sink.sink);
-    await sink.close();
-    await completed;
-    return utf8.decode(bytes, allowMalformed: true);
-  }
-
-  @override
-  Future<int> writeText(String path, String content) async {
-    final bytes = utf8.encode(content);
-    await uploadStream(path, Stream.value(bytes), bytes.length);
-    return bytes.length;
-  }
+  String get textEditingProtocol => 'FTP';
 
   @override
   void close() {

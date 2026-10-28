@@ -242,20 +242,21 @@ class AuthKeysViewModel extends ChangeNotifier {
     if (_keys.any((k) => k.alias == trimmed)) return 'Key alias already exists.';
 
     await _app.repository.insertKey(key.copyWith(alias: trimmed));
-    for (final server in _app.servers.where((s) => s.authKeyAlias == key.alias)) {
-      await _app.repository.updateServer(server.copyWith(authKeyAlias: Value(trimmed)));
-    }
-    for (final server in _app.servers.where((s) => s.proxyKeyAlias == key.alias)) {
-      await _app.repository.updateServer(server.copyWith(proxyKeyAlias: Value(trimmed)));
-    }
-    await _cascadeProfileKeyAlias(key.alias, trimmed);
+    await _cascadeKeyAlias(key.alias, trimmed);
     _status = "Renamed key to '$trimmed'.";
     _safeNotify();
     return null;
   }
 
-  /// Kotlin's `cascadeKeyAliasRename` also repoints key profiles, which name their key by alias.
-  Future<void> _cascadeProfileKeyAlias(String oldAlias, String newAlias) async {
+  /// Kotlin's `cascadeKeyAliasRename`: hosts that sign in or jump with the key, and key profiles,
+  /// all name it by alias, so a renamed key is repointed everywhere.
+  Future<void> _cascadeKeyAlias(String oldAlias, String newAlias) async {
+    for (final server in _app.servers.where((s) => s.authKeyAlias == oldAlias)) {
+      await _app.repository.updateServer(server.copyWith(authKeyAlias: Value(newAlias)));
+    }
+    for (final server in _app.servers.where((s) => s.proxyKeyAlias == oldAlias)) {
+      await _app.repository.updateServer(server.copyWith(proxyKeyAlias: Value(newAlias)));
+    }
     for (final profile in _profiles.where((p) => p.keyAlias == oldAlias)) {
       await _app.repository.insertProfile(profile.copyWith(keyAlias: Value(newAlias)));
     }
@@ -295,13 +296,7 @@ class AuthKeysViewModel extends ChangeNotifier {
       }
       await _app.repository.insertKey(updated);
       if (trimmed != key.alias) {
-        for (final server in _app.servers.where((s) => s.authKeyAlias == key.alias)) {
-          await _app.repository.updateServer(server.copyWith(authKeyAlias: Value(trimmed)));
-        }
-        for (final server in _app.servers.where((s) => s.proxyKeyAlias == key.alias)) {
-          await _app.repository.updateServer(server.copyWith(proxyKeyAlias: Value(trimmed)));
-        }
-        await _cascadeProfileKeyAlias(key.alias, trimmed);
+        await _cascadeKeyAlias(key.alias, trimmed);
       }
     } on KeyImportException catch (e) {
       return _fail(e.message);

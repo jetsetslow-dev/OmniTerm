@@ -11,7 +11,7 @@ import '../remote_models.dart';
 import 'remote_fs_client.dart';
 
 /// Standards-based WebDAV client using PROPFIND/MKCOL/MOVE/DELETE and streamed GET/PUT.
-class WebDavRemoteFsClient extends RemoteFsClient {
+class WebDavRemoteFsClient extends RemoteFsClient with StreamedTextEditing {
   WebDavRemoteFsClient({
     required String host,
     required int port,
@@ -168,31 +168,7 @@ class WebDavRemoteFsClient extends RemoteFsClient {
   }
 
   @override
-  bool get supportsTextEditing => true;
-
-  @override
-  Future<String> readText(String path, {int maxBytes = 512 * 1024}) async {
-    final bytes = <int>[];
-    final controller = StreamController<List<int>>();
-    final subscription = controller.stream.listen((chunk) {
-      if (bytes.length + chunk.length > maxBytes) {
-        throw FileSystemException('WebDAV file is larger than the editor limit', path);
-      }
-      bytes.addAll(chunk);
-    });
-    final completed = subscription.asFuture<void>();
-    await downloadTo(path, controller.sink);
-    await controller.close();
-    await completed;
-    return utf8.decode(bytes, allowMalformed: true);
-  }
-
-  @override
-  Future<int> writeText(String path, String content) async {
-    final bytes = utf8.encode(content);
-    await uploadStream(path, Stream.value(bytes), bytes.length);
-    return bytes.length;
-  }
+  String get textEditingProtocol => 'WebDAV';
 
   @override
   void cancelActiveTransfers() {

@@ -609,6 +609,24 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
         ),
       ],
     );
+    final outputs = ScrollConfiguration(
+      behavior: const PopupScrollBehavior(popupsOnly: false),
+      child: ListView.separated(
+        key: const ValueKey('fleet.results'),
+        itemCount: vm.results.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          final result = vm.results[index];
+          return _BroadcastOutputCard(
+            result: result,
+            expanded: _collapsed[result.serverId] != true,
+            onToggle: () => setState(() {
+              _collapsed[result.serverId] = _collapsed[result.serverId] != true;
+            }),
+          );
+        },
+      ),
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         // Kotlin keeps the controls fixed above an output list that scrolls on its own. Below a
@@ -622,27 +640,7 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
                 header,
                 controls,
                 outputsHeader,
-                SizedBox(
-                  height: 160,
-                  child: ScrollConfiguration(
-                    behavior: const PopupScrollBehavior(popupsOnly: false),
-                    child: ListView.separated(
-                      key: const ValueKey('fleet.results'),
-                      itemCount: vm.results.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final result = vm.results[index];
-                        return _BroadcastOutputCard(
-                          result: result,
-                          expanded: _collapsed[result.serverId] != true,
-                          onToggle: () => setState(() {
-                            _collapsed[result.serverId] = _collapsed[result.serverId] != true;
-                          }),
-                        );
-                      },
-                    ),
-                  ),
-                ),
+                SizedBox(height: 160, child: outputs),
               ],
             ),
           );
@@ -663,26 +661,7 @@ class _FleetBroadcastViewState extends State<_FleetBroadcastView> {
               child: SingleChildScrollView(child: controls),
             ),
             outputsHeader,
-            Expanded(
-              child: ScrollConfiguration(
-                behavior: const PopupScrollBehavior(popupsOnly: false),
-                child: ListView.separated(
-                  key: const ValueKey('fleet.results'),
-                  itemCount: vm.results.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final result = vm.results[index];
-                    return _BroadcastOutputCard(
-                      result: result,
-                      expanded: _collapsed[result.serverId] != true,
-                      onToggle: () => setState(() {
-                        _collapsed[result.serverId] = _collapsed[result.serverId] != true;
-                      }),
-                    );
-                  },
-                ),
-              ),
-            ),
+            Expanded(child: outputs),
           ],
         );
       },

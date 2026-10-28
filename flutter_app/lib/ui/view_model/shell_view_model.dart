@@ -447,7 +447,7 @@ class ShellViewModel extends ChangeNotifier {
   /// Online only, matching the other live tabs. Forcing SSH to a host the app believes is down is
   /// done from the Hosts tab's connect button, which warns first — offering it here as an ordinary
   /// choice would hide that warning.
-  List<Server> get connectableServers => _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get connectableServers => _app.onlineServers;
 
   /// The host the screen is showing.
   ///

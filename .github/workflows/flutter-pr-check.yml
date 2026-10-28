@@ -67,7 +67,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           match=0
-          grep -qE '^(flutter_app/|gradle/libs\.versions\.toml$|gradle/wrapper/gradle-wrapper\.(properties|jar)$|build\.gradle\.kts$|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(refresh-flutter-android-verification-metadata\.sh|verify-flutter-android-toolchain\.py|verify-native-sbom-baselines\.py|local-pr-check\.sh|flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|verify-flutter-release-apk\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh|test-change-detectors\.sh)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)' "$changed_list" || match=$?
+          grep -qE '^(flutter_app/|gradle/libs\.versions\.toml$|gradle/wrapper/gradle-wrapper\.(properties|jar)$|build\.gradle\.kts$|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(refresh-flutter-android-verification-metadata\.sh|verify-flutter-android-toolchain\.py|verify-native-sbom-baselines\.py|local-pr-check\.sh|flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|verify-flutter-release-apk\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh|test-change-detectors\.sh|check-duplicates\.py|test-check-duplicates\.sh|flutter-duplicate-code-baseline\.json)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)' "$changed_list" || match=$?
           rm -f "$changed_list"
           if [ "$match" -eq 0 ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -125,6 +125,14 @@ jobs:
       # `--fatal-infos`: an analyzer hint that nothing fails on is a hint that accumulates.
       - name: Analyze
         run: flutter analyze --fatal-infos
+
+      # Same check as scripts/local-pr-check.sh: a new copy-pasted block fails the build.
+      - name: Check for new duplicated code
+        working-directory: .
+        run: |
+          ./scripts/test-check-duplicates.sh
+          python3 scripts/check-duplicates.py --baseline scripts/flutter-duplicate-code-baseline.json \
+            --exclude '*.g.dart' --exclude '*.freezed.dart' --exclude '*/l10n/*' flutter_app/lib
 
       # Kotlin is the reference app. Fails on a Kotlin/Flutter label, option, settings-key or text
       # style difference that is not in scripts/parity/baseline.json; fixed entries shrink it.

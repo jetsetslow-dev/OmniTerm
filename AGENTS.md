@@ -154,6 +154,10 @@ when configuring a Codex client to read these agreements.
 - Keep `scripts/local-pr-check.sh` and `.github/workflows/android-pr-check.yml` aligned whenever
   build, test, lint, migration, SBOM, signing-input, or dependency-verification behavior changes.
 - Run `git diff --check` and `git diff --cached --check` before committing.
+- Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.
+  `scripts/check-duplicates.py` fails the gate and CI on a new copied block. The Flutter baseline
+  (`scripts/flutter-duplicate-code-baseline.json`) lists the one known copy; only
+  `--update-baseline` adds to it, and that needs the reviewer's agreement.
 
 ## Monitor every PR head to completion
 

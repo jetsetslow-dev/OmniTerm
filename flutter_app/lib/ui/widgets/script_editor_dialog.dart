@@ -8,6 +8,7 @@ import '../theme/typography.dart';
 import '../view_model/scripts_view_model.dart';
 import 'omni_components.dart';
 import 'omni_confirm.dart';
+import 'text_controllers_state.dart';
 
 /// Opens Kotlin's `SharedScriptEditorDialog` (`ui/ScriptEditorDialog.kt`).
 ///
@@ -72,7 +73,7 @@ class ScriptEditorDialog extends StatefulWidget {
   State<ScriptEditorDialog> createState() => _ScriptEditorDialogState();
 }
 
-class _ScriptEditorDialogState extends State<ScriptEditorDialog> {
+class _ScriptEditorDialogState extends State<ScriptEditorDialog> with TextControllersState {
   late final String _ogEmoji = widget.existing?.emoji ?? 'CMD';
   late final String _ogName = widget.existing?.name ?? '';
   late final String _ogCommand = widget.existing?.command ?? widget.initialCommand;
@@ -99,7 +100,8 @@ class _ScriptEditorDialogState extends State<ScriptEditorDialog> {
   bool _saving = false;
   String? _failure;
 
-  List<TextEditingController> get _controllers => [
+  @override
+  List<TextEditingController> get textControllers => [
     _emoji,
     _name,
     _command,
@@ -108,26 +110,6 @@ class _ScriptEditorDialogState extends State<ScriptEditorDialog> {
     _targetSystem,
     _notes,
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    for (final c in _controllers) {
-      c.addListener(_rebuild);
-    }
-  }
-
-  void _rebuild() => setState(() {});
-
-  @override
-  void dispose() {
-    for (final c in _controllers) {
-      c
-        ..removeListener(_rebuild)
-        ..dispose();
-    }
-    super.dispose();
-  }
 
   bool get _dirty =>
       _name.text != _ogName ||

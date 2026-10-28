@@ -58,6 +58,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The hosts that are online now.
+  List<Server> get onlineServers => _servers.where((s) => s.status == 'online').toList();
+
+  /// The selected host while it is online, else the first online host, else none: the host of a
+  /// screen that needs a live connection.
+  Server? get selectedOnlineServer {
+    final online = _servers.where((s) => s.status == 'online');
+    for (final server in online) {
+      if (server.id == _selectedServerId) return server;
+    }
+    return online.firstOrNull;
+  }
+
   /// The host every host-scoped screen operates on.
   ///
   /// Falls back to the first host when nothing is explicitly selected, which is what keeps the

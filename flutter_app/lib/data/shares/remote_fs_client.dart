@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:intl/intl.dart';
@@ -70,6 +72,43 @@ abstract class RemoteFsClient {
   void cancelActiveTransfers() => close();
 
   void close() {}
+}
+
+/// Text editing for a client whose only file I/O is a whole-file stream ([RemoteFsClient.downloadTo]
+/// and [RemoteFsClient.uploadStream]), as FTP and WebDAV are.
+mixin StreamedTextEditing on RemoteFsClient {
+  /// The protocol named in the too-large error, such as "FTP".
+  String get textEditingProtocol;
+
+  @override
+  bool get supportsTextEditing => true;
+
+  @override
+  Future<String> readText(String path, {int maxBytes = 512 * 1024}) async {
+    final bytes = <int>[];
+    final controller = StreamController<List<int>>();
+    final subscription = controller.stream.listen((chunk) {
+      if (bytes.length + chunk.length > maxBytes) {
+        throw FileSystemException(
+          '$textEditingProtocol file is larger than the editor limit',
+          path,
+        );
+      }
+      bytes.addAll(chunk);
+    });
+    final completed = subscription.asFuture<void>();
+    await downloadTo(path, controller.sink);
+    await controller.close();
+    await completed;
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  @override
+  Future<int> writeText(String path, String content) async {
+    final bytes = utf8.encode(content);
+    await uploadStream(path, Stream.value(bytes), bytes.length);
+    return bytes.length;
+  }
 }
 
 /// Thrown for protocols we can save/test but not browse (NFS, CUSTOM).
