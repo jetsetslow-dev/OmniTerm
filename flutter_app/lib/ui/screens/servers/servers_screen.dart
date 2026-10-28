@@ -24,6 +24,7 @@ import '../../view_model/telemetry_poller.dart';
 import '../../widgets/copy_with_confirmation.dart';
 import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/omni_components.dart';
+import '../../widgets/omni_confirm.dart';
 import '../../widgets/license_gate.dart';
 import '../../widgets/wake_on_lan.dart';
 import '../monitor/system_specs_view.dart';
@@ -549,36 +550,56 @@ class _BulkActions extends StatelessWidget {
   }
 
   Future<void> _confirmBulkDelete(BuildContext context) async {
-    final count = vm.selectedServerIdsForBulk.length;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        key: const ValueKey('servers.bulk.delete.dialog'),
-        title: Text(count == 1 ? 'Delete 1 host?' : 'Delete $count hosts?'),
-        content: const Text(
-          'Remove these host connections and their saved credentials from OmniTerm? '
-          'This does not affect the remote machines and cannot be undone here.',
-        ),
-        actions: [
-          TextButton(
-            // Keyed like its Delete sibling so the back-out branch can be driven by a test. It
-            // is the branch that must leave the fleet untouched, which is the whole point of
-            // asking first.
-            key: const ValueKey('servers.bulk.deleteCancel'),
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const ValueKey('servers.bulk.deleteConfirm'),
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: OmniColors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final l10n = AppLocalizations.of(context);
+    final ids = vm.selectedServerIdsForBulk.toSet();
+    final endTmux = await _confirmHostDelete(
+      context,
+      vm,
+      ids,
+      title: ids.length == 1 ? l10n.deleteOneHost : l10n.deleteNHosts(ids.length),
+      message: l10n.removeTheseHostConnectionsAndTheir,
+      optionLabel: (count) => count == 1
+          ? l10n.alsoEndTheTmuxSessionOnTheRemovedHosts
+          : l10n.alsoEndTheTmuxSessionsOnTheRemovedHosts(count),
+      keyPrefix: 'servers.bulk.delete',
     );
-    if (confirmed == true) await vm.deleteSelectedServers();
+    if (endTmux != null) await vm.deleteSelectedServers(endTmuxSessions: endTmux);
   }
+}
+
+/// Asks before deleting the hosts of [ids], as Kotlin does: the option to end their tmux sessions
+/// is offered only when there are some, since the dialog otherwise promises the remote machines are
+/// left alone. Null when cancelled; otherwise whether to end them.
+Future<bool?> _confirmHostDelete(
+  BuildContext context,
+  ServersViewModel vm,
+  Set<int> ids, {
+  required String title,
+  required String message,
+  required String Function(int count) optionLabel,
+  required String keyPrefix,
+}) async {
+  final confirmLabel = AppLocalizations.of(context).delete;
+  final tmuxCount = vm.tmuxSessionCount(ids);
+  if (tmuxCount == 0) {
+    final confirmed = await showOmniConfirm(
+      context,
+      title: title,
+      message: message,
+      confirmLabel: confirmLabel,
+      destructive: true,
+      keyPrefix: keyPrefix,
+    );
+    return confirmed ? false : null;
+  }
+  return showOmniConfirmWithOption(
+    context,
+    title: title,
+    message: message,
+    optionLabel: optionLabel(tmuxCount),
+    confirmLabel: confirmLabel,
+    keyPrefix: keyPrefix,
+  );
 }
 
 class _ServerCard extends StatelessWidget {
@@ -1060,25 +1081,19 @@ class _ServerCard extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Delete ${server.name}?'),
-        content: const Text(
-          'Remove this host connection and its saved credentials from OmniTerm? '
-          'This does not affect the remote machine, but cannot be undone here.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: OmniColors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final l10n = AppLocalizations.of(context);
+    final endTmux = await _confirmHostDelete(
+      context,
+      vm,
+      {server.id},
+      title: l10n.delete2(server.name),
+      message: l10n.removeThisHostConnectionAndIts,
+      optionLabel: (count) => count == 1
+          ? l10n.alsoEndItsTmuxSessionOnTheServer
+          : l10n.alsoEndItsTmuxSessionsOnTheServer(count),
+      keyPrefix: 'servers.card.${server.id}.delete',
     );
-    if (confirmed == true) await vm.deleteServer(server.id);
+    if (endTmux != null) await vm.deleteServer(server.id, endTmuxSessions: endTmux);
   }
 
   String _statusLabel(Server server) {

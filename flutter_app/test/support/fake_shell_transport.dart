@@ -42,6 +42,12 @@ class FakeShellTransport implements SshTransport {
   /// Chunks each `execStream` replays to its `onChunk`.
   List<String> streamChunks = const [];
 
+  /// Credentials whose pooled connections were dropped, oldest first.
+  final List<SshCredentials> forgotten = [];
+
+  @override
+  void forgetCredentials(SshCredentials creds) => forgotten.add(creds);
+
   @override
   Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
     commands.add(command);

@@ -8,12 +8,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_commands.dart' show tmuxCheckCommand;
+import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
+import 'package:omniterm/data/ssh/ssh_tunnel_manager.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/data/term/tmux_bootstrap.dart';
 import 'package:omniterm/domain/app_preferences.dart';
 import 'package:omniterm/domain/terminal_key_encoder.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/ui/view_model/servers_view_model.dart';
 import 'package:omniterm/ui/view_model/shell_session.dart';
 import 'package:omniterm/ui/view_model/shell_view_model.dart';
 
@@ -32,6 +35,16 @@ class _RecordingShortcuts extends ShortcutHelper {
     splits.add((first.id, second.id));
     return true;
   }
+}
+
+/// Records which tunnels were stopped instead of tearing any down.
+class _RecordingTunnels extends SshTunnelManager {
+  _RecordingTunnels() : super((_) => throw UnimplementedError('no tunnel connects in this test'));
+
+  final List<int> stopped = [];
+
+  @override
+  Future<void> stop(int id) async => stopped.add(id);
 }
 
 /// An [AppRepository] whose persistent-session reads start failing once one has been written.
@@ -1655,6 +1668,170 @@ void main() {
 
         expect(await vm.endSavedSession(orphan), contains('is no longer saved'));
         expect(transport.commands.where((c) => c.contains('kill-session')), isEmpty);
+      });
+    });
+
+    group('deleting a host', () {
+      // Kotlin's `removeServer`: everything that still points at the host lets go of it, and its
+      // tmux sessions keep running on the server unless the user asked for them to end.
+      late _RecordingTunnels tunnels;
+      late SshHostKeyTrust trust;
+      late ServersViewModel servers;
+      late FakeShellTransport ssh;
+
+      setUp(() {
+        tunnels = _RecordingTunnels();
+        trust = SshHostKeyTrust(InMemoryHostKeyStore());
+      });
+
+      tearDown(() => servers.dispose());
+
+      /// A persistent host with one open session and one left running, a tunnel and a pinned key.
+      Future<Server> hostInUse({String name = 'nas'}) async {
+        ssh = FakeShellTransport();
+        vm = await start(ssh: ssh);
+        servers = ServersViewModel(
+          app,
+          transport: ssh,
+          shell: () => vm,
+          tunnels: tunnels,
+          hostKeyTrust: trust,
+        );
+        await repo.insertServer(server(name: name, persistent: true));
+        await Future<void>.delayed(Duration.zero);
+        final host = (await repo.getAllServers()).single;
+        await vm.connect(host);
+        await vm.connect(host, freshSession: true);
+        vm.close(vm.sessions.first);
+        await Future<void>.delayed(Duration.zero);
+        await repo.insertPortForward(
+          PortForwardsCompanion.insert(serverId: host.id, name: 'web', bindPort: 8080),
+        );
+        await trust.importEntries({'${host.host}|ssh-ed25519': 'SHA256:pinned'});
+        return host;
+      }
+
+      List<String> kills() => ssh.commands.where((c) => c.contains('kill-session')).toList();
+
+      test('its tmux sessions are counted once, open or left running', () async {
+        final host = await hostInUse();
+
+        final sessions = vm.tmuxSessionsOnHosts({host.id});
+        expect(sessions, hasLength(2));
+        expect(sessions.map((s) => s.tmuxName).toSet(), hasLength(2));
+        expect(servers.tmuxSessionCount({host.id}), 2);
+        expect(servers.tmuxSessionCount({host.id + 1}), 0);
+      });
+
+      test('everything here lets go of it, and tmux keeps running unless asked', () async {
+        final host = await hostInUse();
+        final tunnel = (await repo.getAllPortForwards()).single;
+        app.selectedServerId = host.id;
+
+        await servers.deleteServer(host.id);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(kills(), isEmpty);
+        expect(vm.sessions, isEmpty);
+        expect(vm.resumableSessions, isEmpty);
+        expect(await repo.getPersistentSessions(), isEmpty);
+        expect(await repo.getAllServers(), isEmpty);
+        expect(tunnels.stopped, [tunnel.id]);
+        expect(ssh.forgotten.single.host, host.host);
+        expect(await trust.hasPinnedKey(host.host, host.port), isFalse);
+        expect(app.selectedServerId, isNull);
+        expect(vm.error, isNull);
+      });
+
+      test('asked to, it ends each of its tmux sessions on the server', () async {
+        final host = await hostInUse();
+        final names = vm.tmuxSessionsOnHosts({host.id}).map((s) => s.tmuxName).toList();
+        ssh.execAnswers['kill-session'] = '';
+        ssh.execAnswers['has-session'] = tmuxSessionAbsentMarker;
+
+        await servers.deleteServer(host.id, endTmuxSessions: true);
+
+        expect(kills(), hasLength(2));
+        for (final name in names) {
+          expect(kills().where((c) => c.contains(name)), hasLength(1));
+        }
+        expect(vm.error, isNull);
+      });
+
+      test('a session tmux will not confirm gone is reported on the Shell tab', () async {
+        final host = await hostInUse();
+        ssh.execAnswers['kill-session'] = '';
+        ssh.execAnswers['has-session'] = tmuxSessionPresentMarker;
+
+        await servers.deleteServer(host.id, endTmuxSessions: true);
+
+        expect(await repo.getAllServers(), isEmpty, reason: 'the host is deleted regardless');
+        expect(
+          vm.error,
+          'Host deleted locally, but at least one remote tmux session could not be confirmed '
+          'stopped.',
+        );
+      });
+
+      test('a bulk delete says hosts, and leaves multi-select', () async {
+        final host = await hostInUse();
+        ssh.execAnswers['kill-session'] = 'SSH Error: connection refused';
+        servers.isMultiSelectMode = true;
+        servers.toggleBulkSelection(host.id);
+
+        await servers.deleteSelectedServers(endTmuxSessions: true);
+
+        expect(servers.isMultiSelectMode, isFalse);
+        expect(await repo.getAllServers(), isEmpty);
+        expect(
+          vm.error,
+          'Hosts deleted locally, but at least one remote tmux session could not be confirmed '
+          'stopped.',
+        );
+      });
+
+      test('another host at the same address keeps the trusted keys', () async {
+        final host = await hostInUse();
+        await repo.insertServer(server(name: 'nas-admin'));
+
+        await servers.deleteServer(host.id);
+
+        expect(await trust.hasPinnedKey(host.host, host.port), isTrue);
+      });
+
+      test('keeping one host for the free plan ends the others\' tmux when asked', () async {
+        final host = await hostInUse();
+        final keep = await repo.insertServer(
+          server(name: 'kept', authType: 'key', authKeyAlias: 'kept-key'),
+        );
+        for (final alias in ['kept-key', 'orphan-key']) {
+          await repo.insertKey(
+            SshKey(
+              id: 0,
+              alias: alias,
+              keyType: 'ed25519',
+              privateKey: 'k',
+              publicKey: 'p',
+              fingerprint: '',
+            ),
+          );
+        }
+        await Future<void>.delayed(Duration.zero);
+        ssh.execAnswers['kill-session'] = '';
+        ssh.execAnswers['has-session'] = tmuxSessionPresentMarker;
+
+        expect(await servers.reconcileHostLimit({keep}, endTmuxSessions: true), 1);
+
+        expect((await repo.getAllServers()).map((s) => s.id), [keep]);
+        expect((await repo.getAllKeys()).map((k) => k.alias), ['kept-key']);
+        expect(kills(), hasLength(2));
+        expect(app.selectedServerId, keep);
+        expect(await trust.hasPinnedKey(host.host, host.port), isTrue, reason: 'same address');
+        expect(
+          vm.error,
+          'Hosts removed locally, but at least one remote tmux session could not be confirmed '
+          'stopped.',
+        );
       });
     });
 

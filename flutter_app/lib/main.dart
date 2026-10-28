@@ -336,15 +336,6 @@ class OmniTermApp extends StatelessWidget {
             )..start();
           },
         ),
-        ChangeNotifierProxyProvider<AppState, ServersViewModel>(
-          create: (context) => ServersViewModel(
-            context.read<AppState>(),
-            transport: context.read<SshTransport>(),
-            shortcuts: context.read<ShortcutHelper>(),
-            probeHost: context.read<HostStatusProbe>().probeOne,
-          ),
-          update: (_, app, previous) => previous!,
-        ),
         ChangeNotifierProxyProvider<AppState, MonitorViewModel>(
           create: (context) => MonitorViewModel(
             context.read<AppState>(),
@@ -440,6 +431,20 @@ class OmniTermApp extends StatelessWidget {
             syncLiveSessionServers: context.read<HostStatusProbe>().setLiveSessionServers,
             recheckHost: context.read<HostStatusProbe>().probeOne,
             shortcuts: context.read<ShortcutHelper>(),
+            hostKeyTrust: context.read<SshHostKeyTrust>(),
+          ),
+          update: (_, app, previous) => previous!,
+        ),
+        // Below the shell's provider so a host delete can reach that host's terminals and tmux
+        // sessions.
+        ChangeNotifierProxyProvider<AppState, ServersViewModel>(
+          create: (context) => ServersViewModel(
+            context.read<AppState>(),
+            transport: context.read<SshTransport>(),
+            shortcuts: context.read<ShortcutHelper>(),
+            probeHost: context.read<HostStatusProbe>().probeOne,
+            shell: () => context.read<ShellViewModel>(),
+            tunnels: context.read<SshTunnelManager>(),
             hostKeyTrust: context.read<SshHostKeyTrust>(),
           ),
           update: (_, app, previous) => previous!,

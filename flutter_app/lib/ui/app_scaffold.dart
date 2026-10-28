@@ -39,7 +39,6 @@ import 'view_model/host_status_probe.dart';
 import 'view_model/infra_view_model.dart';
 import 'view_model/monitor_view_model.dart';
 import 'view_model/network_view_model.dart';
-import 'view_model/servers_view_model.dart';
 import 'view_model/system_specs_view_model.dart';
 import 'view_model/scripts_view_model.dart';
 import 'view_model/sftp_view_model.dart';
@@ -47,10 +46,10 @@ import 'view_model/shell_view_model.dart';
 import 'view_model/telemetry_poller.dart';
 import 'widgets/ad_banner.dart';
 import '../domain/permission_copy.dart';
-import 'widgets/host_limit_gate.dart';
 import 'widgets/keep_screen_on_feedback.dart';
 import 'widgets/omni_chrome.dart';
 import 'widgets/omni_components.dart';
+import 'widgets/host_limit_reconciliation_dialog.dart';
 import 'widgets/screen_swipe_area.dart';
 
 /// The 7 top-level bottom-nav destinations, with the labels and accent colours from
@@ -152,9 +151,6 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
       fit: StackFit.expand,
       children: [
         body,
-        // Over every screen, because the install is in a state no screen should be usable from
-        // until it is resolved. Renders nothing at all unless there is a violation.
-        const HostLimitGate(),
         if (compactTerminalIme)
           Positioned(
             top: 8,
@@ -184,7 +180,9 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
         if (context.watch<BatterySaverController>().showDialog)
           _BatterySaverDialog(controller: context.read<BatterySaverController>()),
         if (shell.hostLimitReconciliationRequired)
-          _HostLimitReconciliationDialog(reason: shell.hostLimitReconciliationReason),
+          Positioned.fill(
+            child: HostLimitReconciliationDialog(reason: shell.hostLimitReconciliationReason),
+          ),
         const _PermissionPromptHost(),
       ],
     );
@@ -624,119 +622,6 @@ class _LandscapeAction extends StatelessWidget {
       ),
     ),
   );
-}
-
-class _HostLimitReconciliationDialog extends StatefulWidget {
-  const _HostLimitReconciliationDialog({required this.reason});
-
-  final String reason;
-
-  @override
-  State<_HostLimitReconciliationDialog> createState() => _HostLimitReconciliationDialogState();
-}
-
-class _HostLimitReconciliationDialogState extends State<_HostLimitReconciliationDialog> {
-  int? _selectedId;
-  bool _busy = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final servers = context.watch<AppState>().servers;
-    _selectedId ??= servers.firstOrNull?.id;
-    return Positioned.fill(
-      child: Material(
-        color: Colors.black54,
-        child: Center(
-          child: AlertDialog(
-            key: const ValueKey('license.hostReconciliation'),
-            title: const Text('Choose host to keep'),
-            content: SizedBox(
-              width: 440,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.reason.isEmpty
-                          ? 'The free Play Store build supports one saved host.'
-                          : widget.reason,
-                    ),
-                    const SizedBox(height: 10),
-                    RadioGroup<int>(
-                      groupValue: _selectedId,
-                      onChanged: _busy ? (_) {} : (value) => setState(() => _selectedId = value),
-                      child: Column(
-                        children: [
-                          for (final server in servers)
-                            RadioListTile<int>(
-                              key: ValueKey('license.hostReconciliation.${server.id}'),
-                              value: server.id,
-                              enabled: !_busy,
-                              title: Text(
-                                server.name.isEmpty ? server.host : server.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Text(
-                                '${server.username}@${server.host}:${server.port}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              FilledButton(
-                key: const ValueKey('license.hostReconciliation.keep'),
-                onPressed: _busy || _selectedId == null ? null : _keepSelected,
-                child: Text(_busy ? 'Applying…' : 'Keep selected'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _keepSelected() async {
-    final keepId = _selectedId;
-    if (keepId == null) return;
-    setState(() => _busy = true);
-    final app = context.read<AppState>();
-    final shell = context.read<ShellViewModel>();
-    final network = context.read<NetworkViewModel>();
-    final servers = context.read<ServersViewModel>();
-    final removedIds = app.servers
-        .where((server) => server.id != keepId)
-        .map((server) => server.id)
-        .toSet();
-
-    for (final session
-        in shell.sessions.where((session) => removedIds.contains(session.serverId)).toList()) {
-      if (session.tmuxName != null) {
-        await shell.terminate(session);
-      } else {
-        shell.close(session);
-      }
-    }
-    for (final tunnel
-        in network.portForwards.where((tunnel) => removedIds.contains(tunnel.serverId)).toList()) {
-      await network.deleteTunnel(tunnel);
-    }
-    for (final id in removedIds) {
-      await servers.deleteServer(id);
-    }
-    app.selectedServerId = keepId;
-    if (!mounted) return;
-    context.read<NavigationController>().navigateTo(Screen.servers);
-    context.read<ShellState>().completeHostLimitReconciliation();
-  }
 }
 
 class _PermissionPromptHost extends StatefulWidget {

@@ -1887,6 +1887,58 @@ class ShellViewModel extends ChangeNotifier {
     }
   }
 
+  /// Every tmux session on the servers of [serverIds]: the persistent sessions open here plus the
+  /// saved ones that are not, once each. Deleting a host offers to end exactly these, because once
+  /// the host is gone nothing in the app points at them any more. Kotlin's `tmuxSessionsOnHosts`.
+  List<({int serverId, String tmuxName})> tmuxSessionsOnHosts(Set<int> serverIds) => {
+    for (final session in _sessions)
+      if (serverIds.contains(session.serverId) && session.tmuxName != null)
+        (serverId: session.serverId, tmuxName: session.tmuxName!),
+    for (final row in _saved)
+      if (serverIds.contains(row.serverId)) (serverId: row.serverId, tmuxName: row.tmuxName),
+  }.toList();
+
+  /// Lets go of [server] as it is deleted: the terminal half of Kotlin's `removeServer`. Its
+  /// terminals close without saving anything to resume, then, when [endTmuxSessions], its tmux
+  /// sessions are ended on the server. Returns true when one could not be confirmed stopped.
+  Future<bool> releaseHost(Server server, {bool endTmuxSessions = false}) async {
+    final toEnd = tmuxSessionsOnHosts({server.id});
+    // Closed first, so a terminal whose tmux session is about to be ended does not see its shell
+    // exit and try to reconnect.
+    for (final session in _sessions.where((s) => s.serverId == server.id).toList()) {
+      _close(session, saveRecovery: false);
+    }
+    var unconfirmed = false;
+    if (endTmuxSessions) {
+      for (final session in toEnd) {
+        if (await _endRemoteTmux(server, session.tmuxName) is! TmuxEnded) unconfirmed = true;
+      }
+    }
+    _saved = [
+      for (final row in _saved)
+        if (row.serverId != server.id) row,
+    ];
+    _safeNotify();
+    return unconfirmed;
+  }
+
+  /// Says on the Shell tab that a tmux session on a deleted host may still be running, as Kotlin
+  /// does after a delete it was asked to end sessions for.
+  void reportUnendedTmuxAfterDelete(HostDeletion deletion) {
+    _error = switch (deletion) {
+      HostDeletion.one =>
+        'Host deleted locally, but at least one remote tmux session could not be confirmed '
+            'stopped.',
+      HostDeletion.several =>
+        'Hosts deleted locally, but at least one remote tmux session could not be confirmed '
+            'stopped.',
+      HostDeletion.limit =>
+        'Hosts removed locally, but at least one remote tmux session could not be confirmed '
+            'stopped.',
+    };
+    _safeNotify();
+  }
+
   /// Ends a saved session on its server, then forgets it, as Kotlin's `endSavedSession`. The entry
   /// is dropped only once tmux confirms the session is gone; otherwise this returns the reason, and
   /// the entry stays for Forget.

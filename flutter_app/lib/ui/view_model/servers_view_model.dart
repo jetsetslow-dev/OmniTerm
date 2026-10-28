@@ -5,22 +5,34 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
 import '../../data/remote_models.dart';
+import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/ssh/ssh_transport.dart';
+import '../../data/ssh/ssh_tunnel_manager.dart';
 import '../../domain/host_limit.dart';
 import '../../domain/host_list.dart';
 import '../../domain/health_scoring.dart';
 import '../../domain/measurement_units.dart';
+import '../../domain/saved_tmux_sessions.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/ssh_failure.dart';
 import '../../platform/shortcut_helper.dart';
 import 'app_state.dart';
+import 'shell_view_model.dart';
 
 /// The Servers screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 ///
 /// Owns only what the Servers screen needs — search text, the group filter, multi-select — and reads
 /// the host list from the shared [AppState] rather than holding a second copy that could drift.
 class ServersViewModel extends ChangeNotifier {
-  ServersViewModel(this._app, {this.transport, this.shortcuts, this.probeHost}) {
+  ServersViewModel(
+    this._app, {
+    this.transport,
+    this.shortcuts,
+    this.probeHost,
+    this.shell,
+    this.tunnels,
+    this.hostKeyTrust,
+  }) {
     _app.addListener(notifyListeners);
   }
 
@@ -34,6 +46,16 @@ class ServersViewModel extends ChangeNotifier {
   /// Checks one host through its configured route. Kotlin's `addServer` probes a new host as soon as
   /// it is saved; without that the card sits on its stored `offline` until the next sweep.
   final Future<void> Function(Server server)? probeHost;
+
+  /// The Shell tab, which a deleted host's terminals and tmux sessions belong to. Read when needed
+  /// because its view model is created after this one.
+  final ShellViewModel Function()? shell;
+
+  /// Stops a deleted host's running tunnels, which would otherwise hold their ports open.
+  final SshTunnelManager? tunnels;
+
+  /// Forgets a deleted host's trusted keys.
+  final SshHostKeyTrust? hostKeyTrust;
 
   bool get canTestConnections => transport != null;
 
@@ -217,19 +239,42 @@ class ServersViewModel extends ChangeNotifier {
         hostCount: servers.length,
       );
 
-  /// Keeps [keepIds] and deletes every other saved host.
+  /// Keeps [keepIds] and deletes every other saved host, as Kotlin's `keepOnlyHostAfterLimitChange`.
+  /// The removed hosts' tmux sessions keep running unless [endTmuxSessions]. SSH keys no kept host
+  /// signs in with go too, since the free tier's credential limit applies as well.
   ///
   /// Refuses a selection that is not exactly the limit rather than doing something approximate:
   /// this deletes hosts, and a flow that deletes more than the user chose — or leaves the install
   /// still over its limit — is worse than one that declines. Returns how many were removed.
-  Future<int> reconcileHostLimit(Set<int> keepIds) async {
+  Future<int> reconcileHostLimit(Set<int> keepIds, {bool endTmuxSessions = false}) async {
     if (!isValidHostKeepSelection(selectedCount: keepIds.length, hostLimit: freePlayStoreLimit)) {
       return 0;
     }
-    final doomed = servers.where((s) => !keepIds.contains(s.id)).toList();
+    final all = await _app.repository.getAllServers();
+    final kept = all.where((s) => keepIds.contains(s.id)).toList();
+    if (kept.length != keepIds.length) return 0;
+    final doomed = all.where((s) => !keepIds.contains(s.id)).toList();
+    var unconfirmed = false;
     for (final server in doomed) {
-      await deleteServer(server.id);
+      if (await _removeServer(server, endTmuxSessions: endTmuxSessions, remaining: kept)) {
+        unconfirmed = true;
+      }
     }
+    final profiles = await _app.repository.getAllProfiles();
+    final usedKeys = {
+      for (final server in kept) ...[
+        server.authKeyAlias,
+        server.proxyKeyAlias,
+        profiles.where((p) => p.id == server.authProfileId).firstOrNull?.keyAlias,
+      ],
+    };
+    for (final key in await _app.repository.getAllKeys()) {
+      if (!usedKeys.contains(key.alias)) await _app.repository.deleteKey(key);
+    }
+    _app.selectedServerId = kept.first.id;
+    _selectedServerIdsForBulk.removeWhere((id) => !keepIds.contains(id));
+    notifyListeners();
+    if (unconfirmed) shell?.call().reportUnendedTmuxAfterDelete(HostDeletion.limit);
     return doomed.length;
   }
 
@@ -277,28 +322,83 @@ class ServersViewModel extends ChangeNotifier {
     await shortcuts?.pushServer(server);
   }
 
-  /// Delete a host and everything that referenced it.
-  ///
-  /// Also clears the selection when the deleted host was the selected one, so the screens do not
-  /// keep operating against an id that no longer resolves.
-  Future<void> deleteServer(int serverId) async {
-    await _app.repository.deleteServerAndDependents(serverId);
-    await shortcuts?.removeServer(serverId);
-    if (_app.selectedServerId == serverId) _app.selectedServerId = null;
+  /// How many tmux sessions deleting [serverIds] would leave running, for the delete dialog's
+  /// offer to end them.
+  int tmuxSessionCount(Set<int> serverIds) =>
+      shell?.call().tmuxSessionsOnHosts(serverIds).length ?? 0;
+
+  /// Deletes a host and everything stored for it. Its tmux sessions keep running on the server
+  /// unless [endTmuxSessions], since the dialog promises the remote machine is otherwise untouched.
+  Future<void> deleteServer(int serverId, {bool endTmuxSessions = false}) async {
+    final all = await _app.repository.getAllServers();
+    final server = all.where((s) => s.id == serverId).firstOrNull;
+    if (server == null) return;
+    final unconfirmed = await _removeServer(
+      server,
+      endTmuxSessions: endTmuxSessions,
+      remaining: [
+        for (final s in all)
+          if (s.id != serverId) s,
+      ],
+    );
     _selectedServerIdsForBulk.remove(serverId);
     notifyListeners();
+    if (unconfirmed) shell?.call().reportUnendedTmuxAfterDelete(HostDeletion.one);
   }
 
-  Future<void> deleteSelectedServers() async {
-    final ids = List<int>.from(_selectedServerIdsForBulk);
-    for (final id in ids) {
-      await _app.repository.deleteServerAndDependents(id);
-      await shortcuts?.removeServer(id);
-      if (_app.selectedServerId == id) _app.selectedServerId = null;
-    }
+  /// Deletes every bulk-selected host the way [deleteServer] deletes one, and leaves multi-select.
+  Future<void> deleteSelectedServers({bool endTmuxSessions = false}) async {
+    final ids = _selectedServerIdsForBulk.toSet();
     _selectedServerIdsForBulk.clear();
     _isMultiSelectMode = false;
     notifyListeners();
+    final all = await _app.repository.getAllServers();
+    final remaining = all.where((s) => !ids.contains(s.id)).toList();
+    var unconfirmed = false;
+    for (final server in all.where((s) => ids.contains(s.id))) {
+      if (await _removeServer(server, endTmuxSessions: endTmuxSessions, remaining: remaining)) {
+        unconfirmed = true;
+      }
+    }
+    if (unconfirmed) shell?.call().reportUnendedTmuxAfterDelete(HostDeletion.several);
+  }
+
+  /// The work behind every host delete, as Kotlin's `removeServer`: the host's terminals close, its
+  /// tmux sessions end when asked, its tunnels stop and its pooled connections are dropped before
+  /// its rows go. Its trusted keys go too unless one of [remaining] uses the same address. Returns
+  /// true when a tmux session it was asked to end could not be confirmed stopped.
+  Future<bool> _removeServer(
+    Server server, {
+    required bool endTmuxSessions,
+    required List<Server> remaining,
+  }) async {
+    SshCredentials? creds;
+    try {
+      creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+    } on CredentialResolutionException {
+      // Nothing can have connected without credentials, so there is nothing pooled to drop.
+    }
+    final unconfirmed =
+        await shell?.call().releaseHost(server, endTmuxSessions: endTmuxSessions) ?? false;
+    final tunnels = this.tunnels;
+    if (tunnels != null) {
+      for (final forward in await _app.repository.getAllPortForwards()) {
+        if (forward.serverId == server.id) await tunnels.stop(forward.id);
+      }
+    }
+    if (creds != null) transport?.forgetCredentials(creds);
+    await _app.repository.deleteServerAndDependents(server.id);
+    // Launcher shortcuts must not outlive the host they open.
+    await shortcuts?.removeServer(server.id);
+    if (!keepTrustedHostKeys(server.host, remaining)) {
+      await hostKeyTrust?.removeHost(server.host, server.port);
+    }
+    if (_app.selectedServerId == server.id) _app.selectedServerId = null;
+    return unconfirmed;
   }
 
   /// Apply a group name to every bulk-selected host.

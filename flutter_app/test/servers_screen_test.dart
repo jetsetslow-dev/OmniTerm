@@ -31,6 +31,30 @@ class _UnreachableProbe implements NetworkProbe {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// Reports [tmux] sessions on any set of hosts and records each delete instead of doing it, so the
+/// dialogs can be checked without a shell. The deletes themselves are covered in
+/// `shell_view_model_test.dart`.
+class _TmuxHosts extends ServersViewModel {
+  _TmuxHosts(super.app, this.tmux);
+
+  final int tmux;
+
+  /// The ids each delete was asked for, sorted and comma-joined, and whether to end their tmux
+  /// sessions.
+  final List<(String, bool)> deletes = [];
+
+  @override
+  int tmuxSessionCount(Set<int> serverIds) => tmux;
+
+  @override
+  Future<void> deleteServer(int serverId, {bool endTmuxSessions = false}) async =>
+      deletes.add(('$serverId', endTmuxSessions));
+
+  @override
+  Future<void> deleteSelectedServers({bool endTmuxSessions = false}) async =>
+      deletes.add((([...selectedServerIdsForBulk]..sort()).join(','), endTmuxSessions));
+}
+
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -150,9 +174,9 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('servers.bulk.delete')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('servers.bulk.deleteConfirm')), findsOneWidget);
+    expect(find.byKey(const ValueKey('servers.bulk.delete.confirm')), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('servers.bulk.deleteCancel')));
+    await tester.tap(find.byKey(const ValueKey('servers.bulk.delete.cancel')));
     await tester.pumpAndSettle();
 
     // The effect, not the dialog: backing out of a destructive confirmation must leave the data
@@ -172,7 +196,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('servers.bulk.delete')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('servers.bulk.deleteConfirm')));
+    await tester.tap(find.byKey(const ValueKey('servers.bulk.delete.confirm')));
     await tester.pumpAndSettle();
 
     // "Exactly" is the assertion that matters: a bulk action that deletes the selection plus
@@ -180,6 +204,101 @@ void main() {
     expect(app.servers, hasLength(1));
     expect(find.text('nas'), findsNothing);
     expect(find.text('web-prod'), findsOneWidget, reason: 'an unselected host must survive');
+  });
+
+  group('the delete dialog', () {
+    // Kotlin offers to end the hosts' tmux sessions only when there are some, since the dialog
+    // otherwise promises the remote machine is left alone.
+    Future<_TmuxHosts> withTmux(int tmux) async {
+      vm.dispose();
+      final hosts = _TmuxHosts(app, tmux);
+      vm = hosts;
+      return hosts;
+    }
+
+    Future<int> openDelete(WidgetTester tester) async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await tester.tap(find.byKey(ValueKey('servers.card.$id.actions')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('servers.action.delete')));
+      await tester.pumpAndSettle();
+      return id;
+    }
+
+    testWidgets('a host without tmux sessions is just deleted', (tester) async {
+      final hosts = await withTmux(0);
+      final id = await openDelete(tester);
+
+      expect(find.text('Delete nas?'), findsOneWidget);
+      expect(
+        find.text(
+          'Remove this host connection (and its saved credentials) from OmniTerm? This does not '
+          'affect the remote machine, but cannot be undone here.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(ValueKey('servers.card.$id.delete.option')), findsNothing);
+      await tester.tap(find.byKey(ValueKey('servers.card.$id.delete.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(hosts.deletes, [('$id', false)]);
+    });
+
+    testWidgets('a host with tmux sessions offers to end them, unticked', (tester) async {
+      final hosts = await withTmux(2);
+      final id = await openDelete(tester);
+
+      expect(find.text('Also end its 2 tmux sessions on the server'), findsOneWidget);
+      await tester.tap(find.byKey(ValueKey('servers.card.$id.delete.option')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('servers.card.$id.delete.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(hosts.deletes, [('$id', true)]);
+    });
+
+    testWidgets('cancelling deletes nothing, ticked or not', (tester) async {
+      final hosts = await withTmux(1);
+      final id = await openDelete(tester);
+
+      expect(find.text('Also end its tmux session on the server'), findsOneWidget);
+      await tester.tap(find.byKey(ValueKey('servers.card.$id.delete.option')));
+      await tester.tap(find.byKey(ValueKey('servers.card.$id.delete.cancel')));
+      await tester.pumpAndSettle();
+
+      expect(hosts.deletes, isEmpty);
+    });
+
+    testWidgets('a bulk delete words the option for the removed hosts', (tester) async {
+      final hosts = await withTmux(3);
+      final nas = await repo.insertServer(server(name: 'nas'));
+      final web = await repo.insertServer(server(name: 'web-prod'));
+      await pump(tester);
+      vm.isMultiSelectMode = true;
+      vm.toggleBulkSelection(nas);
+      vm.toggleBulkSelection(web);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('servers.bulk.delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete 2 hosts?'), findsOneWidget);
+      expect(
+        find.text(
+          'Remove these host connections (and their saved credentials) from OmniTerm? This does '
+          'not affect the remote machines, but cannot be undone here.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Also end the 3 tmux sessions running on the removed hosts'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('servers.bulk.delete.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(hosts.deletes, [('$nas,$web', false)]);
+    });
   });
 
   testWidgets('an empty fleet shows Kotlin\'s first-run checklist and Add Host Server', (
