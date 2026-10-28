@@ -72,7 +72,6 @@ class SystemSpecsContent extends StatelessWidget {
             Text(
               'Could not read the specs: $error',
               key: const ValueKey('specs.error'),
-              textAlign: TextAlign.center,
               style: const TextStyle(color: OmniColors.red, fontSize: 11),
             ),
             TextButton(onPressed: () => vm.load(server), child: const Text('Retry')),
