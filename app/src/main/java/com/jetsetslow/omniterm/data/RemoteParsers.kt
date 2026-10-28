@@ -397,12 +397,29 @@ object RemoteCommands {
         else -> PROCESSES
     }
 
+    const val PROCESS_SAMPLE_MARKER = "##OMNI-SAMPLE"
+    const val PROCESS_NVIDIA_MARKER = "##OMNI-NVIDIA"
+
     // Linux: pid,user,%cpu,%mem,vsz,etime,stat,comm (etime adds per-process uptime). The `ps`
     // header line is dropped by the parser (non-numeric pid). BusyBox ps has no -eo, so fall back
     // to its plain 4-column output (PID USER TIME COMMAND), which the parser also understands.
+    //
+    // Then two samples, a second apart, of what the listed processes did meanwhile: disk bytes
+    // from /proc/<pid>/io, and GPU use from the DRM fdinfo that the open drivers publish (engine
+    // time from amdgpu, i915 and most others; engine cycles from Intel's xe). NVIDIA's own driver
+    // publishes none, so `nvidia-smi pmon` answers for it. Another user's counters are unreadable
+    // without root; grep skips those quietly and the parser reports them as unknown, not zero.
+    // xargs keeps a process with thousands of descriptors under the argument limit.
+    // See [RemoteParsers.parseProcessUsage].
     const val PROCESSES =
-        "ps -eo pid,user,%cpu,%mem,vsz,etime,stat,comm 2>/dev/null | sort -k3 -rn | head -n 80" +
-        " || ps w 2>/dev/null | head -n 80"
+        "P=\$(ps -eo pid,user,%cpu,%mem,vsz,etime,stat,comm 2>/dev/null | sort -k3 -rn | head -n 80); " +
+        "[ -n \"\$P\" ] || P=\$(ps w 2>/dev/null | head -n 80); printf '%s\\n' \"\$P\"; " +
+        "D=''; for p in \$(printf '%s\\n' \"\$P\" | awk '{print \$1}'); do [ -d /proc/\$p ] && D=\"\$D /proc/\$p\"; done; " +
+        "s(){ echo \"$PROCESS_SAMPLE_MARKER \$(date +%s%N 2>/dev/null)\"; [ -n \"\$D\" ] && " +
+        "for d in \$D; do echo \$d/io; ls -d \$d/fdinfo/* 2>/dev/null; done | " +
+        "xargs grep -H -E '^(read_bytes|write_bytes|drm-client-id|drm-pdev|drm-engine-[a-z0-9-]+|drm-(total-)?cycles-[a-z0-9-]+):' 2>/dev/null; }; " +
+        "s; sleep 1; s; " +
+        "if command -v nvidia-smi >/dev/null 2>&1; then echo '$PROCESS_NVIDIA_MARKER'; nvidia-smi pmon -c 1 -s u 2>/dev/null; fi; true"
 
     // FreeBSD/macOS BSD ps: same 8 columns via -axo (keywords differ slightly).
     const val PROCESSES_BSD =
@@ -1173,7 +1190,8 @@ object RemoteParsers {
     // or BusyBox's plain `ps w` 4-column form (PID USER TIME COMMAND) from the fallback path.
     // The `ps` header line is skipped because its first column ("PID") isn't an integer.
     fun parseProcesses(output: String): List<SimProcess> =
-        output.lineSequence()
+        output.substringBefore(RemoteCommands.PROCESS_SAMPLE_MARKER).substringBefore(RemoteCommands.PROCESS_NVIDIA_MARKER)
+            .lineSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .mapNotNull { line ->
@@ -1903,6 +1921,135 @@ object RemoteParsers {
             Regex("\\b(warn|warning|deprecat|timeout|retry)").containsMatchIn(l) -> "WARN"
             else -> "INFO"
         }
+    }
+
+    /**
+     * Disk and GPU use per process from the samples [RemoteCommands.PROCESSES] appends. Rates are
+     * the difference between the two samples over the time between them. A process whose counters
+     * could not be read is absent rather than zero. [ProcessUsage.gpuReported] is true when the
+     * host reported any GPU use source at all, so the GPU column only shows where it applies.
+     */
+    fun parseProcessUsage(output: String): ProcessUsage {
+        val nvidia = output.substringAfter(RemoteCommands.PROCESS_NVIDIA_MARKER, "")
+        val samples = output.substringBefore(RemoteCommands.PROCESS_NVIDIA_MARKER)
+            .split(RemoteCommands.PROCESS_SAMPLE_MARKER).drop(1).map(::parseProcessSample)
+        val disk = mutableMapOf<Int, DiskRate>()
+        val gpu = mutableMapOf<Int, Float>()
+        var gpuReported = false
+        if (samples.size >= 2) {
+            val (first, second) = samples[0] to samples[1]
+            val seconds = if (first.atNanos != null && second.atNanos != null && second.atNanos > first.atNanos) {
+                (second.atNanos - first.atNanos) / 1e9
+            } else {
+                1.0
+            }
+            second.io.forEach { (pid, after) ->
+                val before = first.io[pid] ?: return@forEach
+                disk[pid] = DiskRate(
+                    readBytesPerSecond = ((after.first - before.first).coerceAtLeast(0) / seconds).toLong(),
+                    writeBytesPerSecond = ((after.second - before.second).coerceAtLeast(0) / seconds).toLong(),
+                )
+            }
+            gpuReported = listOf(first, second).any { it.engineNanos.isNotEmpty() || it.cycles.isNotEmpty() }
+            // Busiest engine: adding engines up (render + video + copy) can pass 100%.
+            fun busy(pid: Int, engine: String, used: Long, available: Double): Double {
+                val capacity = second.capacity[pid]?.get(engine) ?: 1
+                return if (available > 0) used.coerceAtLeast(0) / (available * capacity) else 0.0
+            }
+            (second.engineNanos.keys + second.cycles.keys).forEach { pid ->
+                val byTime = second.engineNanos[pid].orEmpty().mapNotNull { (engine, nanos) ->
+                    val start = first.engineNanos[pid]?.get(engine) ?: return@mapNotNull null
+                    busy(pid, engine, nanos - start, seconds * 1e9)
+                }
+                // xe counts cycles; its share of the GPU's total cycles over the same span.
+                val byCycles = second.cycles[pid].orEmpty().mapNotNull { (engine, cycles) ->
+                    val start = first.cycles[pid]?.get(engine) ?: return@mapNotNull null
+                    val total = second.totalCycles[pid]?.get(engine) ?: return@mapNotNull null
+                    val totalStart = first.totalCycles[pid]?.get(engine) ?: return@mapNotNull null
+                    busy(pid, engine, cycles - start, (total - totalStart).toDouble())
+                }
+                val busiest = (byTime + byCycles).maxOrNull() ?: return@forEach
+                gpu[pid] = (busiest * 100).coerceIn(0.0, 100.0).toFloat()
+            }
+        }
+        // `nvidia-smi pmon` columns: gpu pid type sm mem ... command; "-" means idle.
+        nvidia.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.forEach { line ->
+            val t = line.split(Regex("\\s+"))
+            val pid = t.getOrNull(1)?.toIntOrNull() ?: return@forEach
+            gpuReported = true
+            val sm = t.getOrNull(3)?.toFloatOrNull() ?: 0f
+            gpu[pid] = maxOf(gpu[pid] ?: 0f, sm.coerceIn(0f, 100f))
+        }
+        // pmon prints its "# gpu  pid ..." header only when the driver answered.
+        if (nvidia.lineSequence().any { it.trimStart().startsWith("#") }) gpuReported = true
+        return ProcessUsage(disk, gpu, gpuReported)
+    }
+
+    private class ProcessSample(
+        val atNanos: Long?,
+        /** pid → (read bytes, write bytes). */
+        val io: Map<Int, Pair<Long, Long>>,
+        /** pid → engine key → busy nanoseconds, summed over the process's distinct DRM clients. */
+        val engineNanos: Map<Int, Map<String, Long>>,
+        /** pid → engine key → busy cycles, for drivers that count cycles instead of time (xe). */
+        val cycles: Map<Int, Map<String, Long>>,
+        /** pid → engine key → the GPU's total cycles at the moment [cycles] was read. */
+        val totalCycles: Map<Int, Map<String, Long>>,
+        /** pid → engine key → how many engines of that class the device has. */
+        val capacity: Map<Int, Map<String, Int>>,
+    )
+
+    // Lines look like "/proc/123/io:read_bytes: 4096" and "/proc/123/fdinfo/7:drm-engine-gfx: 1234 ns".
+    private fun parseProcessSample(block: String): ProcessSample {
+        val lines = block.lines()
+        val atNanos = lines.firstOrNull()?.trim()?.toLongOrNull()
+        val read = mutableMapOf<Int, Long>()
+        val written = mutableMapOf<Int, Long>()
+        // One DRM client can sit behind several file descriptors; count each client once.
+        val clients = mutableMapOf<Pair<Int, String>, MutableMap<String, String>>()
+        lines.drop(1).forEach { line ->
+            val path = line.substringBefore(':')
+            val pid = path.removePrefix("/proc/").substringBefore('/').toIntOrNull() ?: return@forEach
+            val key = line.substringAfter(':').substringBefore(':').trim()
+            val value = line.substringAfter(':').substringAfter(':').trim()
+            when {
+                path.endsWith("/io") && key == "read_bytes" -> value.toLongOrNull()?.let { read[pid] = it }
+                path.endsWith("/io") && key == "write_bytes" -> value.toLongOrNull()?.let { written[pid] = it }
+                key.startsWith("drm-") -> clients.getOrPut(pid to path) { mutableMapOf() }[key] = value
+            }
+        }
+        val io = read.keys.intersect(written.keys).associateWith { read.getValue(it) to written.getValue(it) }
+        val engineNanos = mutableMapOf<Int, MutableMap<String, Long>>()
+        val cycles = mutableMapOf<Int, MutableMap<String, Long>>()
+        // A device's total is the same for each of its clients, so it is kept, not added up.
+        val totalCycles = mutableMapOf<Int, MutableMap<String, Long>>()
+        val capacity = mutableMapOf<Int, MutableMap<String, Int>>()
+        fun add(into: MutableMap<Int, MutableMap<String, Long>>, pid: Int, engine: String, amount: Long) {
+            val engines = into.getOrPut(pid) { mutableMapOf() }
+            engines[engine] = (engines[engine] ?: 0L) + amount
+        }
+        clients.entries
+            .distinctBy { (fd, fields) -> Triple(fd.first, fields["drm-pdev"], fields["drm-client-id"] ?: fd.second) }
+            .forEach { (fd, fields) ->
+                val device = fields["drm-pdev"].orEmpty()
+                fields.forEach { (key, value) ->
+                    when {
+                        key.startsWith("drm-engine-capacity-") ->
+                            capacity.getOrPut(fd.first) { mutableMapOf() }["$device/${key.removePrefix("drm-engine-capacity-")}"] =
+                                value.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                        key.startsWith("drm-engine-") -> value.substringBefore(' ').toLongOrNull()?.let { nanos ->
+                            add(engineNanos, fd.first, "$device/${key.removePrefix("drm-engine-")}", nanos)
+                        }
+                        key.startsWith("drm-total-cycles-") -> value.toLongOrNull()?.let { total ->
+                            totalCycles.getOrPut(fd.first) { mutableMapOf() }["$device/${key.removePrefix("drm-total-cycles-")}"] = total
+                        }
+                        key.startsWith("drm-cycles-") -> value.toLongOrNull()?.let { used ->
+                            add(cycles, fd.first, "$device/${key.removePrefix("drm-cycles-")}", used)
+                        }
+                    }
+                }
+            }
+        return ProcessSample(atNanos, io, engineNanos, cycles, totalCycles, capacity)
     }
 
     fun humanBytes(bytes: Long): String {

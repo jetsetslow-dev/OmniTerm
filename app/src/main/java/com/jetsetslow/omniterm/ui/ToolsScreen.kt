@@ -1753,27 +1753,11 @@ private fun PingTab(viewModel: AppViewModel) {
         )
         if (viewModel.pingLines.isNotEmpty()) {
             OmniCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                val pingListState = rememberLazyListState()
-                LaunchedEffect(viewModel.pingLines.size) {
-                    if (viewModel.pingLines.isNotEmpty()) pingListState.animateScrollToItem(viewModel.pingLines.size - 1)
-                }
-                SelectionContainer {
-                    OverflowLazyColumn(
-                        state = pingListState,
-                        modifier = Modifier.fillMaxSize().padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        items(viewModel.pingLines) { line ->
-                            Text(
-                                line,
-                                fontSize = 11.sp,
-                                fontFamily = OmniFonts.mono,
-                                color = if (line.contains("failed", true) || line.contains("unreachable", true) || line.contains("100% packet loss"))
-                                    OmniColors.red else MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                    }
-                }
+                StreamOutputBox(
+                    failureHighlighted(viewModel.pingLines, ::isPingFailureLine),
+                    modifier = Modifier.fillMaxSize(),
+                    look = StreamOutputLook.Plain,
+                )
             }
         }
     }
@@ -1814,27 +1798,11 @@ private fun TracerouteTab(viewModel: AppViewModel) {
         )
         if (viewModel.tracerouteLines.isNotEmpty()) {
             OmniCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                val listState = rememberLazyListState()
-                LaunchedEffect(viewModel.tracerouteLines.size) {
-                    if (viewModel.tracerouteLines.isNotEmpty()) listState.animateScrollToItem(viewModel.tracerouteLines.size - 1)
-                }
-                SelectionContainer {
-                    OverflowLazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize().padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        items(viewModel.tracerouteLines) { line ->
-                            Text(
-                                line,
-                                fontSize = 11.sp,
-                                fontFamily = OmniFonts.mono,
-                                color = if (line.contains("not available", true) || line.contains("failed", true))
-                                    OmniColors.red else MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                    }
-                }
+                StreamOutputBox(
+                    failureHighlighted(viewModel.tracerouteLines, ::isTracerouteFailureLine),
+                    modifier = Modifier.fillMaxSize(),
+                    look = StreamOutputLook.Plain,
+                )
             }
         }
     }
@@ -1974,22 +1942,7 @@ private fun WolTab(viewModel: AppViewModel) {
                                 // A magic packet is a single UDP send, so a spinner would only
                                 // flash; disabling while in flight is enough to stop double-taps.
                                 enabled = !viewModel.wolSendRunning,
-                                onClick = {
-                                    confirm.ask(
-                                        confirm.str(R.string.send_wake_packet),
-                                        confirm.str(R.string.send_a_wake_on_lan_magic, target.name, target.macAddress),
-                                        confirmLabel = confirm.str(R.string.wake),
-                                    ) {
-                                        viewModel.triggerWol(target) { sent ->
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                if (sent) "Magic packet sent to ${target.name}"
-                                                else "Failed to send magic packet to ${target.name}",
-                                                android.widget.Toast.LENGTH_SHORT,
-                                            ).show()
-                                        }
-                                    }
-                                },
+                                onClick = { confirmAndWake(confirm, viewModel, target, context) },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                 modifier = Modifier.height(36.dp),

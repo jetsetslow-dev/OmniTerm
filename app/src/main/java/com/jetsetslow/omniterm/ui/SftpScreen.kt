@@ -85,7 +85,7 @@ private fun CompactSftpIconToggleButton(
 @Composable
 fun SftpScreen(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = servers.filter { it.status == "online" }
+    val onlineServers = servers.filter { viewModel.isPickableHost(it) }
     val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
     val srv = explicitlySelected ?: onlineServers.firstOrNull()
     LaunchedEffect(srv?.id) {

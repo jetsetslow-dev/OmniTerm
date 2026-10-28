@@ -51,6 +51,9 @@ interface ServerDao {
 
 @Dao
 interface MetricHistoryDao {
+    @Query("SELECT serverId, MAX(timestamp) AS lastAt FROM metric_history GROUP BY serverId")
+    suspend fun getLastSampleTimes(): List<ServerLastSample>
+
     @Query("SELECT * FROM metric_history WHERE serverId = :serverId ORDER BY timestamp ASC")
     fun getMetricsForServerFlow(serverId: Int): Flow<List<MetricHistoryEntity>>
 
@@ -366,6 +369,9 @@ interface PersistentSessionDao {
 
     @Query("DELETE FROM persistent_sessions WHERE serverId = :serverId")
     suspend fun deleteForServer(serverId: Int)
+
+    @Query("UPDATE persistent_sessions SET serverName = :serverName WHERE serverId = :serverId")
+    suspend fun renameServer(serverId: Int, serverName: String)
 
     @Query("DELETE FROM persistent_sessions WHERE serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)

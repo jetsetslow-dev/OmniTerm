@@ -174,10 +174,13 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun deleteSetting(key: String) = db.appSettingDao().deleteSetting(key)
 
     // Persistent (tmux) session tracking — runtime/device state, never backed up.
+    suspend fun getLastSampleTimes(): List<ServerLastSample> = db.metricHistoryDao().getLastSampleTimes()
     suspend fun getPersistentSessions(): List<PersistentSessionEntity> = db.persistentSessionDao().getAll()
     suspend fun upsertPersistentSession(session: PersistentSessionEntity) = db.persistentSessionDao().upsert(session)
     suspend fun deletePersistentSession(tmuxName: String) = db.persistentSessionDao().delete(tmuxName)
     suspend fun deletePersistentSessionsForServer(serverId: Int) = db.persistentSessionDao().deleteForServer(serverId)
+    suspend fun renamePersistentSessionsForServer(serverId: Int, serverName: String) =
+        db.persistentSessionDao().renameServer(serverId, serverName)
 
     private fun decryptServer(server: ServerEntity): ServerEntity = server.copy(
         authPassword = SecretStore.decrypt(server.authPassword),

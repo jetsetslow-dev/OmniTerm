@@ -251,6 +251,85 @@ private const val NETWORK_SHARE_PROBE_INTERVAL_MS = 60_000L
 // Auto-reconnect backoff for dropped interactive sessions: 1s, 2s, 4s… capped at 30s, up to N tries.
 // Slow Wi-Fi -> mobile handoffs can take well over a minute before the OS has a usable route again.
 private const val RECONNECT_BASE_DELAY_MS = 1_000L
+/** Tries a host's ping pop-up sends, as Tools → Ping does by default. */
+private const val HOST_PING_COUNT = 4
+
+/** Orders for Monitor → Processes. Disk and GPU apply only when the host reports them. */
+enum class ProcessSort { Cpu, Mem, Disk, Gpu }
+
+/** [list] busiest first by [sort]; processes without a reading sort last. */
+internal fun sortProcesses(list: List<SimProcess>, sort: ProcessSort): List<SimProcess> = when (sort) {
+    ProcessSort.Cpu -> list.sortedByDescending { it.cpu }
+    ProcessSort.Mem -> list.sortedByDescending { it.mem }
+    ProcessSort.Disk -> list.sortedByDescending { it.disk?.totalBytesPerSecond ?: -1L }
+    ProcessSort.Gpu -> list.sortedByDescending { it.gpu ?: -1f }
+}
+
+/** A device-side check the Hosts tab can run against a host. */
+enum class HostCheck { Ping, Traceroute }
+
+/** Orders for the Hosts list. Ties keep the name order the list is loaded in. */
+enum class HostSort(val settingValue: String) {
+    Name("name"),
+    Status("status"),
+    Health("health"),
+    Latency("latency");
+
+    companion object {
+        fun fromSetting(value: String?): HostSort = entries.firstOrNull { it.settingValue == value } ?: Name
+    }
+}
+
+/**
+ * [hosts] (loaded by name) in [sort] order. Status puts online hosts first, then those being
+ * checked, then offline ones. Health puts the lowest scores first, so hosts needing attention lead,
+ * and hosts without a score last. Latency is fastest first, with hosts that are not online last.
+ */
+internal fun sortHosts(hosts: List<ServerEntity>, sort: HostSort, health: (ServerEntity) -> Int): List<ServerEntity> =
+    when (sort) {
+        HostSort.Name -> hosts
+        HostSort.Status -> hosts.sortedBy {
+            when (it.status) {
+                "online" -> 0
+                "connecting" -> 1
+                else -> 2
+            }
+        }
+        HostSort.Health -> hosts.sortedBy { health(it).let { score -> if (score < 0) Int.MAX_VALUE else score } }
+        HostSort.Latency -> hosts.sortedBy { if (it.status == "online") it.lastLatency else Int.MAX_VALUE }
+    }
+
+/**
+ * An OpenSSH command line reaching [srv] as [username], through its jump host or proxy when it has
+ * one, for pasting into a terminal elsewhere. Carries no secrets.
+ */
+internal fun sshCommandFor(srv: ServerEntity, username: String): String {
+    fun hostPort(host: String, port: Int) =
+        if (port > 0 && port != 22) "${if (':' in host) "[$host]" else host}:$port" else host
+    val parts = mutableListOf("ssh")
+    when (srv.proxyType) {
+        "ssh" -> if (srv.proxyHost.isNotBlank()) {
+            parts += "-J"
+            parts += (if (srv.proxyUser.isNotBlank()) "${srv.proxyUser}@" else "") + hostPort(srv.proxyHost, srv.proxyPort)
+        }
+        "socks5" -> if (srv.proxyHost.isNotBlank()) {
+            parts += "-o"
+            parts += "'ProxyCommand=nc -X 5 -x ${hostPort(srv.proxyHost, srv.proxyPort)} %h %p'"
+        }
+        "http" -> if (srv.proxyHost.isNotBlank()) {
+            parts += "-o"
+            parts += "'ProxyCommand=nc -X connect -x ${hostPort(srv.proxyHost, srv.proxyPort)} %h %p'"
+        }
+    }
+    if (srv.port != 22) {
+        parts += "-p"
+        parts += srv.port.toString()
+    }
+    parts += "$username@${srv.host}"
+    return parts.joinToString(" ")
+}
+
+data class HostCheckRequest(val server: ServerEntity, val kind: HostCheck)
 private const val RECONNECT_MAX_DELAY_MS = 30_000L
 private const val RECONNECT_MAX_ATTEMPTS = 12
 
@@ -1037,28 +1116,38 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun keepOnlyHostAfterLimitChange(serverId: Int) {
+    /**
+     * Keeps [serverId] and deletes every other host. As with [deleteServer], the removed hosts'
+     * tmux sessions keep running on their servers unless the user ticked [endTmuxSessions].
+     */
+    fun keepOnlyHostAfterLimitChange(serverId: Int, endTmuxSessions: Boolean = false) {
         viewModelScope.launch {
             val all = repository.getAllServers()
             val keep = all.find { it.id == serverId } ?: all.firstOrNull() ?: return@launch
             val remove = all.filter { it.id != keep.id }
+            var unconfirmedTmuxEnds = 0
             remove.forEach { removed ->
                 val removedSessions = activeSessions.filter { it.serverId == removed.id }.toList()
+                val tmuxToEnd = if (endTmuxSessions) tmuxSessionsOnHosts(setOf(removed.id)) else emptyList()
                 removedSessions.forEach { session ->
                     session.userClosed = true
                     session.reconnectJob?.cancel()
                 }
                 val creds = runCatching { buildCredentials(removed) }.getOrNull()
+                unconfirmedTmuxEnds += endRemoteTmuxSessions(creds, tmuxToEnd)
                 if (creds != null) {
-                    removedSessions.filter { it.persistent }.forEach { session ->
-                        sshTransport.exec(creds, RemoteCommands.tmuxKillCommand(session.tmuxName))
-                    }
                     sshTransport.forgetCredentials(creds)
                     JschSftp.forgetCredentials(creds)
                 }
                 repository.getAllPortForwards().filter { it.serverId == removed.id }.forEach { stopTunnel(it.id) }
-                SshHostKeyTrust.removeHost(removed.host, removed.port)
+                if (!keepTrustedHostKeys(removed.host, listOf(keep))) {
+                    SshHostKeyTrust.removeHost(removed.host, removed.port)
+                }
                 removedSessions.forEach { cleanupSession(it) }
+            }
+            if (unconfirmedTmuxEnds > 0) {
+                terminalConnectError =
+                    "Hosts removed locally, but at least one remote tmux session could not be confirmed stopped."
             }
             repository.keepOnlyServers(setOf(keep.id))
             restorablePersistentSessions = restorablePersistentSessions.filter { it.serverId == keep.id }
@@ -1144,7 +1233,7 @@ class AppViewModel @JvmOverloads constructor(
 
     // MONITOR SCREEN METRIC HISTORY & EXPANSION STATE
     var activeMonitorTab by mutableStateOf(0) // 0: Overview, 1: Process, 2: Services, 3: Logs
-    var processSortByCpu by mutableStateOf(true) // true: CPU, false: MEM
+    var processSort by mutableStateOf(ProcessSort.Cpu)
     var expandedProcessPid by mutableStateOf<Int?>(null)
     var logFilterType by mutableStateOf("ALL")
     var isLogsLive by mutableStateOf(true)
@@ -1414,6 +1503,10 @@ class AppViewModel @JvmOverloads constructor(
     @Volatile private var actionStreamEpoch = 0
 
     var processes by mutableStateOf<List<SimProcess>>(emptyList()); private set
+    /** Whether the host reported per-process disk use, so the Disk column and sort apply. */
+    var processDiskReported by mutableStateOf(false); private set
+    /** Whether the host reported a GPU use source, so the GPU column and sort apply. */
+    var processGpuReported by mutableStateOf(false); private set
     var processesLoading by mutableStateOf(false); private set
 
     var services by mutableStateOf<List<SimService>>(emptyList()); private set
@@ -1908,6 +2001,7 @@ class AppViewModel @JvmOverloads constructor(
     private suspend fun markServerReachableAfterSsh(srv: ServerEntity) {
         if (srv.id <= 0) return
         noteFreshSshEvidence(srv.id)
+        withContext(Dispatchers.Main) { noteSeen(srv.id, System.currentTimeMillis()) }
         // Serialize with that host's background probe. If the probe started first, this online write
         // lands last. Only fresh SSH evidence received during a probe can override its failure.
         telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
@@ -2143,6 +2237,17 @@ class AppViewModel @JvmOverloads constructor(
     private val REFRESH_REPORT_TIMEOUT_MS = 30_000L
     private val REFRESH_POLL_MS = 250L
 
+    /**
+     * When OmniTerm last had metrics or a working SSH connection from each host, for the "last
+     * seen" line on an offline host. Seeded from stored metrics, so it survives a restart for as
+     * long as metrics are kept.
+     */
+    val lastSeenAt = mutableStateMapOf<Int, Long>()
+
+    // Above init: the settings collector there assigns it while the constructor is still running.
+    var hostSort by mutableStateOf(HostSort.Name)
+        private set
+
     init {
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
@@ -2181,6 +2286,9 @@ class AppViewModel @JvmOverloads constructor(
             restorablePersistentSessions = withContext(Dispatchers.IO) {
                 repository.getPersistentSessions()
             }
+        }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repository.getLastSampleTimes() }.forEach { noteSeen(it.serverId, it.lastAt) }
         }
 
         // Auto-start is deliberately app-lifetime scoped: definitions start only after an explicit
@@ -2377,6 +2485,7 @@ class AppViewModel @JvmOverloads constructor(
                 measurementSystem = MeasurementSystem.fromSetting(
                     list.find { it.key == "measurement_system" }?.value
                 )
+                hostSort = HostSort.fromSetting(list.find { it.key == "host_sort" }?.value)
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
                     isKeepScreenOnEnabled = keepScreenOn
@@ -2768,6 +2877,7 @@ class AppViewModel @JvmOverloads constructor(
         updateMonitor: Boolean,
     ) {
         withContext(Dispatchers.Main) {
+            noteSeen(srv.id, timestamp)
             metricsErrorsById.remove(srv.id)
             metricsExpiryJobs.remove(srv.id)?.cancel()
             metricsExpiryJobs[srv.id] = viewModelScope.launch {
@@ -2858,16 +2968,50 @@ class AppViewModel @JvmOverloads constructor(
         manualRefreshError = null
     }
 
-    fun refreshServer(serverId: Int) {
+    /**
+     * Hosts a manual refresh is re-checking that were online when it began. The Hosts list shows
+     * them as being checked, but the tabs that pick from online hosts keep them: dropping them moved
+     * Monitor and Terminal to another host and cleared Fleet's targets on every pull.
+     */
+    private val recheckingOnlineIds = mutableStateListOf<Int>()
+
+    /**
+     * Whether a tab that only offers online hosts (Monitor, Terminal, SFTP, Containers, Fleet
+     * targets) offers [server]: online, or online until a manual refresh began re-checking it.
+     */
+    fun isPickableHost(server: ServerEntity): Boolean =
+        server.status == "online" || (server.status == "connecting" && server.id in recheckingOnlineIds)
+
+    /** Shows [list] as being checked, remembering which of them were online. */
+    private suspend fun markChecking(list: List<ServerEntity>) {
+        withContext(Dispatchers.Main) {
+            list.filter { it.status == "online" && it.id !in recheckingOnlineIds }.forEach { recheckingOnlineIds.add(it.id) }
+        }
+        list.forEach { repository.updateReachability(it.id, "connecting", 0) }
+    }
+
+    private suspend fun doneRechecking(ids: List<Int>) {
+        if (ids.isEmpty()) return
+        withContext(Dispatchers.Main) { recheckingOnlineIds.removeAll(ids) }
+    }
+
+    /**
+     * [markChecking] shows the host as being checked until its probe answers. Monitor passes false:
+     * it lists only online hosts, so a host marked as being checked left its selector and Monitor
+     * switched to another host on every pull.
+     */
+    fun refreshServer(serverId: Int, markChecking: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { manualRefreshError = null }
-            repository.updateReachability(serverId, "connecting", 0)
+            if (markChecking) repository.getServerById(serverId)?.let { markChecking(listOf(it)) }
             val srv = repository.getAllServers().find { it.id == serverId }
             if (srv == null) {
+                doneRechecking(listOf(serverId))
                 withContext(Dispatchers.Main) { manualRefreshError = "Refresh failed: host was removed." }
                 return@launch
             }
             probeServer(srv)
+            doneRechecking(listOf(serverId))
             val refreshed = repository.getServerById(serverId)
             val failure = when {
                 refreshed == null -> "Refresh failed: host was removed."
@@ -3307,9 +3451,7 @@ class AppViewModel @JvmOverloads constructor(
             }
             try {
                 val list = repository.getAllServers()
-                for (s in list) {
-                    repository.updateReachability(s.id, "connecting", 0)
-                }
+                markChecking(list)
                 startTelemetryPolling() // Restart polling immediately
                 // Wait for this pull's probes to actually reach a verdict. The old code span a
                 // fixed 1.2s spinner and walked away while the probes were still in flight, so a
@@ -3319,7 +3461,10 @@ class AppViewModel @JvmOverloads constructor(
                 val failure = awaitRefreshOutcome(list)
                 withContext(Dispatchers.Main) { manualRefreshError = failure }
             } finally {
-                withContext(Dispatchers.Main) { isRefreshing = false }
+                withContext(NonCancellable + Dispatchers.Main) {
+                    recheckingOnlineIds.clear()
+                    isRefreshing = false
+                }
             }
         }
     }
@@ -3338,6 +3483,8 @@ class AppViewModel @JvmOverloads constructor(
         if (list.isEmpty()) return null
         val deadline = System.currentTimeMillis() + REFRESH_REPORT_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {
+            // A host that has answered is judged by its answer again, not by its old status.
+            doneRechecking(list.filter { repository.getServerById(it.id)?.status != "connecting" }.map { it.id })
             if (currentRefreshStates(list).none { RefreshOutcome.isStillChecking(it) }) break
             delay(REFRESH_POLL_MS)
         }
@@ -3369,7 +3516,7 @@ class AppViewModel @JvmOverloads constructor(
                     2 -> loadServices()
                     3 -> loadLogs(logFilterType)
                     5 -> loadCron()
-                    else -> selectedServer?.let { refreshServer(it.id) } // Overview / Scripts
+                    else -> selectedServer?.let { refreshServer(it.id, markChecking = false) } // Overview / Scripts
                 }
             }
             Screen.Infra -> pullSpin { loadDocker() }
@@ -3676,11 +3823,16 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** Shown once after a host edit that running tunnels did not pick up; see [updateServer]. */
+    var hostEditNotice by mutableStateOf<String?>(null)
+        private set
+
+    fun consumeHostEditNotice(): String? = hostEditNotice.also { hostEditNotice = null }
+
     fun updateServer(server: ServerEntity, onResult: (String?) -> Unit = {}) {
         viewModelScope.launch {
-            val previousCreds = repository.getServerById(server.id)?.let {
-                runCatching { buildCredentials(it) }.getOrNull()
-            }
+            val previous = repository.getServerById(server.id)
+            val previousCreds = previous?.let { runCatching { buildCredentials(it) }.getOrNull() }
             try {
                 repository.saveUniqueServer(server, update = true)
             } catch (error: Exception) {
@@ -3695,59 +3847,154 @@ class AppViewModel @JvmOverloads constructor(
                 sshTransport.forgetCredentials(it)
                 JschSftp.forgetCredentials(it)
             }
+            val creds = runCatching { buildCredentials(server) }.getOrNull()
+            val moved = previous != null && (previous.host != server.host || previous.port != server.port)
+            renameHostEverywhere(server.id, server.name)
+            activeSessions.filter { it.serverId == server.id }.forEach { session ->
+                // Side channels (tmux history, copy mode) must reach the machine this shell is on,
+                // so they take the new credentials only when the address is unchanged. Reconnects
+                // always read the host's current settings; see reconnectCredentials.
+                if (!moved && creds != null && session.creds != null) session.creds = creds
+            }
+            if (moved) {
+                // Health, metrics and sparklines describe the old address. Measure the new one.
+                forgetTelemetryFor(server.id)
+                invalidateCurrentHealth(server.id, "Host address changed. Waiting for current metrics.")
+                repository.updateReachability(server.id, "connecting", 0)
+                repository.getServerById(server.id)?.let { updated ->
+                    activeProbes[server.id] = viewModelScope.launch(Dispatchers.IO) { probeServer(updated) }
+                }
+            }
+            if (creds != previousCreds) {
+                val running = repository.getAllPortForwards().count { it.serverId == server.id && isTunnelActive(it.id) }
+                if (running > 0) {
+                    hostEditNotice = if (running == 1) {
+                        "1 running tunnel still uses the previous connection settings. Restart it to apply the changes."
+                    } else {
+                        "$running running tunnels still use the previous connection settings. Restart them to apply the changes."
+                    }
+                }
+            }
             onResult(null)
         }
     }
 
-    fun deleteServer(server: ServerEntity) {
+    /**
+     * Shows [name] for [serverId] in the session lists: open sessions, their notification, and
+     * saved tmux sessions. The tmux sessions on the server keep their names, which never contain
+     * the host's name and are what other devices reattach by.
+     */
+    private suspend fun renameHostEverywhere(serverId: Int, name: String) {
+        val renamed = activeSessions.filter { it.serverId == serverId && it.serverName != name }
+        renamed.forEach { it.serverName = name }
+        if (renamed.isNotEmpty()) TerminalSessionManager.startKeepAliveService()
+        repository.renamePersistentSessionsForServer(serverId, name)
+        restorablePersistentSessions = restorablePersistentSessions.map {
+            if (it.serverId == serverId) it.copy(serverName = name) else it
+        }
+    }
+
+    /** tmux sessions on [serverIds]' servers: open persistent ones plus saved ones not open here. */
+    internal fun tmuxSessionsOnHosts(serverIds: Set<Int>): List<HostTmuxSession> = hostTmuxSessions(
+        serverIds,
+        activeSessions.filter { it.persistent }.map { HostTmuxSession(it.serverId, it.tmuxName) },
+        restorablePersistentSessions,
+    )
+
+    /**
+     * Ends each of [sessions] on its server, using [creds] for all of them. Returns how many could
+     * not be confirmed ended. Missing credentials count every session as unconfirmed.
+     */
+    private suspend fun endRemoteTmuxSessions(creds: SshCredentials?, sessions: List<HostTmuxSession>): Int {
+        if (creds == null) return sessions.size
+        return sessions.count { session ->
+            withContext(Dispatchers.IO) {
+                endRemoteTmux(
+                    kill = { sshTransport.exec(creds, RemoteCommands.tmuxKillCommand(session.tmuxName)) },
+                    stillExists = { remoteTmuxSessionExists(creds, session.tmuxName) },
+                )
+            } != TmuxEndResult.Ended
+        }
+    }
+
+    /**
+     * Deletes [server] and everything stored for it. Its tmux sessions are left running on the
+     * server unless the user ticked [endTmuxSessions] in the delete dialog, which promises the
+     * remote machine is otherwise untouched.
+     */
+    fun deleteServer(server: ServerEntity, endTmuxSessions: Boolean = false) {
         viewModelScope.launch {
-            val creds = runCatching { buildCredentials(server) }.getOrNull()
-            val sessions = activeSessions.filter { it.serverId == server.id }
-            sessions.forEach {
-                it.userClosed = true
-                it.reconnectJob?.cancel()
-            }
-            var remoteTmuxKillFailed = false
-            if (creds != null) {
-                sessions.filter { it.persistent }.forEach { session ->
-                    val kill = sshTransport.exec(creds, RemoteCommands.tmuxKillCommand(session.tmuxName))
-                    if (kill.startsWith("SSH Error:") || remoteTmuxSessionExists(creds, session.tmuxName) != false) {
-                        remoteTmuxKillFailed = true
-                    }
-                }
-            }
-            repository.getAllPortForwards().filter { it.serverId == server.id }.forEach { tunnel ->
-                stopTunnel(tunnel.id)
-            }
-            sessions.forEach(::cleanupSession)
-            creds?.let {
-                sshTransport.forgetCredentials(it)
-                JschSftp.forgetCredentials(it)
-            }
-            repository.deleteServerAndDependents(server.id)
-            // Dead launcher entries must not survive the host they point at.
-            runCatching { ShortcutHelper.removeShortcutsForServer(getApplication(), server.id) }
-            refreshHomeWidgets()
-            restorablePersistentSessions = restorablePersistentSessions.filter { it.serverId != server.id }
-            // Everything keyed by this host's row id goes with it. Room reuses a freed rowid, so a
-            // host added later can be handed the deleted one's id -- and would then inherit its
-            // cumulative counters, measuring its first CPU and network rates against a machine it
-            // has never met, and showing a sparkline drawn from someone else's readings.
-            forgetTelemetryFor(server.id)
-            SshHostKeyTrust.removeHost(server.host, server.port)
-            if (selectedServerId == server.id) {
-                selectedServerId = null
-            }
-            if (remoteTmuxKillFailed) {
+            val remaining = repository.getAllServers().filter { it.id != server.id }
+            if (removeServer(server, endTmuxSessions, remaining)) {
                 terminalConnectError =
                     "Host deleted locally, but at least one remote tmux session could not be confirmed stopped."
             }
         }
     }
 
+    /** Deletes every bulk-selected host the way [deleteServer] deletes one, and leaves multi-select. */
+    fun deleteSelectedServers(endTmuxSessions: Boolean = false) {
+        val ids = selectedServerIdsForBulk.toSet()
+        clearBulkSelect()
+        viewModelScope.launch {
+            val all = repository.getAllServers()
+            val remaining = all.filter { it.id !in ids }
+            var unconfirmed = false
+            all.filter { it.id in ids }.forEach { server ->
+                if (removeServer(server, endTmuxSessions, remaining)) unconfirmed = true
+            }
+            if (unconfirmed) {
+                terminalConnectError =
+                    "Hosts deleted locally, but at least one remote tmux session could not be confirmed stopped."
+            }
+        }
+    }
+
+    /**
+     * The work behind [deleteServer]. [remaining] are the hosts kept afterwards, which decide
+     * whether [server]'s trusted keys go. Returns true when a tmux session it was asked to end
+     * could not be confirmed stopped.
+     */
+    private suspend fun removeServer(server: ServerEntity, endTmuxSessions: Boolean, remaining: List<ServerEntity>): Boolean {
+        val creds = runCatching { buildCredentials(server) }.getOrNull()
+        val sessions = activeSessions.filter { it.serverId == server.id }
+        val tmuxToEnd = if (endTmuxSessions) tmuxSessionsOnHosts(setOf(server.id)) else emptyList()
+        sessions.forEach {
+            it.userClosed = true
+            it.reconnectJob?.cancel()
+        }
+        val remoteTmuxKillFailed = endRemoteTmuxSessions(creds, tmuxToEnd) > 0
+        repository.getAllPortForwards().filter { it.serverId == server.id }.forEach { tunnel ->
+            stopTunnel(tunnel.id)
+        }
+        sessions.forEach(::cleanupSession)
+        creds?.let {
+            sshTransport.forgetCredentials(it)
+            JschSftp.forgetCredentials(it)
+        }
+        repository.deleteServerAndDependents(server.id)
+        // Dead launcher entries must not survive the host they point at.
+        runCatching { ShortcutHelper.removeShortcutsForServer(getApplication(), server.id) }
+        refreshHomeWidgets()
+        restorablePersistentSessions = restorablePersistentSessions.filter { it.serverId != server.id }
+        // Everything keyed by this host's row id goes with it. Room reuses a freed rowid, so a
+        // host added later can be handed the deleted one's id -- and would then inherit its
+        // cumulative counters, measuring its first CPU and network rates against a machine it
+        // has never met, and showing a sparkline drawn from someone else's readings.
+        forgetTelemetryFor(server.id)
+        if (!keepTrustedHostKeys(server.host, remaining)) {
+            SshHostKeyTrust.removeHost(server.host, server.port)
+        }
+        if (selectedServerId == server.id) {
+            selectedServerId = null
+        }
+        return remoteTmuxKillFailed
+    }
+
     /** Drops every per-host cache keyed by [serverId]. See the call in [deleteServer]. */
     private fun forgetTelemetryFor(serverId: Int) {
         hostMetricsById.remove(serverId)
+        lastSeenAt.remove(serverId)
         cpuSparklineCache.remove(serverId)
         ramSparklineCache.remove(serverId)
         sparklineTimestampCache.remove(serverId)
@@ -6145,6 +6392,88 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** The saved tmux session whose Remove dialog is open. */
+    var savedSessionPendingRemoval by mutableStateOf<PersistentSessionEntity?>(null)
+        private set
+
+    /** Why ending it on the server failed; the dialog shows this and still offers Forget. */
+    var savedSessionRemovalError by mutableStateOf<String?>(null)
+        private set
+
+    var isEndingSavedSession by mutableStateOf(false)
+        private set
+
+    fun requestRemoveSavedSession(tmuxName: String) {
+        savedSessionPendingRemoval = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
+        savedSessionRemovalError = null
+    }
+
+    fun cancelSavedSessionRemoval() {
+        if (isEndingSavedSession) return
+        savedSessionPendingRemoval = null
+        savedSessionRemovalError = null
+    }
+
+    /**
+     * Removes a saved session from this device only. The tmux session, if its server still has
+     * it, keeps running. This is the way out for a host that no longer answers: without it, the
+     * entry waited for a server that would never confirm the session gone.
+     */
+    fun forgetSavedSession(tmuxName: String) {
+        if (isEndingSavedSession) return
+        savedSessionPendingRemoval = null
+        savedSessionRemovalError = null
+        viewModelScope.launch { forgetPersistentSession(tmuxName) }
+    }
+
+    /**
+     * Ends a saved session on its server, then forgets it. The entry is dropped only once tmux
+     * confirms the session is gone; otherwise the dialog stays open with the reason and Forget.
+     */
+    fun endSavedSession(tmuxName: String) {
+        if (isEndingSavedSession) return
+        val saved = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
+        val name = displayTmuxSessionName(tmuxName)
+        val srv = servers.value.find { it.id == saved.serverId }
+        if (srv == null) {
+            savedSessionRemovalError =
+                "The host for \"$name\" is no longer saved, so it can't be ended from here. " +
+                    "Forget removes it from this device."
+            return
+        }
+        isEndingSavedSession = true
+        savedSessionRemovalError = null
+        viewModelScope.launch {
+            val result = try {
+                val creds = buildCredentials(srv)
+                withContext(Dispatchers.IO) {
+                    endRemoteTmux(
+                        kill = { sshTransport.exec(creds, RemoteCommands.tmuxKillCommand(tmuxName)) },
+                        stillExists = { remoteTmuxSessionExists(creds, tmuxName) },
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TmuxEndResult.Unreachable(e.message ?: e.javaClass.simpleName)
+            } finally {
+                isEndingSavedSession = false
+            }
+            when (result) {
+                TmuxEndResult.Ended -> {
+                    forgetPersistentSession(tmuxName)
+                    savedSessionPendingRemoval = null
+                }
+                is TmuxEndResult.Unreachable -> savedSessionRemovalError =
+                    "Couldn't reach ${srv.name} to end \"$name\". It is still saved; Forget removes it " +
+                        "from this device only.\n\n${result.reason}"
+                TmuxEndResult.NotConfirmed -> savedSessionRemovalError =
+                    "${srv.name} answered, but tmux did not confirm that \"$name\" ended. It is still " +
+                        "saved; Forget removes it from this device only."
+            }
+        }
+    }
+
     private suspend fun remoteTmuxSessionExists(creds: SshCredentials, tmuxName: String): Boolean? {
         val out = sshTransport.exec(creds, RemoteCommands.tmuxHasSessionCommand(tmuxName)).trim()
         return parseRemoteTmuxSessionPresence(out)
@@ -6156,10 +6485,19 @@ class AppViewModel @JvmOverloads constructor(
      * resumes, writes a "— reconnected —" marker into the kept scrollback, and re-wires I/O. Gives
      * up after [RECONNECT_MAX_ATTEMPTS], leaving a "Connection lost." session the user can retry.
      */
+    /**
+     * Credentials a reconnect uses: the host's current settings, so an edit made while the session
+     * was connected applies on its next reconnect. Falls back to what it connected with when the
+     * host has no saved entry to read.
+     */
+    private suspend fun reconnectCredentials(shellSession: ShellSession): SshCredentials? =
+        repository.getServerById(shellSession.serverId)?.let { runCatching { buildCredentials(it) }.getOrNull() }
+            ?: shellSession.creds
+
     private fun reconnectSession(shellSession: ShellSession) {
         if (shellSession.tmuxSessionMissing) return
         if (shellSession.reconnectJob?.isActive == true) return
-        val creds = shellSession.creds ?: return
+        if (shellSession.creds == null) return
         shellSession.reconnecting = true
         shellSession.disconnectError = null
         TerminalSessionManager.updateKeepaliveCount()
@@ -6170,6 +6508,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (shellSession.userClosed) return@launch
                 delay(delayMs)
                 delayMs = (delayMs * 2).coerceAtMost(RECONNECT_MAX_DELAY_MS)
+                val creds = reconnectCredentials(shellSession) ?: return@launch
                 val newSession = try {
                     sshTransport.openShell(creds, shellSession.lastCols, shellSession.lastRows)
                 } catch (e: Exception) {
@@ -6218,6 +6557,7 @@ class AppViewModel @JvmOverloads constructor(
                     synchronized(shellSession.sessionOwnershipLock) {
                         check(!shellSession.userClosed) { "Session closed while reconnecting" }
                         shellSession.session = newSession
+                        shellSession.creds = creds
                         adopted = true
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -7635,14 +7975,29 @@ class AppViewModel @JvmOverloads constructor(
         processesJob = viewModelScope.launch {
             processesLoading = true
             try {
-                val list = RemoteParsers.parseProcesses(executeSshCommand(srv, RemoteCommands.processesFor(osByServer[srv.id].orEmpty())))
+                val output = executeSshCommand(srv, RemoteCommands.processesFor(osByServer[srv.id].orEmpty()))
+                val usage = RemoteParsers.parseProcessUsage(output)
+                val list = RemoteParsers.parseProcesses(output).map {
+                    it.copy(disk = usage.disk[it.pid], gpu = usage.gpu[it.pid] ?: if (usage.gpuReported) 0f else null)
+                }
                 if (srv.id != selectedServerId) return@launch
-                processes = if (processSortByCpu) list.sortedByDescending { it.cpu }
-                            else list.sortedByDescending { it.mem }
+                processDiskReported = usage.disk.isNotEmpty()
+                processGpuReported = usage.gpuReported
+                // A Disk or GPU sort chosen on another host may not apply to this one.
+                if ((processSort == ProcessSort.Disk && !processDiskReported) || (processSort == ProcessSort.Gpu && !processGpuReported)) {
+                    processSort = ProcessSort.Cpu
+                }
+                processes = sortProcesses(list, processSort)
             } finally {
                 if (processesJob == coroutineContext[Job]) processesLoading = false
             }
         }
+    }
+
+    /** Re-sorts the loaded list; sampling disk and GPU again would cost another second for nothing. */
+    fun sortProcessesBy(sort: ProcessSort) {
+        processSort = sort
+        processes = sortProcesses(processes, sort)
     }
 
     fun killProcess(pid: Int, signal: Int = 15) {
@@ -7779,6 +8134,86 @@ class AppViewModel @JvmOverloads constructor(
         // cancelled coroutine actually finish.
         pingProcess?.destroy()
         pingJob?.cancel()
+    }
+
+    private fun noteSeen(serverId: Int, at: Long) {
+        if ((lastSeenAt[serverId] ?: 0L) < at) lastSeenAt[serverId] = at
+    }
+
+    fun updateHostSort(sort: HostSort) {
+        hostSort = sort
+        viewModelScope.launch { repository.insertSetting("host_sort", sort.settingValue) }
+    }
+
+    /** [sshCommandFor] with the user a credential profile signs in as, for the ⋮ menu's copy. */
+    fun copySshCommand(srv: ServerEntity, onReady: (String) -> Unit) {
+        viewModelScope.launch {
+            val username = if (srv.authType == "profile") {
+                repository.getAllProfiles().find { it.id == srv.authProfileId }?.username ?: srv.username
+            } else {
+                srv.username
+            }
+            onReady(sshCommandFor(srv, username))
+        }
+    }
+
+    /** The host check open in a pop-up on the Hosts tab, or null. */
+    var hostCheck by mutableStateOf<HostCheckRequest?>(null)
+        private set
+
+    val hostCheckRunning: Boolean
+        get() = when (hostCheck?.kind) {
+            HostCheck.Ping -> pingRunning
+            HostCheck.Traceroute -> tracerouteRunning
+            null -> false
+        }
+
+    val hostCheckLines: List<String>
+        get() = when (hostCheck?.kind) {
+            HostCheck.Ping -> pingLines
+            HostCheck.Traceroute -> tracerouteLines
+            null -> emptyList()
+        }
+
+    /**
+     * Pings or traces [server]'s address from this device, whatever its status: an offline host is
+     * exactly when this helps. Uses the Tools tab's ping and traceroute, replacing a run of the
+     * same tool still going there.
+     */
+    fun runHostCheck(server: ServerEntity, kind: HostCheck) {
+        val request = HostCheckRequest(server, kind)
+        hostCheck = request
+        viewModelScope.launch {
+            when (kind) {
+                HostCheck.Ping -> {
+                    if (pingRunning) {
+                        stopPing()
+                        pingJob?.join()
+                    }
+                    if (hostCheck == request) startPing(server.host, HOST_PING_COUNT)
+                }
+                HostCheck.Traceroute -> {
+                    if (tracerouteRunning) {
+                        stopTraceroute()
+                        tracerouteJob?.join()
+                    }
+                    if (hostCheck == request) startTraceroute(server.host)
+                }
+            }
+        }
+    }
+
+    fun stopHostCheck() {
+        when (hostCheck?.kind) {
+            HostCheck.Ping -> stopPing()
+            HostCheck.Traceroute -> stopTraceroute()
+            null -> Unit
+        }
+    }
+
+    fun closeHostCheck() {
+        stopHostCheck()
+        hostCheck = null
     }
 
     // ── Traceroute (modeled on ping above) ──

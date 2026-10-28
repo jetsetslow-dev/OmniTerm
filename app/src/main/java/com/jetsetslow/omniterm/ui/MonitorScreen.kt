@@ -41,7 +41,7 @@ import com.jetsetslow.omniterm.R
 @Composable
 fun MonitorScreen(viewModel: AppViewModel) {
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = serversList.filter { it.status == "online" }
+    val onlineServers = serversList.filter { viewModel.isPickableHost(it) }
     // The explicit selection wins only while it is still online. The selector bar directly below is
     // built with onlineOnly = true, so matching on id alone left the body rendering a host the bar
     // no longer listed: the header and the content disagreed about which machine was on screen, the
@@ -933,10 +933,20 @@ private fun StatRow(label: String, value: String, modifier: Modifier = Modifier)
     }
 }
 
+/** One figure in a process row: the value over its label, red when [busy]. */
+@Composable
+private fun ProcessStat(value: String, label: String, busy: Boolean) {
+    Column(horizontalAlignment = Alignment.End) {
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (busy) Color.Red else MaterialTheme.colorScheme.onSurface)
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
 @Composable
 fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
-    // Real process list from `ps` over SSH; reloads on host change or sort toggle.
-    LaunchedEffect(srv.id, viewModel.processSortByCpu) { viewModel.loadProcesses() }
+    // Real process list from `ps` over SSH, with a second of disk and GPU sampling; reloads on
+    // host change. A sort change re-sorts what is loaded.
+    LaunchedEffect(srv.id) { viewModel.loadProcesses() }
     val simProcesses = viewModel.processes
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
@@ -959,16 +969,18 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = viewModel.processSortByCpu,
-                    onClick = { viewModel.processSortByCpu = true },
-                    label = { Text(stringResource(R.string.cpu)) }
-                )
-                FilterChip(
-                    selected = !viewModel.processSortByCpu,
-                    onClick = { viewModel.processSortByCpu = false },
-                    label = { Text(stringResource(R.string.mem)) }
-                )
+                listOfNotNull(
+                    ProcessSort.Cpu to R.string.cpu,
+                    ProcessSort.Mem to R.string.mem,
+                    (ProcessSort.Disk to R.string.sort_disk).takeIf { viewModel.processDiskReported },
+                    (ProcessSort.Gpu to R.string.sort_gpu).takeIf { viewModel.processGpuReported },
+                ).forEach { (sort, label) ->
+                    FilterChip(
+                        selected = viewModel.processSort == sort,
+                        onClick = { viewModel.sortProcessesBy(sort) },
+                        label = { Text(stringResource(label)) }
+                    )
+                }
             }
             Text(stringResource(R.string.procs, simProcesses.size), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -1005,9 +1017,9 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(proc.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 14.sp)
+                                    Text(proc.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     OmniTag(proc.state, color = if (proc.state == "R") OmniColors.green else OmniColors.cyan)
                                 }
@@ -1018,13 +1030,21 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             }
 
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("${proc.cpu}%", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (proc.cpu > 20f) Color.Red else MaterialTheme.colorScheme.onSurface)
-                                    Text(stringResource(R.string.cpu_2), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                ProcessStat("${proc.cpu}%", stringResource(R.string.cpu_2), busy = proc.cpu > 20f)
+                                ProcessStat("${proc.mem}%", stringResource(R.string.mem_2), busy = proc.mem > 20f)
+                                if (viewModel.processDiskReported) {
+                                    ProcessStat(
+                                        proc.disk?.let { "${RemoteParsers.humanBytes(it.totalBytesPerSecond)}/s" } ?: "—",
+                                        stringResource(R.string.disk_2),
+                                        busy = (proc.disk?.totalBytesPerSecond ?: 0L) > 10L * 1024 * 1024,
+                                    )
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("${proc.mem}%", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (proc.mem > 20f) Color.Red else MaterialTheme.colorScheme.onSurface)
-                                    Text(stringResource(R.string.mem_2), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (viewModel.processGpuReported) {
+                                    ProcessStat(
+                                        proc.gpu?.let { "${it.roundToInt()}%" } ?: "—",
+                                        stringResource(R.string.gpu_2),
+                                        busy = (proc.gpu ?: 0f) > 20f,
+                                    )
                                 }
                             }
                         }
@@ -1032,6 +1052,17 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                         if (isExpanded) {
                             androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                             Text(stringResource(R.string.virtual_memory_size_vms, proc.vms), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            proc.disk?.let { disk ->
+                                Text(
+                                    stringResource(
+                                        R.string.disk_read_write_per_second,
+                                        RemoteParsers.humanBytes(disk.readBytesPerSecond),
+                                        RemoteParsers.humanBytes(disk.writeBytesPerSecond),
+                                    ),
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1273,11 +1304,13 @@ fun LogsTab(viewModel: AppViewModel) {
             }
         } else
         SelectionContainer(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // journalctl lists oldest first, so the newest entries are at the end: follow them.
             OverflowLazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
-                    .padding(8.dp)
+                    .padding(8.dp),
+                state = rememberTailFollowingLazyListState(loadedLogs),
             ) {
                 items(loadedLogs) { entry ->
                     Row(

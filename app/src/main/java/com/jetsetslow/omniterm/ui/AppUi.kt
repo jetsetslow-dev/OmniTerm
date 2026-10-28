@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -42,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -62,6 +64,7 @@ import com.jetsetslow.omniterm.billing.LicenseState
 
 import com.jetsetslow.omniterm.billing.createLicenseController
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
+import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.ServerEntity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,7 +102,7 @@ fun ServerSelectorBar(
     modifier: Modifier = Modifier
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val selectableServers = if (onlineOnly) servers.filter { it.status == "online" } else servers
+    val selectableServers = if (onlineOnly) servers.filter { viewModel.isPickableHost(it) } else servers
     val srv = overrideServer
         ?: selectableServers.find { it.id == viewModel.selectedServerId }
         ?: selectableServers.firstOrNull()
@@ -117,7 +120,12 @@ fun ServerSelectorBar(
         splitSelection.removeAll { selectedId -> selectableServers.none { it.id == selectedId } }
     }
     val accent = getServerColor(srv)
-    val latency = if (srv.status == "online") "${srv.lastLatency}ms" else "offline"
+    // A host being re-checked shows "…", as on the Hosts list, rather than a moment of "offline".
+    val latency = when {
+        srv.status == "online" -> "${srv.lastLatency}ms"
+        viewModel.isPickableHost(srv) -> "…"
+        else -> "offline"
+    }
     // Anchor width, so the dropdown spans the full bar instead of wrapping its widest row.
     val density = LocalDensity.current
     var anchorWidth by remember { mutableStateOf(0.dp) }
@@ -159,7 +167,7 @@ fun ServerSelectorBar(
                 if (leadingContent != null) {
                     leadingContent()
                 }
-                StatusDot(online = srv.status == "online", color = accent, size = 8.dp)
+                StatusDot(online = viewModel.isPickableHost(srv), color = accent, size = 8.dp)
                 Text(srv.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Text(
                     "${HostDisplay.userAtHost(srv)} · $latency",
@@ -282,20 +290,12 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
             }
         },
         text = {
-            val outScroll = rememberScrollState()
-            LaunchedEffect(viewModel.actionStreamOutput) { outScroll.scrollTo(outScroll.maxValue) }
-            Box(
-                Modifier.fillMaxWidth().height(300.dp).background(Color.Black)
-                    .verticalScrollWithIndicators(outScroll).padding(8.dp)
-            ) {
-                if (viewModel.actionStreamRunning && viewModel.actionStreamOutput.isBlank()) {
-                    Text(stringResource(R.string.running_2), fontFamily = OmniFonts.mono, fontSize = 11.sp, color = Color.Gray)
-                } else {
-                    androidx.compose.foundation.text.selection.SelectionContainer {
-                        Text(viewModel.actionStreamOutput, fontFamily = OmniFonts.mono, fontSize = 11.sp, color = Color.White)
-                    }
-                }
-            }
+            StreamOutputBox(
+                viewModel.actionStreamOutput,
+                modifier = Modifier.height(300.dp),
+                placeholder = if (viewModel.actionStreamRunning) stringResource(R.string.running_2) else null,
+                look = StreamOutputLook.Terminal,
+            )
         },
         dismissButton = {
             TextButton(
@@ -363,12 +363,18 @@ data class ConfirmRequest(
     val destructive: Boolean,
     val onConfirm: () -> Unit,
     val onCancel: () -> Unit = {},
+    /** A checkbox under the message, unticked by default; [onConfirmOption] receives its state. */
+    val optionLabel: String? = null,
+    val onConfirmOption: (Boolean) -> Unit = {},
 )
 
 /** Holds the pending confirmation for a screen; `ask` queues one, `ConfirmHost` renders it. */
 class ConfirmController {
     var pending by mutableStateOf<ConfirmRequest?>(null)
         private set
+
+    /** The checkbox of a request made with [askWithOption]. */
+    var optionChecked by mutableStateOf(false)
 
     /**
      * The screen's current resources, refreshed by [rememberConfirm] on every composition so a
@@ -393,6 +399,22 @@ class ConfirmController {
         pending = ConfirmRequest(title, message, confirmLabel, destructive, onConfirm, onCancel)
     }
 
+    /** Like [ask], with an unticked checkbox labelled [optionLabel] whose state goes to [onConfirm]. */
+    fun askWithOption(
+        title: String,
+        message: String,
+        optionLabel: String,
+        confirmLabel: String = "Confirm",
+        destructive: Boolean = true,
+        onConfirm: (Boolean) -> Unit,
+    ) {
+        optionChecked = false
+        pending = ConfirmRequest(
+            title, message, confirmLabel, destructive,
+            onConfirm = {}, optionLabel = optionLabel, onConfirmOption = onConfirm,
+        )
+    }
+
     fun dismiss() {
         val request = pending ?: return
         pending = null
@@ -402,7 +424,7 @@ class ConfirmController {
     fun confirm() {
         val request = pending ?: return
         pending = null
-        request.onConfirm()
+        if (request.optionLabel != null) request.onConfirmOption(optionChecked) else request.onConfirm()
     }
 }
 
@@ -419,7 +441,32 @@ fun ConfirmHost(controller: ConfirmController) {
     AlertDialog(
         onDismissRequest = { controller.dismiss() },
         title = { Text(req.title) },
-        text = { Text(req.message) },
+        text = {
+            val option = req.optionLabel
+            if (option == null) {
+                Text(req.message)
+            } else {
+                Column {
+                    Text(req.message)
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .toggleable(
+                                value = controller.optionChecked,
+                                role = Role.Checkbox,
+                                onValueChange = { controller.optionChecked = it },
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = controller.optionChecked, onCheckedChange = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(option)
+                    }
+                }
+            }
+        },
         confirmButton = {
             TextButton(onClick = {
                 controller.confirm()
@@ -561,6 +608,11 @@ fun MainAppScreen(viewModel: AppViewModel) {
                 android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
             }
         }
+        LaunchedEffect(viewModel.hostEditNotice) {
+            viewModel.consumeHostEditNotice()?.let { message ->
+                android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
         CompositionLocalProvider(LocalFullScreenEditorHost provides fullScreenEditorHost) {
             AppCoreScaffold(viewModel)
         }
@@ -668,16 +720,7 @@ fun TmuxInstallDialog(viewModel: AppViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (output != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 180.dp)
-                            .verticalScrollWithIndicators(rememberScrollState())
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                            .padding(8.dp),
-                    ) {
-                        Text(output.ifEmpty { "Starting…" }, fontFamily = OmniFonts.mono, fontSize = 11.sp)
-                    }
+                    StreamOutputBox(output, modifier = Modifier.heightIn(max = 180.dp), placeholder = "Starting…")
                 }
             }
         },
@@ -698,6 +741,68 @@ fun TmuxInstallDialog(viewModel: AppViewModel) {
         },
     )
 }
+
+/**
+ * A ping or traceroute of a host from this device, opened from its card or its ⋮ menu whatever its
+ * status. Output streams into a scrolling box that follows it; the address is masked like
+ * everywhere else when sensitive info is hidden.
+ */
+@Composable
+fun HostCheckDialog(viewModel: AppViewModel) {
+    val request = viewModel.hostCheck ?: return
+    val srv = request.server
+    val running = viewModel.hostCheckRunning
+    val lines = viewModel.hostCheckLines.map { line ->
+        if (HostDisplay.hideSensitiveInfo) {
+            line.replace(srv.host, HostDisplay.host(srv)).replace(IPV4_ADDRESS, "•••")
+        } else {
+            line
+        }
+    }
+    AlertDialog(
+        onDismissRequest = { viewModel.closeHostCheck() },
+        title = {
+            Text(
+                when (request.kind) {
+                    HostCheck.Ping -> stringResource(R.string.ping_host, HostDisplay.name(srv))
+                    HostCheck.Traceroute -> stringResource(R.string.traceroute_to, HostDisplay.name(srv))
+                }
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    when (request.kind) {
+                        HostCheck.Ping -> stringResource(R.string.pings_are_sent_from_this_device)
+                        HostCheck.Traceroute -> stringResource(R.string.traces_each_network_hop_from_this)
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                StreamOutputBox(
+                    failureHighlighted(
+                        lines,
+                        if (request.kind == HostCheck.Ping) ::isPingFailureLine else ::isTracerouteFailureLine,
+                    ),
+                    modifier = Modifier.heightIn(min = 120.dp, max = 320.dp),
+                    placeholder = stringResource(R.string.running_2),
+                )
+            }
+        },
+        confirmButton = {
+            if (running) {
+                TextButton(onClick = { viewModel.stopHostCheck() }) { Text(stringResource(R.string.stop)) }
+            } else {
+                TextButton(onClick = { viewModel.runHostCheck(srv, request.kind) }) { Text(stringResource(R.string.run_again)) }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.closeHostCheck() }) { Text(stringResource(R.string.close)) }
+        },
+    )
+}
+
+private val IPV4_ADDRESS = Regex("""\b\d{1,3}(\.\d{1,3}){3}\b""")
 
 @Composable
 fun OfflineConnectDialog(viewModel: AppViewModel) {
@@ -1255,6 +1360,10 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 )
             }
 
+            viewModel.savedSessionPendingRemoval?.let { saved ->
+                SavedSessionRemovalDialog(viewModel, saved)
+            }
+
             if (viewModel.hostLimitReconciliationRequired) {
                 HostLimitReconciliationDialog(viewModel)
             }
@@ -1367,10 +1476,56 @@ private fun LocalNetworkPermissionDialog(
     )
 }
 
+/**
+ * Removes a saved tmux session: Forget drops it from this device only, End session stops it on
+ * its server first. A failed End keeps the dialog open with the reason, so a server that no longer
+ * answers can still be cleared with Forget.
+ */
+@Composable
+private fun SavedSessionRemovalDialog(viewModel: AppViewModel, saved: PersistentSessionEntity) {
+    val ending = viewModel.isEndingSavedSession
+    AlertDialog(
+        onDismissRequest = { viewModel.cancelSavedSessionRemoval() },
+        title = { Text(stringResource(R.string.remove_saved_session)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(
+                        R.string.forget_removes_it_from_this_device_only,
+                        displayTmuxSessionName(saved.tmuxName),
+                        saved.serverName,
+                    ),
+                )
+                viewModel.savedSessionRemovalError?.let { error ->
+                    Text(error, color = OmniColors.red, fontSize = 13.sp)
+                }
+                if (ending) LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(enabled = !ending, onClick = { viewModel.forgetSavedSession(saved.tmuxName) }) {
+                    Text(stringResource(R.string.forget))
+                }
+                TextButton(enabled = !ending, onClick = { viewModel.endSavedSession(saved.tmuxName) }) {
+                    Text(stringResource(R.string.end_session), color = if (ending) Color.Unspecified else OmniColors.red)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(enabled = !ending, onClick = { viewModel.cancelSavedSessionRemoval() }) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
+}
+
 @Composable
 private fun HostLimitReconciliationDialog(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     var selectedId by remember(servers) { mutableStateOf(servers.firstOrNull()?.id) }
+    var endTmuxSessions by remember { mutableStateOf(false) }
+    val tmuxCount = viewModel.tmuxSessionsOnHosts(servers.map { it.id }.filter { it != selectedId }.toSet()).size
     AlertDialog(
         onDismissRequest = {},
         title = { Text(stringResource(R.string.choose_host_to_keep)) },
@@ -1408,12 +1563,37 @@ private fun HostLimitReconciliationDialog(viewModel: AppViewModel) {
                         }
                     }
                 }
+                if (tmuxCount > 0) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .toggleable(
+                                value = endTmuxSessions,
+                                role = Role.Checkbox,
+                                onValueChange = { endTmuxSessions = it },
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = endTmuxSessions, onCheckedChange = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (tmuxCount == 1) {
+                                stringResource(R.string.also_end_the_tmux_session_on_the_removed_hosts)
+                            } else {
+                                stringResource(R.string.also_end_the_tmux_sessions_on_the_removed_hosts, tmuxCount)
+                            },
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = selectedId != null,
-                onClick = { selectedId?.let(viewModel::keepOnlyHostAfterLimitChange) },
+                onClick = {
+                    selectedId?.let { viewModel.keepOnlyHostAfterLimitChange(it, endTmuxSessions = endTmuxSessions && tmuxCount > 0) }
+                },
             ) { Text(stringResource(R.string.keep_selected)) }
         },
     )
@@ -1612,7 +1792,10 @@ fun ServersMainView(viewModel: AppViewModel) {
     var showBulkGroupDialog by remember { mutableStateOf(false) }
     var bulkGroupName by remember { mutableStateOf("") }
     var scoreDialogServer by remember { mutableStateOf<ServerEntity?>(null) }
+    var showSortMenu by remember { mutableStateOf(false) }
     val hostLimitReached = viewModel.hasHostLimit && srvList.size >= viewModel.hostLimit
+    val wolTargets by viewModel.wolTargets.collectAsStateWithLifecycle()
+    val copyWithConfirmation = rememberCopyWithConfirmation()
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
@@ -1668,6 +1851,40 @@ fun ServersMainView(viewModel: AppViewModel) {
                 // Compact auto-refresh countdown lives inline in the toolbar (no dedicated row).
                 RefreshCountdown(viewModel.lastTelemetryStartMs, viewModel.telemetryIntervalMs, size = 26.dp)
                 Spacer(modifier = Modifier.width(4.dp))
+                Box {
+                    IconButton(onClick = { showSortMenu = true }) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Sort,
+                            contentDescription = stringResource(R.string.sort_hosts),
+                            tint = if (viewModel.hostSort != HostSort.Name) MaterialTheme.colorScheme.primary else Color.Gray,
+                        )
+                    }
+                    DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                        HostSort.entries.forEach { sort ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        stringResource(
+                                            when (sort) {
+                                                HostSort.Name -> R.string.sort_by_name
+                                                HostSort.Status -> R.string.sort_by_status
+                                                HostSort.Health -> R.string.sort_by_health
+                                                HostSort.Latency -> R.string.sort_by_latency
+                                            }
+                                        )
+                                    )
+                                },
+                                leadingIcon = {
+                                    if (sort == viewModel.hostSort) Icon(Icons.Filled.Check, contentDescription = null)
+                                },
+                                onClick = {
+                                    showSortMenu = false
+                                    viewModel.updateHostSort(sort)
+                                },
+                            )
+                        }
+                    }
+                }
                 IconButton(
                     onClick = {
                         viewModel.isMultiSelectMode = !viewModel.isMultiSelectMode
@@ -1741,6 +1958,38 @@ fun ServersMainView(viewModel: AppViewModel) {
                                     showBulkGroupDialog = true
                                 }
                             ) { Text(stringResource(R.string.group)) }
+                            IconButton(
+                                enabled = viewModel.selectedServerIdsForBulk.isNotEmpty(),
+                                onClick = {
+                                    val ids = viewModel.selectedServerIdsForBulk.toSet()
+                                    val title = confirm.str(R.string.delete_n_hosts, ids.size)
+                                    val message = confirm.str(R.string.remove_these_host_connections_and_their)
+                                    // As for one host: offer to end tmux sessions only when there are some.
+                                    val tmuxCount = viewModel.tmuxSessionsOnHosts(ids).size
+                                    if (tmuxCount == 0) {
+                                        confirm.ask(title, message, confirmLabel = confirm.str(R.string.delete)) {
+                                            viewModel.deleteSelectedServers()
+                                        }
+                                    } else {
+                                        confirm.askWithOption(
+                                            title,
+                                            message,
+                                            optionLabel = if (tmuxCount == 1) {
+                                                confirm.str(R.string.also_end_the_tmux_session_on_the_removed_hosts)
+                                            } else {
+                                                confirm.str(R.string.also_end_the_tmux_sessions_on_the_removed_hosts, tmuxCount)
+                                            },
+                                            confirmLabel = confirm.str(R.string.delete),
+                                        ) { endTmux -> viewModel.deleteSelectedServers(endTmuxSessions = endTmux) }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = stringResource(R.string.delete_selected),
+                                    tint = if (viewModel.selectedServerIdsForBulk.isNotEmpty()) Color.Red else Color.Gray,
+                                )
+                            }
                             IconButton(onClick = { viewModel.clearBulkSelect() }) { Icon(Icons.Filled.Close, "Cancel") }
                         }
                     }
@@ -1748,12 +1997,15 @@ fun ServersMainView(viewModel: AppViewModel) {
             }
 
             // Srv Cards Layout Feed
-            val filteredList = srvList.filter {
-                val matchesSearch = it.name.contains(viewModel.serverSearchText, ignoreCase = true) ||
-                        it.host.contains(viewModel.serverSearchText, ignoreCase = true)
-                val matchesGroup = viewModel.selectedGroupChip == "All" || it.groupName == viewModel.selectedGroupChip
-                matchesSearch && matchesGroup
-            }
+            val filteredList = sortHosts(
+                srvList.filter {
+                    val matchesSearch = it.name.contains(viewModel.serverSearchText, ignoreCase = true) ||
+                            it.host.contains(viewModel.serverSearchText, ignoreCase = true)
+                    val matchesGroup = viewModel.selectedGroupChip == "All" || it.groupName == viewModel.selectedGroupChip
+                    matchesSearch && matchesGroup
+                },
+                viewModel.hostSort,
+            ) { viewModel.currentHealthScore(it) }
 
             if (filteredList.isEmpty()) {
                 Box(
@@ -2034,6 +2286,12 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                 color = identityColor,
                                                 small = true
                                             )
+                                            OmniButton(
+                                                label = stringResource(R.string.ping_2),
+                                                onClick = { viewModel.runHostCheck(server, HostCheck.Ping) },
+                                                color = identityColor,
+                                                small = true
+                                            )
                                         }
                                     } else if (server.status == "connecting" || !viewModel.probedServerIds.containsKey(server.id)) {
                                         // Covers an explicit "connecting" state AND the window
@@ -2062,14 +2320,39 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                     fontSize = 10.sp,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
+                                                viewModel.lastSeenAt[server.id]?.let { seenAt ->
+                                                    Text(
+                                                        if (System.currentTimeMillis() - seenAt < 60_000L) {
+                                                            stringResource(R.string.last_seen_just_now)
+                                                        } else {
+                                                            stringResource(R.string.last_seen_ago, formatSessionAge(seenAt))
+                                                        },
+                                                        fontSize = 10.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
                                             }
                                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                wolTargetFor(server, wolTargets)?.let { target ->
+                                                    OmniButton(
+                                                        label = stringResource(R.string.wake_2),
+                                                        onClick = { confirmAndWake(confirm, viewModel, target, context) },
+                                                        color = OmniColors.green,
+                                                        small = true,
+                                                    )
+                                                }
                                                 OmniButton(
                                                     label = stringResource(R.string.ssh_anyway),
                                                     onClick = {
                                                         viewModel.selectedServerId = server.id
                                                         viewModel.connectTerminal()
                                                     },
+                                                    color = identityColor,
+                                                    small = true,
+                                                )
+                                                OmniButton(
+                                                    label = stringResource(R.string.ping_2),
+                                                    onClick = { viewModel.runHostCheck(server, HostCheck.Ping) },
                                                     color = identityColor,
                                                     small = true,
                                                 )
@@ -2092,6 +2375,8 @@ fun ServersMainView(viewModel: AppViewModel) {
         scoreDialogServer?.let { s ->
             HealthBreakdownDialog(viewModel, s) { scoreDialogServer = null }
         }
+
+        HostCheckDialog(viewModel)
 
         if (showAddSheet) {
             // Non-null only when the sheet was opened from a LAN scan result: seeds the address and
@@ -2158,6 +2443,16 @@ fun ServersMainView(viewModel: AppViewModel) {
                         TextButton(
                             onClick = {
                                 selectedForActionSheet = null
+                                viewModel.copySshCommand(srv, copyWithConfirmation)
+                            }
+                        ) {
+                            Icon(Icons.Filled.ContentPaste, null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.copy_ssh_command))
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedForActionSheet = null
                                 viewModel.selectedServerId = srv.id
                                 viewModel.connectTerminal()
                                 // If the offline warning gate fired, stay here — confirming it
@@ -2170,6 +2465,26 @@ fun ServersMainView(viewModel: AppViewModel) {
                             Icon(Icons.Filled.Terminal, null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(stringResource(R.string.open_terminal_console))
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedForActionSheet = null
+                                viewModel.runHostCheck(srv, HostCheck.Ping)
+                            }
+                        ) {
+                            Icon(Icons.Filled.NetworkCheck, null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.ping_from_this_device))
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedForActionSheet = null
+                                viewModel.runHostCheck(srv, HostCheck.Traceroute)
+                            }
+                        ) {
+                            Icon(Icons.Filled.Route, null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.traceroute_from_this_device))
                         }
                         TextButton(
                             onClick = {
@@ -2196,11 +2511,27 @@ fun ServersMainView(viewModel: AppViewModel) {
                         TextButton(
                             onClick = {
                                 selectedForActionSheet = null
-                                confirm.ask(
-                                    confirm.str(R.string.delete_2, srv.name),
-                                    confirm.str(R.string.remove_this_host_connection_and_its),
-                                    confirmLabel = confirm.str(R.string.delete),
-                                ) { viewModel.deleteServer(srv) }
+                                // Offer to end the host's tmux sessions only when it has some; the
+                                // dialog otherwise promises the remote machine is left alone.
+                                val tmuxCount = viewModel.tmuxSessionsOnHosts(setOf(srv.id)).size
+                                if (tmuxCount == 0) {
+                                    confirm.ask(
+                                        confirm.str(R.string.delete_2, srv.name),
+                                        confirm.str(R.string.remove_this_host_connection_and_its),
+                                        confirmLabel = confirm.str(R.string.delete),
+                                    ) { viewModel.deleteServer(srv) }
+                                } else {
+                                    confirm.askWithOption(
+                                        confirm.str(R.string.delete_2, srv.name),
+                                        confirm.str(R.string.remove_this_host_connection_and_its),
+                                        optionLabel = if (tmuxCount == 1) {
+                                            confirm.str(R.string.also_end_its_tmux_session_on_the_server)
+                                        } else {
+                                            confirm.str(R.string.also_end_its_tmux_sessions_on_the_server, tmuxCount)
+                                        },
+                                        confirmLabel = confirm.str(R.string.delete),
+                                    ) { endTmux -> viewModel.deleteServer(srv, endTmuxSessions = endTmux) }
+                                }
                             }
                         ) {
                             Icon(Icons.Filled.Delete, null, tint = Color.Red)

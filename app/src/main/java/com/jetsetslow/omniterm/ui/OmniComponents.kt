@@ -49,6 +49,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import kotlinx.coroutines.launch
@@ -65,6 +67,20 @@ fun rememberClipboardCopy(): (String) -> Unit {
             scope.launch {
                 clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("OmniTerm", text)))
             }
+        }
+    }
+}
+
+/** [rememberClipboardCopy] followed by the "Copied to clipboard" toast. */
+@Composable
+fun rememberCopyWithConfirmation(): (String) -> Unit {
+    val copy = rememberClipboardCopy()
+    val context = LocalContext.current
+    val resources = LocalResources.current
+    return remember(copy, context, resources) {
+        { text ->
+            copy(text)
+            android.widget.Toast.makeText(context, resources.getString(R.string.copied_to_clipboard), android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

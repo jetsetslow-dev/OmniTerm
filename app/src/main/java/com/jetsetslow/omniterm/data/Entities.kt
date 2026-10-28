@@ -209,6 +209,9 @@ data class QuickScriptEntity(
     val presetKey: String? = null
 )
 
+/** When metrics were last recorded for a host; a query result, not a table. */
+data class ServerLastSample(val serverId: Int, val lastAt: Long)
+
 @Entity(tableName = "wol_targets")
 data class WolTargetEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

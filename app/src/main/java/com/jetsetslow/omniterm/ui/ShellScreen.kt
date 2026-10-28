@@ -216,6 +216,9 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                 IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
                                     Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.resume), tint = OmniColors.cyan)
                                 }
+                                IconButton(onClick = { viewModel.requestRemoveSavedSession(s.tmuxName) }) {
+                                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
+                                }
                             }
                         }
                     }
@@ -359,7 +362,7 @@ fun ShellScreen(viewModel: AppViewModel) {
         currentSession
     }
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = servers.filter { it.status == "online" }
+    val onlineServers = servers.filter { viewModel.isPickableHost(it) }
     // Offline hosts are hidden here like on the other live tabs — new connects only ever offer
     // online hosts. Forcing SSH to an offline host is done from the Hosts tab's connect button,
     // which warns first. A host with an active/connecting session stays visible even if its
@@ -942,6 +945,14 @@ private fun TerminalOpenPicker(
                             if (viewModel.isMultiSsh) viewModel.setMultiSshFocus(focusedPane)
                             viewModel.resumePersistentSession(saved.tmuxName)
                             expanded = false
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                expanded = false
+                                viewModel.requestRemoveSavedSession(saved.tmuxName)
+                            }) {
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
+                            }
                         },
                     )
                 }
@@ -1792,6 +1803,14 @@ private fun MultiSshPanePicker(
                             viewModel.setMultiSshFocus(paneIndex)
                             viewModel.resumePersistentSession(saved.tmuxName)
                             expanded = false
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                expanded = false
+                                viewModel.requestRemoveSavedSession(saved.tmuxName)
+                            }) {
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
+                            }
                         },
                     )
                 }
@@ -2716,8 +2735,7 @@ private fun PaneTerminalContent(
         }
 
         copyDialogTitle?.let { title ->
-            val context = LocalContext.current
-            val resources = LocalResources.current
+            val copyWithConfirmation = rememberCopyWithConfirmation()
             fun dismiss() {
                 copyDialogTitle = null
                 copyDialogText = ""
@@ -2819,12 +2837,7 @@ private fun PaneTerminalContent(
                             }
                             Button(
                                 onClick = {
-                                    val cm = context.getSystemService(android.content.ClipboardManager::class.java)
-                                    cm?.setPrimaryClip(
-                                        android.content.ClipData.newPlainText("Terminal", copyDialogText)
-                                    )
-                                    // Android 13+ shows its own copy confirmation; toast covers older.
-                                    android.widget.Toast.makeText(context, resources.getString(R.string.copied_to_clipboard), android.widget.Toast.LENGTH_SHORT).show()
+                                    copyWithConfirmation(copyDialogText)
                                     dismiss()
                                 },
                                 enabled = copyDialogText.isNotBlank(),

@@ -38,7 +38,7 @@ internal const val INFRA_TAB_BUILDER = 1
 @Composable
 fun InfraScreen(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = servers.filter { it.status == "online" }
+    val onlineServers = servers.filter { viewModel.isPickableHost(it) }
     // Keep an explicit host selected when it goes offline: Compose drafts remain editable.
     val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
     val srv = explicitlySelected ?: onlineServers.firstOrNull()

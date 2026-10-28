@@ -57,13 +57,15 @@ The first-run flow walks you through creating a server. Authenticate with a pass
 - Display name, hostname/IP, SSH port, username, and authentication method.
 - Optional group, color, notes, keepalive, compression, jump host / proxy, sudo password, and **SSH agent forwarding**.
 
-Groups make Fleet Broadcast targeting easier; host colors help you tell servers apart across sessions and dashboards. Use the host picker on operational screens to switch the active server, or **swipe left/right** to move between tabs and subtabs outside the terminal.
+Groups make Fleet Broadcast targeting easier; host colors help you tell servers apart across sessions and dashboards. Use the host picker on operational screens to switch the active server, or **swipe left/right** to move between tabs and subtabs outside the terminal. A pull-to-refresh re-checks hosts without moving the picker off the one you are looking at.
+
+The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), and **Copy SSH command** (including its jump host or proxy). Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Select several hosts to delete them together, optionally ending their tmux sessions too.
 
 ### Terminal
 Open **Term** for an interactive SSH shell on the selected host.
 - **MultiSSH split screen** — tap **SPLIT** to view two sessions at once, side-by-side or stacked (flip with the layout button). In split mode only, check two hosts in the top picker to load them into the panes. The focused pane and current host are labelled at the top; the cyan-bordered pane owns the keyboard and special-key bar. **OPEN** and each pane's **PICK** menu can attach a background session, resume saved tmux, or start a new host without filling the terminal with a long server list. **BG** frees a pane while keeping its session connected, and **✕** offers either a resumable tmux detach or a background normal SSH session before disconnecting. **SINGLE** returns to single-session view while keeping both sessions available.
 - **Quick connect** (**Unlock OmniTerm** only) — **OPEN › Quick connect** SSHes to a host that is not in your saved list, for one-off access. It offers the same options as Add Host (password, saved key, or credential profile; HTTP/SOCKS5 proxy or SSH jump host, optionally filled from a saved host) and enforces the same validation and host-key trust prompts, but writes nothing to the database. The free Play Store build does not include it — save the host instead, within the 1-host limit. **Remove Ads does not unlock it.**
-- **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically.
+- **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically. Remove one you no longer need from the session picker: **Forget** drops it from this device and leaves it running, **End session** stops it on the server too.
 - Multiple background sessions with session switching and explicit disconnect prompts.
 - Adjustable, persisted font size with reflowing scrollback on resize.
 - Themes: App theme (follows app light/dark/AMOLED/high-contrast), Omni Dark, Solarized Dark, Matrix, and Light.
@@ -107,7 +109,7 @@ Open **Network** for a tabbed suite of diagnostics:
 - **Tunnels** — user-defined SSH port forwards: **local (-L)**, **remote (-R)**, and **dynamic SOCKS (-D)**, each running over a saved host. Start/stop per tunnel; they stay up until you stop them or leave the app.
 
 ### Monitoring
-Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, process count, temperature, per-core usage, and network/disk I/O rates — plus disk mounts with SMART health, and process/service/log/scripts/cron views (including visual cron schedule management).
+Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, process count, temperature, per-core usage, and network/disk I/O rates — plus disk mounts with SMART health, and process/service/log/scripts/cron views (including visual cron schedule management). On Linux hosts the process list also shows how fast each process is reading and writing to disk and, on hosts with an AMD, Intel or NVIDIA graphics card, how much of the GPU it is using. You can sort by either.
 
 ### Docker, Podman & stacks
 Open **Infra** to manage containers, compose stacks, images, and volumes (Docker and Podman are detected automatically).

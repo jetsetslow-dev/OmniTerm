@@ -105,11 +105,13 @@ internal fun CoroutineScope.launchTerminalResizeConsumer(
  */
 class ShellSession(
     val serverId: Int,
-    val serverName: String,
+    serverName: String,
     session: SshSession,
     val emulator: TerminalEmulator,
     val id: String = UUID.randomUUID().toString(),
 ) {
+    /** The host's name as shown on this session's tab and picker card; follows a rename. */
+    var serverName by mutableStateOf(serverName)
     // The live SSH channel. Swapped out by auto-reconnect, so it's a var (not val).
     var session: SshSession = session
     /** Coordinates reconnect ownership transfer with user/lifecycle cleanup. */
