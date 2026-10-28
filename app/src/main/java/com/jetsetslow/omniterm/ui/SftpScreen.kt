@@ -1386,8 +1386,8 @@ private fun NetworkShareDialog(
                             DropdownMenuItem(
                                 text = { Text(option) },
                                 onClick = {
+                                    portText = portAfterProtocolSwitch(portText, defaultPort(protocol), defaultPort(option))
                                     protocol = option
-                                    portText = defaultPort(option).takeIf { it > 0 }?.toString().orEmpty()
                                     if (option == "SFTP") anonymous = false
                                     // Sensible TLS default when switching to WebDAV; still user-editable.
                                     if (option == "WEBDAV") useHttps = true
@@ -1533,6 +1533,18 @@ private fun NetworkShareDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+/**
+ * The port field after the share's protocol changes from one whose default is [oldDefault]: a blank
+ * port or the old default moves to [newDefault] (blank for a protocol without one), and a port the
+ * user typed is kept. Overwriting it is how a share stops reaching a NAS on a non-standard port with
+ * no visible cause. Ported from Flutter's `NetworkShareDraft.withProtocol`.
+ */
+internal fun portAfterProtocolSwitch(portText: String, oldDefault: Int, newDefault: Int): String {
+    val typed = portText.trim()
+    val wasDefault = typed.isEmpty() || typed.toIntOrNull() == oldDefault
+    return if (!wasDefault) portText else newDefault.takeIf { it > 0 }?.toString().orEmpty()
 }
 
 private fun shareUri(share: NetworkShareEntity): String {
