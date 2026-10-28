@@ -119,7 +119,17 @@ void main() {
 
     test('the Linux process command falls back for BusyBox', () {
       // BusyBox ps has no -eo; without the fallback the tab would be empty on OpenWrt.
-      expect(processesLinux, contains('|| ps w'));
+      expect(processesLinux, contains('[ -n "\$P" ] || P=\$(ps w'));
+    });
+
+    test('the Linux process command samples disk and GPU use a second apart', () {
+      // Two samples make a rate; NVIDIA's own driver publishes no fdinfo, so pmon answers for it.
+      expect(processSampleMarker.allMatches(processesLinux), hasLength(1));
+      expect(processesLinux, contains('s; sleep 1; s;'));
+      expect(processesLinux, contains('nvidia-smi pmon -c 1 -s u'));
+      expect(processesWindows, contains("'$processRatesMarker'"));
+      expect(processesWindows, contains("'$processGpuMarker'"));
+      expect(processesBsd, isNot(contains(processSectionPrefix)), reason: 'BSD reports neither');
     });
 
     test('logs fall through every source a non-systemd host might have', () {

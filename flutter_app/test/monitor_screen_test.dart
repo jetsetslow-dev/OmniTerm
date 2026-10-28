@@ -300,6 +300,69 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   });
 
+  testWidgets('disk and GPU columns and sorts appear only where the host reports them', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    const ps =
+        '  PID USER     %CPU %MEM    VSZ     ELAPSED STAT COMMAND\n'
+        '  101 root      5.0 40.0 100000    01:00:00 S    reader\n'
+        '  102 root     90.0  1.0 100000    01:00:00 R    idle-gpu\n';
+    // A second apart, pid 101 read 20 MiB and kept its GPU busy for half the time.
+    final transport = RecordingTransport(
+      replies: {
+        'ps -eo':
+            '$ps$processSampleMarker 1000000000\n'
+            '/proc/101/io:read_bytes: 0\n'
+            '/proc/101/io:write_bytes: 0\n'
+            '/proc/101/fdinfo/7:drm-engine-gfx:\t0 ns\n'
+            '$processSampleMarker 2000000000\n'
+            '/proc/101/io:read_bytes: 20971520\n'
+            '/proc/101/io:write_bytes: 1024\n'
+            '/proc/101/fdinfo/7:drm-engine-gfx:\t500000000 ns\n',
+      },
+    );
+    await pump(tester, transport: transport);
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.processes')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('↓ DISK'), findsOneWidget);
+    expect(find.text('↓ GPU'), findsOneWidget);
+    final reader = find.byKey(const ValueKey('monitor.process.101'));
+    expect(find.descendant(of: reader, matching: find.text('20.0 MB/s')), findsOneWidget);
+    expect(find.descendant(of: reader, matching: find.text('50%')), findsOneWidget);
+    expect(find.descendant(of: reader, matching: find.text('DISK')), findsOneWidget);
+    expect(
+      find.descendant(of: reader, matching: find.text('PID 101 · root · up 01:00:00')),
+      findsOneWidget,
+    );
+    final idle = find.byKey(const ValueKey('monitor.process.102'));
+    expect(find.descendant(of: idle, matching: find.text('—')), findsOneWidget);
+    expect(find.descendant(of: idle, matching: find.text('0%')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('monitor.processes.sortDisk')));
+    await tester.pumpAndSettle();
+    expect(vm.processSort, ProcessSort.disk);
+    expect(tester.getTopLeft(reader).dy, lessThan(tester.getTopLeft(idle).dy));
+
+    await tester.tap(reader);
+    await tester.pumpAndSettle();
+    expect(find.text('Virtual Memory Size (VMS): 97.7 MB'), findsOneWidget);
+    expect(find.text('Disk: read 20.0 MB/s · write 1.0 KB/s'), findsOneWidget);
+
+    // The same host without readable counters: no columns, and the Disk sort falls back to CPU.
+    transport.replies = {'ps -eo': ps};
+    await vm.loadProcesses();
+    await tester.pumpAndSettle();
+    expect(find.text('↓ DISK'), findsNothing);
+    expect(find.text('↓ GPU'), findsNothing);
+    expect(find.text('DISK'), findsNothing);
+    expect(vm.processSort, ProcessSort.cpu);
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
+  });
+
   for (final width in [320.0, 760.0]) {
     for (final loading in [true, false]) {
       testWidgets(

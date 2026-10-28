@@ -237,8 +237,7 @@ void main() {
     });
 
     test('switching to memory re-sorts without another round trip', () async {
-      // The Kotlin re-fetched from the host on a sort toggle, so the user waited on the network to
-      // reorder a list already in hand.
+      // Sampling disk and GPU again would cost another second to reorder a list already in hand.
       await repo.insertServer(server(name: 'a'));
       final transport = RecordingTransport(replies: {'ps -eo': psOutput});
       final vm = await boot(transport: transport);
@@ -246,9 +245,64 @@ void main() {
       await vm.loadProcesses();
       final callsAfterLoad = transport.commands.length;
 
-      vm.sortByCpu = false;
+      vm.sortProcessesBy(ProcessSort.mem);
       expect(vm.processes.first.name, 'lowcpu-highmem');
       expect(transport.commands.length, callsAfterLoad);
+      vm.dispose();
+    });
+
+    // A second apart, pid 101 read 2 MiB and kept its GPU busy for half the time; pid 102's
+    // counters were unreadable.
+    const psWithUsage =
+        '$psOutput$processSampleMarker 1000000000\n'
+        '/proc/101/io:read_bytes: 0\n'
+        '/proc/101/io:write_bytes: 0\n'
+        '/proc/101/fdinfo/7:drm-engine-gfx:\t0 ns\n'
+        '$processSampleMarker 2000000000\n'
+        '/proc/101/io:read_bytes: 2097152\n'
+        '/proc/101/io:write_bytes: 0\n'
+        '/proc/101/fdinfo/7:drm-engine-gfx:\t500000000 ns\n';
+
+    test('disk and GPU readings join their processes; a sort that no longer applies falls back to '
+        'CPU', () async {
+      await repo.insertServer(server(name: 'a'));
+      final transport = RecordingTransport(replies: {'ps -eo': psWithUsage});
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+      await vm.loadProcesses();
+
+      expect(vm.processDiskReported, isTrue);
+      expect(vm.processGpuReported, isTrue);
+      final reader = vm.processes.firstWhere((p) => p.pid == 101);
+      expect(reader.disk, const DiskRate(readBytesPerSecond: 2097152, writeBytesPerSecond: 0));
+      expect(reader.gpu, closeTo(50, 0.01));
+      final other = vm.processes.firstWhere((p) => p.pid == 102);
+      expect(other.disk, isNull, reason: 'unreadable counters are unknown, not zero');
+      expect(other.gpu, 0, reason: 'the host reports GPU use, and this process had none');
+
+      vm.sortProcessesBy(ProcessSort.disk);
+      expect(vm.processes.map((p) => p.pid), [101, 102]);
+
+      transport.replies = {'ps -eo': psOutput};
+      await vm.loadProcesses();
+      expect(vm.processDiskReported, isFalse);
+      expect(vm.processGpuReported, isFalse);
+      expect(vm.processSort, ProcessSort.cpu);
+      expect(vm.processes.first.name, 'highcpu-lowmem');
+      vm.dispose();
+    });
+
+    test("another host's disk and GPU columns are not carried over", () async {
+      final a = await repo.insertServer(server(name: 'a'));
+      final b = await repo.insertServer(server(name: 'b'));
+      final vm = await boot(transport: RecordingTransport(replies: {'ps -eo': psWithUsage}));
+      vm.selectServer(a);
+      await vm.loadProcesses();
+      expect(vm.processDiskReported, isTrue);
+
+      vm.selectServer(b);
+      expect(vm.processDiskReported, isFalse);
+      expect(vm.processGpuReported, isFalse);
       vm.dispose();
     });
 

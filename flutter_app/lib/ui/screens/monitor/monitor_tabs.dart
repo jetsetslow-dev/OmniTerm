@@ -547,22 +547,31 @@ class _ProcessesToolbar extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    ChoiceChip(
-                      key: const ValueKey('monitor.processes.sortCpu'),
-                      label: const Text('CPU'),
-                      selected: vm.sortByCpu,
-                      onSelected: (_) => vm.sortByCpu = true,
+                // Four chips do not fit a phone's width beside the count, so they scroll rather
+                // than push it off screen.
+                Flexible(
+                  flex: 3,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final (i, (sort, key, label)) in [
+                          (ProcessSort.cpu, 'sortCpu', '↓ CPU'),
+                          (ProcessSort.mem, 'sortMem', '↓ MEM'),
+                          if (vm.processDiskReported) (ProcessSort.disk, 'sortDisk', '↓ DISK'),
+                          if (vm.processGpuReported) (ProcessSort.gpu, 'sortGpu', '↓ GPU'),
+                        ].indexed) ...[
+                          if (i > 0) const SizedBox(width: 8),
+                          ChoiceChip(
+                            key: ValueKey('monitor.processes.$key'),
+                            label: Text(label),
+                            selected: vm.processSort == sort,
+                            onSelected: (_) => vm.sortProcessesBy(sort),
+                          ),
+                        ],
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    ChoiceChip(
-                      key: const ValueKey('monitor.processes.sortMem'),
-                      label: const Text('MEM'),
-                      selected: !vm.sortByCpu,
-                      onSelected: (_) => vm.sortByCpu = false,
-                    ),
-                  ],
+                  ),
                 ),
                 Flexible(
                   child: vm.processesLoading && vm.processes.isEmpty
@@ -683,44 +692,95 @@ class _ProcessesTabState extends State<ProcessesTab> {
                       Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              proc.name,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontFamily: OmniFonts.mono,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        proc.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontFamily: OmniFonts.mono,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    OmniTag(
+                                      label: proc.state,
+                                      color: proc.state == 'R' ? OmniColors.green : OmniColors.cyan,
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  [
+                                    'PID ${proc.pid} · ${proc.owner}',
+                                    if (proc.uptime.trim().isNotEmpty) 'up ${proc.uptime}',
+                                  ].join(' · '),
+                                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                                ),
+                              ],
                             ),
                           ),
-                          Text(
-                            '${proc.cpu.toStringAsFixed(1)}%  ${proc.mem.toStringAsFixed(1)}%',
-                            style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
-                          ),
+                          _ProcessStat(value: '${proc.cpu}%', label: 'CPU', busy: proc.cpu > 20),
+                          const SizedBox(width: 12),
+                          _ProcessStat(value: '${proc.mem}%', label: 'MEM', busy: proc.mem > 20),
+                          if (vm.processDiskReported) ...[
+                            const SizedBox(width: 12),
+                            _ProcessStat(
+                              value: switch (proc.disk) {
+                                final disk? => '${humanBytes(disk.totalBytesPerSecond)}/s',
+                                null => '—',
+                              },
+                              label: 'DISK',
+                              busy: (proc.disk?.totalBytesPerSecond ?? 0) > 10 * 1024 * 1024,
+                            ),
+                          ],
+                          if (vm.processGpuReported) ...[
+                            const SizedBox(width: 12),
+                            _ProcessStat(
+                              value: switch (proc.gpu) {
+                                final gpu? => '${gpu.round()}%',
+                                null => '—',
+                              },
+                              label: 'GPU',
+                              busy: (proc.gpu ?? 0) > 20,
+                            ),
+                          ],
                         ],
                       ),
-                      Text(
-                        'pid ${proc.pid} · ${proc.owner} · ${proc.state}',
-                        style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                      ),
                       if (expanded) ...[
-                        const SizedBox(height: 8),
+                        Divider(height: 17, thickness: 1, color: scheme.outlineVariant),
+                        Text(
+                          'Virtual Memory Size (VMS): ${proc.vms}',
+                          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                        ),
+                        if (proc.disk case final disk?)
+                          Text(
+                            'Disk: read ${humanBytes(disk.readBytesPerSecond)}/s · '
+                            'write ${humanBytes(disk.writeBytesPerSecond)}/s',
+                            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                          ),
+                        const SizedBox(height: 12),
                         Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
                           children: [
-                            Expanded(
-                              child: Text(
-                                'vms ${proc.vms} · up ${proc.uptime}',
-                                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                              ),
-                            ),
                             // SIGTERM is exactly the signal a wedged process ignores, so an app
                             // that only sends it cannot end the one case you reach for it.
-                            for (final kill in _killWordings(windows: windows))
-                              TextButton(
+                            for (final (i, kill) in _killWordings(windows: windows).indexed) ...[
+                              if (i > 0) const SizedBox(width: 10),
+                              OmniButton(
                                 key: ValueKey('monitor.process.${proc.pid}.${kill.key}'),
+                                label: kill.button,
+                                color: kill.color,
+                                small: true,
                                 onPressed: () => _confirmKill(context, vm, proc, kill),
-                                child: Text(kill.button, style: TextStyle(color: kill.color)),
                               ),
+                            ],
                           ],
                         ),
                       ],
@@ -774,6 +834,35 @@ class _ProcessesTabState extends State<ProcessesTab> {
 }
 
 /// One way of ending a process, in the words its OS uses.
+/// One figure in a process row: the value over its label, red while the process is busy on it.
+class _ProcessStat extends StatelessWidget {
+  const _ProcessStat({required this.value, required this.label, required this.busy});
+
+  final String value;
+  final String label;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+            color: busy ? const Color(0xFFFF0000) : scheme.onSurface,
+          ),
+        ),
+        Text(label, style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
+      ],
+    );
+  }
+}
+
 class _KillWording {
   const _KillWording({
     required this.key,

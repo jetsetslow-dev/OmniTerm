@@ -20,6 +20,9 @@ import 'telemetry_poller.dart';
 /// Monitor's sub-tabs in the order shown, as Kotlin's `MonitorTab`.
 enum MonitorTab { overview, specs, processes, services, logs, scripts, cron }
 
+/// Orders for Monitor → Processes. Disk and GPU apply only when the host reports them.
+enum ProcessSort { cpu, mem, disk, gpu }
+
 /// The Monitor screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 ///
 /// Holds what Monitor needs — the host it is showing, the active tab, and each tab's loaded data —
@@ -225,6 +228,8 @@ class MonitorViewModel extends ChangeNotifier {
 
   void _clearHostScopedData() {
     _processes = const [];
+    _processDiskReported = false;
+    _processGpuReported = false;
     _services = const [];
     _logs = const [];
     _logsUnsupported = false;
@@ -367,16 +372,23 @@ class MonitorViewModel extends ChangeNotifier {
 
   // ── processes ───────────────────────────────────────────────────────────────
 
-  bool _sortByCpu = true;
+  ProcessSort _processSort = ProcessSort.cpu;
+  bool _processDiskReported = false;
+  bool _processGpuReported = false;
 
-  bool get sortByCpu => _sortByCpu;
+  ProcessSort get processSort => _processSort;
 
-  set sortByCpu(bool value) {
-    if (_sortByCpu == value) return;
-    _sortByCpu = value;
-    // Re-sorting what is already loaded is instant; the Kotlin re-fetched from the host, which
-    // meant a sort toggle waited on a round trip to show a list it already had.
-    _processes = sortProcesses(_processes, byCpu: value);
+  /// Whether the host reported per-process disk use, so the Disk column and sort apply.
+  bool get processDiskReported => _processDiskReported;
+
+  /// Whether the host reported a GPU use source, so the GPU column and sort apply.
+  bool get processGpuReported => _processGpuReported;
+
+  /// Re-sorts the loaded list; sampling disk and GPU again would cost another second for nothing.
+  void sortProcessesBy(ProcessSort sort) {
+    if (_processSort == sort) return;
+    _processSort = sort;
+    _processes = sortProcesses(_processes, sort);
     notifyListeners();
   }
 
@@ -389,10 +401,17 @@ class MonitorViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Orders processes by the heaviest consumer of the chosen resource.
-  static List<SimProcess> sortProcesses(List<SimProcess> list, {required bool byCpu}) {
+  /// [list] busiest first by [sort]; processes without a reading sort last. Stable, as Kotlin's
+  /// `sortedByDescending` is, so equal readings keep the host's order.
+  static List<SimProcess> sortProcesses(List<SimProcess> list, ProcessSort sort) {
+    num key(SimProcess p) => switch (sort) {
+      ProcessSort.cpu => p.cpu,
+      ProcessSort.mem => p.mem,
+      ProcessSort.disk => p.disk?.totalBytesPerSecond ?? -1,
+      ProcessSort.gpu => p.gpu ?? -1,
+    };
     final sorted = [...list];
-    sorted.sort((a, b) => byCpu ? b.cpu.compareTo(a.cpu) : b.mem.compareTo(a.mem));
+    mergeSort(sorted, compare: (a, b) => key(b).compareTo(key(a)));
     return sorted;
   }
 
@@ -402,8 +421,24 @@ class MonitorViewModel extends ChangeNotifier {
       setLoading: (v) => _processesLoading = v,
       run: (server, exec) async {
         final out = await exec(processesFor(await _hostOs(server, exec)));
-        final parsed = sortProcesses(parseProcesses(out), byCpu: _sortByCpu);
-        return () => _processes = parsed;
+        final usage = parseProcessUsage(out);
+        final list = [
+          for (final p in parseProcesses(out))
+            p.withUsage(
+              disk: usage.disk[p.pid],
+              gpu: usage.gpu[p.pid] ?? (usage.gpuReported ? 0 : null),
+            ),
+        ];
+        return () {
+          _processDiskReported = usage.disk.isNotEmpty;
+          _processGpuReported = usage.gpuReported;
+          // A Disk or GPU sort chosen on another host may not apply to this one.
+          if ((_processSort == ProcessSort.disk && !_processDiskReported) ||
+              (_processSort == ProcessSort.gpu && !_processGpuReported)) {
+            _processSort = ProcessSort.cpu;
+          }
+          _processes = sortProcesses(list, _processSort);
+        };
       },
     );
   }

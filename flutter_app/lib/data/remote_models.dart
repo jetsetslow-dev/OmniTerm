@@ -140,6 +140,8 @@ class SimProcess {
     required this.state,
     required this.vms,
     this.uptime = '',
+    this.disk,
+    this.gpu,
   });
 
   final int pid;
@@ -156,6 +158,58 @@ class SimProcess {
 
   /// Elapsed run time (ps etime), e.g. "01:23:45" or "2-03:04:05".
   final String uptime;
+
+  /// Disk throughput over the sampled second; null when its counters could not be read.
+  final DiskRate? disk;
+
+  /// Busiest GPU engine's use over the sampled second, 0–100; null when not reported.
+  final double? gpu;
+
+  /// This process with the disk and GPU use [parseProcessUsage] found for it.
+  SimProcess withUsage({DiskRate? disk, double? gpu}) => SimProcess(
+    pid: pid,
+    name: name,
+    owner: owner,
+    cpu: cpu,
+    mem: mem,
+    state: state,
+    vms: vms,
+    uptime: uptime,
+    disk: disk,
+    gpu: gpu,
+  );
+}
+
+class DiskRate {
+  const DiskRate({required this.readBytesPerSecond, required this.writeBytesPerSecond});
+
+  final int readBytesPerSecond;
+  final int writeBytesPerSecond;
+
+  int get totalBytesPerSecond => readBytesPerSecond + writeBytesPerSecond;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DiskRate &&
+      other.readBytesPerSecond == readBytesPerSecond &&
+      other.writeBytesPerSecond == writeBytesPerSecond;
+
+  @override
+  int get hashCode => Object.hash(readBytesPerSecond, writeBytesPerSecond);
+
+  @override
+  String toString() => 'DiskRate(read $readBytesPerSecond/s, write $writeBytesPerSecond/s)';
+}
+
+/// What `parseProcessUsage` found: per-pid disk and GPU use.
+class ProcessUsage {
+  const ProcessUsage({required this.disk, required this.gpu, required this.gpuReported});
+
+  final Map<int, DiskRate> disk;
+  final Map<int, double> gpu;
+
+  /// True when the host reported a GPU use source, even if every process was idle on it.
+  final bool gpuReported;
 }
 
 class SimService {

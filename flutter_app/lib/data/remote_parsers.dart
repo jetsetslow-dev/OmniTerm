@@ -40,7 +40,7 @@ String composeStackWorkingDir(String workingDirLabel, String configFiles) {
 /// The `ps` header line is skipped because its first column ("PID") isn't an integer.
 List<SimProcess> parseProcesses(String output) {
   final out = <SimProcess>[];
-  for (final raw in output.lines) {
+  for (final raw in output.substringBefore(processSectionPrefix).lines) {
     final line = raw.trim();
     if (line.isEmpty) continue;
     final t = splitWhitespace(line, limit: 8);
@@ -78,6 +78,207 @@ List<SimProcess> parseProcesses(String output) {
     }
   }
   return out;
+}
+
+/// Disk and GPU use per process from the samples [processesLinux] appends. Rates are the difference
+/// between the two samples over the time between them; Windows sends its own rates instead
+/// ([processesWindows]). A process whose counters could not be read is absent rather than zero.
+/// [ProcessUsage.gpuReported] is true when the host reported any GPU use source at all, so the GPU
+/// column only shows where it applies.
+ProcessUsage parseProcessUsage(String output) {
+  final nvidia = output.substringAfter(processNvidiaMarker, '');
+  final samples = output
+      .substringBefore(processNvidiaMarker)
+      .split(processSampleMarker)
+      .skip(1)
+      .map(_parseProcessSample)
+      .toList();
+  final disk = <int, DiskRate>{};
+  final gpu = <int, double>{};
+  var gpuReported = false;
+  if (samples.length >= 2) {
+    final [first, second, ...] = samples;
+    final (firstAt, secondAt) = (first.atNanos, second.atNanos);
+    final seconds = firstAt != null && secondAt != null && secondAt > firstAt
+        ? (secondAt - firstAt) / 1e9
+        : 1.0;
+    second.io.forEach((pid, after) {
+      final before = first.io[pid];
+      if (before == null) return;
+      disk[pid] = DiskRate(
+        readBytesPerSecond: (math.max(0, after.read - before.read) / seconds).toInt(),
+        writeBytesPerSecond: (math.max(0, after.write - before.write) / seconds).toInt(),
+      );
+    });
+    gpuReported = [first, second].any((s) => s.engineNanos.isNotEmpty || s.cycles.isNotEmpty);
+    // Busiest engine: adding engines up (render + video + copy) can pass 100%.
+    double busy(int pid, String engine, int used, double available) {
+      final capacity = second.capacity[pid]?[engine] ?? 1;
+      return available > 0 ? math.max(0, used) / (available * capacity) : 0.0;
+    }
+
+    for (final pid in {...second.engineNanos.keys, ...second.cycles.keys}) {
+      final shares = [
+        for (final MapEntry(key: engine, value: nanos) in (second.engineNanos[pid] ?? {}).entries)
+          if (first.engineNanos[pid]?[engine] case final start?)
+            busy(pid, engine, nanos - start, seconds * 1e9),
+        // xe counts cycles; its share of the GPU's total cycles over the same span.
+        for (final MapEntry(key: engine, value: used) in (second.cycles[pid] ?? {}).entries)
+          if ((
+                first.cycles[pid]?[engine],
+                second.totalCycles[pid]?[engine],
+                first.totalCycles[pid]?[engine],
+              )
+              case (final start?, final total?, final totalStart?))
+            busy(pid, engine, used - start, (total - totalStart).toDouble()),
+      ];
+      if (shares.isEmpty) continue;
+      gpu[pid] = (shares.reduce(math.max) * 100).clamp(0.0, 100.0);
+    }
+  }
+  // `nvidia-smi pmon` columns: gpu pid type sm mem ... command; "-" means idle.
+  for (final line in nvidia.lines.map((l) => l.trim())) {
+    if (line.isEmpty || line.startsWith('#')) continue;
+    final t = splitWhitespace(line);
+    final pid = int.tryParse(t.getOrElse(1, ''));
+    if (pid == null) continue;
+    gpuReported = true;
+    final sm = double.tryParse(t.getOrElse(3, '')) ?? 0.0;
+    gpu[pid] = math.max(gpu[pid] ?? 0.0, sm.clamp(0.0, 100.0));
+  }
+  // pmon prints its "# gpu  pid ..." header only when the driver answered.
+  if (nvidia.lines.any((l) => l.trimLeft().startsWith('#'))) gpuReported = true;
+  // Windows works the rates out itself (see [processesWindows]).
+  for (final t in _processSection(output, processRatesMarker)) {
+    final pid = int.tryParse(t.getOrElse(0, ''));
+    final read = int.tryParse(t.getOrElse(1, ''));
+    final write = int.tryParse(t.getOrElse(2, ''));
+    if (pid == null || read == null || write == null) continue;
+    disk[pid] = DiskRate(
+      readBytesPerSecond: math.max(0, read),
+      writeBytesPerSecond: math.max(0, write),
+    );
+  }
+  if (output.contains(processGpuMarker)) {
+    gpuReported = true;
+    for (final t in _processSection(output, processGpuMarker)) {
+      final pid = int.tryParse(t.getOrElse(0, ''));
+      final busiest = double.tryParse(t.getOrElse(1, ''));
+      if (pid == null || busiest == null) continue;
+      gpu[pid] = math.max(gpu[pid] ?? 0.0, busiest.clamp(0.0, 100.0));
+    }
+  }
+  return ProcessUsage(disk: disk, gpu: gpu, gpuReported: gpuReported);
+}
+
+/// The whitespace-split lines of the section [marker] starts, up to the next one.
+List<List<String>> _processSection(String output, String marker) => output
+    .substringAfter(marker, '')
+    .substringBefore(processSectionPrefix)
+    .lines
+    .map((l) => l.trim())
+    .where((l) => l.isNotEmpty)
+    .map(splitWhitespace)
+    .toList();
+
+class _ProcessSample {
+  const _ProcessSample({
+    required this.atNanos,
+    required this.io,
+    required this.engineNanos,
+    required this.cycles,
+    required this.totalCycles,
+    required this.capacity,
+  });
+
+  final int? atNanos;
+
+  /// pid → bytes read and written.
+  final Map<int, ({int read, int write})> io;
+
+  /// pid → engine key → busy nanoseconds, summed over the process's distinct DRM clients.
+  final Map<int, Map<String, int>> engineNanos;
+
+  /// pid → engine key → busy cycles, for drivers that count cycles instead of time (xe).
+  final Map<int, Map<String, int>> cycles;
+
+  /// pid → engine key → the GPU's total cycles at the moment [cycles] was read.
+  final Map<int, Map<String, int>> totalCycles;
+
+  /// pid → engine key → how many engines of that class the device has.
+  final Map<int, Map<String, int>> capacity;
+}
+
+// Lines look like "/proc/123/io:read_bytes: 4096" and "/proc/123/fdinfo/7:drm-engine-gfx: 1234 ns".
+_ProcessSample _parseProcessSample(String block) {
+  final lines = block.lines;
+  final atNanos = int.tryParse(lines.firstOrNull?.trim() ?? '');
+  final read = <int, int>{};
+  final written = <int, int>{};
+  // One DRM client can sit behind several file descriptors; count each client once.
+  final clients = <(int, String), Map<String, String>>{};
+  for (final line in lines.skip(1)) {
+    final path = line.substringBefore(':');
+    final pid = int.tryParse(path.removePrefix('/proc/').substringBefore('/'));
+    if (pid == null) continue;
+    final key = line.substringAfter(':').substringBefore(':').trim();
+    final value = line.substringAfter(':').substringAfter(':').trim();
+    if (path.endsWith('/io') && key == 'read_bytes') {
+      if (int.tryParse(value) case final bytes?) read[pid] = bytes;
+    } else if (path.endsWith('/io') && key == 'write_bytes') {
+      if (int.tryParse(value) case final bytes?) written[pid] = bytes;
+    } else if (key.startsWith('drm-')) {
+      clients.putIfAbsent((pid, path), () => {})[key] = value;
+    }
+  }
+  final io = {
+    for (final MapEntry(key: pid, value: bytes) in read.entries)
+      if (written[pid] case final w?) pid: (read: bytes, write: w),
+  };
+  final engineNanos = <int, Map<String, int>>{};
+  final cycles = <int, Map<String, int>>{};
+  // A device's total is the same for each of its clients, so it is kept, not added up.
+  final totalCycles = <int, Map<String, int>>{};
+  final capacity = <int, Map<String, int>>{};
+  void add(Map<int, Map<String, int>> into, int pid, String engine, int amount) {
+    final engines = into.putIfAbsent(pid, () => {});
+    engines[engine] = (engines[engine] ?? 0) + amount;
+  }
+
+  final seen = <(int, String?, String)>{};
+  for (final MapEntry(key: (pid, path), value: fields) in clients.entries) {
+    if (!seen.add((pid, fields['drm-pdev'], fields['drm-client-id'] ?? path))) continue;
+    final device = fields['drm-pdev'] ?? '';
+    fields.forEach((key, value) {
+      if (key.startsWith('drm-engine-capacity-')) {
+        capacity.putIfAbsent(pid, () => {})['$device/${key.removePrefix('drm-engine-capacity-')}'] =
+            math.max(1, int.tryParse(value) ?? 1);
+      } else if (key.startsWith('drm-engine-')) {
+        if (int.tryParse(value.substringBefore(' ')) case final nanos?) {
+          add(engineNanos, pid, '$device/${key.removePrefix('drm-engine-')}', nanos);
+        }
+      } else if (key.startsWith('drm-total-cycles-')) {
+        if (int.tryParse(value) case final total?) {
+          totalCycles.putIfAbsent(
+            pid,
+            () => {},
+          )['$device/${key.removePrefix('drm-total-cycles-')}'] = total;
+        }
+      } else if (key.startsWith('drm-cycles-')) {
+        if (int.tryParse(value) case final used?) {
+          add(cycles, pid, '$device/${key.removePrefix('drm-cycles-')}', used);
+        }
+      }
+    });
+  }
+  return _ProcessSample(
+    atNanos: atNanos,
+    io: io,
+    engineNanos: engineNanos,
+    cycles: cycles,
+    totalCycles: totalCycles,
+    capacity: capacity,
+  );
 }
 
 /// OpenRC `rc-status -a` line: "  sshd  [  started  ]" (runlevel headers don't match).

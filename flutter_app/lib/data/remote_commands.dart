@@ -81,12 +81,36 @@ String? sudoStdin(String sudoPassword) => sudoPassword.trim().isNotEmpty ? '$sud
 
 // ── processes ──────────────────────────────────────────────────────────────────
 
+/// Starts every section the process commands append after the list itself.
+const processSectionPrefix = '##OMNI-';
+const processSampleMarker = '${processSectionPrefix}SAMPLE';
+const processNvidiaMarker = '${processSectionPrefix}NVIDIA';
+
+/// Rates a host has already worked out: "pid readBytesPerSecond writeBytesPerSecond".
+const processRatesMarker = '${processSectionPrefix}RATES';
+
+/// Present when the host reports GPU use; then "pid busiestEnginePercent" lines.
+const processGpuMarker = '${processSectionPrefix}GPU';
+
 /// Linux: `pid,user,%cpu,%mem,vsz,etime,stat,comm`. The header line is dropped by the parser (its
 /// pid is non-numeric). BusyBox `ps` has no `-eo`, hence the plain-output fallback, which the parser
 /// also understands.
+///
+/// Then two samples, a second apart, of what the listed processes did meanwhile: disk bytes from
+/// `/proc/<pid>/io`, and GPU use from the DRM fdinfo that the open drivers publish (engine time from
+/// amdgpu, i915 and most others; engine cycles from Intel's xe). NVIDIA's own driver publishes none,
+/// so `nvidia-smi pmon` answers for it. Another user's counters are unreadable without root; grep
+/// skips those quietly and the parser reports them as unknown, not zero. xargs keeps a process with
+/// thousands of descriptors under the argument limit. See [parseProcessUsage].
 const processesLinux =
-    'ps -eo pid,user,%cpu,%mem,vsz,etime,stat,comm 2>/dev/null | sort -k3 -rn | head -n 80'
-    ' || ps w 2>/dev/null | head -n 80';
+    "P=\$(ps -eo pid,user,%cpu,%mem,vsz,etime,stat,comm 2>/dev/null | sort -k3 -rn | head -n 80); "
+    "[ -n \"\$P\" ] || P=\$(ps w 2>/dev/null | head -n 80); printf '%s\\n' \"\$P\"; "
+    "D=''; for p in \$(printf '%s\\n' \"\$P\" | awk '{print \$1}'); do [ -d /proc/\$p ] && D=\"\$D /proc/\$p\"; done; "
+    "s(){ echo \"$processSampleMarker \$(date +%s%N 2>/dev/null)\"; [ -n \"\$D\" ] && "
+    "for d in \$D; do echo \$d/io; ls -d \$d/fdinfo/* 2>/dev/null; done | "
+    "xargs grep -H -E '^(read_bytes|write_bytes|drm-client-id|drm-pdev|drm-engine-[a-z0-9-]+|drm-(total-)?cycles-[a-z0-9-]+):' 2>/dev/null; }; "
+    's; sleep 1; s; '
+    "if command -v nvidia-smi >/dev/null 2>&1; then echo '$processNvidiaMarker'; nvidia-smi pmon -c 1 -s u 2>/dev/null; fi; true";
 
 /// FreeBSD/macOS: the same eight columns via `-axo` (the keywords differ slightly).
 const processesBsd =
@@ -94,11 +118,23 @@ const processesBsd =
 
 /// Windows: emulates the same eight space-separated columns, sorted by CPU. `ProcessName` has no
 /// spaces, so the parser's simple split holds.
+///
+/// Then the listed processes' I/O rates, which the performance counters already give per second.
+/// Windows has no per-process disk-only counter short of a kernel trace, so these count all of a
+/// process's I/O, as Task Manager's "I/O read/write bytes" columns do. Last, when the GPU counters
+/// exist (Windows 10 1709 and later), each process's busiest engine, as Task Manager's GPU column
+/// shows it. The counter classes are not translated, unlike Get-Counter's paths, so this works on
+/// any display language. See [parseProcessUsage].
 const processesWindows =
-    'powershell -NoProfile -Command "Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | '
+    'powershell -NoProfile -Command "\$p = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | '
     'Where-Object { \$_.IDProcess -ne 0 } | Sort-Object PercentProcessorTime -Descending | '
-    "Select-Object -First 80 | ForEach-Object { \$_.IDProcess.ToString() + ' NA ' + "
-    "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }\"";
+    "Select-Object -First 80; \$p | ForEach-Object { \$_.IDProcess.ToString() + ' NA ' + "
+    "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }; "
+    "'$processRatesMarker'; \$p | ForEach-Object { \$_.IDProcess.ToString() + ' ' + "
+    "\$_.IOReadBytesPersec + ' ' + \$_.IOWriteBytesPersec }; "
+    'try { \$g = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop; '
+    "'$processGpuMarker'; \$g | Group-Object { (\$_.Name -split '_')[1] } | ForEach-Object { "
+    "\$_.Name + ' ' + (\$_.Group | Measure-Object UtilizationPercentage -Maximum).Maximum } } catch { }\"";
 
 String processesFor(String os) => switch (normaliseOs(os)) {
   'Windows' => processesWindows,
