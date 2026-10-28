@@ -95,15 +95,20 @@ void main() {
   Future<void> waitForSavePicker(PatrolIntegrationTester $) async {
     final context = $.tester.element($(const ValueKey('backup.list')).finder);
     final vm = context.read<BackupViewModel>();
-    final deadline = DateTime.now().add(const Duration(seconds: 20));
-    await answerNotificationPromptIfShown($, deadline: deadline);
+    // One budget per phase. Building the encrypted backup is the app's own work: its PBKDF2 key
+    // takes the hosted emulator 23-32 s from the passphrase tap. Sharing one 20 s budget with the
+    // picker failed #92 twice. Run 39203550831 ran out before the export finished. Run 39391764284
+    // left DocumentsUI 6 s, while the next test in that run, given 10 s, saw it open in under 3.
+    // The export now has its own deadline, which still catches a hang, and the picker its whole
+    // twenty seconds from when the app asks for it.
+    final exportDeadline = DateTime.now().add(const Duration(seconds: 60));
+    await answerNotificationPromptIfShown($, deadline: exportDeadline);
     // Native visibility polling does not pump Flutter frames or wait for the SQLite reads that
     // build the backup. The permission reply can arrive after pumpAndSettle has returned. Wait
-    // for that export to start and finish before handing the observation over to Android, using
-    // the same twenty-second budget rather than extending the picker deadline.
+    // for that export to start and finish before handing the observation over to Android.
     while ((vm.busyMessage != 'Creating backup…' || vm.busy) &&
         vm.error == null &&
-        DateTime.now().isBefore(deadline)) {
+        DateTime.now().isBefore(exportDeadline)) {
       await $.tester.pump(const Duration(milliseconds: 100));
       await $.tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     }
@@ -114,15 +119,9 @@ void main() {
       false,
       reason: 'the backup reads must finish before checking the native picker',
     );
-    final remaining = deadline.difference(DateTime.now());
-    expect(
-      remaining,
-      greaterThan(Duration.zero),
-      reason: 'the original picker deadline still applies',
-    );
     await $.platformAutomator.android.waitUntilVisible(
       AndroidSelector(applicationPackage: 'com.google.android.documentsui'),
-      timeout: remaining,
+      timeout: const Duration(seconds: 20),
     );
   }
 

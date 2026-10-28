@@ -465,7 +465,13 @@ Future<void> _exerciseSplitPaneRecovery(
     await _waitFor(tester, () => resume.evaluate().isNotEmpty);
     await tester.ensureVisible(resume);
     await tester.tap(resume);
-    await _waitFor(tester, () => terminals.sessions.length == 2 && !terminals.isConnecting);
+    await _waitFor(
+      tester,
+      () => terminals.sessions.length == 2 && !terminals.isConnecting,
+      diagnostic: () =>
+          'resuming ${second.tmuxName}: ${terminals.sessions.length} sessions, '
+          'connecting ${terminals.isConnecting}, error ${terminals.error}',
+    );
     expect(terminals.error, isNull);
     expect(terminals.splitSecondSession!.tmuxName, second.tmuxName);
     expect(terminals.current, same(terminals.splitSecondSession));
