@@ -1199,7 +1199,11 @@ class AppViewModel @JvmOverloads constructor(
     var selectedServerId: Int?
         get() = _selectedServerId
         set(value) {
-            if (value != _selectedServerId) clearActiveComposeDraft()
+            if (value != _selectedServerId) {
+                clearActiveComposeDraft()
+                clearMonitorHostData()
+                clearContainerHostData()
+            }
             _selectedServerId = value
         }
     val selectedServer: ServerEntity?
@@ -1446,6 +1450,12 @@ class AppViewModel @JvmOverloads constructor(
     // taken down via `compose down`, which erases the daemon's every trace of the project.
     // Sourced from the app-side stack registry (see StackRegistryEntity); refreshed by loadDocker.
     var downedStacks by mutableStateOf<List<StackRegistryEntity>>(emptyList()); private set
+    // The Images and Volumes tabs' multi-select, and which stacks show their services. Each is kept
+    // per host, unlike the lists above, which are refetched: switching hosts and back finds them as
+    // they were, and nothing picked on one host is acted on while another is shown.
+    val imageSelection = HostSelection()
+    val volumeSelection = HostSelection()
+    val expandedStacks = HostSelection()
 
     var activeInfraTab by mutableStateOf(0)
     // Network Tools subtab (see NetworkTab). Held in the VM (not local screen state) so the global
@@ -2190,10 +2200,17 @@ class AppViewModel @JvmOverloads constructor(
     /** Render snapshot the ShellScreen observes; replaced wholesale on each output batch. */
     val terminalScreen: TerminalSnapshot get() = currentSession?.terminalScreen ?: TerminalSnapshot.EMPTY
 
-    // Sticky modifier keys driven by the on-screen key bar
-    var isCtrlPressed by mutableStateOf(false)
-    var isAltPressed by mutableStateOf(false)
-    var isShiftPressed by mutableStateOf(false)
+    // Sticky modifier keys driven by the on-screen key bar. Each terminal keeps its own
+    // (ShellSession.ctrlArmed); with none focused there is nothing to arm them for.
+    var isCtrlPressed: Boolean
+        get() = focusedTerminalSession?.ctrlArmed == true
+        set(value) { focusedTerminalSession?.ctrlArmed = value }
+    var isAltPressed: Boolean
+        get() = focusedTerminalSession?.altArmed == true
+        set(value) { focusedTerminalSession?.altArmed = value }
+    var isShiftPressed: Boolean
+        get() = focusedTerminalSession?.shiftArmed == true
+        set(value) { focusedTerminalSession?.shiftArmed = value }
     var isFunctionSetVisible by mutableStateOf(false)
     /** Display-only terminal mode: blocks text/paste keys while retaining scroll navigation. */
     var terminalReadOnly by mutableStateOf(false)
@@ -2202,9 +2219,11 @@ class AppViewModel @JvmOverloads constructor(
     fun updateTerminalReadOnly(enabled: Boolean) {
         terminalReadOnly = enabled
         if (enabled) {
-            isCtrlPressed = false
-            isAltPressed = false
-            isShiftPressed = false
+            activeSessions.forEach {
+                it.ctrlArmed = false
+                it.altArmed = false
+                it.shiftArmed = false
+            }
             pendingSwipeFlush?.invoke()
         }
     }
@@ -4068,6 +4087,10 @@ class AppViewModel @JvmOverloads constructor(
         probedServerIds.remove(serverId)
         telemetryProbeMutexes.remove(serverId)
         activeProbes.remove(serverId)?.cancel()
+        // A deleted host, or one now pointing at another machine, keeps nothing picked.
+        imageSelection.clear(serverId)
+        volumeSelection.clear(serverId)
+        expandedStacks.clear(serverId)
     }
 
     fun dismissHostKeyChangedDialog() { hostKeyChangedServer = null }
@@ -7580,6 +7603,28 @@ class AppViewModel @JvmOverloads constructor(
         runStreamingAction("volume $action", RemoteCommands.dockerVolumeAction(volumeName, action, runtime)) { loadDocker() }
     }
 
+    /**
+     * Removes [images] from [server], the host they were picked on, in one command.
+     *
+     * One action per image did not work: each streaming action cancels the one before it, so all
+     * but the last could be dropped before they ran. One command also keeps the whole batch on the
+     * host it was confirmed for, whichever host is selected meanwhile.
+     */
+    fun removeDockerImages(images: List<SimDockerImage>, server: ServerEntity? = selectedServer) {
+        if (images.isEmpty() || server == null) return
+        imageSelection.clear(server.id)
+        val command = images.joinToString("; ") { RemoteCommands.dockerImageAction(it.id, "remove", it.runtime) }
+        runStreamingAction("image remove", command, server = server) { loadDocker() }
+    }
+
+    /** [removeDockerImages] for volumes, where a shared name (`data`, `db`) is the common case. */
+    fun removeDockerVolumes(volumes: List<SimDockerVolume>, server: ServerEntity? = selectedServer) {
+        if (volumes.isEmpty() || server == null) return
+        volumeSelection.clear(server.id)
+        val command = volumes.joinToString("; ") { RemoteCommands.dockerVolumeAction(it.name, "remove", it.runtime) }
+        runStreamingAction("volume remove", command, server = server) { loadDocker() }
+    }
+
     fun dockerNetworkAction(networkId: String, action: String, runtime: String = "") {
         runStreamingAction("network $action", RemoteCommands.dockerNetworkAction(networkId, action, runtime)) { loadDocker() }
     }
@@ -8122,6 +8167,42 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             runStreamingAction("${check.label} · ${srv.name}", RemoteCommands.quickCheck(check, hostOs(srv)), server = srv)
         }
+    }
+
+    /**
+     * Another host's processes, services, logs and crontab are not this host's. Kept across a host
+     * switch, they sat under the new host's name with live Kill, service and Save actions until its
+     * own reply arrived, so a tap there acted on the wrong machine. Each tab reloads for the new host.
+     */
+    /**
+     * Another host's containers are not this host's, and acting on one would act on the new host
+     * (a volume named `data` exists on most). Cleared at once rather than when the new host's load
+     * lands, and the old host's load is stopped so it cannot fill the lists in afterwards.
+     */
+    private fun clearContainerHostData() {
+        dockerJob?.cancel()
+        dockerError = null
+        dockerContainers = emptyList()
+        dockerImages = emptyList()
+        dockerVolumes = emptyList()
+        dockerNetworks = emptyList()
+        availableContainerRuntimes = emptySet()
+        downedStacks = emptyList()
+    }
+
+    private fun clearMonitorHostData() {
+        processes = emptyList()
+        processDiskReported = false
+        processGpuReported = false
+        expandedProcessPid = null
+        services = emptyList()
+        servicesUnsupported = false
+        serviceActionFeedback = null
+        logs = emptyList()
+        logsUnsupported = false
+        cronText = ""
+        cronReadable = false
+        cronStatus = ""
     }
 
     fun killProcess(pid: Int, signal: Int = 15) {

@@ -254,10 +254,11 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
             editBuilderError = viewModel.composeFileReadError ?: "Could not read compose file: $composePath"
         }
     }
-    // Which stacks have their service list open, by stack name. Hoisted for the same reason as the
-    // container list: per-item `remember` dies when the row scrolls out of the LazyColumn viewport,
-    // so an expanded stack silently collapsed itself as soon as the user scrolled past it.
-    val expandedStacks = remember { mutableStateMapOf<String, Boolean>() }
+    // Which stacks have their service list open, per host (see AppViewModel.expandedStacks). Held
+    // above the rows for the same reason as the container list: per-item `remember` dies when the
+    // row scrolls out of the LazyColumn viewport, so an expanded stack collapsed itself as soon as
+    // the user scrolled past it.
+    val host = viewModel.selectedServer?.id
     OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         editBuilderError?.let { msg ->
             item {
@@ -283,7 +284,8 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
         }
         items(stacks) { stack ->
             val canCompose = stack.name != "standalone" && stack.workingDir.isNotBlank()
-            val servicesExpanded = expandedStacks[stack.name] == true
+            val expandedKey = "${stack.runtime}:${stack.name}"
+            val servicesExpanded = viewModel.expandedStacks.isPicked(host, expandedKey)
             OmniCard(modifier = Modifier.fillMaxWidth().testTag("infra.stack.${stack.runtime}.${stack.name}"), leftAccent = OmniColors.cyan) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
@@ -359,7 +361,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                     if (stack.services.isNotEmpty()) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable { expandedStacks[stack.name] = !servicesExpanded }.padding(vertical = 2.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { viewModel.expandedStacks.toggle(host, expandedKey) }.padding(vertical = 2.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -782,28 +784,25 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
-    var isSelectionMode by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    // The picks belong to the host shown: see AppViewModel.imageSelection.
+    val server = viewModel.selectedServer
+    val selection = viewModel.imageSelection
     fun imageKey(img: SimDockerImage) = "${img.runtime}:${img.id}"
+    val isSelectionMode = selection.isSelecting(server?.id)
+    val picked = images.filter { selection.isPicked(server?.id, imageKey(it)) }
 
     OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedIds = setOf() }) {
+                TextButton(onClick = { selection.toggleSelecting(server?.id) }) {
                     Text(if (isSelectionMode) stringResource(R.string.cancel_selection) else stringResource(R.string.multi_select_2))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (isSelectionMode && selectedIds.isNotEmpty()) {
+                    if (isSelectionMode && picked.isNotEmpty()) {
                         Button(
                             onClick = {
-                                confirm.ask(confirm.str(R.string.remove_images), confirm.str(R.string.permanently_remove_images, selectedIds.size), confirmLabel = confirm.str(R.string.remove)) {
-                                    selectedIds.forEach { key ->
-                                        images.firstOrNull { imageKey(it) == key }?.let {
-                                            viewModel.dockerImageAction(it.id, "remove", it.runtime)
-                                        }
-                                    }
-                                    selectedIds = setOf()
-                                    isSelectionMode = false
+                                confirm.ask(confirm.str(R.string.remove_images), confirm.str(R.string.permanently_remove_images, picked.size), confirmLabel = confirm.str(R.string.remove)) {
+                                    viewModel.removeDockerImages(picked, server)
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
@@ -833,7 +832,7 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (img.inUse) OmniColors.green else MaterialTheme.colorScheme.outlineVariant) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
-                        Checkbox(checked = imageKey(img) in selectedIds, onCheckedChange = { if (it) selectedIds += imageKey(img) else selectedIds -= imageKey(img) })
+                        Checkbox(checked = img in picked, onCheckedChange = { selection.toggle(server?.id, imageKey(img)) })
                     }
                     Column(modifier = Modifier.weight(1f).padding(12.dp)) {
                     Row(
@@ -884,28 +883,25 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
-    var isSelectionMode by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    // The picks belong to the host shown: see AppViewModel.volumeSelection.
+    val server = viewModel.selectedServer
+    val selection = viewModel.volumeSelection
     fun volumeKey(vol: SimDockerVolume) = "${vol.runtime}:${vol.name}"
+    val isSelectionMode = selection.isSelecting(server?.id)
+    val picked = volumes.filter { selection.isPicked(server?.id, volumeKey(it)) }
 
     OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedIds = setOf() }) {
+                TextButton(onClick = { selection.toggleSelecting(server?.id) }) {
                     Text(if (isSelectionMode) stringResource(R.string.cancel_selection) else stringResource(R.string.multi_select_2))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (isSelectionMode && selectedIds.isNotEmpty()) {
+                    if (isSelectionMode && picked.isNotEmpty()) {
                         Button(
                             onClick = {
-                                confirm.ask(confirm.str(R.string.remove_volumes), confirm.str(R.string.permanently_remove_volumes, selectedIds.size), confirmLabel = confirm.str(R.string.remove)) {
-                                    selectedIds.forEach { key ->
-                                        volumes.firstOrNull { volumeKey(it) == key }?.let {
-                                            viewModel.dockerVolumeAction(it.name, "remove", it.runtime)
-                                        }
-                                    }
-                                    selectedIds = setOf()
-                                    isSelectionMode = false
+                                confirm.ask(confirm.str(R.string.remove_volumes), confirm.str(R.string.permanently_remove_volumes, picked.size), confirmLabel = confirm.str(R.string.remove)) {
+                                    viewModel.removeDockerVolumes(picked, server)
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
@@ -935,7 +931,7 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
-                        Checkbox(checked = volumeKey(vol) in selectedIds, onCheckedChange = { if (it) selectedIds += volumeKey(vol) else selectedIds -= volumeKey(vol) })
+                        Checkbox(checked = vol in picked, onCheckedChange = { selection.toggle(server?.id, volumeKey(vol)) })
                     }
                     Column(modifier = Modifier.weight(1f).padding(12.dp)) {
                     Row(

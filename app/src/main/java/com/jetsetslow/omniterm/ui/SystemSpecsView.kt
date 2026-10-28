@@ -43,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,50 +110,54 @@ fun SystemSpecsContent(
     val specs = state?.specs
     val copy = rememberCopyWithConfirmation()
     val titles = SpecKind.entries.associateWith { specTitle(it) }
-    Column(modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                stringResource(R.string.spec_read_from, srv.name),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = OmniTextSize.Meta,
-                modifier = Modifier.weight(1f),
-            )
-            if (specs != null) {
-                IconButton(onClick = { copy(specs.asText { titles.getValue(it) }) }) {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_all_specs))
-                }
-            }
-            IconButton(onClick = { viewModel.loadSystemSpecs(srv) }, enabled = state?.loading != true) {
-                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh_specs))
-            }
-        }
-        if (state?.loading == true && specs != null) LinearProgressIndicator(Modifier.fillMaxWidth())
-        when {
-            specs == null && state?.error != null -> Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(stringResource(R.string.could_not_read_specs, state.error), color = OmniColors.red, fontSize = OmniTextSize.Meta)
-                TextButton(onClick = { viewModel.loadSystemSpecs(srv) }) { Text(stringResource(R.string.retry)) }
-            }
-            specs == null -> Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(Modifier.size(28.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text(stringResource(R.string.reading_system_specs), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = OmniTextSize.Meta)
-                }
-            }
-            else -> LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.error?.let { error ->
-                    item { Text(stringResource(R.string.could_not_read_specs, error), color = OmniColors.red, fontSize = OmniTextSize.Meta) }
-                }
-                if (specs.wouldGainFromSudo || specs.sudoError != null) {
-                    item { SudoBanner(viewModel, srv, specs.sudoError) }
-                }
-                items(specs.sections, key = { it.kind }) { section ->
-                    val extra = if (section.kind == SpecKind.System) {
-                        listOfNotNull(specs.uptimeSeconds?.let { SpecField(stringResource(R.string.uptime_label), formatUptime(it)) })
-                    } else {
-                        emptyList()
+    // Each host keeps its own expanded sections and devices: switching hosts and back finds each
+    // sheet as it was left, and one host's open sections never show on another.
+    rememberSaveableStateHolder().SaveableStateProvider(srv.id) {
+        Column(modifier) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    stringResource(R.string.spec_read_from, srv.name),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = OmniTextSize.Meta,
+                    modifier = Modifier.weight(1f),
+                )
+                if (specs != null) {
+                    IconButton(onClick = { copy(specs.asText { titles.getValue(it) }) }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_all_specs))
                     }
-                    SpecSectionCard(section, titles.getValue(section.kind), extra)
+                }
+                IconButton(onClick = { viewModel.loadSystemSpecs(srv) }, enabled = state?.loading != true) {
+                    Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh_specs))
+                }
+            }
+            if (state?.loading == true && specs != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            when {
+                specs == null && state?.error != null -> Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(stringResource(R.string.could_not_read_specs, state.error), color = OmniColors.red, fontSize = OmniTextSize.Meta)
+                    TextButton(onClick = { viewModel.loadSystemSpecs(srv) }) { Text(stringResource(R.string.retry)) }
+                }
+                specs == null -> Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(Modifier.size(28.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(stringResource(R.string.reading_system_specs), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = OmniTextSize.Meta)
+                    }
+                }
+                else -> LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.error?.let { error ->
+                        item { Text(stringResource(R.string.could_not_read_specs, error), color = OmniColors.red, fontSize = OmniTextSize.Meta) }
+                    }
+                    if (specs.wouldGainFromSudo || specs.sudoError != null) {
+                        item { SudoBanner(viewModel, srv, specs.sudoError) }
+                    }
+                    items(specs.sections, key = { it.kind }) { section ->
+                        val extra = if (section.kind == SpecKind.System) {
+                            listOfNotNull(specs.uptimeSeconds?.let { SpecField(stringResource(R.string.uptime_label), formatUptime(it)) })
+                        } else {
+                            emptyList()
+                        }
+                        SpecSectionCard(section, titles.getValue(section.kind), extra)
+                    }
                 }
             }
         }

@@ -137,6 +137,14 @@ class ShellSession(
      * arm the control on the other. Mirrors the old global terminalTmuxScrolledBack flag.
      */
     var tmuxScrolledBack by mutableStateOf(false)
+    /**
+     * Key-bar Ctrl, Alt and Shift armed on this terminal. Kept per session: armed on one host and
+     * carried to another, the next key there would become, say, Ctrl+C on a machine the user never
+     * meant it for. Switching back finds them as they were left.
+     */
+    var ctrlArmed by mutableStateOf(false)
+    var altArmed by mutableStateOf(false)
+    var shiftArmed by mutableStateOf(false)
     /** Incremented by terminal chrome to ask this pane to open its session options. */
     var terminalOptionsRequestGeneration by mutableStateOf(0L)
     /**

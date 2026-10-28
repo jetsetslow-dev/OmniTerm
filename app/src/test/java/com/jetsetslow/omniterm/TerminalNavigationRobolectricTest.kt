@@ -276,6 +276,48 @@ class TerminalNavigationRobolectricTest {
         assertEquals(Screen.Shell, viewModel.currentScreen)
     }
 
+    @Test
+    fun armedKeyBarModifiersStayWithTheirOwnTerminal() {
+        // Armed on one host and carried to another, the next `c` there would be a Ctrl+C on a
+        // machine the user never meant it for. Switching back finds it as it was left.
+        val nas = addSession("nas")
+        val pi = addSession("pi")
+        viewModel.currentSessionId = pi.id
+        viewModel.isCtrlPressed = true
+
+        viewModel.currentSessionId = nas.id
+        assertFalse(viewModel.isCtrlPressed)
+        viewModel.currentSessionId = pi.id
+        assertTrue(viewModel.isCtrlPressed)
+
+        enterSplit(pi, nas)
+        assertTrue("the focused pane's own modifier", viewModel.isCtrlPressed)
+        viewModel.multiSshFocusedPane = 2
+        assertFalse(viewModel.isCtrlPressed)
+
+        viewModel.updateTerminalReadOnly(true)
+        viewModel.multiSshFocusedPane = 1
+        assertFalse("read-only disarms every terminal", viewModel.isCtrlPressed)
+    }
+
+    @Test
+    fun monitorStateOfOneHostIsClearedWhenAnotherIsSelected() {
+        // Kept across a switch, host A's expanded process and action result sat under host B's
+        // name, next to live Kill and service actions that would run on B.
+        viewModel.selectedServerId = 1
+        viewModel.expandedProcessPid = 1
+        viewModel.serviceActionFeedback = "restart nginx: done"
+
+        viewModel.selectedServerId = 1
+        assertEquals("re-selecting the same host keeps its state", 1, viewModel.expandedProcessPid)
+
+        viewModel.selectedServerId = 2
+        assertNull(viewModel.expandedProcessPid)
+        assertNull(viewModel.serviceActionFeedback)
+        assertTrue(viewModel.processes.isEmpty() && viewModel.services.isEmpty() && viewModel.logs.isEmpty())
+        assertEquals("", viewModel.cronText)
+    }
+
     private fun enterSplit(first: ShellSession, second: ShellSession) {
         viewModel.activeSshTab = 1
         viewModel.multiSshSessionId1 = first.id
