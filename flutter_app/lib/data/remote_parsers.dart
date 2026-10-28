@@ -424,7 +424,7 @@ List<SimDockerNetwork> parseDockerNetworks(String output) {
 
 /// Dispatch host-metrics parsing by the detected remote OS (from the `@OS` section).
 HostMetrics parseMetrics(String output, {String host = ''}) {
-  final sections = _splitSections(output);
+  final sections = splitSections(output);
   return switch (normaliseOs(sections['OS'] ?? '')) {
     'FreeBSD' => _parseMetricsBsd(sections, 'FreeBSD'),
     'Darwin' => _parseMetricsDarwin(sections),
@@ -438,7 +438,7 @@ final _bsdIdleRe = RegExp(r'([+-]?[\d.]+)%\s*idle', caseSensitive: false);
 
 /// A score needs actual CPU, memory and root-disk readings, not parser defaults.
 bool hasReliableHealthMetrics(String output, {HostMetrics? parsed}) {
-  final sections = _splitSections(output);
+  final sections = splitSections(output);
   final os = normaliseOs(sections['OS'] ?? '');
   final metrics = parsed ?? parseMetrics(output);
   final cpu = os == 'Windows'
@@ -949,7 +949,9 @@ Map<String, String> parseUnavailable(Map<String, String> sections) {
   return out;
 }
 
-Map<String, String> _splitSections(String output) {
+/// Splits a probe's `@SECTION` blocks into section name → trimmed body. Mirrors Kotlin's
+/// `RemoteParsers.splitSections`.
+Map<String, String> splitSections(String output) {
   final map = <String, String>{};
   String? key;
   final sb = StringBuffer();

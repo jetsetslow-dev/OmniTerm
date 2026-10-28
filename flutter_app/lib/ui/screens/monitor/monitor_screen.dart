@@ -14,11 +14,12 @@ import '../../widgets/host_selector_bar.dart';
 import '../../widgets/omni_components.dart';
 import 'cron_tab.dart';
 import 'scripts_tab.dart';
+import 'system_specs_view.dart';
 import 'monitor_tabs.dart';
 
 /// The Monitor screen, ported from `MonitorScreen` in `ui/MonitorScreen.kt`.
 ///
-/// A host selector, six sub-tabs in the Kotlin's order, and a reboot action. All of the logic — which
+/// A host selector, seven sub-tabs in the Kotlin's order, and a reboot action. All of the logic — which
 /// host is shown, what each tab loads, how replies are guarded — lives in [MonitorViewModel].
 class MonitorScreen extends StatelessWidget {
   const MonitorScreen({super.key});
@@ -49,6 +50,7 @@ class MonitorScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: switch (vm.activeTab) {
                 MonitorTab.overview => OverviewTab(vm: vm, server: server),
+                MonitorTab.specs => SpecsTab(server: server),
                 MonitorTab.processes => ProcessesTab(vm: vm),
                 MonitorTab.services => ServicesTab(vm: vm),
                 MonitorTab.logs => LogsTab(vm: vm),
@@ -259,6 +261,7 @@ class _TabBar extends StatelessWidget {
 
   static const _labels = {
     MonitorTab.overview: 'Overview',
+    MonitorTab.specs: 'Specs',
     MonitorTab.processes: 'Processes',
     MonitorTab.services: 'Services',
     MonitorTab.logs: 'Logs',

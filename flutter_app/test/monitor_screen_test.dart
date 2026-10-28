@@ -20,9 +20,11 @@ import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/ui/view_model/monitor_view_model.dart';
 import 'package:omniterm/ui/view_model/scripts_view_model.dart';
+import 'package:omniterm/ui/view_model/system_specs_view_model.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:provider/provider.dart';
 
+import 'fixtures/system_specs_fixtures.dart';
 import 'monitor_view_model_test.dart' show RecordingTransport;
 import 'support/fake_secure_storage.dart';
 
@@ -30,6 +32,7 @@ void main() {
   late AppDatabase db;
   late AppRepository repo;
   late AppState app;
+  SystemSpecsViewModel? specsVm;
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
@@ -39,6 +42,8 @@ void main() {
   });
 
   tearDown(() async {
+    specsVm?.dispose();
+    specsVm = null;
     app.dispose();
     await db.close();
   });
@@ -87,6 +92,7 @@ void main() {
     await app.start();
     vm = MonitorViewModel(app, transport: transport, poller: poller);
     scriptsVm = ScriptsViewModel(app);
+    specsVm = SystemSpecsViewModel(app, transport: transport);
     // Reboot and service actions re-authenticate before using a stored sudo password, so the lock
     // is in scope here as it is in the real app. Left unconfigured — no PIN, no biometrics — so the
     // gate is inert and these tests still exercise the actions themselves.
@@ -100,6 +106,7 @@ void main() {
           // The Scripts tab offers the saved quick scripts, so the store is in scope.
           ChangeNotifierProvider<ScriptsViewModel>.value(value: scriptsVm),
           ChangeNotifierProvider<AppLockController>.value(value: lock),
+          ChangeNotifierProvider<SystemSpecsViewModel>.value(value: specsVm!),
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
@@ -158,6 +165,7 @@ void main() {
       (MonitorTab.services, 'monitor.services.list'),
       (MonitorTab.logs, 'monitor.logs.list'),
       (MonitorTab.overview, 'monitor.overview'),
+      (MonitorTab.specs, 'specs.sections'),
     ]) {
       await tester.tap(find.byKey(ValueKey('monitor.tab.${tab.name}')));
       await tester.pumpAndSettle();
@@ -167,6 +175,52 @@ void main() {
         reason: 'the ${tab.name} tab did not render',
       );
     }
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
+  });
+
+  testWidgets('the Specs tab reads the host once and keeps each host\'s sheet as it was left', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await repo.insertServer(server(name: 'pi'));
+    final transport = RecordingTransport(replies: {'lscpu': linuxCommon, 'uname': 'Linux\n'});
+    await pump(tester, transport: transport);
+    final nas = app.servers.firstWhere((s) => s.name == 'nas');
+    final pi = app.servers.firstWhere((s) => s.name == 'pi');
+    vm.selectServer(nas.id);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.specs')));
+    await tester.pumpAndSettle();
+    expect(find.text('Hardware and software of nas'), findsOneWidget);
+    expect(find.byKey(const ValueKey('specs.sudoBanner')), findsOneWidget);
+    expect(find.text('Read with sudo'), findsOneWidget);
+    expect(find.text('Processor'), findsOneWidget);
+    expect(find.text('L2'), findsNothing, reason: 'sections start collapsed');
+
+    await tester.tap(find.text('Processor'));
+    await tester.pumpAndSettle();
+    expect(find.text('L2'), findsOneWidget);
+
+    vm.selectServer(pi.id);
+    await tester.pumpAndSettle();
+    expect(find.text('Hardware and software of pi'), findsOneWidget);
+    expect(find.text('L2'), findsNothing, reason: "one host's expanded sections are its own");
+
+    vm.selectServer(nas.id);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('L2'),
+      findsOneWidget,
+      reason: 'switching back finds the sheet as it was left',
+    );
+    expect(
+      transport.commands.where((c) => c.contains('lscpu')),
+      hasLength(2),
+      reason: 'each host is read once, not again on every switch',
+    );
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));

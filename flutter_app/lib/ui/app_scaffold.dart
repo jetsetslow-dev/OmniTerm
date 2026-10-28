@@ -40,6 +40,7 @@ import 'view_model/infra_view_model.dart';
 import 'view_model/monitor_view_model.dart';
 import 'view_model/network_view_model.dart';
 import 'view_model/servers_view_model.dart';
+import 'view_model/system_specs_view_model.dart';
 import 'view_model/scripts_view_model.dart';
 import 'view_model/sftp_view_model.dart';
 import 'view_model/shell_view_model.dart';
@@ -371,7 +372,13 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
         await poller.cycle();
         return _describeHostRefresh(repository, probe);
       case Screen.monitor:
-        await context.read<MonitorViewModel>().loadActiveTab();
+        final monitor = context.read<MonitorViewModel>();
+        final server = monitor.monitoredServer;
+        if (monitor.activeTab == MonitorTab.specs && server != null) {
+          await context.read<SystemSpecsViewModel>().load(server);
+        } else {
+          await monitor.loadActiveTab();
+        }
       case Screen.infra:
         await context.read<InfraViewModel>().load();
       case Screen.sftp:

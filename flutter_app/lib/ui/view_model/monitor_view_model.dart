@@ -17,7 +17,8 @@ import 'app_state.dart';
 import 'telemetry_poller.dart';
 
 /// The Monitor screen's six sub-tabs, in the Kotlin's order (`ui/MonitorScreen.kt` line 100).
-enum MonitorTab { overview, processes, services, logs, scripts, cron }
+/// Monitor's sub-tabs in the order shown, as Kotlin's `MonitorTab`.
+enum MonitorTab { overview, specs, processes, services, logs, scripts, cron }
 
 /// The Monitor screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 ///
@@ -264,7 +265,8 @@ class MonitorViewModel extends ChangeNotifier {
     MonitorTab.services => loadServices(),
     MonitorTab.logs => loadLogs(),
     MonitorTab.cron => loadCron(),
-    // Scripts are repository-backed and need no remote refresh.
+    // Specs belong to SystemSpecsViewModel, which the screen refreshes; scripts are
+    // repository-backed and need no remote refresh.
     _ => Future<void>.value(),
   };
 

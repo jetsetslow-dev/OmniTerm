@@ -72,6 +72,7 @@ import 'ui/view_model/shell_view_model.dart';
 import 'ui/view_model/shares_view_model.dart';
 import 'ui/view_model/sftp_view_model.dart';
 import 'ui/view_model/servers_view_model.dart';
+import 'ui/view_model/system_specs_view_model.dart';
 import 'ui/theme/theme.dart';
 import 'ui/theme/text_scaling.dart';
 import 'ui/widgets/startup_recovery_app.dart';
@@ -348,6 +349,13 @@ class OmniTermApp extends StatelessWidget {
             context.read<AppState>(),
             transport: context.read<SshTransport>(),
             poller: context.read<TelemetryPoller>(),
+          ),
+          update: (_, app, previous) => previous!,
+        ),
+        ChangeNotifierProxyProvider<AppState, SystemSpecsViewModel>(
+          create: (context) => SystemSpecsViewModel(
+            context.read<AppState>(),
+            transport: context.read<SshTransport>(),
           ),
           update: (_, app, previous) => previous!,
         ),

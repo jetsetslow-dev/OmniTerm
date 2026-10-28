@@ -129,6 +129,7 @@ class AppState extends ChangeNotifier {
     await loadSettings();
 
     _serversSub = _repository.serversStream.listen((list) {
+      _forgetGoneOrMovedHosts(_servers, list);
       _servers = list;
       // Bind a concrete host as soon as the list loads. Without this, selectedServerId stays null on
       // a cold start while selectedServer falls back to the first host — and per-tab loaders whose
@@ -175,6 +176,24 @@ class AppState extends ChangeNotifier {
     if (_osByServer[serverId] == os) return;
     _osByServer[serverId] = os;
     notifyListeners();
+  }
+
+  /// Called with a host's id when what is known about it no longer applies: the host was deleted,
+  /// or its address or port changed so it may now be a different machine. Features holding per-host
+  /// readings (system specs, notably) drop them, as the OS cache below does.
+  final List<void Function(int serverId)> onHostForgotten = [];
+
+  /// Kotlin's `forgetTelemetryFor`, run for each host that left [next] or moved within it.
+  void _forgetGoneOrMovedHosts(List<Server> previous, List<Server> next) {
+    final now = {for (final s in next) s.id: s};
+    for (final before in previous) {
+      final after = now[before.id];
+      if (after != null && after.host == before.host && after.port == before.port) continue;
+      _osByServer.remove(before.id);
+      for (final listener in onHostForgotten) {
+        listener(before.id);
+      }
+    }
   }
 
   /// The OS family of [serverId], asking the host over [exec] when nothing has probed it yet.

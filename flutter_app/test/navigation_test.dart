@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/ui/navigation.dart';
+import 'package:omniterm/ui/view_model/monitor_view_model.dart';
 
 /// These lock in the exact behaviour of the Kotlin original (`AppViewModel.commitNavigation`,
 /// `navigateBack`, `swipeNavigate`). They are assertions about the *ported contract*, not about
@@ -176,8 +177,8 @@ void main() {
   group('swipeNavigate', () {
     test('pages through subtabs before changing tab', () {
       final nav = NavigationController()..navigateTo(Screen.monitor);
-      expect(subtabCount(Screen.monitor), 6);
-      for (var i = 1; i < 6; i++) {
+      expect(subtabCount(Screen.monitor), MonitorTab.values.length);
+      for (var i = 1; i < MonitorTab.values.length; i++) {
         nav.swipeNavigate(forward: true);
         expect(nav.currentScreen, Screen.monitor);
         expect(nav.currentSubtab(Screen.monitor), i);
@@ -186,7 +187,7 @@ void main() {
 
     test('past the last subtab it advances to the adjacent tab', () {
       final nav = NavigationController()..navigateTo(Screen.monitor);
-      for (var i = 0; i < 6; i++) {
+      for (var i = 0; i < MonitorTab.values.length; i++) {
         nav.swipeNavigate(forward: true);
       }
       expect(nav.currentScreen, Screen.shell);
@@ -239,7 +240,7 @@ void main() {
 
     test('setSubtab rejects out-of-range indices', () {
       final nav = NavigationController()
-        ..setSubtab(Screen.monitor, 6)
+        ..setSubtab(Screen.monitor, MonitorTab.values.length)
         ..setSubtab(Screen.monitor, -1);
       expect(nav.currentSubtab(Screen.monitor), 0);
     });

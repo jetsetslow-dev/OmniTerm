@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../domain/terminal_transcript.dart';
 import '../../l10n/app_localizations.dart';
 import '../theme/typography.dart';
 import '../view_model/shell_session.dart';
+import 'copy_with_confirmation.dart';
 
 /// The scrollback as selectable text: Kotlin's copy window (`ui/ShellScreen.kt`, the `copyDialog`).
 ///
@@ -165,12 +165,8 @@ class _TranscriptDialogState extends State<_TranscriptDialog> {
                       onPressed: text.trim().isEmpty
                           ? null
                           : () async {
-                              final messenger = ScaffoldMessenger.maybeOf(context);
                               final navigator = Navigator.of(context);
-                              await Clipboard.setData(ClipboardData(text: text));
-                              messenger?.showSnackBar(
-                                const SnackBar(content: Text('Copied to clipboard')),
-                              );
+                              await copyWithConfirmation(context, text);
                               navigator.pop();
                             },
                       icon: const Icon(Icons.content_copy, size: 18),

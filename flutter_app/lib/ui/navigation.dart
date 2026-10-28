@@ -77,7 +77,7 @@ const swipeNavOrder = <Screen>[
 
 /// Number of inner subtabs for a screen that supports horizontal subtab paging (0 = none).
 int subtabCount(Screen screen) => switch (screen) {
-  Screen.monitor => 6,
+  Screen.monitor => 7, // MonitorTab.values; navigation_test keeps the two in step
   Screen.infra => 5,
   Screen.fleet => 3,
   Screen.sftp => 4,

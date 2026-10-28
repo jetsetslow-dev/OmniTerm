@@ -21,6 +21,7 @@ import '../../view_model/telemetry_poller.dart';
 import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/license_gate.dart';
+import '../monitor/system_specs_view.dart';
 import 'server_form_sheet.dart';
 import 'server_form_state.dart';
 
@@ -872,6 +873,13 @@ class _ServerCard extends StatelessWidget {
             _DialogAction(value: 'pin', icon: Icons.push_pin, label: 'Pin to home screen'),
           if (shell != null)
             _DialogAction(value: 'shell', icon: Icons.terminal, label: 'Open terminal console'),
+          // Read over SSH, so only while the host answers.
+          _DialogAction(
+            value: 'specs',
+            icon: Icons.developer_board,
+            label: 'System specs',
+            enabled: server.status == 'online',
+          ),
           _DialogAction(value: 'monitor', icon: Icons.speed, label: 'Monitor live metrics'),
           _DialogAction(value: 'infra', icon: Icons.layers, label: 'Infrastructure / containers'),
           const _DialogAction(
@@ -898,6 +906,8 @@ class _ServerCard extends StatelessWidget {
         }
       case 'shell':
         await _connect(context);
+      case 'specs':
+        await showSystemSpecsDialog(context, server);
       case 'monitor':
         _navigate(Screen.monitor);
       case 'infra':
@@ -943,26 +953,36 @@ class _DialogAction extends StatelessWidget {
     required this.icon,
     required this.label,
     this.destructive = false,
+    this.enabled = true,
   });
 
   final String value;
   final IconData icon;
   final String label;
   final bool destructive;
+  final bool enabled;
 
   @override
-  Widget build(BuildContext context) => SimpleDialogOption(
-    onPressed: () => Navigator.pop(context, value),
-    child: Row(
-      children: [
-        Icon(icon, color: destructive ? OmniColors.red : null),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(label, style: TextStyle(color: destructive ? OmniColors.red : null)),
-        ),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final color = !enabled
+        ? Theme.of(context).disabledColor
+        : destructive
+        ? OmniColors.red
+        : null;
+    return SimpleDialogOption(
+      key: ValueKey('servers.action.$value'),
+      onPressed: enabled ? () => Navigator.pop(context, value) : null,
+      child: Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(label, style: TextStyle(color: color)),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _CardAction extends StatelessWidget {
