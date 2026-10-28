@@ -66,6 +66,9 @@ class RemoteCommandShellSyntaxTest {
             "tmuxHasSessionCommand" to RemoteCommands.tmuxHasSessionCommand("omniterm-1"),
             "tmuxCaptureHistoryCommand" to RemoteCommands.tmuxCaptureHistoryCommand("omniterm-1", 5_000),
             "tmuxInstallCommand" to RemoteCommands.tmuxInstallCommand(),
+            "tmuxKillCommand" to RemoteCommands.tmuxKillCommand("0"),
+            "tmuxAttachCommand(adopted)" to RemoteCommands.tmuxAttachCommand("main", adopted = true),
+            "TMUX_LIST_SESSIONS" to RemoteCommands.TMUX_LIST_SESSIONS,
         )
 
         commands.forEach { (label, script) -> assertParses(label, script) }

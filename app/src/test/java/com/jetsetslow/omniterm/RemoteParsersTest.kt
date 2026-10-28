@@ -285,7 +285,7 @@ class RemoteParsersTest {
     @Test
     fun tmuxReconnectRequiresExistingSessionAndNeverCreatesReplacement() {
         val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand("omniterm-test-name", 12_000)
-        assertTrue(cmd.contains("tmux has-session -t omniterm-test-name"))
+        assertTrue(cmd.contains("grep -qxF -- omniterm-test-name"))
         assertFalse(cmd.contains("new-session"))
     }
 
@@ -370,9 +370,54 @@ class RemoteParsersTest {
     fun tmuxClearHistoryCommandTargetsSanitisedSession() {
         val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxClearHistoryCommand("bad; rm -rf /")
         assertEquals(
-            com.jetsetslow.omniterm.data.RemoteCommands.TMUX_PATH + "tmux clear-history -t badrm-rf 2>/dev/null || true",
+            com.jetsetslow.omniterm.data.RemoteCommands.TMUX_PATH + "tmux clear-history -t badrm-rf: 2>/dev/null || true",
             cmd,
         )
+    }
+
+    /**
+     * `-t name` also matches a session whose name only starts with it, so once "0" has ended a check
+     * or kill would reach "01". Session checks list the names and match exactly; pane commands name
+     * the session explicitly, since a bare "0" means pane 0 of whichever session tmux picks.
+     */
+    @Test
+    fun tmuxCommandsTargetExactlyTheNamedSession() {
+        val c = com.jetsetslow.omniterm.data.RemoteCommands
+        assertEquals(c.TMUX_PATH + "tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -qxF -- 0 && echo yes || echo no", c.tmuxHasSessionCommand("0"))
+        assertTrue(c.tmuxKillCommand("0").contains("grep -qxF -- 0 && tmux kill-session -t 0 "))
+        for (cmd in listOf(c.tmuxCaptureScreenCommand("0"), c.tmuxCursorQuery("0"), c.tmuxExitCopyModeCommand("0"), c.tmuxCaptureHistoryCommand("0", 5_000))) {
+            assertTrue("bare pane target in: $cmd", cmd.contains("-t 0: ") || cmd.contains("-t 0:'"))
+            assertFalse("bare pane target in: $cmd", Regex("-t 0( |$)").containsMatchIn(cmd))
+        }
+    }
+
+    @Test
+    fun anAdoptedSessionKeepsItsOwnOptions() {
+        val c = com.jetsetslow.omniterm.data.RemoteCommands
+        for (cmd in listOf(c.tmuxAttachCommand("main", adopted = true), c.tmuxControlAttachCommand("main", adopted = true))) {
+            assertFalse("the user's other clients share these: $cmd", cmd.contains("set-option"))
+            assertTrue(cmd.contains("grep -qxF -- main && exec tmux"))
+        }
+        assertTrue(c.tmuxAttachCommand("omniterm-own").contains("mouse off"))
+    }
+
+    @Test
+    fun onlyNamesThatPassThroughUnchangedCanBeAttached() {
+        val c = com.jetsetslow.omniterm.data.RemoteCommands
+        listOf("0", "main", "my_project", "web-1").forEach { assertTrue(it, c.isAttachableTmuxName(it)) }
+        listOf("", "-x", "two words", "a;b", "it's", "x\$y").forEach { assertFalse(it, c.isAttachableTmuxName(it)) }
+    }
+
+    @Test
+    fun tmuxSessionsAreListedOldestFirstWithNamesThatMayHaveSpaces() {
+        val p = com.jetsetslow.omniterm.data.RemoteParsers
+        val sessions = checkNotNull(p.parseTmuxSessions("1700000100 0 3 main\r\n1700000000 2 1 two words\r\n\r\n"))
+        assertEquals(listOf("two words", "main"), sessions.map { it.name })
+        assertEquals(2, sessions[0].attachedClients)
+        assertEquals(3, sessions[1].windows)
+        assertEquals(1_700_000_100_000L, sessions[1].createdAtMs)
+        assertEquals(emptyList<Any>(), p.parseTmuxSessions(""))
+        assertEquals(null, p.parseTmuxSessions(com.jetsetslow.omniterm.data.RemoteCommands.TMUX_MISSING_MARKER + "\n"))
     }
 
     /**

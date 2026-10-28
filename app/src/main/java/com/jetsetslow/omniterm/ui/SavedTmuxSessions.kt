@@ -1,9 +1,21 @@
 package com.jetsetslow.omniterm.ui
 
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
+import com.jetsetslow.omniterm.data.RemoteTmuxSession
 import com.jetsetslow.omniterm.data.ServerEntity
 
-/** A tmux session that lives on a saved host's server, open here or only saved for recovery. */
+/** What the Attach dialog found running on its host. */
+data class HostTmuxListing(
+    val loading: Boolean = true,
+    /** The host's tmux sessions, oldest first; null when the host has no tmux. */
+    val sessions: List<RemoteTmuxSession>? = emptyList(),
+    val error: String? = null,
+)
+
+/**
+ * A tmux session that lives on a saved host's server, open here or only saved for recovery.
+ * Identified by host and name together: two hosts can each have a session called "main".
+ */
 internal data class HostTmuxSession(val serverId: Int, val tmuxName: String)
 
 /**
@@ -18,7 +30,7 @@ internal fun hostTmuxSessions(
 ): List<HostTmuxSession> =
     (openPersistent + saved.map { HostTmuxSession(it.serverId, it.tmuxName) })
         .filter { it.serverId in serverIds }
-        .distinctBy { it.tmuxName }
+        .distinct()
 
 /** How an attempt to end a tmux session on its server turned out. */
 internal sealed interface TmuxEndResult {

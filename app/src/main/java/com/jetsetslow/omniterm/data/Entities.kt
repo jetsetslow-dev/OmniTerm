@@ -6,12 +6,17 @@ import androidx.room.PrimaryKey
 
 /**
  * A persistent (tmux-backed) terminal session that should be re-offered after an app restart.
- * One row per live tmux session the app created; the [tmuxName] is how a reconnect re-attaches the
- * exact session. Pure runtime/device state — deliberately NOT included in backup/restore.
+ * One row per live tmux session the app created or attached to; the [tmuxName] is how a reconnect
+ * re-attaches the exact session. Pure runtime/device state — deliberately NOT included in
+ * backup/restore.
+ *
+ * Keyed by host and name together: names the app generates are unique, but a session attached
+ * from the host's own list is called whatever the user called it, and two hosts can each have a
+ * "main" (or tmux's default "0").
  */
-@Entity(tableName = "persistent_sessions")
+@Entity(tableName = "persistent_sessions", primaryKeys = ["serverId", "tmuxName"])
 data class PersistentSessionEntity(
-    @PrimaryKey val tmuxName: String,
+    val tmuxName: String,
     val serverId: Int,
     val serverName: String,
     val createdAt: Long = System.currentTimeMillis(),
@@ -20,6 +25,12 @@ data class PersistentSessionEntity(
     // every time the user backgrounds the session again, so "backgrounded since" answers "how long
     // has it been sitting there since I last used it?".
     val backgroundedAt: Long = System.currentTimeMillis(),
+    /**
+     * The session was already running on the host and the user attached to it. OmniTerm leaves
+     * its tmux options alone (its own sessions get mouse off and a history limit), because the
+     * user's other tmux clients share them.
+     */
+    val adopted: Boolean = false,
 )
 
 /**

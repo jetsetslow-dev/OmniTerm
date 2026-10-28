@@ -65,6 +65,7 @@ import com.jetsetslow.omniterm.billing.LicenseState
 import com.jetsetslow.omniterm.billing.createLicenseController
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
+import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1504,10 +1505,10 @@ private fun SavedSessionRemovalDialog(viewModel: AppViewModel, saved: Persistent
         },
         confirmButton = {
             Row {
-                TextButton(enabled = !ending, onClick = { viewModel.forgetSavedSession(saved.tmuxName) }) {
+                TextButton(enabled = !ending, onClick = { viewModel.forgetSavedSession(saved.serverId, saved.tmuxName) }) {
                     Text(stringResource(R.string.forget))
                 }
-                TextButton(enabled = !ending, onClick = { viewModel.endSavedSession(saved.tmuxName) }) {
+                TextButton(enabled = !ending, onClick = { viewModel.endSavedSession(saved.serverId, saved.tmuxName) }) {
                     Text(stringResource(R.string.end_session), color = if (ending) Color.Unspecified else OmniColors.red)
                 }
             }
@@ -2378,6 +2379,7 @@ fun ServersMainView(viewModel: AppViewModel) {
 
         HostCheckDialog(viewModel)
         SystemSpecsDialog(viewModel)
+        AttachTmuxDialog(viewModel)
 
         if (showAddSheet) {
             // Non-null only when the sheet was opened from a LAN scan result: seeds the address and
@@ -2466,6 +2468,21 @@ fun ServersMainView(viewModel: AppViewModel) {
                             Icon(Icons.Filled.Terminal, null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(stringResource(R.string.open_terminal_console))
+                        }
+                        // A Windows host has no tmux: absent rather than shown and refused.
+                        if (RemoteCommands.hasUnixShell(viewModel.knownOs(srv))) {
+                            TextButton(
+                                onClick = {
+                                    selectedForActionSheet = null
+                                    viewModel.openAttachTmux(srv)
+                                },
+                                enabled = viewModel.isPickableHost(srv),
+                                modifier = Modifier.testTag("hosts.attach_tmux"),
+                            ) {
+                                Icon(Icons.Filled.Terminal, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.attach_existing_tmux))
+                            }
                         }
                         TextButton(
                             onClick = {

@@ -364,8 +364,8 @@ interface PersistentSessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(session: PersistentSessionEntity)
 
-    @Query("DELETE FROM persistent_sessions WHERE tmuxName = :tmuxName")
-    suspend fun delete(tmuxName: String)
+    @Query("DELETE FROM persistent_sessions WHERE serverId = :serverId AND tmuxName = :tmuxName")
+    suspend fun delete(serverId: Int, tmuxName: String)
 
     @Query("DELETE FROM persistent_sessions WHERE serverId = :serverId")
     suspend fun deleteForServer(serverId: Int)

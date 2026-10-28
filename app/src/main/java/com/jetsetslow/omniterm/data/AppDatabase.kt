@@ -29,7 +29,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 22,
+    version = 23,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -262,6 +262,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Saved tmux sessions become keyed by host and name: a session attached from a host's own
+        // list keeps the user's name, and two hosts can each have a "main". `adopted` marks those
+        // attached sessions. SQLite cannot change a primary key in place, so the table is rebuilt.
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `persistent_sessions_new` (" +
+                        "`tmuxName` TEXT NOT NULL, `serverId` INTEGER NOT NULL, `serverName` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, `backgroundedAt` INTEGER NOT NULL, " +
+                        "`adopted` INTEGER NOT NULL, PRIMARY KEY(`serverId`, `tmuxName`))"
+                )
+                db.execSQL(
+                    "INSERT INTO `persistent_sessions_new` " +
+                        "(tmuxName, serverId, serverName, createdAt, backgroundedAt, adopted) " +
+                        "SELECT tmuxName, serverId, serverName, createdAt, backgroundedAt, 0 FROM `persistent_sessions`"
+                )
+                db.execSQL("DROP TABLE `persistent_sessions`")
+                db.execSQL("ALTER TABLE `persistent_sessions_new` RENAME TO `persistent_sessions`")
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -331,6 +352,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_19_20,
             MIGRATION_20_21,
             MIGRATION_21_22,
+            MIGRATION_22_23,
         )
 
         fun getDatabase(context: Context): AppDatabase {

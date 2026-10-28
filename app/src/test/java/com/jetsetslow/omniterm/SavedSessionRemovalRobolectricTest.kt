@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
+import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshTransport
@@ -48,36 +49,36 @@ import java.util.concurrent.Executors
 class SavedSessionRemovalRobolectricTest {
 
     @Test
-    fun forgetDropsTheEntryWithoutTouchingTheServer() = withSavedSession { model, repository, transport, _ ->
-        onMain { model.requestRemoveSavedSession(NAME) }
+    fun forgetDropsTheEntryWithoutTouchingTheServer() = withSavedSession { model, repository, transport, id ->
+        onMain { model.requestRemoveSavedSession(id, NAME) }
         assertEquals(NAME, model.savedSessionPendingRemoval?.tmuxName)
-        onMain { model.forgetSavedSession(NAME) }
+        onMain { model.forgetSavedSession(id, NAME) }
         awaitTrue { repository.getPersistentSessions().isEmpty() && model.restorablePersistentSessions.isEmpty() }
         assertNull(model.savedSessionPendingRemoval)
         assertTrue("Forget must not end anything on the server", transport.kills.isEmpty())
     }
 
     @Test
-    fun anUnreachableServerKeepsTheEntryAndStillOffersForget() = withSavedSession { model, repository, transport, _ ->
+    fun anUnreachableServerKeepsTheEntryAndStillOffersForget() = withSavedSession { model, repository, transport, id ->
         transport.reachable = false
         onMain {
-            model.requestRemoveSavedSession(NAME)
-            model.endSavedSession(NAME)
+            model.requestRemoveSavedSession(id, NAME)
+            model.endSavedSession(id, NAME)
         }
         awaitTrue { !model.isEndingSavedSession && model.savedSessionRemovalError != null }
         assertTrue(checkNotNull(model.savedSessionRemovalError).startsWith("Couldn't reach Saved fixture"))
         assertNotNull("The dialog stays open with Forget", model.savedSessionPendingRemoval)
         assertTrue(repository.getPersistentSessions().any { it.tmuxName == NAME })
 
-        onMain { model.forgetSavedSession(NAME) }
+        onMain { model.forgetSavedSession(id, NAME) }
         awaitTrue { repository.getPersistentSessions().isEmpty() }
     }
 
     @Test
-    fun endingDropsTheEntryOnceTmuxConfirmsItIsGone() = withSavedSession { model, repository, transport, _ ->
+    fun endingDropsTheEntryOnceTmuxConfirmsItIsGone() = withSavedSession { model, repository, transport, id ->
         onMain {
-            model.requestRemoveSavedSession(NAME)
-            model.endSavedSession(NAME)
+            model.requestRemoveSavedSession(id, NAME)
+            model.endSavedSession(id, NAME)
         }
         awaitTrue { repository.getPersistentSessions().isEmpty() && model.savedSessionPendingRemoval == null }
         assertEquals(listOf(NAME), transport.kills)
@@ -221,8 +222,8 @@ class SavedSessionRemovalRobolectricTest {
                 kills.add(command.substringAfter("-t ").substringBefore(' '))
                 return ""
             }
-            if (command.contains("has-session")) {
-                return if (kills.any { command.contains(it) }) "no" else "yes"
+            listOf(NAME, SECOND).firstOrNull { command == RemoteCommands.tmuxHasSessionCommand(it) }?.let { name ->
+                return if (name in kills) "no" else "yes"
             }
             return ""
         }

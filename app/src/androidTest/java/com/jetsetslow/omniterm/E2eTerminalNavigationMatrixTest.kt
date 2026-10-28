@@ -194,7 +194,8 @@ class E2eTerminalNavigationMatrixTest {
                 TerminalSessionManager.clearAll()
                 vm.saveBackgroundKeepAliveToggle(priorKeepAlive)
             }
-            created.forEach { repository.deletePersistentSession(it) }
+            repository.getPersistentSessions().filter { it.tmuxName in created }
+                .forEach { repository.deletePersistentSession(it.serverId, it.tmuxName) }
         }
     }
 
@@ -346,7 +347,7 @@ class E2eTerminalNavigationMatrixTest {
                 vm.saveBackgroundKeepAliveToggle(priorKeepAlive)
             }
             val dao = AppDatabase.getDatabase(composeRule.activity).persistentSessionDao()
-            createdTmuxNames.forEach { dao.delete(it) }
+            dao.getAll().filter { it.tmuxName in createdTmuxNames }.forEach { dao.delete(it.serverId, it.tmuxName) }
             TerminalSessionManager.clearAll()
         }
     }

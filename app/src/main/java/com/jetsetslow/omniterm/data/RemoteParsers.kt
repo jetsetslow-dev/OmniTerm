@@ -199,13 +199,42 @@ object RemoteCommands {
      * [name] so multiple persistent sessions to one host re-attach their own session on reconnect.
      */
     private fun tmuxSafeName(name: String) =
-        name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        name.filter { it.isTmuxNameChar() }.ifBlank { "omniterm" }
 
-    /** Configure an existing session before the regular/control client attaches to it. */
-    private fun tmuxExistingBootstrap(safe: String, historyLimit: Int): String {
+    private fun Char.isTmuxNameChar() = isLetterOrDigit() || this == '-' || this == '_'
+
+    /**
+     * Whether a session found on the host can be attached by its own name. Names go into shell
+     * commands unquoted, so it must pass [tmuxSafeName] unchanged, and it must not start with `-`,
+     * which tmux would read as an option. tmux's default names (0, 1, …) qualify.
+     */
+    fun isAttachableTmuxName(name: String): Boolean =
+        name.isNotEmpty() && name.first() != '-' && name.all { it.isTmuxNameChar() }
+
+    /**
+     * Succeeds only when a session is called exactly [safe]. `-t name` also accepts a session whose
+     * name merely starts with it, so once a session called "0" has ended, `has-session -t 0` finds
+     * "01", and an attach or kill would act on a session the user never picked.
+     */
+    private fun tmuxExactSession(safe: String) =
+        "tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -qxF -- $safe"
+
+    /**
+     * The active pane of session [safe]. A bare name is tried as a pane and then a window before a
+     * session, so a session called "0" would reach pane 0 of whichever session tmux took as current.
+     */
+    private fun tmuxPane(safe: String) = "$safe:"
+
+    /**
+     * Configure an existing session before the regular/control client attaches to it. A session
+     * the user attached from the host's own list is left as it is ([configure] false): their other
+     * tmux clients share its options.
+     */
+    private fun tmuxExistingBootstrap(safe: String, historyLimit: Int, configure: Boolean = true): String {
         val limit = historyLimit.coerceIn(1_000, 50_000)
-        return TMUX_PATH + "command -v tmux >/dev/null 2>&1 && " +
-            "tmux has-session -t $safe 2>/dev/null && " +
+        val bootstrap = TMUX_PATH + "command -v tmux >/dev/null 2>&1 && " + tmuxExactSession(safe) + " && "
+        if (!configure) return bootstrap
+        return bootstrap +
             "(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && " +
             // Touch scrolling is handled locally by the app. Keep tmux mouse mode off so normal
             // drags don't get captured by tmux copy-mode or terminal apps in surprising ways.
@@ -233,10 +262,10 @@ object RemoteCommands {
         return tmuxCreateBootstrap(safe, historyLimit) + "exec tmux -C attach-session -t $safe\n"
     }
 
-    fun tmuxAttachCommand(name: String, historyLimit: Int = 10_000): String {
-        // Defensive: only allow our own [a-z0-9-] names through into the shell command.
+    fun tmuxAttachCommand(name: String, historyLimit: Int = 10_000, adopted: Boolean = false): String {
+        // Defensive: only allow [A-Za-z0-9_-] names through into the shell command.
         val safe = tmuxSafeName(name)
-        return tmuxExistingBootstrap(safe, historyLimit) + "exec tmux attach-session -t $safe\n"
+        return tmuxExistingBootstrap(safe, historyLimit, configure = !adopted) + "exec tmux attach-session -t $safe\n"
     }
 
     /**
@@ -245,18 +274,31 @@ object RemoteCommands {
      * repaint (see [com.jetsetslow.omniterm.data.term.TmuxControlParser]). Single `-C`, not `-CC`
      * — the double form wraps the conversation in a DCS envelope for terminal-embedded clients.
      */
-    fun tmuxControlAttachCommand(name: String, historyLimit: Int = 10_000): String {
+    fun tmuxControlAttachCommand(name: String, historyLimit: Int = 10_000, adopted: Boolean = false): String {
         val safe = tmuxSafeName(name)
-        return tmuxExistingBootstrap(safe, historyLimit) + "exec tmux -C attach-session -t $safe\n"
+        return tmuxExistingBootstrap(safe, historyLimit, configure = !adopted) + "exec tmux -C attach-session -t $safe\n"
     }
+
+    /** Marks a host without tmux in [TMUX_LIST_SESSIONS]'s output. */
+    const val TMUX_MISSING_MARKER = "##OMNI-NO-TMUX"
+
+    /**
+     * The host's tmux sessions, one per line: when each was created (epoch seconds), how many
+     * clients are attached, how many windows it has, and its name last, since a name the user chose
+     * may contain spaces. See [RemoteParsers.parseTmuxSessions].
+     */
+    const val TMUX_LIST_SESSIONS = TMUX_PATH +
+        "if command -v tmux >/dev/null 2>&1; then " +
+        "tmux list-sessions -F '#{session_created} #{session_attached} #{session_windows} #{session_name}' 2>/dev/null; true; " +
+        "else echo '$TMUX_MISSING_MARKER'; fi"
 
     /** Active pane id of [name]'s current window, e.g. `%0` (side channel; control mode needs it to route %output). */
     fun tmuxActivePaneQuery(name: String): String =
-        TMUX_PATH + "tmux display-message -p -t ${tmuxSafeName(name)} '#{pane_id}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{pane_id}' 2>/dev/null || true"
 
     /** Cursor position as `x y` (0-based) for the control-mode repaint seed. */
     fun tmuxCursorQuery(name: String): String =
-        TMUX_PATH + "tmux display-message -p -t ${tmuxSafeName(name)} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
 
     /**
      * Prints `1` when a full-screen TUI owns the pane's alternate screen, else `0`. Drives
@@ -264,7 +306,7 @@ object RemoteCommands {
      * side has no history for them), plain shells keep the local-buffer scroll.
      */
     fun tmuxAlternateOnQuery(name: String): String =
-        TMUX_PATH + "tmux display-message -p -t ${tmuxSafeName(name)} '#{alternate_on}' 2>/dev/null || true"
+        TMUX_PATH + "tmux display-message -p -t ${tmuxPane(tmuxSafeName(name))} '#{alternate_on}' 2>/dev/null || true"
 
     /** Cursor position for an exact pane id, avoiding an active-pane change between side queries. */
     fun tmuxPaneCursorQuery(paneId: String): String {
@@ -277,7 +319,7 @@ object RemoteCommands {
      * repaints on attach, so the client must paint the current pane content itself.
      */
     fun tmuxCaptureScreenCommand(name: String): String =
-        TMUX_PATH + "tmux capture-pane -p -e -t ${tmuxSafeName(name)} 2>/dev/null || true"
+        TMUX_PATH + "tmux capture-pane -p -e -t ${tmuxPane(tmuxSafeName(name))} 2>/dev/null || true"
 
     /**
      * [tmuxCaptureScreenCommand] guarded on `#{alternate_on}`, for the REGULAR-attach pre-paint.
@@ -292,7 +334,7 @@ object RemoteCommands {
      * skipping costs nothing while the TUI is up. Same guard as [tmuxCaptureHistoryCommand].
      */
     fun tmuxCaptureScreenIfNoTuiCommand(name: String): String {
-        val safe = tmuxSafeName(name)
+        val safe = tmuxPane(tmuxSafeName(name))
         return TMUX_PATH + "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
             "then :; else tmux capture-pane -p -e -t $safe 2>/dev/null; fi || true"
     }
@@ -303,19 +345,17 @@ object RemoteCommands {
         return TMUX_PATH + "tmux capture-pane -p -e -t $safe 2>/dev/null || true"
     }
 
-    fun tmuxHasSessionCommand(name: String): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return TMUX_PATH + "tmux has-session -t $safe >/dev/null 2>&1 && echo yes || echo no"
-    }
+    fun tmuxHasSessionCommand(name: String): String =
+        TMUX_PATH + tmuxExactSession(tmuxSafeName(name)) + " && echo yes || echo no"
 
     fun tmuxKillCommand(name: String): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return TMUX_PATH + "tmux kill-session -t $safe 2>/dev/null"
+        val safe = tmuxSafeName(name)
+        return TMUX_PATH + tmuxExactSession(safe) + " && tmux kill-session -t $safe 2>/dev/null"
     }
 
     /** Clear only the active pane's server-side history; the visible screen remains intact. */
     fun tmuxClearHistoryCommand(name: String): String =
-        TMUX_PATH + "tmux clear-history -t ${tmuxSafeName(name)} 2>/dev/null || true"
+        TMUX_PATH + "tmux clear-history -t ${tmuxPane(tmuxSafeName(name))} 2>/dev/null || true"
 
     /**
      * Dump the pane's scrollback history (colours preserved via -e, wrapped lines re-joined via
@@ -330,7 +370,7 @@ object RemoteCommands {
      * callers keep their dirty flag armed and retry after the TUI exits.
      */
     fun tmuxCaptureHistoryCommand(name: String, maxLines: Int): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        val safe = tmuxPane(tmuxSafeName(name))
         val lines = maxLines.coerceIn(1_000, 50_000)
         return TMUX_PATH + "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
             "then :; else tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null; fi || true"
@@ -343,7 +383,7 @@ object RemoteCommands {
      * would land at the shell prompt as a literal letter. Harmless no-op outside copy-mode.
      */
     fun tmuxExitCopyModeCommand(name: String): String {
-        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        val safe = tmuxPane(tmuxSafeName(name))
         return TMUX_PATH + "tmux send-keys -X -t $safe cancel 2>/dev/null || true"
     }
 
@@ -2219,6 +2259,25 @@ object RemoteParsers {
             }
         }
         return ProcessUsage(disk, gpu, gpuReported)
+    }
+
+    /**
+     * The sessions [RemoteCommands.TMUX_LIST_SESSIONS] listed, oldest first, or null when the host
+     * has no tmux. No running tmux server is simply no sessions.
+     */
+    fun parseTmuxSessions(output: String): List<RemoteTmuxSession>? {
+        if (output.contains(RemoteCommands.TMUX_MISSING_MARKER)) return null
+        return output.lineSequence().map { it.trimEnd('\r') }.mapNotNull { line ->
+            val t = line.split(' ', limit = 4)
+            val created = t.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+            val name = t.getOrNull(3)?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            RemoteTmuxSession(
+                name = name,
+                windows = t[2].toIntOrNull() ?: 0,
+                attachedClients = t[1].toIntOrNull() ?: 0,
+                createdAtMs = created * 1000,
+            )
+        }.sortedBy { it.createdAtMs }.toList()
     }
 
     /** The whitespace-split lines of the section [marker] starts, up to the next one. */

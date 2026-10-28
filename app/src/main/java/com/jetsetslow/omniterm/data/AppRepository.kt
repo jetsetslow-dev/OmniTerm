@@ -177,7 +177,8 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun getLastSampleTimes(): List<ServerLastSample> = db.metricHistoryDao().getLastSampleTimes()
     suspend fun getPersistentSessions(): List<PersistentSessionEntity> = db.persistentSessionDao().getAll()
     suspend fun upsertPersistentSession(session: PersistentSessionEntity) = db.persistentSessionDao().upsert(session)
-    suspend fun deletePersistentSession(tmuxName: String) = db.persistentSessionDao().delete(tmuxName)
+    suspend fun deletePersistentSession(serverId: Int, tmuxName: String) =
+        db.persistentSessionDao().delete(serverId, tmuxName)
     suspend fun deletePersistentSessionsForServer(serverId: Int) = db.persistentSessionDao().deleteForServer(serverId)
     suspend fun renamePersistentSessionsForServer(serverId: Int, serverName: String) =
         db.persistentSessionDao().renameServer(serverId, serverName)

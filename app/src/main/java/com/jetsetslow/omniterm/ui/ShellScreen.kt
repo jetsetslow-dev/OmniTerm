@@ -119,9 +119,7 @@ import com.jetsetslow.omniterm.R
 private fun SessionPicker(viewModel: AppViewModel) {
     val chrome = shellChromePalette()
     val sessions = viewModel.activeSessions
-    val restorableSessions = viewModel.restorablePersistentSessions.filter { r ->
-        sessions.none { it.tmuxName == r.tmuxName }
-    }
+    val restorableSessions = viewModel.resumableSavedSessions
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text(stringResource(R.string.active_sessions), color = chrome.text, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
@@ -191,10 +189,10 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             modifier = Modifier.padding(top = if (sessions.isEmpty()) 0.dp else 8.dp)
                         )
                     }
-                    items(restorableSessions, key = { it.tmuxName }) { s ->
+                    items(restorableSessions, key = { "${it.serverId}/${it.tmuxName}" }) { s ->
                         OmniCard(
                             modifier = Modifier.fillMaxWidth().clickable {
-                                viewModel.resumePersistentSession(s.tmuxName)
+                                viewModel.resumePersistentSession(s.serverId, s.tmuxName)
                             },
                             leftAccent = OmniColors.amber
                         ) {
@@ -213,10 +211,10 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                     )
                                     Text(stringResource(R.string.tap_to_reattach_tmux_session), fontSize = 12.sp, color = OmniColors.amber)
                                 }
-                                IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
+                                IconButton(onClick = { viewModel.resumePersistentSession(s.serverId, s.tmuxName) }) {
                                     Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.resume), tint = OmniColors.cyan)
                                 }
-                                IconButton(onClick = { viewModel.requestRemoveSavedSession(s.tmuxName) }) {
+                                IconButton(onClick = { viewModel.requestRemoveSavedSession(s.serverId, s.tmuxName) }) {
                                     Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
                                 }
                             }
@@ -459,9 +457,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                         currentSession != null -> ActiveTerminal(viewModel, confirm)
                         else -> {
                             val activeHasAny = viewModel.activeSessions.isNotEmpty()
-                            val restorableHasAny = viewModel.restorablePersistentSessions.any { r ->
-                                viewModel.activeSessions.none { it.tmuxName == r.tmuxName }
-                            }
+                            val restorableHasAny = viewModel.resumableSavedSessions.isNotEmpty()
                             if (activeHasAny || restorableHasAny) {
                                 SessionPicker(viewModel)
                             } else {
@@ -829,9 +825,7 @@ private fun TerminalOpenPicker(
     val backgroundSessions = viewModel.activeSessions.filter {
         it.id != currentSession?.id && it.id != otherPaneSessionId
     }
-    val resumableSessions = viewModel.restorablePersistentSessions.filter { saved ->
-        viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
-    }
+    val resumableSessions = viewModel.resumableSavedSessions
     var expanded by remember { mutableStateOf(false) }
     // Session ages are minute-resolution, so re-read the clock once a minute while the menu is
     // open rather than recomposing the whole switcher on every frame.
@@ -943,13 +937,13 @@ private fun TerminalOpenPicker(
                         },
                         onClick = {
                             if (viewModel.isMultiSsh) viewModel.setMultiSshFocus(focusedPane)
-                            viewModel.resumePersistentSession(saved.tmuxName)
+                            viewModel.resumePersistentSession(saved.serverId, saved.tmuxName)
                             expanded = false
                         },
                         trailingIcon = {
                             IconButton(onClick = {
                                 expanded = false
-                                viewModel.requestRemoveSavedSession(saved.tmuxName)
+                                viewModel.requestRemoveSavedSession(saved.serverId, saved.tmuxName)
                             }) {
                                 Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
                             }
@@ -1707,9 +1701,7 @@ private fun MultiSshPanePicker(
     val selectableSessions = viewModel.activeSessions.filter {
         it.id != otherSessionId && it.id != currentSession?.id
     }
-    val resumableSessions = viewModel.restorablePersistentSessions.filter { saved ->
-        viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
-    }
+    val resumableSessions = viewModel.resumableSavedSessions
     var expanded by remember { mutableStateOf(false) }
     val ageNowMs = rememberSessionAgeClock(expanded)
 
@@ -1801,13 +1793,13 @@ private fun MultiSshPanePicker(
                         onClick = {
                             currentSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             viewModel.setMultiSshFocus(paneIndex)
-                            viewModel.resumePersistentSession(saved.tmuxName)
+                            viewModel.resumePersistentSession(saved.serverId, saved.tmuxName)
                             expanded = false
                         },
                         trailingIcon = {
                             IconButton(onClick = {
                                 expanded = false
-                                viewModel.requestRemoveSavedSession(saved.tmuxName)
+                                viewModel.requestRemoveSavedSession(saved.serverId, saved.tmuxName)
                             }) {
                                 Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.remove_saved_session), tint = OmniColors.red)
                             }

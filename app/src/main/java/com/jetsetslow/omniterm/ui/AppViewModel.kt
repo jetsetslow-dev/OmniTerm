@@ -1833,6 +1833,12 @@ class AppViewModel @JvmOverloads constructor(
     // Parallel multi-session management
     val activeSessions get() = TerminalSessionManager.activeSessions
     var restorablePersistentSessions by mutableStateOf<List<com.jetsetslow.omniterm.data.PersistentSessionEntity>>(emptyList()); private set
+
+    /** Saved tmux sessions not open in a tab right now: the ones to offer for resuming. */
+    val resumableSavedSessions: List<com.jetsetslow.omniterm.data.PersistentSessionEntity>
+        get() = restorablePersistentSessions.filter { saved ->
+            activeSessions.none { it.persistent && it.serverId == saved.serverId && it.tmuxName == saved.tmuxName }
+        }
     var currentSessionId: String?
         get() = TerminalSessionManager.currentSessionId
         set(value) { TerminalSessionManager.currentSessionId = value }
@@ -2035,7 +2041,7 @@ class AppViewModel @JvmOverloads constructor(
     // Error from an initial connect that never produced a session (bad creds, host down, …). Unlike
     // [terminalDisconnectError] this isn't tied to a session, so it can surface on the connect prompt.
     var terminalConnectError by mutableStateOf<String?>(null)
-    private var terminalTmuxRetryName: String? = null
+    private var terminalTmuxRetry: HostTmuxSession? = null
     var terminalConnectionFailure by mutableStateOf<SshConnectionFailure?>(null)
         private set
     private val _terminalConnectionState = MutableStateFlow<TerminalConnectionState>(TerminalConnectionState.Idle)
@@ -5280,14 +5286,14 @@ class AppViewModel @JvmOverloads constructor(
 
     fun dismissTerminalConnectError() {
         terminalConnectError = null
-        terminalTmuxRetryName = null
+        terminalTmuxRetry = null
         terminalConnectionFailure = null
         _terminalConnectionState.value = TerminalConnectionState.Idle
     }
 
     fun retryTerminalConnectError() {
-        val tmuxName = terminalTmuxRetryName
-        if (tmuxName != null) resumePersistentSession(tmuxName)
+        val retry = terminalTmuxRetry
+        if (retry != null) resumePersistentSession(retry.serverId, retry.tmuxName)
         else if (currentSessionId != null) attachSession(currentSessionId!!)
         else connectTerminal()
     }
@@ -5518,7 +5524,7 @@ class AppViewModel @JvmOverloads constructor(
         onFinished: ((Boolean) -> Unit)? = null,
     ) {
         if (isTerminalConnecting) return
-        terminalTmuxRetryName = null
+        terminalTmuxRetry = null
         // Publish/refresh the launcher shortcut for this host; connecting is the usage signal
         // that keeps frequently used hosts ranked in the launcher's dynamic shortcut list.
         // Skipped for ad-hoc hosts (negative id, see quickConnect): they have no database row, so
@@ -6077,9 +6083,9 @@ class AppViewModel @JvmOverloads constructor(
         job.start()
     }
 
-    fun resumePersistentSession(tmuxName: String) {
-        terminalTmuxRetryName = tmuxName
-        val existingSession = activeSessions.find { it.tmuxName == tmuxName }
+    fun resumePersistentSession(serverId: Int, tmuxName: String) {
+        terminalTmuxRetry = HostTmuxSession(serverId, tmuxName)
+        val existingSession = activeSessions.find { it.persistent && it.serverId == serverId && it.tmuxName == tmuxName }
         if (existingSession != null) {
             if (isMultiSsh) {
                 assignMultiSshPane(multiSshFocusedPane, existingSession.id)
@@ -6087,7 +6093,7 @@ class AppViewModel @JvmOverloads constructor(
             } else attachSession(existingSession.id)
             return
         }
-        val sessionEntity = restorablePersistentSessions.find { it.tmuxName == tmuxName }
+        val sessionEntity = restorablePersistentSessions.find { it.serverId == serverId && it.tmuxName == tmuxName }
         if (sessionEntity == null) {
             terminalConnectError = "This tmux recovery entry is no longer available. Select another session or connect to the host."
             return
@@ -6123,7 +6129,7 @@ class AppViewModel @JvmOverloads constructor(
                     false -> {
                         invalidateCurrentHealth(srv.id, "The tmux session no longer exists. Waiting for current host metrics.")
                         markServerReachableAfterSsh(srv)
-                        forgetPersistentSession(tmuxName)
+                        forgetPersistentSession(srv.id, tmuxName)
                         isTerminalConnecting = false
                         val failure = SshConnectionFailure.Dropped
                         terminalConnectionFailure = failure
@@ -6167,19 +6173,22 @@ class AppViewModel @JvmOverloads constructor(
                 shellSession.lastRows = termRows
                 shellSession.persistent = true
                 shellSession.tmuxName = tmuxName
+                shellSession.adopted = sessionEntity.adopted
                 shellSession.controlMode = tmuxControlMode
                 // Age the resumed shell from when the tmux session was first created, not from
                 // this re-attach — the remote session (and whatever runs in it) is that old.
                 shellSession.startedAtMs = sessionEntity.createdAt
                 emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
                 if (shellSession.controlMode) {
-                    session.write(RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
+                    session.write(
+                        RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted).toByteArray(),
+                    )
                 } else {
                     // A regular tmux client paints its own screen on attach. Do not block an
                     // already-open SSH channel on optional side-channel screen/cursor captures:
                     // each could wait for the command timeout while the UI said Opening channel.
                     // History hydration below preserves the live screen and runs independently.
-                    session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
+                    session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted).toByteArray())
                 }
                 check(!session.closed.value) { "SSH channel closed while attaching tmux" }
 
@@ -6456,7 +6465,7 @@ class AppViewModel @JvmOverloads constructor(
                     reconnectSession(shellSession)
                 } else if (shouldTearDown) {
                     if (shellSession.persistent) {
-                        forgetPersistentSession(shellSession.tmuxName)
+                        forgetPersistentSession(shellSession.serverId, shellSession.tmuxName)
                     }
                     cleanupSession(shellSession)
                 } else {
@@ -6488,14 +6497,16 @@ class AppViewModel @JvmOverloads constructor(
             // Commit every pane together. A failed later write must not partially update recovery
             // state, and no session is closed until this transaction has actually committed.
             val saved = repository.inTransaction {
-                val known = repository.getPersistentSessions().associateBy { it.tmuxName }
+                val known = repository.getPersistentSessions().associateBy { HostTmuxSession(it.serverId, it.tmuxName) }
                 eligible.forEach { shellSession ->
                     repository.upsertPersistentSession(PersistentSessionEntity(
                         shellSession.tmuxName,
                         shellSession.serverId,
                         shellSession.serverName,
-                        createdAt = known[shellSession.tmuxName]?.createdAt ?: shellSession.startedAtMs,
+                        createdAt = known[HostTmuxSession(shellSession.serverId, shellSession.tmuxName)]?.createdAt
+                            ?: shellSession.startedAtMs,
                         backgroundedAt = System.currentTimeMillis(),
+                        adopted = shellSession.adopted,
                     ))
                 }
                 repository.getPersistentSessions()
@@ -6512,10 +6523,11 @@ class AppViewModel @JvmOverloads constructor(
         return generateUniqueTmuxSessionName(existingNames)
     }
 
-    private suspend fun forgetPersistentSession(tmuxName: String) {
+    private suspend fun forgetPersistentSession(serverId: Int, tmuxName: String) {
         persistentSessionMutationMutex.withLock {
-            repository.deletePersistentSession(tmuxName)
-            restorablePersistentSessions = restorablePersistentSessions.filter { it.tmuxName != tmuxName }
+            repository.deletePersistentSession(serverId, tmuxName)
+            restorablePersistentSessions =
+                restorablePersistentSessions.filterNot { it.serverId == serverId && it.tmuxName == tmuxName }
         }
     }
 
@@ -6530,8 +6542,9 @@ class AppViewModel @JvmOverloads constructor(
     var isEndingSavedSession by mutableStateOf(false)
         private set
 
-    fun requestRemoveSavedSession(tmuxName: String) {
-        savedSessionPendingRemoval = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
+    fun requestRemoveSavedSession(serverId: Int, tmuxName: String) {
+        savedSessionPendingRemoval =
+            restorablePersistentSessions.find { it.serverId == serverId && it.tmuxName == tmuxName } ?: return
         savedSessionRemovalError = null
     }
 
@@ -6546,20 +6559,20 @@ class AppViewModel @JvmOverloads constructor(
      * it, keeps running. This is the way out for a host that no longer answers: without it, the
      * entry waited for a server that would never confirm the session gone.
      */
-    fun forgetSavedSession(tmuxName: String) {
+    fun forgetSavedSession(serverId: Int, tmuxName: String) {
         if (isEndingSavedSession) return
         savedSessionPendingRemoval = null
         savedSessionRemovalError = null
-        viewModelScope.launch { forgetPersistentSession(tmuxName) }
+        viewModelScope.launch { forgetPersistentSession(serverId, tmuxName) }
     }
 
     /**
      * Ends a saved session on its server, then forgets it. The entry is dropped only once tmux
      * confirms the session is gone; otherwise the dialog stays open with the reason and Forget.
      */
-    fun endSavedSession(tmuxName: String) {
+    fun endSavedSession(serverId: Int, tmuxName: String) {
         if (isEndingSavedSession) return
-        val saved = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
+        val saved = restorablePersistentSessions.find { it.serverId == serverId && it.tmuxName == tmuxName } ?: return
         val name = displayTmuxSessionName(tmuxName)
         val srv = servers.value.find { it.id == saved.serverId }
         if (srv == null) {
@@ -6588,7 +6601,7 @@ class AppViewModel @JvmOverloads constructor(
             }
             when (result) {
                 TmuxEndResult.Ended -> {
-                    forgetPersistentSession(tmuxName)
+                    forgetPersistentSession(serverId, tmuxName)
                     savedSessionPendingRemoval = null
                 }
                 is TmuxEndResult.Unreachable -> savedSessionRemovalError =
@@ -6598,6 +6611,92 @@ class AppViewModel @JvmOverloads constructor(
                     "${srv.name} answered, but tmux did not confirm that \"$name\" ended. It is still " +
                         "saved; Forget removes it from this device only."
             }
+        }
+    }
+
+    /** The host whose own tmux sessions the Attach dialog lists, while it is open. */
+    var tmuxAttachServer by mutableStateOf<ServerEntity?>(null)
+        private set
+    var tmuxAttachListing by mutableStateOf(HostTmuxListing())
+        private set
+    private var tmuxAttachJob: Job? = null
+
+    /** Hosts ⋮ › Attach existing tmux…: lists the tmux sessions running on [srv]. */
+    fun openAttachTmux(srv: ServerEntity) {
+        tmuxAttachServer = srv
+        tmuxAttachListing = HostTmuxListing()
+        refreshAttachTmux()
+    }
+
+    fun refreshAttachTmux() {
+        val srv = tmuxAttachServer ?: return
+        tmuxAttachJob?.cancel()
+        tmuxAttachListing = tmuxAttachListing.copy(loading = true, error = null)
+        tmuxAttachJob = viewModelScope.launch {
+            var unsupported: String? = null
+            if (!requireUnixShell(srv, "tmux") { unsupported = it }) {
+                if (tmuxAttachServer?.id == srv.id) tmuxAttachListing = HostTmuxListing(loading = false, error = unsupported)
+                return@launch
+            }
+            val listing = try {
+                val output = withContext(Dispatchers.IO) {
+                    sshTransport.exec(buildCredentials(srv), RemoteCommands.TMUX_LIST_SESSIONS)
+                }
+                if (output.startsWith("SSH Error")) {
+                    HostTmuxListing(loading = false, error = output.trim())
+                } else {
+                    HostTmuxListing(loading = false, sessions = RemoteParsers.parseTmuxSessions(output))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                HostTmuxListing(loading = false, error = e.message ?: e.javaClass.simpleName)
+            }
+            if (tmuxAttachServer?.id == srv.id) tmuxAttachListing = listing
+        }
+    }
+
+    fun dismissAttachTmux() {
+        tmuxAttachJob?.cancel()
+        tmuxAttachServer = null
+        tmuxAttachListing = HostTmuxListing()
+    }
+
+    /** Whether tmux session [name] on [serverId] is open in a tab here. */
+    fun isTmuxSessionOpen(serverId: Int, name: String): Boolean =
+        activeSessions.any { it.persistent && it.serverId == serverId && it.tmuxName == name }
+
+    /**
+     * Attaches to [session], running on the Attach dialog's host, by its own name: the same as
+     * `tmux attach -t name`, so every client shows the same window. One open here already is
+     * switched to and one saved here resumes; any other is saved as attached first, keeping the
+     * user's options, so it is offered again like OmniTerm's own. Terminate here ends it on the
+     * server, as it does any persistent session.
+     */
+    fun attachHostTmuxSession(session: RemoteTmuxSession) {
+        val srv = tmuxAttachServer ?: return
+        if (!RemoteCommands.isAttachableTmuxName(session.name)) return
+        dismissAttachTmux()
+        selectedServerId = srv.id
+        viewModelScope.launch {
+            val known = isTmuxSessionOpen(srv.id, session.name) ||
+                restorablePersistentSessions.any { it.serverId == srv.id && it.tmuxName == session.name }
+            if (!known) {
+                persistentSessionMutationMutex.withLock {
+                    repository.upsertPersistentSession(
+                        PersistentSessionEntity(
+                            tmuxName = session.name,
+                            serverId = srv.id,
+                            serverName = srv.name,
+                            createdAt = session.createdAtMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                            backgroundedAt = System.currentTimeMillis(),
+                            adopted = true,
+                        ),
+                    )
+                    restorablePersistentSessions = repository.getPersistentSessions()
+                }
+            }
+            resumePersistentSession(srv.id, session.name)
         }
     }
 
@@ -6653,7 +6752,7 @@ class AppViewModel @JvmOverloads constructor(
                                     shellSession.reconnecting = false
                                     shellSession.disconnectError =
                                         "Connected to the server, but tmux confirmed that this session no longer exists."
-                                    forgetPersistentSession(shellSession.tmuxName)
+                                    forgetPersistentSession(shellSession.serverId, shellSession.tmuxName)
                                     cleanupSession(shellSession)
                                     terminalConnectError =
                                         "Connected to the server, but tmux confirmed that this session no longer exists. " +
@@ -6673,9 +6772,9 @@ class AppViewModel @JvmOverloads constructor(
                             shellSession.emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
                         }
                         val attach = if (shellSession.controlMode) {
-                            RemoteCommands.tmuxControlAttachCommand(shellSession.tmuxName, terminalScrollbackLimit)
+                            RemoteCommands.tmuxControlAttachCommand(shellSession.tmuxName, terminalScrollbackLimit, shellSession.adopted)
                         } else {
-                            RemoteCommands.tmuxAttachCommand(shellSession.tmuxName, terminalScrollbackLimit)
+                            RemoteCommands.tmuxAttachCommand(shellSession.tmuxName, terminalScrollbackLimit, shellSession.adopted)
                         }
                         newSession.write(attach.toByteArray())
                         check(!newSession.closed.value) { "SSH channel closed while reattaching tmux" }
@@ -7340,7 +7439,7 @@ class AppViewModel @JvmOverloads constructor(
 
     private fun validateExistingTmuxSession(session: ShellSession) {
         if (isTerminalConnecting) return
-        terminalTmuxRetryName = session.tmuxName
+        terminalTmuxRetry = HostTmuxSession(session.serverId, session.tmuxName)
         val srv = servers.value.firstOrNull { it.id == session.serverId }
         if (srv == null) {
             terminalConnectError = "The saved host is unavailable. The tmux recovery entry was kept."
@@ -7361,7 +7460,7 @@ class AppViewModel @JvmOverloads constructor(
                     null -> throw IllegalStateException(raw.takeIf { it.isNotBlank() } ?: "Could not verify tmux on the host.")
                     false -> {
                         session.tmuxSessionMissing = true
-                        forgetPersistentSession(session.tmuxName)
+                        forgetPersistentSession(session.serverId, session.tmuxName)
                         invalidateCurrentHealth(srv.id, "The tmux session no longer exists. Waiting for current host metrics.")
                         markServerReachableAfterSsh(srv)
                         session.isConnected = false
@@ -7454,7 +7553,7 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 } else false
                 if (confirmedGone) {
-                    forgetPersistentSession(s.tmuxName)
+                    forgetPersistentSession(s.serverId, s.tmuxName)
                 } else {
                     terminalConnectError =
                         "Disconnected locally, but the remote tmux session could not be confirmed stopped. It remains available for recovery."

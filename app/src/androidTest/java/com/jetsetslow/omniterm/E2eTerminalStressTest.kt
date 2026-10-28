@@ -128,7 +128,7 @@ class E2eTerminalStressTest {
             vm.sendSessionToBackground(direct.id)
 
             delay(5_000)
-            vm.resumePersistentSession(persistent.tmuxName)
+            vm.resumePersistentSession(persistent.serverId, persistent.tmuxName)
             // The live pane must become usable promptly; large historical scrollback hydrates in
             // the background and is checked separately below.
             await("tmux resume", 15_000) {

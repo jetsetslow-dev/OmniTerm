@@ -66,7 +66,7 @@ class E2eTerminalLifecycleStressTest {
                     vm.restorablePersistentSessions.any { it.tmuxName == original.tmuxName }
             }
             val started = android.os.SystemClock.elapsedRealtime()
-            scenario.onActivity { vm.resumePersistentSession(original.tmuxName) }
+            scenario.onActivity { vm.resumePersistentSession(original.serverId, original.tmuxName) }
             await("resumed shell", 15_000) { !vm.isTerminalConnecting && vm.currentSession?.isConnected == true }
             val resumed = requireNotNull(vm.currentSession)
             assertEquals(original.tmuxName, resumed.tmuxName)

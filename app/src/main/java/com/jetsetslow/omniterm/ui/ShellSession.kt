@@ -244,6 +244,11 @@ class ShellSession(
      * re-attach their own session rather than colliding on one shared name.
      */
     var tmuxName: String = generateTmuxSessionName()
+    /**
+     * The tmux session was already running on the host and the user attached to it by its own
+     * name; its options are left alone (see [com.jetsetslow.omniterm.data.PersistentSessionEntity.adopted]).
+     */
+    var adopted: Boolean = false
     /** Reconnect coroutine in flight (backoff retry loop); cancelled on manual disconnect. */
     var reconnectJob: Job? = null
     /** True while the auto-reconnect backoff loop is running (drives the "Reconnecting…" UI). */

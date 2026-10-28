@@ -81,6 +81,15 @@ data class DiskRate(val readBytesPerSecond: Long, val writeBytesPerSecond: Long)
     val totalBytesPerSecond: Long get() = readBytesPerSecond + writeBytesPerSecond
 }
 
+/** A tmux session running on a host, as [RemoteParsers.parseTmuxSessions] read it. */
+data class RemoteTmuxSession(
+    val name: String,
+    val windows: Int,
+    /** How many tmux clients are attached to it right now, anywhere. */
+    val attachedClients: Int,
+    val createdAtMs: Long,
+)
+
 /** What [RemoteParsers.parseProcessUsage] found: per-pid disk and GPU use. */
 data class ProcessUsage(
     val disk: Map<Int, DiskRate>,
