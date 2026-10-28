@@ -101,35 +101,25 @@ class FlavorLicenseController(private val context: Context) : LicenseController,
         }
     }
 
-    override fun launchPurchase(activity: Activity) {
-        val pd = productDetails
-        if (pd == null) {
-            updateState(message = "Unlock purchase not available yet.")
-            return
-        }
-        val productDetailsParamsList = listOf(
-            BillingFlowParams.ProductDetailsParams.newBuilder()
-                .setProductDetails(pd)
-                .build()
-        )
-        val billingFlowParams = BillingFlowParams.newBuilder()
-            .setProductDetailsParamsList(productDetailsParamsList)
-            .build()
-        val result = billingClient.launchBillingFlow(activity, billingFlowParams)
-        if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-            updateState(message = result.debugMessage.ifBlank { "Could not launch purchase." })
-        }
-    }
+    override fun launchPurchase(activity: Activity) =
+        launchBillingFlow(activity, productDetails, "Unlock purchase not available yet.", "Could not launch purchase.")
 
-    override fun launchAdRemovalPurchase(activity: Activity) {
-        val pd = adRemovalDetails
-        if (pd == null) {
-            updateState(message = "Ad removal purchase not available yet.")
+    override fun launchAdRemovalPurchase(activity: Activity) = launchBillingFlow(
+        activity,
+        adRemovalDetails,
+        "Ad removal purchase not available yet.",
+        "Could not launch ad removal purchase.",
+    )
+
+    /** Opens Google Play's purchase sheet for [details], or says why it cannot. */
+    private fun launchBillingFlow(activity: Activity, details: ProductDetails?, unavailable: String, failed: String) {
+        if (details == null) {
+            updateState(message = unavailable)
             return
         }
         val productDetailsParamsList = listOf(
             BillingFlowParams.ProductDetailsParams.newBuilder()
-                .setProductDetails(pd)
+                .setProductDetails(details)
                 .build()
         )
         val billingFlowParams = BillingFlowParams.newBuilder()
@@ -137,7 +127,7 @@ class FlavorLicenseController(private val context: Context) : LicenseController,
             .build()
         val result = billingClient.launchBillingFlow(activity, billingFlowParams)
         if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-            updateState(message = result.debugMessage.ifBlank { "Could not launch ad removal purchase." })
+            updateState(message = result.debugMessage.ifBlank { failed })
         }
     }
 

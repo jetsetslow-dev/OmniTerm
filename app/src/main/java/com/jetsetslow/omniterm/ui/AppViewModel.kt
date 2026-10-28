@@ -3237,21 +3237,29 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * The notification manager with [channelId] created, or null when the app may not post
+     * notifications (Android 13+ without the permission).
+     */
+    private fun notificationChannel(channelId: String, name: String, importance: Int): NotificationManager? {
+        val app = getApplication<Application>()
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return null
+        val nm = app.getSystemService(NotificationManager::class.java) ?: return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(NotificationChannel(channelId, name, importance))
+        }
+        return nm
+    }
+
     private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
     private fun postAlertNotification(srv: ServerEntity, rule: AlertRuleEntity, value: Float) {
         val app = getApplication<Application>()
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) return
-        val nm = app.getSystemService(NotificationManager::class.java) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(
-                NotificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH)
-            )
-        }
+        val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
         val openAppIntent = Intent(app, MainActivity::class.java)
         openAppIntent.setClass(app, MainActivity::class.java)
         openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
@@ -5577,25 +5585,9 @@ class AppViewModel @JvmOverloads constructor(
                 }
 
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = sshTransport.openShell(creds, termCols, termRows) { phase ->
-                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        if (attemptGeneration == terminalConnectGeneration) {
-                            val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
-                            terminalConnectionPhase = typedPhase.label
-                            _terminalConnectionState.value = TerminalConnectionState.Connecting(typedPhase)
-                        }
-                    }
-                }
+                val session = openTerminalChannel(creds, attemptGeneration)
                 openedSession = session
-                currentCoroutineContext().ensureActive()
-                check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
-                val shellSession = ShellSession(srv.id, srv.name, session, emulator)
-                // Keep what auto-reconnect needs to reopen this exact shell without the UI.
-                shellSession.creds = creds
-                shellSession.termCols = termCols
-                shellSession.termRows = termRows
-                shellSession.lastCols = termCols
-                shellSession.lastRows = termRows
+                val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = usePersistence
                 if (usePersistence) {
                     shellSession.tmuxName = nextTmuxSessionName()
@@ -5625,16 +5617,7 @@ class AppViewModel @JvmOverloads constructor(
                 activeSessions.add(shellSession)
                 registeredSession = shellSession
                 openedSession = null // ownership transferred to the registered ShellSession
-                withContext(Dispatchers.Main) {
-                    check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
-                    if (activeSshTab == 1 && targetMultiSshPane != null) {
-                        if (targetMultiSshPane == 1) multiSshSessionId1 = shellSession.id
-                        else multiSshSessionId2 = shellSession.id
-                    } else {
-                        currentSessionId = shellSession.id
-                    }
-                    _terminalConnectionState.value = TerminalConnectionState.Connected(shellSession.id)
-                }
+                showConnectedShell(shellSession, attemptGeneration, targetMultiSshPane)
                 wireSessionIo(shellSession)
                 if (shellSession.controlMode) initControlModeSession(shellSession, creds)
                 if (usePersistence) rememberRestorablePersistentSession(shellSession)
@@ -6083,6 +6066,54 @@ class AppViewModel @JvmOverloads constructor(
         job.start()
     }
 
+    /**
+     * Opens the SSH channel for a terminal connect or resume, showing its phases while
+     * [attemptGeneration] is still the current attempt. The caller owns the channel until a
+     * registered shell takes it over.
+     */
+    private suspend fun openTerminalChannel(creds: SshCredentials, attemptGeneration: Long): TerminalSession =
+        sshTransport.openShell(creds, termCols, termRows) { phase ->
+            viewModelScope.launch(Dispatchers.Main) {
+                if (attemptGeneration == terminalConnectGeneration) {
+                    val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
+                    terminalConnectionPhase = typedPhase.label
+                    _terminalConnectionState.value = TerminalConnectionState.Connecting(typedPhase)
+                }
+            }
+        }
+
+    /** The shell for a just-opened [channel], keeping what auto-reconnect needs to reopen it without the UI. */
+    private suspend fun newShellSession(
+        srv: ServerEntity,
+        creds: SshCredentials,
+        channel: TerminalSession,
+        emulator: TerminalEmulator,
+        attemptGeneration: Long,
+    ): ShellSession {
+        currentCoroutineContext().ensureActive()
+        check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
+        val shellSession = ShellSession(srv.id, srv.name, channel, emulator)
+        shellSession.creds = creds
+        shellSession.termCols = termCols
+        shellSession.termRows = termRows
+        shellSession.lastCols = termCols
+        shellSession.lastRows = termRows
+        return shellSession
+    }
+
+    /** Shows a registered shell in the split pane or tab its attempt was started from. */
+    private suspend fun showConnectedShell(shellSession: ShellSession, attemptGeneration: Long, targetMultiSshPane: Int?) =
+        withContext(Dispatchers.Main) {
+            check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
+            if (activeSshTab == 1 && targetMultiSshPane != null) {
+                if (targetMultiSshPane == 1) multiSshSessionId1 = shellSession.id
+                else multiSshSessionId2 = shellSession.id
+            } else {
+                currentSessionId = shellSession.id
+            }
+            _terminalConnectionState.value = TerminalConnectionState.Connected(shellSession.id)
+        }
+
     fun resumePersistentSession(serverId: Int, tmuxName: String) {
         terminalTmuxRetry = HostTmuxSession(serverId, tmuxName)
         val existingSession = activeSessions.find { it.persistent && it.serverId == serverId && it.tmuxName == tmuxName }
@@ -6153,24 +6184,9 @@ class AppViewModel @JvmOverloads constructor(
                     true -> Unit
                 }
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = sshTransport.openShell(creds, termCols, termRows) { phase ->
-                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        if (attemptGeneration == terminalConnectGeneration) {
-                            val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
-                            terminalConnectionPhase = typedPhase.label
-                            _terminalConnectionState.value = TerminalConnectionState.Connecting(typedPhase)
-                        }
-                    }
-                }
+                val session = openTerminalChannel(creds, attemptGeneration)
                 openedSession = session
-                currentCoroutineContext().ensureActive()
-                check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
-                val shellSession = ShellSession(srv.id, srv.name, session, emulator)
-                shellSession.creds = creds
-                shellSession.termCols = termCols
-                shellSession.termRows = termRows
-                shellSession.lastCols = termCols
-                shellSession.lastRows = termRows
+                val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = true
                 shellSession.tmuxName = tmuxName
                 shellSession.adopted = sessionEntity.adopted
@@ -6195,16 +6211,7 @@ class AppViewModel @JvmOverloads constructor(
                 activeSessions.add(shellSession)
                 registeredSession = shellSession
                 openedSession = null
-                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
-                    if (activeSshTab == 1 && targetMultiSshPane != null) {
-                        if (targetMultiSshPane == 1) multiSshSessionId1 = shellSession.id
-                        else multiSshSessionId2 = shellSession.id
-                    } else {
-                        currentSessionId = shellSession.id
-                    }
-                    _terminalConnectionState.value = TerminalConnectionState.Connected(shellSession.id)
-                }
+                showConnectedShell(shellSession, attemptGeneration, targetMultiSshPane)
                 wireSessionIo(shellSession)
                 if (shellSession.controlMode) {
                     initControlModeSession(shellSession, creds)
@@ -9311,22 +9318,17 @@ class AppViewModel @JvmOverloads constructor(
             val transferClient = shareFsClient(share)
             client = transferClient
             activeTransferAborters[transferId] = { transferClient.cancelActiveTransfers() }
-            val bytes = withContext(Dispatchers.IO) {
-                context.contentResolver.openOutputStream(uri).use { output ->
-                    output ?: throw java.io.IOException("Could not open destination.")
-                    client.downloadTo(remotePath, output, transferProgress(transferId))
-                }
-            }
+            val bytes = downloadToDevice(transferClient, context, uri, remotePath, transferId)
             finishSftpTransfer(transferId, SftpTransferStatus.Success, bytes, bytes, "Downloaded $bytes bytes")
             if (browsingShare?.id == share.id) shareStatus = "Downloaded \"$remoteName\""
             return true
         } catch (e: CancellationException) {
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
+            discardDeviceDocument(context, uri)
             throw e
         } catch (e: Exception) {
             // A failed/cancelled SAF write is not a usable download. Remove the partial document
             // instead of leaving a corrupt file beside a transfer row that says it failed.
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
+            discardDeviceDocument(context, uri)
             if (browsingShare?.id == share.id) shareError = e.message ?: "Download failed"
             finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
             return false
@@ -9353,32 +9355,21 @@ class AppViewModel @JvmOverloads constructor(
                 val transferClient = shareFsClient(share)
                 client = transferClient
                 for ((index, uri) in picked.withIndex()) {
-                    val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-                        ?: "upload_${System.currentTimeMillis()}_${index + 1}"
+                    val name = pickedUploadName(context, uri, index)
                     val remotePath = joinPath(destDir, name)
                     val stagedPath = transferStagingPath(remotePath)
                     val transferId = addTransfer(-share.id, shareEndpointLabel(share), "Upload", name, remotePath, sourceUri = uri.toString())
                     activeTransferAborters[transferId] = { transferClient.cancelActiveTransfers() }
                     try {
-                        val totalBytes = queryOpenableSize(context, uri)
-                        withContext(Dispatchers.IO) {
-                            context.contentResolver.openInputStream(uri).use { input ->
-                                input ?: throw java.io.IOException("Could not read the selected file from this device.")
-                                val counting = CountingUploadInput(input)
-                                client.uploadStream(stagedPath, counting, totalBytes, transferProgress(transferId))
-                                if (totalBytes > 0 && counting.bytesRead != totalBytes) {
-                                    throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
-                                }
-                            }
-                        }
+                        val totalBytes = uploadDeviceFile(transferClient, context, uri, stagedPath, transferId)
                         commitStagedRemoteFile(client, stagedPath, remotePath)
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, totalBytes, totalBytes, "Uploaded")
                     } catch (e: CancellationException) {
-                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                        discardStagedFile(client, stagedPath)
                         throw e
                     } catch (e: Exception) {
-                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                        discardStagedFile(client, stagedPath)
                         val msg = e.message ?: "upload failed"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -10011,10 +10002,10 @@ class AppViewModel @JvmOverloads constructor(
                         copiedFiles++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "${if (isMove) "Moved" else "Copied"} $copied bytes to $destLabel")
                     } catch (e: CancellationException) {
-                        withContext(NonCancellable + Dispatchers.IO) { runCatching { destClient.delete(stagedDestPath, false) } }
+                        discardStagedFile(destClient, stagedDestPath)
                         throw e
                     } catch (e: Exception) {
-                        withContext(NonCancellable + Dispatchers.IO) { runCatching { destClient.delete(stagedDestPath, false) } }
+                        discardStagedFile(destClient, stagedDestPath)
                         val msg = e.message ?: "copy failed"
                         if (firstErr == null) firstErr = "${ref.name}: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -10173,7 +10164,7 @@ class AppViewModel @JvmOverloads constructor(
             }
             if (backupPath != null) runCatching { client.delete(backupPath, false) }
         } catch (e: CancellationException) {
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+            discardStagedFile(client, stagedPath)
             throw e
         } catch (e: Exception) {
             runCatching { client.delete(stagedPath, false) }
@@ -10223,10 +10214,10 @@ class AppViewModel @JvmOverloads constructor(
                     finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "Copied $copied bytes")
                     files++
                 } catch (e: CancellationException) {
-                    withContext(NonCancellable + Dispatchers.IO) { runCatching { dest.delete(stagedChildDest, false) } }
+                    discardStagedFile(dest, stagedChildDest)
                     throw e
                 } catch (e: Exception) {
-                    withContext(NonCancellable + Dispatchers.IO) { runCatching { dest.delete(stagedChildDest, false) } }
+                    discardStagedFile(dest, stagedChildDest)
                     finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "copy failed")
                     throw e  // fail the whole folder so a move never deletes a partially-copied tree.
                 }
@@ -11322,18 +11313,13 @@ class AppViewModel @JvmOverloads constructor(
             val transferId = addSftpTransfer(srv, "Download", remoteName, remotePath)
             activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
             try {
-                val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri).use { output ->
-                        output ?: throw java.io.IOException("Could not open destination.")
-                        client.downloadTo(remotePath, output, transferProgress(transferId))
-                    }
-                }
+                val bytes = downloadToDevice(client, context, uri, remotePath, transferId)
                 finishSftpTransfer(transferId, SftpTransferStatus.Success, bytes, bytes, "Downloaded $bytes bytes")
             } catch (e: CancellationException) {
-                withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
+                discardDeviceDocument(context, uri)
                 throw e
             } catch (e: Exception) {
-                withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
+                discardDeviceDocument(context, uri)
                 if (selectedServerId == srv.id) sftpError = e.message
                 finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
             } finally {
@@ -11417,33 +11403,21 @@ class AppViewModel @JvmOverloads constructor(
             val batchId = beginTransferBatch(picked.size)
             try {
                 for ((index, uri) in picked.withIndex()) {
-                    val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-                        ?: "upload_${System.currentTimeMillis()}_${index + 1}"
+                    val name = pickedUploadName(context, uri, index)
                     val remotePath = joinPath(remoteDir, name)
                     val stagedPath = transferStagingPath(remotePath)
                     val transferId = addSftpTransfer(srv, "Upload", name, remotePath, sourceUri = uri.toString())
                     activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
                     try {
-                        val totalBytes = queryOpenableSize(context, uri)
-                        val uploaded = withContext(Dispatchers.IO) {
-                            context.contentResolver.openInputStream(uri).use { input ->
-                                input ?: throw java.io.IOException("Could not read the selected file from this device.")
-                                val counting = CountingUploadInput(input)
-                                client.uploadStream(stagedPath, counting, totalBytes, transferProgress(transferId))
-                                if (totalBytes > 0 && counting.bytesRead != totalBytes) {
-                                    throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
-                                }
-                                totalBytes.coerceAtLeast(0L)
-                            }
-                        }
+                        val uploaded = uploadDeviceFile(client, context, uri, stagedPath, transferId)
                         commitStagedRemoteFile(client, stagedPath, remotePath)
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, uploaded, uploaded, if (uploaded > 0L) "Uploaded $uploaded bytes" else "Uploaded")
                     } catch (e: CancellationException) {
-                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                        discardStagedFile(client, stagedPath)
                         throw e
                     } catch (e: Exception) {
-                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                        discardStagedFile(client, stagedPath)
                         val msg = e.message ?: "unknown error"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -11606,26 +11580,16 @@ class AppViewModel @JvmOverloads constructor(
             activeTransferAborters[retryId] = { client.cancelActiveTransfers() }
             val stagedPath = transferStagingPath(item.remotePath)
             try {
-                val totalBytes = queryOpenableSize(context, uri)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri).use { input ->
-                        input ?: throw java.io.IOException("Could not read the original selected file.")
-                        val counting = CountingUploadInput(input)
-                        client.uploadStream(stagedPath, counting, totalBytes, transferProgress(retryId))
-                        if (totalBytes > 0 && counting.bytesRead != totalBytes) {
-                            throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
-                        }
-                    }
-                }
+                val totalBytes = uploadDeviceFile(client, context, uri, stagedPath, retryId, unreadable = "Could not read the original selected file.")
                 commitStagedRemoteFile(client, stagedPath, item.remotePath)
                 finishSftpTransfer(retryId, SftpTransferStatus.Success, totalBytes, totalBytes, "Uploaded on retry")
                 share?.takeIf { browsingShare?.id == it.id }?.let { loadShareDir(sharePath, clearError = false) }
                 server?.let { refreshSftpIfStillViewing(it.id, item.remotePath.substringBeforeLast('/', "").ifBlank { "/" }) }
             } catch (e: CancellationException) {
-                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                discardStagedFile(client, stagedPath)
                 throw e
             } catch (e: Exception) {
-                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                discardStagedFile(client, stagedPath)
                 finishSftpTransfer(retryId, SftpTransferStatus.Failure, message = e.message ?: "Retry failed")
             } finally {
                 withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
@@ -11633,13 +11597,60 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
-        runCatching {
-            context.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+    /** Removes a partly written device document: a failed or cancelled download is not a usable file. */
+    private suspend fun discardDeviceDocument(context: android.content.Context, uri: android.net.Uri) {
+        withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
+    }
+
+    /** Removes an unfinished staged copy, so a failed transfer never leaves a partial file behind. */
+    private suspend fun discardStagedFile(client: RemoteFsClient, stagedPath: String) {
+        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+    }
+
+    /** A picked device file's name for its remote copy; [index] keeps unnamed picks in one batch apart. */
+    private fun pickedUploadName(context: android.content.Context, uri: android.net.Uri, index: Int): String =
+        contentDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "upload_${System.currentTimeMillis()}_${index + 1}"
+
+    /**
+     * Uploads the device file [uri] to [stagedPath] and returns its size, 0 when the device does
+     * not report one. A file that ends before its reported size fails instead of leaving a short copy.
+     */
+    private suspend fun uploadDeviceFile(
+        client: RemoteFsClient,
+        context: android.content.Context,
+        uri: android.net.Uri,
+        stagedPath: String,
+        transferId: String,
+        unreadable: String = "Could not read the selected file from this device.",
+    ): Long {
+        val totalBytes = queryOpenableSize(context, uri)
+        withContext(Dispatchers.IO) {
+            context.contentResolver.openInputStream(uri).use { input ->
+                input ?: throw java.io.IOException(unreadable)
+                val counting = CountingUploadInput(input)
+                client.uploadStream(stagedPath, counting, totalBytes, transferProgress(transferId))
+                if (totalBytes > 0 && counting.bytesRead != totalBytes) {
+                    throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
+                }
             }
-        }.getOrNull()
+        }
+        return totalBytes
+    }
+
+    /** Downloads [remotePath] into the device document [uri] and returns the bytes written. */
+    private suspend fun downloadToDevice(
+        client: RemoteFsClient,
+        context: android.content.Context,
+        uri: android.net.Uri,
+        remotePath: String,
+        transferId: String,
+    ): Long = withContext(Dispatchers.IO) {
+        context.contentResolver.openOutputStream(uri).use { output ->
+            output ?: throw java.io.IOException("Could not open destination.")
+            client.downloadTo(remotePath, output, transferProgress(transferId))
+        }
+    }
 
     private fun queryOpenableSize(context: android.content.Context, uri: android.net.Uri): Long =
         runCatching {
@@ -12430,16 +12441,7 @@ class AppViewModel @JvmOverloads constructor(
     /** Surfaces both the opt-in prompt and the accepted state while the app is backgrounded. */
     private fun postBatterySaverNotification(pct: Int, active: Boolean) {
         val app = getApplication<Application>()
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) return
-        val nm = app.getSystemService(NotificationManager::class.java) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(
-                NotificationChannel(BATTERY_SAVER_CHANNEL_ID, "Battery saver", NotificationManager.IMPORTANCE_DEFAULT)
-            )
-        }
+        val nm = notificationChannel(BATTERY_SAVER_CHANNEL_ID, "Battery saver", NotificationManager.IMPORTANCE_DEFAULT) ?: return
         val openApp = PendingIntent.getActivity(
             app,
             BATTERY_SAVER_CHANNEL_ID.hashCode(),

@@ -88,12 +88,19 @@ fun FleetScreen(viewModel: AppViewModel) {
     }
 }
 
+/** Host counts for the fleet summary; [avgScore] is -1 while no host has a health score. */
+private data class FleetTotals(val total: Int, val online: Int, val critical: Int, val avgScore: Int)
+
+private fun fleetTotals(viewModel: AppViewModel, srvList: List<ServerEntity>) = FleetTotals(
+    total = srvList.size,
+    online = srvList.count { it.status == "online" },
+    critical = srvList.count { it.status == "online" && viewModel.currentHealthScore(it) in 0..49 },
+    avgScore = srvList.map { viewModel.currentHealthScore(it) }.filter { it >= 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: -1,
+)
+
 @Composable
 fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
-    val total = srvList.size
-    val online = srvList.count { it.status == "online" }
-    val critical = srvList.count { it.status == "online" && viewModel.currentHealthScore(it) in 0..49 }
-    val avgScore = srvList.map { viewModel.currentHealthScore(it) }.filter { it >= 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: -1
+    val (total, online, critical, avgScore) = fleetTotals(viewModel, srvList)
 
     Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
         Row(
@@ -128,10 +135,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val total = srvList.size
-                val online = srvList.count { it.status == "online" }
-                val critical = srvList.count { it.status == "online" && viewModel.currentHealthScore(it) in 0..49 }
-                val avgScore = srvList.map { viewModel.currentHealthScore(it) }.filter { it >= 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: -1
+                val (total, online, critical, avgScore) = fleetTotals(viewModel, srvList)
 
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$total", label = stringResource(R.string.hosts)) }
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = stringResource(R.string.online_3), color = OmniColors.green) }

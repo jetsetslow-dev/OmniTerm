@@ -92,9 +92,7 @@ fun terminalColumnToTextIndex(
     var terminalColumn = 0
     var textIndex = 0
     for (span in row.spans) {
-        val glyphs = if (span.glyphs.isNotEmpty()) span.glyphs else
-            span.text.codePoints().toArray().map { String(Character.toChars(it)) }
-        val widths = if (span.glyphWidths.size == glyphs.size) span.glyphWidths else List(glyphs.size) { 1 }
+        val (glyphs, widths) = span.cellLayout()
         for (index in glyphs.indices) {
             val nextColumn = terminalColumn + widths[index].coerceIn(1, 2)
             if (targetColumn < nextColumn) return textIndex

@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm.ui
 
+import androidx.annotation.StringRes
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import androidx.compose.foundation.background
@@ -15,7 +16,6 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -37,18 +37,9 @@ internal const val INFRA_TAB_BUILDER = 1
 
 @Composable
 fun InfraScreen(viewModel: AppViewModel) {
-    val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = servers.filter { viewModel.isPickableHost(it) }
-    // Keep an explicit host selected when it goes offline: Compose drafts remain editable.
-    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
-    val srv = explicitlySelected ?: onlineServers.firstOrNull()
-    // Load real container runtime state whenever the selected host changes.
-    LaunchedEffect(srv?.id) {
-        if (srv != null) {
-            if (explicitlySelected == null && viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
-            viewModel.loadDocker()
-        }
-    }
+    // Kept while offline: Compose drafts remain editable. Load the real container runtime state
+    // whenever the host changes.
+    val srv = screenHost(viewModel) { if (it != null) viewModel.loadDocker() }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Host picker (mirrors SFTP/Cron) so the user can switch which host's containers they inspect.
@@ -152,6 +143,48 @@ private fun ContainerRuntimeError(error: String) {
  * which one owns the entry. Stacks already carried this badge; images, volumes and networks now
  * render the identical one.
  */
+/** A stack card's top row: its name, runtime and folder, and on the right its [state] above [stateLabel]. */
+@Composable
+private fun StackCardHeader(
+    name: String,
+    runtime: String,
+    iconTint: Color,
+    folder: String,
+    state: String,
+    stateColor: Color,
+    stateLabel: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Filled.Layers, contentDescription = null, tint = iconTint)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
+                    Spacer(Modifier.width(6.dp))
+                    RuntimeTag(runtime)
+                }
+                Text(
+                    folder,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = OmniFonts.mono,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(state, fontWeight = FontWeight.Bold, color = stateColor)
+            Text(stateLabel, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 @Composable
 private fun RuntimeTag(runtime: String) {
     if (runtime.isBlank()) return
@@ -288,35 +321,15 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
             val servicesExpanded = viewModel.expandedStacks.isPicked(host, expandedKey)
             OmniCard(modifier = Modifier.fillMaxWidth().testTag("infra.stack.${stack.runtime}.${stack.name}"), leftAccent = OmniColors.cyan) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.Layers, contentDescription = null, tint = OmniColors.cyan)
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(stack.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
-                    Spacer(Modifier.width(6.dp))
-                    RuntimeTag(stack.runtime)
-                }
-                                Text(
-                                    if (canCompose) stack.workingDir else "No compose metadata for stack actions",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontFamily = OmniFonts.mono,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("${stack.running}/${stack.total}", fontWeight = FontWeight.Bold, color = if (stack.running == stack.total) OmniColors.green else OmniColors.red)
-                            Text(stringResource(R.string.running), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+                    StackCardHeader(
+                        name = stack.name,
+                        runtime = stack.runtime,
+                        iconTint = OmniColors.cyan,
+                        folder = if (canCompose) stack.workingDir else "No compose metadata for stack actions",
+                        state = "${stack.running}/${stack.total}",
+                        stateColor = if (stack.running == stack.total) OmniColors.green else OmniColors.red,
+                        stateLabel = stringResource(R.string.running),
+                    )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
                         if (canCompose) {
                             OmniButton(label = stringResource(R.string.edit_in_builder), color = OmniColors.purple, modifier = Modifier.fillMaxWidth(), onClick = {
@@ -463,35 +476,15 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
         items(downedStacks, key = { "down-${it.runtime}-${it.project}" }) { stack ->
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.red) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(stack.project, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
-                                    Spacer(Modifier.width(6.dp))
-                                    RuntimeTag(stack.runtime)
-                                }
-                                Text(
-                                    stack.workingDir,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontFamily = OmniFonts.mono,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(stringResource(R.string.down), fontWeight = FontWeight.Bold, color = OmniColors.red)
-                            Text(stringResource(R.string.str_0_containers), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+                    StackCardHeader(
+                        name = stack.project,
+                        runtime = stack.runtime,
+                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        folder = stack.workingDir,
+                        state = stringResource(R.string.down),
+                        stateColor = OmniColors.red,
+                        stateLabel = stringResource(R.string.str_0_containers),
+                    )
                     Text(stringResource(R.string.taken_down_its_containers_and_networks),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -779,6 +772,48 @@ private data class StackContainer(val id: String, val name: String, val status: 
 private data class ContainerPortDetail(val container: String, val service: String, val ports: String)
 private data class ScaleTarget(val stack: StackSummary, val service: StackService)
 
+/**
+ * The top of the images and volumes lists: multi-select, remove the picked ones, prune the unused
+ * ones. Both removals ask first.
+ */
+@Composable
+private fun PruneListHeader(
+    confirm: ConfirmController,
+    selecting: Boolean,
+    onToggleSelecting: () -> Unit,
+    @StringRes removeTitle: Int,
+    @StringRes removeMessage: Int,
+    pickedCount: Int,
+    onRemovePicked: () -> Unit,
+    @StringRes pruneTitle: Int,
+    @StringRes pruneMessage: Int,
+    onPrune: () -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = onToggleSelecting) {
+            Text(if (selecting) stringResource(R.string.cancel_selection) else stringResource(R.string.multi_select_2))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (selecting && pickedCount > 0) {
+                Button(
+                    onClick = {
+                        confirm.ask(confirm.str(removeTitle), confirm.str(removeMessage, pickedCount), confirmLabel = confirm.str(R.string.remove)) {
+                            onRemovePicked()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
+                ) { Text(stringResource(R.string.delete_selected)) }
+            }
+            Button(
+                onClick = {
+                    confirm.ask(confirm.str(pruneTitle), confirm.str(pruneMessage), confirmLabel = confirm.str(R.string.prune)) { onPrune() }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
+            ) { Text(stringResource(R.string.prune_unused)) }
+        }
+    }
+}
+
 @Composable
 private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
     val confirm = rememberConfirm()
@@ -793,33 +828,18 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
 
     OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { selection.toggleSelecting(server?.id) }) {
-                    Text(if (isSelectionMode) stringResource(R.string.cancel_selection) else stringResource(R.string.multi_select_2))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (isSelectionMode && picked.isNotEmpty()) {
-                        Button(
-                            onClick = {
-                                confirm.ask(confirm.str(R.string.remove_images), confirm.str(R.string.permanently_remove_images, picked.size), confirmLabel = confirm.str(R.string.remove)) {
-                                    viewModel.removeDockerImages(picked, server)
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
-                        ) { Text(stringResource(R.string.delete_selected)) }
-                    }
-                    Button(
-                        onClick = {
-                            confirm.ask(
-                                confirm.str(R.string.prune_unused_images),
-                                confirm.str(R.string.remove_all_images_not_currently_used),
-                                confirmLabel = confirm.str(R.string.prune),
-                            ) { viewModel.dockerPruneImages() }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
-                    ) { Text(stringResource(R.string.prune_unused)) }
-                }
-            }
+            PruneListHeader(
+                confirm = confirm,
+                selecting = isSelectionMode,
+                onToggleSelecting = { selection.toggleSelecting(server?.id) },
+                removeTitle = R.string.remove_images,
+                removeMessage = R.string.permanently_remove_images,
+                pickedCount = picked.size,
+                onRemovePicked = { viewModel.removeDockerImages(picked, server) },
+                pruneTitle = R.string.prune_unused_images,
+                pruneMessage = R.string.remove_all_images_not_currently_used,
+                onPrune = viewModel::dockerPruneImages,
+            )
         }
         if (images.isEmpty()) {
             item {
@@ -892,33 +912,18 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
 
     OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { selection.toggleSelecting(server?.id) }) {
-                    Text(if (isSelectionMode) stringResource(R.string.cancel_selection) else stringResource(R.string.multi_select_2))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (isSelectionMode && picked.isNotEmpty()) {
-                        Button(
-                            onClick = {
-                                confirm.ask(confirm.str(R.string.remove_volumes), confirm.str(R.string.permanently_remove_volumes, picked.size), confirmLabel = confirm.str(R.string.remove)) {
-                                    viewModel.removeDockerVolumes(picked, server)
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
-                        ) { Text(stringResource(R.string.delete_selected)) }
-                    }
-                    Button(
-                        onClick = {
-                            confirm.ask(
-                                confirm.str(R.string.prune_unused_volumes),
-                                confirm.str(R.string.remove_all_volumes_not_used_by),
-                                confirmLabel = confirm.str(R.string.prune),
-                            ) { viewModel.dockerPruneVolumes() }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
-                    ) { Text(stringResource(R.string.prune_unused)) }
-                }
-            }
+            PruneListHeader(
+                confirm = confirm,
+                selecting = isSelectionMode,
+                onToggleSelecting = { selection.toggleSelecting(server?.id) },
+                removeTitle = R.string.remove_volumes,
+                removeMessage = R.string.permanently_remove_volumes,
+                pickedCount = picked.size,
+                onRemovePicked = { viewModel.removeDockerVolumes(picked, server) },
+                pruneTitle = R.string.prune_unused_volumes,
+                pruneMessage = R.string.remove_all_volumes_not_used_by,
+                onPrune = viewModel::dockerPruneVolumes,
+            )
         }
         if (volumes.isEmpty()) {
             item {

@@ -479,6 +479,44 @@ fun ConfirmHost(controller: ConfirmController) {
     )
 }
 
+/** Shows the system biometric prompt as the dialog opens, when biometrics unlock the app. */
+@Composable
+internal fun BiometricPromptOnShow(
+    viewModel: AppViewModel,
+    @StringRes title: Int,
+    @StringRes subtitle: Int,
+    onAuthenticated: () -> Unit,
+) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        if (viewModel.useBiometrics) {
+            context.getActivity()?.let { activity ->
+                BiometricCryptoGate.authenticate(
+                    activity = activity,
+                    title = activity.getString(title),
+                    subtitle = activity.getString(subtitle),
+                    onAuthenticated = onAuthenticated,
+                )
+            }
+        }
+    }
+}
+
+/** The app PIN field of a confirmation dialog, with why the last PIN was refused beneath it. */
+@Composable
+internal fun AppPinField(pin: String, onPinChange: (String) -> Unit, error: String?) {
+    OutlinedTextField(
+        value = pin,
+        onValueChange = onPinChange,
+        label = { Text(stringResource(R.string.pin)) },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    error?.let { Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+}
+
 /**
  * Confirmation gate for a privileged (sudo) action that has been staged in
  * `viewModel.pendingSudoAction`. Presents biometrics (if enabled) and/or a PIN field, then runs
@@ -487,21 +525,11 @@ fun ConfirmHost(controller: ConfirmController) {
 @Composable
 fun SudoAuthDialog(viewModel: AppViewModel) {
     if (viewModel.pendingSudoAction == null) return
-    val context = LocalContext.current
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        if (viewModel.useBiometrics) {
-            context.getActivity()?.let { activity ->
-                BiometricCryptoGate.authenticate(
-                    activity = activity,
-                    title = activity.getString(R.string.authenticate_for_sudo),
-                    subtitle = activity.getString(R.string.confirm_to_run_the_privileged_action),
-                    onAuthenticated = { viewModel.confirmPendingSudoAction() },
-                )
-            }
-        }
+    BiometricPromptOnShow(viewModel, R.string.authenticate_for_sudo, R.string.confirm_to_run_the_privileged_action) {
+        viewModel.confirmPendingSudoAction()
     }
 
     AlertDialog(
@@ -512,16 +540,7 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
                 Text(stringResource(R.string.confirm_to_run_this_privileged_action), fontSize = 14.sp)
                 if (viewModel.savedPin != null) {
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pin,
-                        onValueChange = { pin = it; error = null },
-                        label = { Text(stringResource(R.string.pin)) },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    error?.let { Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+                    AppPinField(pin, onPinChange = { pin = it; error = null }, error = error)
                 } else {
                     Spacer(Modifier.height(8.dp))
                     Text(stringResource(R.string.use_your_biometric_prompt_to_continue), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1027,30 +1046,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 // Pull-to-refresh is a global gesture, so its failure has to be reported globally.
                 // This banner previously existed only inside ToolsScreen, which meant a refresh
                 // that failed on the Servers list -- where the gesture is used most -- said nothing.
-                viewModel.manualRefreshError?.let { message ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                            .padding(start = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            message,
-                            color = OmniColors.red,
-                            fontSize = OmniTextSize.Meta,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = viewModel::dismissManualRefreshError) {
-                            Icon(
-                                Icons.Filled.Close,
-                                contentDescription = stringResource(R.string.dismiss_refresh_error),
-                                tint = OmniColors.red,
-                            )
-                        }
-                    }
-                }
+                ManualRefreshErrorBanner(viewModel, Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                 if (showMonetizationUi && !licenseState.unlocked) {
                     FreePlanBanner(licenseState, licenseController)
                 }
@@ -3335,4 +3331,41 @@ fun AddServerSheet(
             },
         )
     }
+}
+
+/** Why the last pull-to-refresh failed, until the user dismisses it. Nothing while it has not failed. */
+@Composable
+internal fun ManualRefreshErrorBanner(viewModel: AppViewModel, modifier: Modifier = Modifier) {
+    val message = viewModel.manualRefreshError ?: return
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+            .padding(start = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(message, color = OmniColors.red, fontSize = OmniTextSize.Meta, modifier = Modifier.weight(1f))
+        IconButton(onClick = viewModel::dismissManualRefreshError) {
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.dismiss_refresh_error), tint = OmniColors.red)
+        }
+    }
+}
+
+/**
+ * The host a host-scoped screen works on: the selected host, even while it is offline, else the
+ * first online one, which then becomes the selection. [onHostChange] runs each time that host
+ * changes, with null while there is none.
+ */
+@Composable
+internal fun screenHost(viewModel: AppViewModel, onHostChange: (ServerEntity?) -> Unit): ServerEntity? {
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
+    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
+    val srv = explicitlySelected ?: servers.firstOrNull { viewModel.isPickableHost(it) }
+    LaunchedEffect(srv?.id) {
+        if (srv != null && explicitlySelected == null && viewModel.selectedServerId != srv.id) {
+            viewModel.selectedServerId = srv.id
+        }
+        onHostChange(srv)
+    }
+    return srv
 }

@@ -803,8 +803,7 @@ object SystemSpecsParser {
         val unbound = pci.filter { it.kind.contains("VGA", true) || it.kind.contains("3D", true) || it.kind.contains("Display", true) }
             .filter { p -> seen.none { it.endsWith(p.slot) } }
             .map { p -> SpecItem(p.device, dotted(p.vendor, "no driver loaded"), listOf(SpecField("Vendor", p.vendor), SpecField("PCI slot", p.slot))) }
-        val all = items + unbound
-        return SpecSection(SpecKind.Gpu, summary = all.joinToString(", ") { it.title }, items = all)
+        return gpuSection(items + unbound)
     }
 
     private fun linuxNetwork(s: Map<String, String>, pci: List<PciDevice>): SpecSection {
@@ -839,8 +838,15 @@ object SystemSpecsParser {
                 ),
             )
         }.toList()
-        return SpecSection(SpecKind.Network, summary = count(items.size, "adapter", "adapters").takeIf { items.isNotEmpty() }.orEmpty(), items = items)
+        return networkSection(items)
     }
+
+    private fun gpuSection(gpus: List<SpecItem>) = SpecSection(SpecKind.Gpu, summary = gpus.joinToString(", ") { it.title }, items = gpus)
+
+    private fun networkSection(nics: List<SpecItem>) =
+        SpecSection(SpecKind.Network, summary = count(nics.size, "adapter", "adapters").takeIf { nics.isNotEmpty() }.orEmpty(), items = nics)
+
+    private fun uptimeSince(boot: Long?, now: Long?): Long? = if (boot != null && now != null && now > boot) now - boot else null
 
     // ── FreeBSD / OpenBSD ───────────────────────────────────────────────────────────────────
 
@@ -974,10 +980,10 @@ object SystemSpecsParser {
         return SystemSpecs(
             listOf(
                 system, cpu, memory, storage,
-                SpecSection(SpecKind.Gpu, summary = gpus.joinToString(", ") { it.title }, items = gpus),
-                SpecSection(SpecKind.Network, summary = count(nics.size, "adapter", "adapters").takeIf { nics.isNotEmpty() }.orEmpty(), items = nics),
+                gpuSection(gpus),
+                networkSection(nics),
             ),
-            uptimeSeconds = if (boot != null && now != null && now > boot) now - boot else null,
+            uptimeSeconds = uptimeSince(boot, now),
         )
     }
 
@@ -1132,10 +1138,10 @@ object SystemSpecsParser {
         return SystemSpecs(
             listOf(
                 system, cpu, memory, storage,
-                SpecSection(SpecKind.Gpu, summary = gpus.joinToString(", ") { it.title }, items = gpus),
-                SpecSection(SpecKind.Network, summary = count(nics.size, "adapter", "adapters").takeIf { nics.isNotEmpty() }.orEmpty(), items = nics),
+                gpuSection(gpus),
+                networkSection(nics),
             ),
-            uptimeSeconds = if (boot != null && now != null && now > boot) now - boot else null,
+            uptimeSeconds = uptimeSince(boot, now),
         )
     }
 
@@ -1341,8 +1347,8 @@ object SystemSpecsParser {
         return SystemSpecs(
             listOf(
                 system, cpu, memory, storage,
-                SpecSection(SpecKind.Gpu, summary = gpus.joinToString(", ") { it.title }, items = gpus),
-                SpecSection(SpecKind.Network, summary = count(nics.size, "adapter", "adapters").takeIf { nics.isNotEmpty() }.orEmpty(), items = nics),
+                gpuSection(gpus),
+                networkSection(nics),
             ),
         )
     }

@@ -172,30 +172,35 @@ fun ScoreRing(score: Int, modifier: Modifier = Modifier, size: Dp = 44.dp, conte
     }
     val desc = contentDescription ?: if (score < 0) "Health unavailable. Waiting for verified metrics." else "Health score: $score out of 100"
     Box(modifier.size(size).semantics { this.contentDescription = desc }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val stroke = (size.toPx() * 0.09f).coerceAtLeast(3f)
-            val inset = stroke / 2 + 1f
-            drawArc(
-                color = OmniColors.border,
-                startAngle = 0f, sweepAngle = 360f, useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = Size(this.size.width - inset * 2, this.size.height - inset * 2),
-                style = Stroke(width = stroke),
-            )
-            drawArc(
-                color = color,
-                startAngle = -90f, sweepAngle = 360f * (score / 100f).coerceIn(0f, 1f), useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = Size(this.size.width - inset * 2, this.size.height - inset * 2),
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
-            )
-        }
+        ProgressRing(fraction = (score / 100f).coerceIn(0f, 1f), color = color, strokeWidth = size * 0.09f)
         Text(
             if (score < 0) "—" else "$score",
             color = color,
             fontFamily = OmniFonts.display,
             fontWeight = FontWeight.Bold,
             fontSize = (size.value * 0.30f).sp,
+        )
+    }
+}
+
+/** A ring filled clockwise from the top by [fraction] over a full grey track, at least 3 px thick. */
+@Composable
+private fun ProgressRing(fraction: Float, color: Color, strokeWidth: Dp) {
+    Canvas(Modifier.fillMaxSize()) {
+        val stroke = strokeWidth.toPx().coerceAtLeast(3f)
+        val inset = stroke / 2 + 1f
+        val arcSize = Size(size.width - inset * 2, size.height - inset * 2)
+        drawArc(
+            color = OmniColors.border,
+            startAngle = 0f, sweepAngle = 360f, useCenter = false,
+            topLeft = Offset(inset, inset), size = arcSize,
+            style = Stroke(width = stroke),
+        )
+        drawArc(
+            color = color,
+            startAngle = -90f, sweepAngle = 360f * fraction, useCenter = false,
+            topLeft = Offset(inset, inset), size = arcSize,
+            style = Stroke(width = stroke, cap = StrokeCap.Round),
         )
     }
 }
@@ -227,24 +232,7 @@ fun RefreshCountdown(
     val secs = ((remainingMs + 999) / 1000).toInt()
     val desc = contentDescription ?: "Refreshing in $secs seconds"
     Box(modifier.size(size).semantics { this.contentDescription = desc }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val stroke = (size.toPx() * 0.10f).coerceAtLeast(3f)
-            val inset = stroke / 2 + 1f
-            drawArc(
-                color = OmniColors.border,
-                startAngle = 0f, sweepAngle = 360f, useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = Size(this.size.width - inset * 2, this.size.height - inset * 2),
-                style = Stroke(width = stroke),
-            )
-            drawArc(
-                color = color,
-                startAngle = -90f, sweepAngle = 360f * frac, useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = Size(this.size.width - inset * 2, this.size.height - inset * 2),
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
-            )
-        }
+        ProgressRing(fraction = frac, color = color, strokeWidth = size * 0.10f)
         Text(
             "$secs",
             color = color,

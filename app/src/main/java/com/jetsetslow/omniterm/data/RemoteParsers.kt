@@ -1919,43 +1919,36 @@ object RemoteParsers {
 
     /** FreeBSD/OpenBSD metrics (sysctl/df -k/netstat). Per-core/temp/disk-I/O/SMART are not collected. */
     private fun parseMetricsBsd(sections: Map<String, String>, os: String): HostMetrics {
-        val cpu = sections["CPU"]?.let { line ->
-            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
-                ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
-        } ?: 0f
         val mem = sections["SYSMEM"].orEmpty()
         fun sm(key: String): Long = Regex("""^$key\s+(\d+)""", RegexOption.MULTILINE)
             .find(mem)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val pageSize = sm("pagesize").takeIf { it > 0 } ?: 4096L
-        val memTotal = sm("phys")
         val freeBytes = (sm("free") + sm("inactive") + sm("cache")) * pageSize
-        val memUsed = (memTotal - freeBytes).coerceAtLeast(0L)
-        val disks = parseDisks(sections["DISKS"].orEmpty(), blockBytes = 1024L)
-        val root = disks.firstOrNull { it.mount == "/" }
-        val load = sections["LOADAVG"].orEmpty().let { Regex("""[\d.]+""").findAll(it).map { m -> m.value.toFloat() }.toList() }
-        val boot = Regex("""sec\s*=\s*(\d+)""").find(sections["BOOT"].orEmpty())?.groupValues?.get(1)?.toLongOrNull()
-        val now = sections["NOW"]?.trim()?.toLongOrNull()
-        val uptime = if (boot != null && now != null) (now - boot).coerceAtLeast(0L) else 0L
-        val tcp = sections["TCP"]?.trim()?.toIntOrNull() ?: 0
-        val procCount = sections["PROC"]?.trim()?.toIntOrNull() ?: 0
-        return HostMetrics(
-            cpu, memUsed, memTotal, root?.usedBytes ?: 0L, root?.totalBytes ?: 0L,
-            load.getOrElse(0) { 0f }, load.getOrElse(1) { 0f }, load.getOrElse(2) { 0f }, uptime, procCount,
-            tcpConnections = tcp, disks = disks, netInterfaces = parseBsdNetstat(sections["NETSTAT"].orEmpty()), os = os, platforms = setOf("freebsd"),
-        )
+        return bsdFamilyMetrics(sections, memTotal = sm("phys"), freeBytes = freeBytes, os = os, platform = "freebsd")
     }
 
     /** macOS metrics: like BSD but memory from vm_stat + hw.memsize. */
     private fun parseMetricsDarwin(sections: Map<String, String>): HostMetrics {
-        val cpu = sections["CPU"]?.let { line ->
-            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
-                ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
-        } ?: 0f
         val memTotal = sections["MEMSIZE"]?.trim()?.toLongOrNull() ?: 0L
         val vmstat = sections["VMSTAT"].orEmpty()
         val pageSize = Regex("""page size of (\d+) bytes""").find(vmstat)?.groupValues?.get(1)?.toLongOrNull() ?: 4096L
         fun pages(label: String): Long = Regex("""$label:\s+(\d+)""").find(vmstat)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val freeBytes = (pages("Pages free") + pages("Pages inactive") + pages("Pages speculative")) * pageSize
+        return bsdFamilyMetrics(sections, memTotal = memTotal, freeBytes = freeBytes, os = "Darwin", platform = "darwin")
+    }
+
+    /** What BSD and macOS report the same way (top, df -k, sysctl boot time, netstat); only memory differs. */
+    private fun bsdFamilyMetrics(
+        sections: Map<String, String>,
+        memTotal: Long,
+        freeBytes: Long,
+        os: String,
+        platform: String,
+    ): HostMetrics {
+        val cpu = sections["CPU"]?.let { line ->
+            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
+                ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
+        } ?: 0f
         val memUsed = (memTotal - freeBytes).coerceAtLeast(0L)
         val disks = parseDisks(sections["DISKS"].orEmpty(), blockBytes = 1024L)
         val root = disks.firstOrNull { it.mount == "/" }
@@ -1968,7 +1961,7 @@ object RemoteParsers {
         return HostMetrics(
             cpu, memUsed, memTotal, root?.usedBytes ?: 0L, root?.totalBytes ?: 0L,
             load.getOrElse(0) { 0f }, load.getOrElse(1) { 0f }, load.getOrElse(2) { 0f }, uptime, procCount,
-            tcpConnections = tcp, disks = disks, netInterfaces = parseBsdNetstat(sections["NETSTAT"].orEmpty()), os = "Darwin", platforms = setOf("darwin"),
+            tcpConnections = tcp, disks = disks, netInterfaces = parseBsdNetstat(sections["NETSTAT"].orEmpty()), os = os, platforms = setOf(platform),
         )
     }
 

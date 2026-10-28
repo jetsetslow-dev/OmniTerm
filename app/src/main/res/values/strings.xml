@@ -669,7 +669,6 @@
     <string name="proxy_jump_host">"Proxy / jump host"</string>
     <string name="use_a_saved_host">"Use a saved host…"</string>
     <string name="jump_host_key_optional_2">"Jump host key (optional)"</string>
-    <string name="started_ago_backgrounded_ago_2">"Started %1$s ago · backgrounded %2$s ago"</string>
     <string name="terminal_input">"Terminal input"</string>
     <string name="use_this_when_an_incognito_keyboard">"Use this when an incognito keyboard does not expose clipboard history."</string>
     <string name="terminal_paste">"Terminal paste"</string>
@@ -954,7 +953,6 @@
     <string name="auth_keys_profiles">"Auth Keys &amp; Profiles"</string>
     <string name="could_not_read_file">"Could not read file: %1$s"</string>
     <string name="password_leave_blank_to_keep_current">"Password (leave blank to keep current)"</string>
-    <string name="could_not_read_file_2">"Could not read file: %1$s"</string>
     <string name="restore_backup_2">"Restore Backup"</string>
     <string name="choose_what_to_include">"Choose what to include"</string>
     <string name="sensitive_sections_selected_backup_will_be">"Sensitive sections selected: backup will be encrypted."</string>

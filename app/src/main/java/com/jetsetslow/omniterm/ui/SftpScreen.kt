@@ -85,17 +85,8 @@ private fun CompactSftpIconToggleButton(
 
 @Composable
 fun SftpScreen(viewModel: AppViewModel) {
-    val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = servers.filter { viewModel.isPickableHost(it) }
-    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
-    val srv = explicitlySelected ?: onlineServers.firstOrNull()
-    LaunchedEffect(srv?.id) {
-        if (srv != null) {
-            if (explicitlySelected == null && viewModel.selectedServerId != srv.id) {
-                viewModel.selectedServerId = srv.id
-            }
-            viewModel.ensureSftpLoadedForSelectedServer()
-        }
+    val srv = screenHost(viewModel) {
+        if (it != null) viewModel.ensureSftpLoadedForSelectedServer()
         // Only the SFTP subtab needs an online SSH host; Bookmarks/Shares/Transfers work without.
         else if (viewModel.activeSftpTab == 1) viewModel.activeSftpTab = 0
     }
@@ -3460,7 +3451,7 @@ private fun globToRegex(glob: String): Regex {
 }
 
 /** Resolves a content URI's display name (the filename an upload will use), or null if unknown. */
-private fun contentDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
+internal fun contentDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
     runCatching {
         context.contentResolver.query(uri, null, null, null, null)?.use { c ->
             val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
