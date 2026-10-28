@@ -58,6 +58,7 @@ The standard (user, 2026-10-27): both apps are the same app, written in two lang
 - **`db2daf9`** fixes the local gate's secret scan:
   - In a linked worktree it scanned 0 commits and passed.
   - It now mounts the common git directory, and fails a scan that reads no commits.
+- The Flutter Android wrapper moves to Gradle 9.8.2, as the root wrapper did in #128. The gate's toolchain check caught the mismatch after main was merged in.
 - Full `flutter test` passed with these changes.
 
 ## October 28: PIN and backup keys as fast as Kotlin — validated October 28
