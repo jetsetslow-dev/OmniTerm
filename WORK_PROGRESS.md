@@ -40,6 +40,26 @@ The standard (user, 2026-10-27): both apps are the same app, written in two lang
   - The edit-host fixes.
   - Kotlin's tmux session names: Flutter uses `omniterm-<id>-<millis>`.
 
+## October 28: host delete, attach, edit, metrics reasons, Retry and host health — local complete, device validation pending
+
+- **Host management as Kotlin does it** (`4158e0f`, `52c21b5`, `afe0286`, `2b5ac84`, `db4176a`, `d277c38`):
+  - Deleting a host, one or several at once, offers to end its tmux sessions.
+  - "Attach existing tmux…" joins a session that is already running.
+  - Editing a host carries a rename everywhere, and resets a moved host.
+  - A host without metrics says why.
+  - The card's Retry rechecks that one host.
+  - Details are in the parity doc under "Host delete, attach, edit, metrics reasons and Retry".
+- **Host health when a terminal ends** (user, 2026-10-28: "implement the recommended option across both and keep them in sync"):
+  - Only a dropped connection that is being reconnected resets health, with "Connection lost. Waiting for current metrics.".
+  - Closing a terminal, or its shell exiting on the server, leaves health alone.
+  - Flutter `44c248a` stops the reset in `HostStatusProbe.setLiveSessionServers`. Kotlin already behaved this way; its new `TerminalEndHealthRobolectricTest` pins it on `kotlin-bug-fixes`.
+  - Both test sets were mutation-checked.
+- **`f1c2591`** removes the copies the duplicate-code gate found, in System specs and the SFTP shell check.
+- **`db2daf9`** fixes the local gate's secret scan:
+  - In a linked worktree it scanned 0 commits and passed.
+  - It now mounts the common git directory, and fails a scan that reads no commits.
+- Full `flutter test` passed with these changes.
+
 ## October 28: PIN and backup keys as fast as Kotlin — validated October 28
 
 - **PBKDF2 parity (performance).** Kotlin derives the app PIN hash and the backup key with `javax.crypto` PBKDF2WithHmacSHA256. On Android that is BouncyCastle in Java, not native code. Flutter used `package:cryptography`'s pure-Dart `Pbkdf2`, which rebuilds the HMAC key state on every round. Release builds on the API 35 emulator:
