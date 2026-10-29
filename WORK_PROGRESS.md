@@ -1,5 +1,31 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 29: sudo check, tool installs, ended shells, rejected keys, CodeQL and advisories in the gate
+
+- **Decisions (user, 2026-10-29).**
+  - Every sudo action asks, every time ("Always ask, every sudo action"): App Lock, else the phone's screen lock, else a plain "Run this with sudo on <host>?".
+  - Missing helper tools install from the notice that names them, in a pop-up that stays open until closed. nvidia-smi is never installed on the dev host by hand: the user tests that install from OmniTerm.
+  - CodeQL alert 37: "Bind to a key". Alert 38: "Drop the key on 7–10". Local CodeQL: "Add it to the gate", and "do the same for dependabot".
+- **Kotlin, PR #130** (copied here with `cherry-pick -x`):
+  - `98b9681` / `e8c42cf`: the sudo check for Reboot, service control, Read with sudo, SFTP sudo mode and every install; `HostTool` installs for dmidecode, smartmontools, nvidia-smi and tmux; Processes chips only after the first read.
+  - `7ed87b9` / `2900043`: a shell that exits on the server stays, ended, with its scrollback; a rejected first key is remembered for the run, so background checks stop asking.
+  - `7316a6d` / `48301ef`: `TerminalEndHealthRobolectricTest` (October 28 entry).
+  - `a618a64` / `e2e3b5c`, `734f9a9` / `2cf360b`: on Android 11 and later the screen-lock check counts only once a Keystore key bound to that prompt opens (alert 37). Android 7 to 10 go by the system "Confirm your PIN" screen alone, since a timed key there raised alert 38.
+  - `c27fd92` / `7ac3fe1`: `--full` now runs `scripts/check-dependency-advisories.py` (release-classpath SBOMs and pinned actions against GitHub's advisory database, failing at moderate) and `scripts/local-codeql.sh` (the `codeql.yml` analysis with CLI 2.27.3). Run on a618a64, the local CodeQL reported alert 38 at the line GitHub flagged.
+- **Flutter `2372930`** ports all of it:
+  - `HostTool` scripts are byte-identical to Kotlin's (12 compared), with `ActionStreamDialog` for installs and Fleet's quick checks. The old `StreamingCommandDialog` is gone.
+  - `BiometricBridge` uses the same screen-lock keys.
+  - Ended shells use Kotlin's banner and no RECON.
+  - The host-key prompt names `[host]:port`.
+  - Found on the device and fixed: `SshHostKeyException` was never thrown, so a rejected key read "Connection closed before authentication" and "Host Key Changed" never opened. A live test against the direct fixture fails without the fix.
+- **Checked on the emulators against the direct fixture:**
+  - Kotlin, API 35 and API 29: Read with sudo ran after the PIN; backing out or a wrong PIN ran nothing.
+  - Flutter, API 35: the screen lock and the plain confirm; the install pop-up; Processes chips; the `[host]:port` prompt; a rejected key, both on the card and in the terminal; Host Key Changed with Remove & Reconnect; an ended shell and Dismiss.
+  - Flutter, API 29: the PIN path.
+- **Open:**
+  - "Started just now ago" in both apps' session pickers: `started_ago` wraps `formatSessionAge`, which can return "just now".
+  - GitHub scans neither the pub packages nor `flutter_app`'s native Kotlin. Offered, not added.
+
 ## October 27: queued at the user's request — saved-session cleanup, host-delete parity, behaviour checks
 
 The standard (user, 2026-10-27): both apps are the same app, written in two languages. Behaviour, features, UI, text and performance must all match.
