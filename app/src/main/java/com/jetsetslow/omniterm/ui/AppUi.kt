@@ -2358,11 +2358,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                 )
                                                 viewModel.lastSeenAt[server.id]?.let { seenAt ->
                                                     Text(
-                                                        if (System.currentTimeMillis() - seenAt < 60_000L) {
-                                                            stringResource(R.string.last_seen_just_now)
-                                                        } else {
-                                                            stringResource(R.string.last_seen_ago, formatSessionAge(seenAt))
-                                                        },
+                                                        ageText(R.string.last_seen_ago, R.string.last_seen_just_now, seenAt),
                                                         fontSize = 10.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     )
