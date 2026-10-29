@@ -22,8 +22,15 @@
   - Kotlin, API 35 and API 29: Read with sudo ran after the PIN; backing out or a wrong PIN ran nothing.
   - Flutter, API 35: the screen lock and the plain confirm; the install pop-up; Processes chips; the `[host]:port` prompt; a rejected key, both on the card and in the terminal; Host Key Changed with Remove & Reconnect; an ended shell and Dismiss.
   - Flutter, API 29: the PIN path.
+- **#130 merged** as `3e7d73f`. All of main's runs on it passed, including CodeQL (18 min) and Android build & publish (22 min), with no open CodeQL or Dependabot alerts.
+- **"Started just now ago"** in both apps' session switchers and Attach tmux. User decision: merge #130 first and fix this next.
+  - The cause: `started_ago` wrapped `formatSessionAge`, which returns "just now" in the first minute.
+  - Kotlin `02d48ae` (PR #131), copied here as `280256c`: one `ageText` helper with a whole "just now" string, used for every age line, Last seen included.
+  - Flutter `3dd50b3`: the same helper, through the generated strings. Its switcher and Last seen had typed English in place of them.
+  - Both checked on the API 35 emulator: "Started just now", "Started just now · backgrounded just now", and a minute later "Started 1m ago · backgrounded 1m ago".
+- **Flutter `4ee20b7`**: the switcher's headings are Kotlin's "BACKGROUND SESSIONS" and "RESUMABLE TMUX". Flutter typed them in mixed case.
 - **Open:**
-  - "Started just now ago" in both apps' session pickers: `started_ago` wraps `formatSessionAge`, which can return "just now".
+  - The parity audit lower-cases text before comparing (`norm` in `scripts/parity-audit.py`), so a difference only in case passes unseen. Reported, not changed.
   - GitHub scans neither the pub packages nor `flutter_app`'s native Kotlin. Offered, not added.
 
 ## October 27: queued at the user's request — saved-session cleanup, host-delete parity, behaviour checks
