@@ -37,6 +37,52 @@ internal object SshHostKeyTrust {
     @Volatile private var approvalRegistration: ApprovalRegistration? = null
     private val firstPinCommitLock = Any()
 
+    /**
+     * Keys the user rejected during this run, as "host|type|fingerprint". Every background check
+     * of such a host used to ask about the same key again, every few seconds. Now those checks fail
+     * closed quietly, and a connection the user starts asks again (see [allowPromptAgain]). Kept in
+     * memory only, so a restart asks again too.
+     */
+    private val rejectedKeys: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private fun rejectionKey(request: HostKeyApprovalRequest) =
+        "${request.host}|${request.keyType}|${request.fingerprint}"
+
+    /** The user rejected [request]'s key: don't ask about it again until they connect themselves. */
+    fun rememberRejection(request: HostKeyApprovalRequest) {
+        rejectedKeys.add(rejectionKey(request))
+    }
+
+    /** The user is connecting to this host themselves, so a key they rejected may be asked about again. */
+    fun allowPromptAgain(host: String, port: Int) {
+        val aliases = storageAliases(host, port)
+        rejectedKeys.removeIf { key -> aliases.any { alias -> key.startsWith("$alias|") } }
+    }
+
+    /**
+     * Asks [handler] whether to trust a host's first key, unless the user already rejected this
+     * exact key during this run. With no handler (a background worker, early start-up) it fails
+     * closed: an unknown host must be trusted interactively before unattended use.
+     */
+    internal fun approveFirstKey(
+        handler: ((HostKeyApprovalRequest) -> Unit)?,
+        request: HostKeyApprovalRequest,
+        timeoutMs: Long = APPROVAL_TIMEOUT_MS,
+    ): Boolean {
+        if (handler == null || rejectionKey(request) in rejectedKeys) {
+            request.deferred.complete(false)
+            return false
+        }
+        return awaitApproval(handler, request, timeoutMs)
+    }
+
+    private fun sha256Fingerprint(encodedKey: String): String = runCatching {
+        val bytes = Base64.decode(encodedKey, Base64.NO_WRAP)
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        Base64.encodeToString(md.digest(bytes), Base64.NO_WRAP)
+            .trimEnd('=').let { "SHA256:$it" }
+    }.getOrDefault("(unknown)")
+
     @Synchronized
     fun registerApprovalHandler(owner: Any, handler: (HostKeyApprovalRequest) -> Unit) {
         approvalRegistration = ApprovalRegistration(owner, handler)
@@ -62,13 +108,7 @@ internal object SshHostKeyTrust {
             val parts = storageKey.split("|", limit = 2)
             val host = parts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val keyType = parts.getOrNull(1) ?: ""
-            val fp = runCatching {
-                val bytes = android.util.Base64.decode(decoded, android.util.Base64.NO_WRAP)
-                val md = java.security.MessageDigest.getInstance("SHA-256")
-                android.util.Base64.encodeToString(md.digest(bytes), android.util.Base64.NO_WRAP)
-                    .trimEnd('=').let { "SHA256:$it" }
-            }.getOrDefault("(unknown)")
-            KnownHost(host, keyType, fp)
+            KnownHost(host, keyType, sha256Fingerprint(decoded))
         }
     }
 
@@ -164,24 +204,10 @@ internal object SshHostKeyTrust {
             val trusted = readStored(rawStored)
             return when {
                 trusted == null -> {
-                    val handler = approvalRegistration?.handler
-                    val approved = if (handler != null) {
-                        val fp = runCatching {
-                            val bytes = Base64.decode(encoded, Base64.NO_WRAP)
-                            val md = java.security.MessageDigest.getInstance("SHA-256")
-                            Base64.encodeToString(md.digest(bytes), Base64.NO_WRAP)
-                                .trimEnd('=').let { "SHA256:$it" }
-                        }.getOrDefault("(unknown)")
-                        val deferred = CompletableDeferred<Boolean>()
-                        awaitApproval(
-                            handler,
-                            HostKeyApprovalRequest(normalizedHost, hostKey.getType(), fp, deferred),
-                        )
-                    } else {
-                        // No approval UI available (background worker / early init): fail closed.
-                        // An unknown host must be trusted interactively before unattended use.
-                        false
-                    }
+                    val approved = approveFirstKey(
+                        approvalRegistration?.handler,
+                        HostKeyApprovalRequest(normalizedHost, hostKey.getType(), sha256Fingerprint(encoded), CompletableDeferred()),
+                    )
                     if (!approved) return HostKeyRepository.NOT_INCLUDED
                     persistApprovedFirstPin(
                         encoded = encoded,

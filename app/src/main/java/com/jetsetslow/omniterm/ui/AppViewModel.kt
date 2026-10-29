@@ -3149,6 +3149,7 @@ class AppViewModel @JvmOverloads constructor(
                 withContext(Dispatchers.Main) { manualRefreshError = "Refresh failed: host was removed." }
                 return@launch
             }
+            allowHostKeyPromptAgain(srv)
             probeServer(srv)
             doneRechecking(listOf(serverId))
             val refreshed = repository.getServerById(serverId)
@@ -4163,14 +4164,19 @@ class AppViewModel @JvmOverloads constructor(
 
     fun dismissHostKeyChangedDialog() { hostKeyChangedServer = null }
 
+    /** A connection the user started asks again about a host key they rejected earlier. */
+    private fun allowHostKeyPromptAgain(srv: ServerEntity) {
+        SshHostKeyTrust.allowPromptAgain(srv.host, srv.port)
+        if (srv.proxyHost.isNotBlank()) SshHostKeyTrust.allowPromptAgain(srv.proxyHost, srv.proxyPort)
+    }
+
     fun approveHostKey(approved: Boolean) {
         val req = pendingHostKeyApproval ?: return
         pendingHostKeyApproval = nextPendingHostKeyApproval()
         req.deferred.complete(approved)
-        if (!approved) {
-            isTerminalConnecting = false
-            terminalConnectError = "Host key rejected by user."
-        }
+        // A terminal connect waiting on this key reports the rejection through its own failure
+        // path; a background check's rejection is no reason to mark the terminal failed.
+        if (!approved) SshHostKeyTrust.rememberRejection(req)
     }
 
     private fun removeCompletedHostKeyApproval(req: com.jetsetslow.omniterm.data.ssh.HostKeyApprovalRequest) {
@@ -5278,6 +5284,8 @@ class AppViewModel @JvmOverloads constructor(
         onResult: (String?) -> Unit,
     ) {
         if (host.isBlank()) { onResult("Host is required."); return }
+        SshHostKeyTrust.allowPromptAgain(host, port)
+        if (proxyHost.isNotBlank()) SshHostKeyTrust.allowPromptAgain(proxyHost, proxyPort)
         isTestingConnection = true
         viewModelScope.launch {
             // The real configured SSH route is authoritative. A preliminary direct socket failure
@@ -5548,6 +5556,7 @@ class AppViewModel @JvmOverloads constructor(
         onFinished: ((Boolean) -> Unit)? = null,
     ) {
         if (isTerminalConnecting) return
+        allowHostKeyPromptAgain(srv)
         terminalTmuxRetry = null
         // Publish/refresh the launcher shortcut for this host; connecting is the usage signal
         // that keeps frequently used hosts ranked in the launcher's dynamic shortcut list.
@@ -5664,7 +5673,9 @@ class AppViewModel @JvmOverloads constructor(
                         terminalConnectionFailure = failure
                         terminalConnectError = failure.userMessage
                         _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
-                        hostKeyChangedServer = srv
+                        // Only a pinned key that no longer matches has changed; "reject HostKey" is
+                        // a first key the user turned down, which "Remove & reconnect" would misname.
+                        if (msg.contains("HostKey has been changed", ignoreCase = true)) hostKeyChangedServer = srv
                     } else {
                         val failure = classifySshConnectionFailure(msg)
                         terminalConnectionFailure = failure
@@ -6257,7 +6268,9 @@ class AppViewModel @JvmOverloads constructor(
                         terminalConnectError =
                             failure.userMessage + " The saved tmux recovery entry was kept."
                         _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
-                        hostKeyChangedServer = srv
+                        // Only a pinned key that no longer matches has changed; "reject HostKey" is
+                        // a first key the user turned down, which "Remove & reconnect" would misname.
+                        if (msg.contains("HostKey has been changed", ignoreCase = true)) hostKeyChangedServer = srv
                     } else {
                         val failure = classifySshConnectionFailure(msg)
                         terminalConnectionFailure = failure
@@ -6461,10 +6474,10 @@ class AppViewModel @JvmOverloads constructor(
             // channel-EOF). remoteExited is true ONLY for a deliberate exit and NEVER for a socket
             // death, so it cleanly separates the two cases:
             //
-            //   • cleanExit (remote `exit`): tear the session down. For a persistent session this
-            //     means the user fully exited tmux (inner shell → `exec tmux attach` → login shell all
-            //     ended), so the tmux server is gone — do NOT reconnect, or it loops into a fresh
-            //     session.
+            //   • cleanExit (remote `exit`): end the session, keeping its terminal and scrollback on
+            //     screen until the user dismisses it. For a persistent session this means the user
+            //     fully exited tmux (inner shell → `exec tmux attach` → login shell all ended), so the
+            //     tmux server is gone — do NOT reconnect, or it loops into a fresh session.
             //   • not cleanExit + creds + not user-closed (a drop): auto-reconnect (re-attaching tmux
             //     for a persistent session).
             //   • user-initiated close: tear down.
@@ -6490,7 +6503,11 @@ class AppViewModel @JvmOverloads constructor(
                     if (shellSession.persistent) {
                         forgetPersistentSession(shellSession.serverId, shellSession.tmuxName)
                     }
-                    cleanupSession(shellSession)
+                    if (isUserClose) {
+                        cleanupSession(shellSession)
+                    } else {
+                        TerminalSessionManager.endSessionKeepingScrollback(shellSession, session.exitStatus.value ?: 0)
+                    }
                 } else {
                     // Reached only when the session has no credentials, so it can neither
                     // auto-reconnect nor be retried by hand — retrySession() goes through
@@ -6917,10 +6934,13 @@ class AppViewModel @JvmOverloads constructor(
             .forEach { cleanupSession(it) }
     }
 
-    /** Manually retry a dropped session (the UI "Reconnect" button after auto-retry gives up). */
+    /**
+     * Manually retry a dropped session (the UI "Reconnect" button after auto-retry gives up). A shell
+     * that exited on the server is not a drop and is never reopened.
+     */
     fun retrySession(sessionId: String) {
         val s = activeSessions.find { it.id == sessionId } ?: return
-        if (s.isConnected || s.reconnecting) return
+        if (s.isConnected || s.reconnecting || s.endedExitStatus != null) return
         reconnectSession(s)
     }
 
@@ -7593,6 +7613,11 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun requestDisconnectSession(sessionId: String) {
+        // An ended terminal has nothing left to disconnect or terminate: closing it dismisses it.
+        activeSessions.find { it.id == sessionId && it.endedExitStatus != null }?.let { ended ->
+            cleanupSession(ended)
+            return
+        }
         pendingDisconnectSessionId = sessionId
     }
 
