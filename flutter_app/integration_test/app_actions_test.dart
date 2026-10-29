@@ -304,7 +304,7 @@ void main() {
         reason: 'an advisory probe failure must be described as a check failure, not certainty',
       );
       expect(
-        find.text('SSH ANYWAY'),
+        find.text('SSH anyway'),
         findsOneWidget,
         reason: 'a failed automatic check must never remove the user\'s direct SSH path',
       );
@@ -326,7 +326,7 @@ void main() {
         tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(shortcutChannel, null);
       });
 
-      await tester.tap(find.text('SSH ANYWAY'));
+      await tester.tap(find.text('SSH anyway'));
       await tester.pumpAndSettle();
       expect(shortcutInvoked.isCompleted, isTrue);
       expect(find.byKey(const ValueKey('offline.connect.dialog')), findsOneWidget);
