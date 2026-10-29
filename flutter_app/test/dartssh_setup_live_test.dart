@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -148,6 +149,61 @@ void main() {
       timeout: const Timeout(Duration(seconds: 45)),
     );
   }
+
+  /// `exit` must end the terminal, as it does in Kotlin, not reconnect it. `ShellSession` decides
+  /// the moment `closed` is reported, by reading `remoteExited`, so the judgement has to be made
+  /// before `closed` is set. Against the device fixture the shell reconnected after `exit`.
+  test(
+    'OpenSSH shell: exit is already a remote exit when closed is reported',
+    () async {
+      expect(user, isNotEmpty);
+      expect(password, isNotEmpty);
+      final trust = SshHostKeyTrust(InMemoryHostKeyStore());
+      final owner = Object();
+      trust.registerApprovalHandler(owner, (request) => request.completer.complete(true));
+      final transport = DartSshTransport(trust);
+      TerminalSession? shell;
+      try {
+        shell = await transport
+            .openShell(
+              SshCredentials(
+                host: InternetAddress.loopbackIPv4.address,
+                port: 2201,
+                username: user!,
+                password: password,
+              ),
+              80,
+              24,
+            )
+            .timeout(const Duration(seconds: 30));
+        final open = shell;
+        final seenAtClose = Completer<(bool, int?)>();
+        open.closed.addListener(() {
+          if (open.closed.value && !seenAtClose.isCompleted) {
+            seenAtClose.complete((open.remoteExited.value, open.exitStatus.value));
+          }
+        });
+        final output = open.output.listen((_) {});
+        await open.write(utf8.encode('exit\n'));
+        final (remoteExited, exitStatus) = await seenAtClose.future.timeout(
+          const Duration(seconds: 15),
+        );
+        await output.cancel();
+        expect(
+          remoteExited,
+          isTrue,
+          reason: 'a shell that ran exit was read as a dropped connection',
+        );
+        expect(exitStatus, 0);
+      } finally {
+        shell?.close();
+        transport.shutdown();
+        trust.clearApprovalHandler(owner);
+      }
+    },
+    skip: enabled ? false : 'enable OMNITERM_SETUP_FIXTURE with repository SSH fixtures',
+    timeout: const Timeout(Duration(minutes: 1)),
+  );
 }
 
 class _FixtureRelay {

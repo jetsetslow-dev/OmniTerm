@@ -624,6 +624,7 @@ class _DartSshTerminalSession implements TerminalSession {
   StreamSubscription<Uint8List>? _errorSub;
 
   final ValueNotifier<bool> _closed = ValueNotifier(false);
+  bool _closing = false;
   final ValueNotifier<int?> _exitStatus = ValueNotifier(null);
   final ValueNotifier<bool> _remoteExited = ValueNotifier(false);
 
@@ -665,8 +666,8 @@ class _DartSshTerminalSession implements TerminalSession {
 
   @override
   void close() {
-    if (_closed.value) return;
-    _closed.value = true;
+    if (_closing) return;
+    _closing = true;
 
     // dartssh2 surfaces the exit status on the session once the server sends it. Unlike JSch, there
     // is no lagging status message to poll for: `stdout` completing and `exitCode` being set are
@@ -679,6 +680,9 @@ class _DartSshTerminalSession implements TerminalSession {
     );
     _remoteExited.value = classification.remoteExited;
     _exitStatus.value = classification.exitStatus;
+    // Only now: `ShellSession` reads `remoteExited` as soon as this is set, and an `exit` read
+    // before the judgement looked like a drop and reconnected.
+    _closed.value = true;
 
     _outputSub?.cancel();
     _errorSub?.cancel();
