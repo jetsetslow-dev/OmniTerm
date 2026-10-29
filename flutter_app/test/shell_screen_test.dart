@@ -1582,7 +1582,15 @@ void main() {
       await transport.opened.single.endByRemoteExit(status: 130);
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('exit 130'), findsOneWidget);
+      expect(find.text('Session ended (exit 130). Scrollback kept.'), findsOneWidget);
+      // Nothing reconnects a shell the user's own `exit` ended: no RECON and no Retry, as in
+      // Kotlin. Dismiss closes it.
+      expect(find.byKey(const ValueKey('shell.header.reconnect')), findsNothing);
+      expect(find.byKey(const ValueKey('shell.retry')), findsNothing);
+      expect(vm.sessions, hasLength(1));
+      await tester.tap(find.byKey(const ValueKey('shell.dismiss')));
+      await tester.pumpAndSettle();
+      expect(vm.sessions, isEmpty);
       await finish(tester);
     });
 

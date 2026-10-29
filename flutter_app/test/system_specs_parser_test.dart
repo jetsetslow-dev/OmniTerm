@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/data/host_tools.dart';
 import 'package:omniterm/data/system_specs.dart';
 
 import 'fixtures/system_specs_fixtures.dart';
@@ -140,6 +141,25 @@ void main() {
     expect(specs.section(SpecKind.memory)!.notices, [SpecNotice.modulesToolMissing]);
     expect(specs.section(SpecKind.storage)!.notices, [SpecNotice.driveHealthToolMissing]);
     expect(specs.wouldGainFromSudo, isFalse);
+  });
+
+  test('an nvidia driver without nvidia-smi offers to install it, and one with it does not', () {
+    final withoutSmi = linuxCommon.replaceFirst(
+      RegExp('@NVIDIA\n[^\n]*\n'),
+      '@NVIDIA\n$specsMissing\n',
+    );
+    final gpu = parseSystemSpecs('Linux', withoutSmi).section(SpecKind.gpu)!;
+    expect(gpu.notices, [SpecNotice.gpuToolMissing]);
+    expect(gpu.notices.single.tool, HostTool.nvidiaSmi);
+    // lspci still names the card; only nvidia-smi's own detail is missing.
+    expect(gpu.items.any((i) => i.title == 'GA102 [GeForce RTX 3090]'), isTrue);
+    expect(parseSystemSpecs('Linux', linuxCommon).section(SpecKind.gpu)!.notices, isEmpty);
+    expect(
+      systemSpecsCommand('Linux'),
+      contains(
+        "elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo '$specsMissing'",
+      ),
+    );
   });
 
   test('busybox block devices without lsblk still list the drive', () {

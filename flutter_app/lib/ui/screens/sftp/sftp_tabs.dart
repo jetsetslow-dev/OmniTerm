@@ -1961,13 +1961,13 @@ Future<void> _confirmSudo(BuildContext context, SftpViewModel vm) async {
   );
   if (!(confirmed ?? false) || !context.mounted) return;
 
-  // Confirming says "I meant to"; this asks "are you the person who saved that sudo password".
-  // Kotlin requires the same before switching sudo on (`ui/SftpScreen.kt:1969`), and it is the same
-  // gate reboot and service actions use (defect 23).
+  // Confirming says "I meant to"; this asks "are you the person holding this phone". Turning it on
+  // runs every file operation as root from then on, so it gets the same check as every other sudo
+  // action (Kotlin's `toggleSftpSudo`); turning it off never asks.
   final server = vm.browsedServer;
+  if (server == null) return;
   final lock = context.read<AppLockController>();
-  if (server != null && lock.requiresSudoAuth(server.sudoPassword)) {
-    if (!await requestSudoAuth(context, lock)) return;
-  }
+  if (!await requestSudoAuth(context, lock, hostName: server.name)) return;
+  if (vm.browsedServer?.id != server.id) return;
   vm.sudoMode = true;
 }

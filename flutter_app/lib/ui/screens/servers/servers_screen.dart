@@ -771,7 +771,7 @@ class _ServerCard extends StatelessWidget {
             ],
             const SizedBox(height: 8),
             if (server.status == 'online' && server.authStatus == 'failed')
-              _AuthFailure(server: server, onRetry: () => hostProbe?.probeOne(server))
+              _AuthFailure(server: server, onRetry: () => _refresh(context))
             else if (server.status == 'online') ...[
               // Kotlin draws no metric row until there are metrics to put in it.
               if (metrics == null) ...[
@@ -783,11 +783,7 @@ class _ServerCard extends StatelessWidget {
                   key: ValueKey('servers.metricsRetry.${server.id}'),
                   label: AppLocalizations.of(context).retry,
                   small: true,
-                  // Kotlin's `refreshServer`: the card shows "Checking host…" until the host
-                  // answers, and anything still wrong is said in the refresh banner.
-                  onPressed: () => unawaited(
-                    context.read<ShellState>().reportRefresh(() => vm.refreshServer(server.id)),
-                  ),
+                  onPressed: () => _refresh(context),
                 ),
               ] else
                 Row(
@@ -940,6 +936,12 @@ class _ServerCard extends StatelessWidget {
     );
   }
 
+  /// Every Retry on the card, as Kotlin's `refreshServer`: the card shows "Checking host…" until
+  /// the host answers, anything still wrong is said in the refresh banner, and a host key the user
+  /// turned down earlier is asked about again.
+  void _refresh(BuildContext context) =>
+      unawaited(context.read<ShellState>().reportRefresh(() => vm.refreshServer(server.id)));
+
   OmniButton _pingButton(BuildContext context, Color accent) => OmniButton(
     key: ValueKey('servers.card.${server.id}.ping'),
     label: 'PING',
@@ -980,7 +982,7 @@ class _ServerCard extends StatelessWidget {
             label: 'Retry',
             color: OmniColors.red,
             small: true,
-            onPressed: hostProbe == null ? null : () => hostProbe!.probeOne(server),
+            onPressed: hostProbe == null ? null : () => _refresh(context),
           ),
         ],
       );

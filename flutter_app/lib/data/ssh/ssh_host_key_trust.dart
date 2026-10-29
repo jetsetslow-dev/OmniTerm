@@ -46,12 +46,14 @@ enum HostKeyVerdict {
 class HostKeyApprovalRequest {
   HostKeyApprovalRequest({
     required this.host,
+    this.port = 22,
     required this.keyType,
     required this.fingerprint,
     required this.completer,
   });
 
   final String host;
+  final int port;
   final String keyType;
 
   /// OpenSSH-style `SHA256:…`, shown to the user to compare against the server's own output.
@@ -106,6 +108,33 @@ class SshHostKeyTrust {
 
   Object? _approvalOwner;
   void Function(HostKeyApprovalRequest)? _approvalHandler;
+
+  /// Keys the user rejected during this run, as "alias|type|fingerprint". Every background check of
+  /// such a host used to ask about the same key again, every few seconds. Now those checks fail
+  /// closed quietly, and a connection the user starts asks again (see [allowPromptAgain]). Kept in
+  /// memory only, so a restart asks again too. Kotlin's `SshHostKeyTrust.rejectedKeys`.
+  final Set<String> _rejectedKeys = {};
+
+  static String _rejectionKey(String host, int port, String keyType, String fingerprint) =>
+      '${canonicalAlias(host, port)}|$keyType|$fingerprint';
+
+  /// The user rejected [request]'s key: don't ask about it again until they connect themselves.
+  void rememberRejection(HostKeyApprovalRequest request) => _rejectedKeys.add(
+    _rejectionKey(request.host, request.port, request.keyType, request.fingerprint),
+  );
+
+  /// The user is connecting to this host themselves, so a key they rejected may be asked about again.
+  void allowPromptAgain(String host, int port) {
+    final aliases = storageAliases(host, port);
+    _rejectedKeys.removeWhere((key) => aliases.any((alias) => key.startsWith('$alias|')));
+  }
+
+  /// [allowPromptAgain] for a host and, when it is reached through one, its proxy host. Kotlin's
+  /// `AppViewModel.allowHostKeyPromptAgain`.
+  void allowPromptAgainVia(String host, int port, String proxyHost, int proxyPort) {
+    allowPromptAgain(host, port);
+    if (proxyHost.trim().isNotEmpty) allowPromptAgain(proxyHost.trim(), proxyPort);
+  }
 
   /// Registration is owner-token based: a retiring ViewModel may clear only its own handler, never a
   /// newer instance's.
@@ -199,9 +228,11 @@ class SshHostKeyTrust {
     if (pinned != null) return pinned == fingerprint ? HostKeyVerdict.ok : HostKeyVerdict.changed;
 
     final handler = _approvalHandler;
-    if (handler == null) {
-      // No approval UI available (background worker / early init): fail closed. An unknown host
-      // must be trusted interactively before unattended use.
+    if (handler == null ||
+        _rejectedKeys.contains(_rejectionKey(host, port, keyType, fingerprint))) {
+      // No approval UI available (background worker / early init), or the user already turned this
+      // exact key down: fail closed. An unknown host must be trusted interactively before
+      // unattended use.
       return HostKeyVerdict.notIncluded;
     }
 
@@ -209,6 +240,7 @@ class SshHostKeyTrust {
       handler,
       HostKeyApprovalRequest(
         host: host,
+        port: port,
         keyType: keyType,
         fingerprint: fingerprint,
         completer: Completer<bool>(),

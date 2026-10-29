@@ -1,13 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
 import '../../../data/system_specs.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/app_lock_controller.dart';
 import '../../view_model/system_specs_view_model.dart';
 import '../../widgets/copy_with_confirmation.dart';
+import '../../widgets/host_tool_notice.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/sudo_auth_dialog.dart';
 
@@ -33,16 +37,14 @@ const _icons = {
   SpecKind.network: Icons.lan,
 };
 
-const _notices = {
-  SpecNotice.modulesNeedRoot:
-      "Each memory module's size, type, speed, maker and part number can only be read as root.",
-  SpecNotice.modulesToolMissing: 'Install dmidecode on this host to see its memory modules.',
-  SpecNotice.noModulesReported:
-      "This host's firmware lists no memory modules. Virtual machines usually don't.",
-  SpecNotice.driveHealthNeedsRoot:
-      'Drive health, temperature, hours in use and wear can only be read as root.',
-  SpecNotice.driveHealthToolMissing:
-      'Install smartmontools on this host to see drive health, temperature and wear.',
+/// What each notice says, in Kotlin's words (`SystemSpecsView.kt`, generated from its strings).
+String _noticeText(AppLocalizations l10n, SpecNotice notice) => switch (notice) {
+  SpecNotice.modulesNeedRoot => l10n.specModulesNeedRoot,
+  SpecNotice.modulesToolMissing => l10n.specModulesToolMissing,
+  SpecNotice.noModulesReported => l10n.specNoModulesReported,
+  SpecNotice.driveHealthNeedsRoot => l10n.specDriveHealthNeedsRoot,
+  SpecNotice.driveHealthToolMissing => l10n.specDriveHealthToolMissing,
+  SpecNotice.gpuToolMissing => l10n.specGpuToolMissing,
 };
 
 /// The sheet for [server]: a header with copy and refresh, then the sections.
@@ -218,13 +220,11 @@ class _SudoBanner extends StatelessWidget {
   }
 }
 
-/// Reads again with sudo, behind the same app-lock check as every other use of the saved password.
+/// Reads again with sudo, behind the same check as every other use of sudo.
 Future<void> readSpecsWithSudo(BuildContext context, Server server) async {
   final vm = context.read<SystemSpecsViewModel>();
   final lock = context.read<AppLockController>();
-  if (lock.requiresSudoAuth(server.sudoPassword)) {
-    if (!await requestSudoAuth(context, lock)) return;
-  }
+  if (!await requestSudoAuth(context, lock, hostName: server.name)) return;
   await vm.load(server, withSudo: true);
 }
 
@@ -270,13 +270,22 @@ class _SectionCard extends StatelessWidget {
                   for (final notice in section.notices)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        _notices[notice]!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontSize: 11,
+                      child: switch (notice.tool) {
+                        // Reads again as the specs were read, so a read with sudo stays one.
+                        final tool? => HostToolNotice(
+                          server: server,
+                          tool: tool,
+                          text: _noticeText(AppLocalizations.of(context), notice),
+                          onInstalled: () => unawaited(vm.load(server)),
                         ),
-                      ),
+                        null => Text(
+                          _noticeText(AppLocalizations.of(context), notice),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            fontSize: 11,
+                          ),
+                        ),
+                      },
                     ),
                 ],
               ),

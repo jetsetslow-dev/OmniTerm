@@ -8,12 +8,10 @@ import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 
 import 'support/fake_secure_storage.dart';
 
-/// Re-authentication before a privileged action uses a **stored** sudo password.
-///
-/// Ported from `withSudoAuth` / `verifyPinForSensitiveAction` (`ui/AppViewModel.kt:2521`, `:3130`).
-/// Flutter ran reboot and service actions behind a plain "are you sure?", which asks about intent
-/// rather than identity — so on a host with a saved sudo password, anyone holding the unlocked phone
-/// could reboot the server or stop `sshd`.
+/// The check before every sudo action: App Lock when it is on, else the phone's own lock, else a
+/// plain question. Ported from `withSudoAuth` / `verifyPinForSensitiveAction` (`ui/AppViewModel.kt`).
+/// A plain "are you sure?" asks about intent rather than identity, so anyone holding the unlocked
+/// phone could otherwise reboot a server or stop `sshd`.
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -38,33 +36,65 @@ void main() {
     return lock;
   }
 
-  group('requiresSudoAuth', () {
-    test('a host with no stored sudo password is not gated', () async {
-      // Nothing extra to protect: the user will be typing the password themselves.
+  group('which check a sudo action asks for', () {
+    // Every sudo action asks, saved password or not (Kotlin's `withSudoAuth`). What it asks for
+    // follows what the phone can check.
+    test('App Lock with a PIN asks for App Lock', () async {
       final lock = await controller();
-      expect(lock.requiresSudoAuth(''), isFalse);
-      expect(lock.requiresSudoAuth('   '), isFalse);
+      expect(lock.sudoAuthUsesAppLock, isTrue);
       lock.dispose();
     });
 
-    test('a stored password with a PIN configured is gated', () async {
-      final lock = await controller();
-      expect(lock.requiresSudoAuth('hunter2'), isTrue);
+    test('without App Lock it asks for the phone lock, when there is one', () async {
+      final asked = <String>[];
+      await repo.insertSetting('app_lock_enabled', 'false');
+      final lock = AppLockController(
+        repo,
+        deviceLockAvailable: () async => true,
+        deviceLockPrompt: (title, subtitle) async {
+          asked.add('$title / $subtitle');
+          return true;
+        },
+      );
+      await lock.load();
+
+      expect(lock.sudoAuthUsesAppLock, isFalse);
+      expect(await lock.hasDeviceLock(), isTrue);
+      expect(await lock.authenticateWithDeviceLock('Authenticate for sudo', 'Run this?'), isTrue);
+      expect(asked, ['Authenticate for sudo / Run this?']);
       lock.dispose();
     });
 
-    test('a stored password with no PIN and no biometrics is not gated', () async {
-      // There is nothing to check the user against, so a prompt would be theatre.
-      final lock = await controller(pin: null);
-      expect(lock.requiresSudoAuth('hunter2'), isFalse);
+    test('no App Lock and no phone lock leaves the plain question', () async {
+      await repo.insertSetting('app_lock_enabled', 'false');
+      final lock = AppLockController(
+        repo,
+        deviceLockAvailable: () async => false,
+        deviceLockPrompt: (_, _) async => true,
+      );
+      await lock.load();
+
+      expect(lock.sudoAuthUsesAppLock, isFalse);
+      expect(await lock.hasDeviceLock(), isFalse);
       lock.dispose();
     });
 
-    test('biometrics alone are enough to gate', () async {
-      final lock = await controller(pin: null, biometrics: true, prompt: (_) async => true);
-      expect(lock.requiresSudoAuth('hunter2'), isTrue);
-      lock.dispose();
-    });
+    test(
+      'a phone lock check that throws counts as no lock, and a throwing prompt as a no',
+      () async {
+        await repo.insertSetting('app_lock_enabled', 'false');
+        final lock = AppLockController(
+          repo,
+          deviceLockAvailable: () async => throw StateError('no keyguard'),
+          deviceLockPrompt: (_, _) async => throw StateError('cancelled'),
+        );
+        await lock.load();
+
+        expect(await lock.hasDeviceLock(), isFalse);
+        expect(await lock.authenticateWithDeviceLock('t', 's'), isFalse);
+        lock.dispose();
+      },
+    );
   });
 
   group('verifyPinForSensitiveAction', () {

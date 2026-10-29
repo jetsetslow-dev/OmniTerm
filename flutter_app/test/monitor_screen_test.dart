@@ -7,9 +7,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/host_tools.dart';
 import 'package:omniterm/data/remote_commands.dart';
+import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/domain/health_scoring.dart';
 import 'package:omniterm/domain/host_display.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/monitor/monitor_screen.dart';
 import 'package:omniterm/ui/screens/monitor/monitor_tabs.dart';
@@ -107,8 +110,12 @@ void main() {
           ChangeNotifierProvider<ScriptsViewModel>.value(value: scriptsVm),
           ChangeNotifierProvider<AppLockController>.value(value: lock),
           ChangeNotifierProvider<SystemSpecsViewModel>.value(value: specsVm!),
+          // Installing a missing tool streams over the app's transport.
+          if (transport != null) Provider<SshTransport>.value(value: transport),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: const Scaffold(body: MonitorScreen()),
         ),
@@ -363,6 +370,59 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   });
 
+  testWidgets(
+    'a driver without nvidia-smi offers to install it, then reads again behind the panel',
+    (tester) async {
+      // Kotlin's `processesNameNvidiaSmiWhereTheDriverRunsWithoutIt` and
+      // `aToolInstallsThroughTheSudoCheckThenReadsAgainBehindTheOpenPanel`.
+      await repo.insertServer(server(name: 'nas'));
+      const ps =
+          'PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+          '101 root 12.0 1.5 2048 01:00:00 S Xorg\n';
+      final transport = RecordingTransport(
+        replies: {'ps -eo': '$ps$processNvidiaSmiMissingMarker\n'},
+      );
+      await pump(tester, transport: transport);
+      await tester.tap(find.byKey(const ValueKey('monitor.tab.processes')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('nvidia-smi'), findsWidgets);
+      final install = find.byKey(const ValueKey('install.nvidiaSmi'));
+      expect(install, findsOneWidget);
+
+      await tester.tap(install);
+      await tester.pumpAndSettle();
+      // No App Lock and no screen lock in this harness, so the plain question asks.
+      expect(find.byKey(const ValueKey('sudoAuth.plain')), findsOneWidget);
+      expect(find.text('Run this with sudo on nas?'), findsOneWidget);
+      expect(transport.commands.any((c) => c.contains('apt-get')), isFalse);
+
+      // From here the host has it: the install answers, the check says yes, and ps has no marker.
+      transport.replies = {'ps -eo': ps, 'nvidia-smi': 'yes'};
+      await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('actionStream.dialog')), findsOneWidget);
+      expect(find.text('nvidia-smi is now installed on nas.'), findsOneWidget);
+      expect(
+        transport.commands.any(
+          (c) => c == HostTool.nvidiaSmi.installCommand(withSudoPassword: false),
+        ),
+        isTrue,
+        reason: 'no saved sudo password, so sudo must refuse rather than wait for one',
+      );
+      // Read again behind the panel, which stays up for the user to close.
+      expect(install, findsNothing);
+      await tester.tap(find.byKey(const ValueKey('actionStream.close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('actionStream.dialog')), findsNothing);
+      expect(install, findsNothing);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    },
+  );
+
   for (final width in [320.0, 760.0]) {
     for (final loading in [true, false]) {
       testWidgets(
@@ -401,9 +461,11 @@ void main() {
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 100));
             expect(tester.takeException(), isNull);
+            // The sort chips wait for the first read, then appear once with every column the
+            // host has, rather than CPU and MEM first and DISK and GPU a moment later.
             expect(
               find.byKey(const ValueKey('monitor.processes.sortCpu')).hitTestable(),
-              findsOneWidget,
+              loading ? findsNothing : findsOneWidget,
             );
             if (loading) {
               expect(
@@ -580,6 +642,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('monitor.reboot.confirm')));
+    await tester.pumpAndSettle();
+    // Then the sudo check, as every sudo action has; plain here, with no App Lock or screen lock.
+    expect(transport.commands.any((c) => c.contains('reboot')), isFalse);
+    await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
     await tester.pumpAndSettle();
     expect(transport.commands.any((c) => c.contains('reboot')), isTrue);
     vm.dispose();
@@ -1281,8 +1347,8 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('a host with no stored sudo password is not gated', (tester) async {
-      // Nothing extra to protect: the user supplies the password themselves.
+    testWidgets('a host with no stored sudo password asks too', (tester) async {
+      // Every sudo action asks, as in Kotlin: a passwordless sudo rule is root just the same.
       await repo.insertSetting('app_pin', '1234');
       await repo.insertSetting('app_lock_enabled', 'true');
       await repo.insertServer(server(name: 'nas'));
@@ -1295,7 +1361,31 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('monitor.reboot.confirm')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsNothing);
+      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsOneWidget);
+      expect(transport.commands.any((c) => c.contains('reboot')), isFalse);
+      vm.dispose();
+    });
+
+    testWidgets('with no App Lock and no screen lock it asks plainly, and Continue runs it', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport();
+      await pump(tester, transport: transport);
+      await lock.load();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('sudoAuth.plain')), findsOneWidget);
+      expect(find.text('Run this with sudo on nas?'), findsOneWidget);
+      expect(transport.commands.any((c) => c.contains('reboot')), isFalse);
+
+      await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
+      await tester.pumpAndSettle();
+      expect(transport.commands.any((c) => c.contains('reboot')), isTrue);
       vm.dispose();
     });
 
@@ -1408,6 +1498,10 @@ void main() {
     expect(find.text('web will briefly stop and start again.'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('monitor.service.confirm.confirm')));
     await tester.pumpAndSettle();
+    // systemctl runs with sudo, so the sudo check follows (plain here: no App Lock or screen lock).
+    expect(actions('web', 'restart'), isEmpty);
+    await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
+    await tester.pumpAndSettle();
     expect(actions('web', 'restart'), hasLength(1));
 
     await tester.tap(find.byKey(const ValueKey('monitor.service.web.disable')));
@@ -1421,10 +1515,14 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('monitor.service.batch.start')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('monitor.service.confirm.dialog')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
+    await tester.pumpAndSettle();
     expect(actions('batch', 'start'), hasLength(1));
     await tester.tap(find.byKey(const ValueKey('monitor.service.batch.enable')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('monitor.service.confirm.dialog')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
+    await tester.pumpAndSettle();
     expect(actions('batch', 'enable'), hasLength(1));
     expect(actions('web', 'disable'), isEmpty);
     vm.dispose();

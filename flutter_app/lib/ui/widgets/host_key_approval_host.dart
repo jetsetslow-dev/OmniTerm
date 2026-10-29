@@ -92,6 +92,10 @@ class _HostKeyApprovalHostState extends State<HostKeyApprovalHost> {
       barrierDismissible: true,
       builder: (context) => HostKeyApprovalDialog(request: request),
     );
+    // Reject and a tap outside both turn the key down, as Kotlin's `approveHostKey(false)`: the
+    // background checks stop asking about it until the user connects to the host themselves.
+    // A prompt taken down with the app is not the user's answer.
+    if (approved != true && mounted) widget.trust.rememberRejection(request);
     if (!request.completer.isCompleted) request.completer.complete(approved ?? false);
     _showing = null;
     _pump();
@@ -139,8 +143,9 @@ class HostKeyApprovalDialog extends StatelessWidget {
               child: Text(
                 // Deliberately NOT routed through HostDisplay: the user is authenticating this
                 // specific host against its fingerprint, so masking the identity would defeat the
-                // security decision being asked of them.
-                request.host,
+                // security decision being asked of them. Written as JSch names it, with the port when
+                // it is not 22, as in Kotlin.
+                SshHostKeyTrust.canonicalAlias(request.host, request.port),
                 key: const ValueKey('hostKey.host'),
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),

@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
-import 'package:omniterm/data/remote_commands.dart' show tmuxCheckCommand;
+import 'package:omniterm/data/remote_commands.dart' show tmuxCheckCommand, tmuxInstallCommand;
 import 'package:omniterm/data/ssh/dartssh_transport.dart' show SshHostKeyException;
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/theme/theme.dart';
+import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/shell_view_model.dart';
 import 'package:omniterm/ui/widgets/connection_prompt_host.dart';
@@ -97,6 +98,9 @@ void main() {
         providers: [
           ChangeNotifierProvider<AppState>.value(value: app),
           ChangeNotifierProvider<ShellViewModel>.value(value: vm),
+          // The tmux install asks first, as every sudo action does. No App Lock and no screen
+          // lock here, so it asks plainly.
+          ChangeNotifierProvider<AppLockController>.value(value: AppLockController(repo)),
         ],
         child: MaterialApp(
           localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -166,6 +170,28 @@ void main() {
     );
   });
 
+  testWidgets('the install asks first, and a cancelled check installs nothing', (tester) async {
+    ssh.execAnswers[tmuxCheckCommand] = 'no';
+    await pump(tester);
+    await tester.runAsync(() => vm.connect(vm.connectableServers.single));
+    await settle(tester);
+
+    await tester.tap(find.byKey(const ValueKey('tmux.install.confirm')));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('sudoAuth.plain')), findsOneWidget);
+    expect(find.text('Run this with sudo on nas?'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('sudoAuth.cancel')));
+    await settle(tester);
+    expect(find.byKey(const ValueKey('tmux.install.dialog')), findsOneWidget);
+    expect(vm.tmuxInstalling, isFalse);
+    expect(
+      ssh.commands.where((c) => c.contains('apt-get')),
+      isEmpty,
+      reason: 'nothing may run as root before the user says so',
+    );
+  });
+
   testWidgets('a failed install keeps the prompt up and shows the output', (tester) async {
     ssh
       ..execAnswers[tmuxCheckCommand] = 'no'
@@ -175,6 +201,8 @@ void main() {
     await settle(tester);
 
     await tester.tap(find.byKey(const ValueKey('tmux.install.confirm')));
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await settle(tester);
 
@@ -184,6 +212,8 @@ void main() {
         .data!;
     expect(output, contains('Unable to locate package'));
     expect(output, contains('Install did not complete'));
+    // No saved sudo password: sudo must refuse at once rather than wait on stdin for one.
+    expect(ssh.commands, contains(tmuxInstallCommand(withSudoPassword: false)));
     expect(ssh.opened, isEmpty);
   });
 
@@ -198,6 +228,8 @@ void main() {
     // The re-probe after installing now answers yes.
     ssh.execAnswers[tmuxCheckCommand] = 'yes';
     await tester.tap(find.byKey(const ValueKey('tmux.install.confirm')));
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('sudo.confirm.continue')));
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
     await settle(tester);
 
@@ -295,7 +327,8 @@ void main() {
       expect(find.text('Host Key Changed'), findsOneWidget);
       expect(find.textContaining('has changed since you last connected'), findsOneWidget);
       expect(find.text('Remove & Reconnect'), findsOneWidget);
-      expect(vm.error, isNull, reason: 'the dialog is the message');
+      // As Kotlin: the terminal says why behind the dialog, and still does after Cancel.
+      expect(vm.error, 'Host key verification failed.');
     });
 
     testWidgets('Remove & Reconnect forgets the pinned key and connects again', (tester) async {

@@ -1276,7 +1276,10 @@ class _TerminalHeaderState extends State<_TerminalHeader> {
                   scheme.surfaceContainerHighest,
                   session == null || busy ? null : () => openTerminalOptions(context, vm, session),
                 ),
-                if (session != null && !session.isOpen && !session.reconnecting)
+                // Only a lost connection reconnects; a shell that exited on the server stays ended.
+                if (session != null &&
+                    session.endReason == ShellSessionEnd.disconnected &&
+                    !session.reconnecting)
                   _action(
                     'RECON',
                     'shell.header.reconnect',
@@ -2090,14 +2093,17 @@ class _TerminalStatusRow extends StatelessWidget {
             ),
           Expanded(
             child: Text(
-              _status(),
+              _status(AppLocalizations.of(context)),
               key: const ValueKey('shell.status'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: OmniFonts.mono,
                 fontSize: 10,
-                color: ended ? OmniColors.amber : const Color(0xFF7C8AA5),
+                // A clean exit is not a failure, so it is not shown in the warning colour.
+                color: ended && session.endReason != ShellSessionEnd.remoteExited
+                    ? OmniColors.amber
+                    : const Color(0xFF7C8AA5),
               ),
             ),
           ),
@@ -2125,7 +2131,7 @@ class _TerminalStatusRow extends StatelessWidget {
     );
   }
 
-  String _status() => session.reconnecting
+  String _status(AppLocalizations l10n) => session.reconnecting
       ? 'Reconnecting… Scrollback kept.'
       : switch (session.endReason) {
           ShellSessionEnd.open =>
@@ -2136,8 +2142,7 @@ class _TerminalStatusRow extends StatelessWidget {
                     ? 'READ ONLY · ${session.cols}×${session.rows} · drag to scroll'
                     : '${session.serverName} · ${session.cols}×${session.rows}'),
           // The exit status is the useful part of a clean exit, so it is shown rather than summarised.
-          ShellSessionEnd.remoteExited =>
-            'Session ended (exit ${session.exitStatus ?? 0}). Scrollback kept.',
+          ShellSessionEnd.remoteExited => l10n.sessionEndedExit(session.exitStatus ?? 0),
           // Named as a connection problem, not as an exit: the remote may well still be running, and
           // telling the user their shell "ended" would be a lie they act on.
           ShellSessionEnd.disconnected =>

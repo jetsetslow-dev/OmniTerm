@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
+import '../../data/host_tools.dart';
 import '../../data/remote_commands.dart';
 import '../../data/remote_models.dart';
 import '../../data/remote_parsers.dart';
@@ -231,6 +232,7 @@ class MonitorViewModel extends ChangeNotifier {
     _processes = const [];
     _processDiskReported = false;
     _processGpuReported = false;
+    _processMissingTool = null;
     _services = const [];
     _logs = const [];
     _logsUnsupported = false;
@@ -388,6 +390,7 @@ class MonitorViewModel extends ChangeNotifier {
   ProcessSort _processSort = ProcessSort.cpu;
   bool _processDiskReported = false;
   bool _processGpuReported = false;
+  HostTool? _processMissingTool;
 
   ProcessSort get processSort => _processSort;
 
@@ -396,6 +399,9 @@ class MonitorViewModel extends ChangeNotifier {
 
   /// Whether the host reported a GPU use source, so the GPU column and sort apply.
   bool get processGpuReported => _processGpuReported;
+
+  /// A tool the host lacks that would add to the list, offered for install above it.
+  HostTool? get processMissingTool => _processMissingTool;
 
   /// Re-sorts the loaded list; sampling disk and GPU again would cost another second for nothing.
   void sortProcessesBy(ProcessSort sort) {
@@ -445,6 +451,7 @@ class MonitorViewModel extends ChangeNotifier {
         return () {
           _processDiskReported = usage.disk.isNotEmpty;
           _processGpuReported = usage.gpuReported;
+          _processMissingTool = usage.missingTool;
           // A Disk or GPU sort chosen on another host may not apply to this one.
           if ((_processSort == ProcessSort.disk && !_processDiskReported) ||
               (_processSort == ProcessSort.gpu && !_processGpuReported)) {

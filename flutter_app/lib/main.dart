@@ -297,11 +297,16 @@ class OmniTermApp extends StatelessWidget {
         // Declared after AppState because it reads the same repository, and loaded eagerly: the
         // lock has to be up before the first frame, not after it.
         ChangeNotifierProvider<AppLockController>(
-          create: (context) => AppLockController(
-            context.read<AppState>().repository,
-            biometricPrompt: BiometricAuth().prompt,
-            biometricAvailability: BiometricAuth().isAvailable,
-          )..load(),
+          create: (context) {
+            final biometrics = BiometricAuth();
+            return AppLockController(
+              context.read<AppState>().repository,
+              biometricPrompt: biometrics.prompt,
+              biometricAvailability: biometrics.isAvailable,
+              deviceLockAvailable: biometrics.isDeviceSecure,
+              deviceLockPrompt: biometrics.promptDevice,
+            )..load();
+          },
         ),
         Provider<AlertNotifier>(create: (_) => LocalAlertNotifier()),
         ChangeNotifierProxyProvider<AppState, AlertsViewModel>(

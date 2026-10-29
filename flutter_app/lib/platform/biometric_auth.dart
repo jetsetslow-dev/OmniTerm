@@ -37,6 +37,37 @@ class BiometricAuth {
     }
   }
 
+  /// True when the phone has a screen lock to ask for; fingerprints and faces need one too.
+  ///
+  /// The check before a privileged action while App Lock is off, as Kotlin's
+  /// `DeviceCredentialGate.isAvailable`.
+  Future<bool> isDeviceSecure() async {
+    try {
+      if (_useAndroid) return await _androidChannel.invokeMethod<bool>('isDeviceSecure') ?? false;
+      return await _auth.isDeviceSupported();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Asks for the phone's own lock (fingerprint, face, or its PIN, pattern or password) and says
+  /// whether the person unlocked it. Unlike [prompt] it unlocks no key. A cancelled or failed
+  /// prompt is simply false: nothing runs, and the caller can ask again.
+  Future<bool> promptDevice(String title, String subtitle) async {
+    try {
+      if (_useAndroid) {
+        return await _androidChannel.invokeMethod<bool>('authenticateDevice', {
+              'title': title,
+              'subtitle': subtitle,
+            }) ??
+            false;
+      }
+      return await _auth.authenticate(localizedReason: subtitle, persistAcrossBackgrounding: true);
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> prompt(String reason) async {
     try {
       if (_useAndroid) {

@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../data/app_database.dart';
+import '../../../data/host_tools.dart';
 import '../../../data/remote_commands.dart';
 import '../../../data/remote_models.dart';
 import '../../../data/remote_parsers.dart';
 import '../../../domain/measurement_units.dart';
+import '../../../l10n/app_localizations.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +16,7 @@ import '../../view_model/app_lock_controller.dart';
 import '../../widgets/sudo_auth_dialog.dart';
 import '../../view_model/monitor_view_model.dart';
 import '../../widgets/command_output_card.dart';
+import '../../widgets/host_tool_notice.dart';
 import '../../widgets/metric_line_chart.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/omni_confirm.dart';
@@ -489,8 +492,8 @@ class _DiskCard extends StatelessWidget {
 /// Runs a service action, re-authenticating first when it would use a stored sudo password.
 ///
 /// Starting or stopping a unit is privileged, and on a host with a saved sudo password it needs no
-/// credential from the user at all — so anyone holding the unlocked phone can stop `sshd`. Kotlin
-/// puts the same gate on this and on reboot (`withSudoAuth`, `ui/AppViewModel.kt:2521`).
+/// credential from the user at all — so anyone holding the unlocked phone could stop `sshd`. Every
+/// sudo action asks first, as Kotlin's `withSudoAuth` does.
 Future<void> _runServiceAction(
   BuildContext context,
   MonitorViewModel vm,
@@ -500,10 +503,8 @@ Future<void> _runServiceAction(
   final server = vm.monitoredServer;
   final lock = context.read<AppLockController>();
   // launchd and Windows services are managed without sudo, so the password is neither sent nor gated.
-  if (server != null &&
-      serviceActionUsesSudo(vm.knownOs) &&
-      lock.requiresSudoAuth(server.sudoPassword)) {
-    if (!await requestSudoAuth(context, lock)) return;
+  if (server != null && serviceActionUsesSudo(vm.knownOs)) {
+    if (!await requestSudoAuth(context, lock, hostName: server.name)) return;
   }
   await vm.runServiceAction(service, action);
 }
@@ -532,10 +533,29 @@ class _ProcessesToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Until the first read lands, whether the host reports disk and GPU use is unknown: showing the
+    // sort chips then would show CPU and MEM alone and add DISK and GPU a moment later, as Kotlin's
+    // `ProcessesTab` no longer does.
+    final firstRead = vm.processesLoading && vm.processes.isEmpty;
+    final missingTool = vm.processMissingTool;
+    final server = vm.monitoredServer;
     return ColoredBox(
       color: Theme.of(context).scaffoldBackgroundColor,
       child: Column(
         children: [
+          if (!firstRead && missingTool == HostTool.nvidiaSmi && server != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: HostToolNotice(
+                  server: server,
+                  tool: HostTool.nvidiaSmi,
+                  text: AppLocalizations.of(context).processesGpuToolMissing,
+                  onInstalled: () => unawaited(vm.loadProcesses()),
+                ),
+              ),
+            ),
           // Only while refreshing rows that are already on screen. A 2px bar above an *empty* list is
           // indistinguishable from a host with nothing running, which is the wrong thing to tell
           // someone waiting for a first load — Kotlin splits the two the same way
@@ -549,30 +569,31 @@ class _ProcessesToolbar extends StatelessWidget {
               children: [
                 // Four chips do not fit a phone's width beside the count, so they scroll rather
                 // than push it off screen.
-                Flexible(
-                  flex: 3,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final (i, (sort, key, label)) in [
-                          (ProcessSort.cpu, 'sortCpu', '↓ CPU'),
-                          (ProcessSort.mem, 'sortMem', '↓ MEM'),
-                          if (vm.processDiskReported) (ProcessSort.disk, 'sortDisk', '↓ DISK'),
-                          if (vm.processGpuReported) (ProcessSort.gpu, 'sortGpu', '↓ GPU'),
-                        ].indexed) ...[
-                          if (i > 0) const SizedBox(width: 8),
-                          ChoiceChip(
-                            key: ValueKey('monitor.processes.$key'),
-                            label: Text(label),
-                            selected: vm.processSort == sort,
-                            onSelected: (_) => vm.sortProcessesBy(sort),
-                          ),
+                if (!firstRead)
+                  Flexible(
+                    flex: 3,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final (i, (sort, key, label)) in [
+                            (ProcessSort.cpu, 'sortCpu', '↓ CPU'),
+                            (ProcessSort.mem, 'sortMem', '↓ MEM'),
+                            if (vm.processDiskReported) (ProcessSort.disk, 'sortDisk', '↓ DISK'),
+                            if (vm.processGpuReported) (ProcessSort.gpu, 'sortGpu', '↓ GPU'),
+                          ].indexed) ...[
+                            if (i > 0) const SizedBox(width: 8),
+                            ChoiceChip(
+                              key: ValueKey('monitor.processes.$key'),
+                              label: Text(label),
+                              selected: vm.processSort == sort,
+                              onSelected: (_) => vm.sortProcessesBy(sort),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
                 Flexible(
                   child: vm.processesLoading && vm.processes.isEmpty
                       ? Row(

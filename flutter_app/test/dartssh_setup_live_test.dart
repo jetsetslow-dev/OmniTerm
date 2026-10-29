@@ -204,6 +204,62 @@ void main() {
     skip: enabled ? false : 'enable OMNITERM_SETUP_FIXTURE with repository SSH fixtures',
     timeout: const Timeout(Duration(minutes: 1)),
   );
+
+  /// A key turned down, or one that no longer matches its pin, must reach the screens as a host-key
+  /// failure. dartssh2 reports either only as "Connection closed before authentication", so the
+  /// terminal said that, Retry looked like a password problem, and "Host Key Changed" never opened.
+  test(
+    'OpenSSH: a turned-down or changed host key is reported as a host-key failure',
+    () async {
+      expect(user, isNotEmpty);
+      expect(password, isNotEmpty);
+      final store = InMemoryHostKeyStore();
+      final trust = SshHostKeyTrust(store);
+      final owner = Object();
+      var approve = false;
+      trust.registerApprovalHandler(owner, (request) => request.completer.complete(approve));
+      final transport = DartSshTransport(trust);
+      final credentials = SshCredentials(
+        host: InternetAddress.loopbackIPv4.address,
+        port: 2201,
+        username: user!,
+        password: password,
+      );
+      Future<SshHostKeyException> refusal() async {
+        try {
+          (await transport.openShell(credentials, 80, 24)).close();
+        } on SshHostKeyException catch (e) {
+          return e;
+        }
+        fail('the shell opened');
+      }
+
+      try {
+        final turnedDown = await refusal().timeout(const Duration(seconds: 30));
+        expect(turnedDown.verdict, HostKeyVerdict.notIncluded);
+        expect(turnedDown.message, 'Host key verification failed.');
+        expect(
+          await transport.testConnection(credentials),
+          'Host key verification failed.',
+          reason: 'the host card reads this',
+        );
+
+        approve = true;
+        expect(await transport.testConnection(credentials), isNull);
+        for (final key in (await store.readAll()).keys) {
+          await store.write(key, 'SHA256:${base64.encode(List.filled(32, 7))}');
+        }
+        final changed = await refusal().timeout(const Duration(seconds: 30));
+        expect(changed.verdict, HostKeyVerdict.changed);
+        expect(changed.message, 'Host key verification failed.');
+      } finally {
+        transport.shutdown();
+        trust.clearApprovalHandler(owner);
+      }
+    },
+    skip: enabled ? false : 'enable OMNITERM_SETUP_FIXTURE with repository SSH fixtures',
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 }
 
 class _FixtureRelay {

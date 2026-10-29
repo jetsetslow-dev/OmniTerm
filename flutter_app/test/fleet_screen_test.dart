@@ -9,6 +9,7 @@ import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_commands.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/domain/host_display.dart';
+import 'package:omniterm/l10n/app_localizations.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/fleet/fleet_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
@@ -116,6 +117,8 @@ void main() {
           ChangeNotifierProvider<ScriptsViewModel>.value(value: scriptsVm),
         ],
         child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: const Scaffold(body: FleetScreen()),
         ),
@@ -152,7 +155,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 
-        expect(find.byKey(const ValueKey('command.stream.dialog')), findsOneWidget);
+        expect(find.byKey(const ValueKey('actionStream.dialog')), findsOneWidget);
         expect(find.textContaining('first diagnostic chunk'), findsOneWidget);
         expect(
           find.textContaining('last diagnostic chunk'),

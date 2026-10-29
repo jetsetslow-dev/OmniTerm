@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/data/host_tools.dart';
 import 'package:omniterm/data/remote_commands.dart';
 
 /// Every generated remote command must be valid POSIX `sh`.
@@ -40,6 +41,11 @@ void main() {
     'serviceAction(Darwin)': serviceAction('com.example.web', 'restart', os: 'Darwin'),
     'rebootCommand(FreeBSD)': rebootCommand(os: 'FreeBSD'),
     'tmuxInstallCommand': tmuxInstallCommand(),
+    for (final tool in HostTool.values) ...{
+      'installCommand(${tool.name})': tool.installCommand(),
+      'installCommand(${tool.name}, no password)': tool.installCommand(withSudoPassword: false),
+      'checkCommand(${tool.name})': tool.checkCommand(),
+    },
   };
 
   test('every generated remote command parses as POSIX sh', () {
@@ -74,32 +80,36 @@ void main() {
     }
   });
 
-  test('the tmux install bounds every package-manager step', () {
-    // Mirror of Kotlin's `theTmuxInstallBoundsEveryPackageManagerStep`. Same trap as `ot`:
+  test('every tool install bounds each package-manager step', () {
+    // Mirror of Kotlin's `everyToolInstallBoundsEachPackageManagerStep`. Same trap as `ot`:
     // `pm 600 apt-get install` parses happily and then dies with "pm: not found", turning a bounded
     // install back into the unbounded one this guards. Unbounded is the real regression -- an apt
     // lock held by unattended-upgrades hangs until the transport cuts the stream half an hour
     // later, and the user is told only "command timed out".
-    final script = tmuxInstallCommand();
-    expect(
-      script.contains('pm(){'),
-      isTrue,
-      reason: 'tmuxInstallCommand calls `pm` but never defines it',
+    final step = RegExp(
+      r'(pm \d+ )?(apt-get update|apt-get install|dnf install|yum install|pacman -Sy|apk add|'
+      r'zypper install|pkg install|brew install)',
     );
-    for (final invocation in const [
-      'apt-get update',
-      'apt-get install',
-      'dnf install',
-      'yum install',
-      'pacman -Sy',
-      'apk add',
-      'zypper install',
-      'pkg install',
-    ]) {
+    for (final tool in HostTool.values) {
+      final script = tool.installCommand();
       expect(
-        RegExp('pm \\d+ \\\$SUDO ${RegExp.escape(invocation)}').hasMatch(script),
-        isTrue,
-        reason: '`$invocation` is not wrapped in a `pm <seconds>` bound:\n$script',
+        script,
+        contains('pm(){'),
+        reason: "${tool.name}'s install calls `pm` but never defines it",
+      );
+      final all = step.allMatches(script).toList();
+      expect(all, isNotEmpty, reason: "${tool.name}'s install runs no package manager:\n$script");
+      for (final match in all) {
+        expect(
+          match.group(1),
+          isNotNull,
+          reason: '${tool.name}: `${match.group(2)}` is not wrapped in a `pm <seconds>` bound',
+        );
+      }
+      expect(
+        script,
+        contains('set -- sudo "\$SUDO" -p \'\' "\$@"'),
+        reason: "${tool.name}'s `pm` does not elevate:\n$script",
       );
     }
   });

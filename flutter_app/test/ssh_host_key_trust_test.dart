@@ -106,6 +106,65 @@ void main() {
     });
   });
 
+  group('a rejected key', () {
+    Future<HostKeyVerdict> connect(String host, int port) => trust.check(
+      host: host,
+      port: port,
+      keyType: 'ssh-ed25519',
+      fingerprint: fingerprintFor('a'),
+    );
+
+    test('fails closed without asking until the user connects to the host', () async {
+      var asked = 0;
+      trust.registerApprovalHandler(Object(), (req) {
+        asked++;
+        trust.rememberRejection(req);
+        req.completer.complete(false);
+      });
+      expect(await connect('box', 2201), HostKeyVerdict.notIncluded);
+      expect(await connect('box', 2201), HostKeyVerdict.notIncluded);
+      expect(asked, 1, reason: 'background checks must not ask about a key the user turned down');
+
+      trust.allowPromptAgain('box', 2201);
+      expect(await connect('box', 2201), HostKeyVerdict.notIncluded);
+      expect(asked, 2);
+    });
+
+    test('a different key for the same host is still asked about', () async {
+      var asked = 0;
+      trust.registerApprovalHandler(Object(), (req) {
+        asked++;
+        trust.rememberRejection(req);
+        req.completer.complete(false);
+      });
+      await connect('box', 2201);
+      await trust.check(
+        host: 'box',
+        port: 2201,
+        keyType: 'ssh-ed25519',
+        fingerprint: fingerprintFor('b'),
+      );
+      expect(asked, 2);
+    });
+
+    test('connecting through a jump host lets both be asked about again', () async {
+      var asked = 0;
+      trust.registerApprovalHandler(Object(), (req) {
+        asked++;
+        trust.rememberRejection(req);
+        req.completer.complete(false);
+      });
+      await connect('target', 22);
+      await connect('bastion', 2203);
+      expect(asked, 2);
+
+      trust.allowPromptAgainVia('target', 22, ' bastion ', 2203);
+      await connect('target', 22);
+      await connect('bastion', 2203);
+      expect(asked, 4);
+    });
+  });
+
   group('a changed key is never auto-accepted', () {
     test('a different fingerprint for a pinned host reports changed', () async {
       autoApprove(true);

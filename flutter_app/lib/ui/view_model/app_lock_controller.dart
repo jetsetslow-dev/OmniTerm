@@ -14,6 +14,9 @@ enum UnlockOutcome { unlocked, wrongPin, throttled }
 /// biometric button is simply absent rather than present and silently doing nothing.
 typedef BiometricPrompt = Future<bool> Function(String reason);
 
+/// Asks for the phone's own lock (fingerprint, face or screen lock) and says whether it unlocked.
+typedef DeviceLockPrompt = Future<bool> Function(String title, String subtitle);
+
 /// The app lock: whether the app is currently locked, and everything that decides it.
 ///
 /// Ported from the app-lock parts of `ui/AppViewModel.kt`, with the timeout arithmetic reused from
@@ -25,6 +28,8 @@ class AppLockController extends ChangeNotifier {
     this._repository, {
     this.biometricPrompt,
     this.biometricAvailability,
+    this.deviceLockAvailable,
+    this.deviceLockPrompt,
     int Function()? clock,
     int Function()? monotonicClock,
   }) : _now = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
@@ -39,6 +44,13 @@ class AppLockController extends ChangeNotifier {
   /// as before. Failing *open* on purpose: a wrong "unavailable" would hide a working feature,
   /// while a wrong "available" costs one prompt that falls back to the PIN.
   final Future<bool> Function()? biometricAvailability;
+
+  /// Whether the phone has a screen lock to ask for, as Kotlin's `DeviceCredentialGate.isAvailable`.
+  /// Null where it cannot be asked: sudo then asks with a plain question.
+  final Future<bool> Function()? deviceLockAvailable;
+
+  /// The phone's own lock, the sudo check while App Lock is off.
+  final DeviceLockPrompt? deviceLockPrompt;
 
   bool _biometricsAvailable = true;
 
@@ -287,18 +299,31 @@ class AppLockController extends ChangeNotifier {
   /// True when a PIN is stored, whether or not the lock is currently enabled.
   bool get hasStoredPin => _storedPin != null && _storedPin!.isNotEmpty;
 
-  /// Whether running an action with [sudoPassword] should be gated behind re-authentication.
-  ///
-  /// Kotlin's condition exactly: a **stored** sudo password plus some way to authenticate. The
-  /// reasoning is that a saved sudo password turns "holding the unlocked phone" into "can reboot the
-  /// server", so the password is not used until the person is re-identified. With no stored password
-  /// there is nothing extra to protect — the user will be typing it — and with no PIN or biometrics
-  /// there is nothing to check them against.
-  ///
-  /// Note this deliberately does **not** consult whether the app lock is currently *enabled*: the
-  /// existence of a PIN is what makes the check possible, and Kotlin tests the same two things.
-  bool requiresSudoAuth(String sudoPassword) =>
-      sudoPassword.trim().isNotEmpty && (canUseBiometrics || hasStoredPin);
+  /// App Lock's biometrics or PIN confirm sudo actions while it is on, as Kotlin's
+  /// `sudoAuthUsesAppLock`. Otherwise the phone's own lock does ([hasDeviceLock]), or a plain question.
+  bool get sudoAuthUsesAppLock => isConfigured;
+
+  /// True when the phone has a screen lock to ask for before a sudo action.
+  Future<bool> hasDeviceLock() async {
+    final check = deviceLockAvailable;
+    if (check == null || deviceLockPrompt == null) return false;
+    try {
+      return await check();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Asks for the phone's own lock; true only once the person unlocks it.
+  Future<bool> authenticateWithDeviceLock(String title, String subtitle) async {
+    final prompt = deviceLockPrompt;
+    if (prompt == null) return false;
+    try {
+      return await prompt(title, subtitle);
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Verifies a PIN for a privileged action **without unlocking the app**.
   ///

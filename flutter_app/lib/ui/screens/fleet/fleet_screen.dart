@@ -8,12 +8,12 @@ import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/fleet_view_model.dart';
 import '../../view_model/scripts_view_model.dart';
+import '../../widgets/action_stream_dialog.dart';
 import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/metric_line_chart.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/omni_confirm.dart';
 import '../../widgets/popup_scroll_behavior.dart';
-import '../../widgets/streaming_command_dialog.dart';
 import '../../widgets/script_editor_dialog.dart';
 
 /// The Fleet screen, a faithful port of `FleetScreen` in `ui/FleetScreen.kt`: the summary bar,
@@ -307,9 +307,8 @@ class _FleetHostCard extends StatelessWidget {
                         await showDialog<void>(
                           context: context,
                           barrierDismissible: false,
-                          builder: (_) => StreamingCommandDialog(
+                          builder: (_) => ActionStreamDialog(
                             title: '${check.label} · ${display.name(server)}',
-                            command: command,
                             run: (onChunk, cancellation) => vm.runHostDiagnostic(
                               server,
                               command,

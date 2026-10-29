@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../data/app_database.dart';
+import '../../../data/host_tools.dart';
 import '../../../data/term/tmux_bootstrap.dart';
 import '../../../domain/session_age.dart';
 import '../../../l10n/app_localizations.dart';
@@ -10,6 +11,7 @@ import '../../navigation.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/shell_view_model.dart';
+import '../../widgets/host_tool_notice.dart';
 import '../../widgets/omni_components.dart';
 
 /// Hosts ⋮ › Attach existing tmux…: the tmux sessions running on [server], to attach one here, as
@@ -80,7 +82,13 @@ class _AttachTmuxDialog extends StatelessWidget {
                     style: dense.copyWith(color: OmniColors.red),
                   )
                 else if (sessions == null)
-                  Text(l10n.tmuxIsNotInstalledOn(server.name), style: dense)
+                  HostToolNotice(
+                    server: server,
+                    tool: HostTool.tmux,
+                    text: l10n.tmuxIsNotInstalledOn(server.name),
+                    fontSize: OmniTextSize.dense,
+                    onInstalled: () => unawaited(shell.refreshAttachTmux()),
+                  )
                 else if (sessions.isEmpty)
                   Text(
                     l10n.noTmuxSessionsAreRunningOn(server.name),

@@ -8,7 +8,9 @@ import '../../domain/host_display.dart';
 import '../../l10n/app_localizations.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
+import '../view_model/app_lock_controller.dart';
 import '../view_model/shell_view_model.dart';
+import 'sudo_auth_dialog.dart';
 
 /// The questions [ShellViewModel.connect] can stop and ask before opening a terminal.
 ///
@@ -104,6 +106,14 @@ class _ConnectionPromptHostState extends State<ConnectionPromptHost> {
 
 enum _Prompt { hostKeyChanged, offline, tmux }
 
+Future<void> _installTmux(BuildContext context, ShellViewModel shell, Server server) async {
+  final lock = context.read<AppLockController>();
+  if (!await requestSudoAuth(context, lock, hostName: server.name)) return;
+  // The prompt may have moved on to another host, or closed, while the check was up.
+  if (shell.tmuxPromptServer?.id != server.id) return;
+  await shell.installTmuxAndConnect();
+}
+
 class _ConnectionPromptDialog extends StatelessWidget {
   const _ConnectionPromptDialog({required this.shell});
 
@@ -186,7 +196,8 @@ class _ConnectionPromptDialog extends StatelessWidget {
             ),
             TextButton(
               key: const ValueKey('tmux.install.confirm'),
-              onPressed: installing ? null : shell.installTmuxAndConnect,
+              // Behind the sudo check, as every install is (Kotlin's `withSudoAuth`).
+              onPressed: installing ? null : () => unawaited(_installTmux(context, shell, server)),
               child: Text(
                 installing ? 'Installing…' : 'Install tmux',
                 style: TextStyle(color: installing ? null : OmniColors.cyan),

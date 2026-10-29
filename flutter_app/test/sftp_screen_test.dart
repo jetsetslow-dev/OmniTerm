@@ -1252,7 +1252,8 @@ void main() {
       expect(vm.sudoMode, isTrue);
     });
 
-    testWidgets('a host with no stored sudo password is not gated', (tester) async {
+    testWidgets('a host with no stored sudo password asks too', (tester) async {
+      // Every sudo action asks, as in Kotlin: a passwordless sudo rule is root just the same.
       await repo.insertSetting('app_pin', '1234');
       await repo.insertSetting('app_lock_enabled', 'true');
       await repo.insertServer(server(name: 'nas'));
@@ -1263,8 +1264,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('sftp.sudo.confirm')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsNothing);
-      expect(vm.sudoMode, isTrue);
+      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsOneWidget);
+      expect(vm.sudoMode, isFalse);
     });
 
     testWidgets('turning it off again needs no authentication', (tester) async {

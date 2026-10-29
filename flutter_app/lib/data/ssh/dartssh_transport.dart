@@ -22,6 +22,7 @@ import 'dart:convert';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../domain/ssh_failure.dart';
 import '../term/utf8_stream_decoder.dart';
 import 'capped_text_buffer.dart';
 import 'proxy_socket.dart';
@@ -101,11 +102,14 @@ class DartSshTransport implements SshTransport {
   /// Builds the host-key verifier for one endpoint.
   ///
   /// dartssh2 passes only `(type, fingerprint)`, so host and port are closed over here. Returning
-  /// false aborts the handshake, which is what a declined or changed key must do.
+  /// false aborts the handshake, which is what a declined or changed key must do. dartssh2 then
+  /// reports only "Connection closed before authentication", so [onRefused] keeps the verdict for
+  /// [_connect] to report instead, as JSch's "reject HostKey" and "HostKey has been changed" do.
   Future<bool> Function(String, Uint8List) _verifier(
     String host,
     int port,
     SshSetupDeadline deadline,
+    void Function(HostKeyVerdict verdict) onRefused,
   ) {
     return (String type, Uint8List fingerprint) async {
       final verdict = await _trust.check(
@@ -115,6 +119,7 @@ class DartSshTransport implements SshTransport {
         fingerprint: SshHostKeyTrust.decodeHandlerFingerprint(fingerprint),
         waitForApproval: deadline.awaitApproval,
       );
+      if (verdict != HostKeyVerdict.ok) onRefused(verdict);
       return verdict == HostKeyVerdict.ok;
     };
   }
@@ -140,6 +145,8 @@ class DartSshTransport implements SshTransport {
     SSHClient? target;
     SSHSocket? jumpSocket;
     SSHSocket? targetSocket;
+    HostKeyVerdict? refusedKey;
+    void refuse(HostKeyVerdict verdict) => refusedKey = verdict;
     try {
       if (_isJump(creds)) {
         onPhaseChange?.call('Authenticating bastion…');
@@ -165,7 +172,7 @@ class DartSshTransport implements SshTransport {
           // would try to decrypt the jump key with the wrong secret. Matches the Kotlin, which
           // passed null. (Encrypted jump keys are consequently unsupported, as before.)
           identities: _keyPairs(creds.proxyKeyPem, null),
-          onVerifyHostKey: _verifier(jumpHost, creds.proxyPort, jumpDeadline),
+          onVerifyHostKey: _verifier(jumpHost, creds.proxyPort, jumpDeadline, refuse),
           printDebug: printDebug,
         );
         await jumpDeadline.run(() => jump!.authenticated);
@@ -206,7 +213,7 @@ class DartSshTransport implements SshTransport {
         username: creds.username,
         onPasswordRequest: () => creds.password,
         identities: identities,
-        onVerifyHostKey: _verifier(creds.host, creds.port, targetDeadline),
+        onVerifyHostKey: _verifier(creds.host, creds.port, targetDeadline, refuse),
         keepAliveInterval: creds.keepAliveSeconds > 0
             ? Duration(seconds: creds.keepAliveSeconds)
             : null,
@@ -237,6 +244,8 @@ class DartSshTransport implements SshTransport {
       targetSocket?.destroy();
       jump?.close();
       jumpSocket?.destroy();
+      final verdict = refusedKey;
+      if (verdict != null) throw SshHostKeyException(SshFailureKind.hostKey.message, verdict);
       rethrow;
     }
   }

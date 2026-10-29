@@ -153,6 +153,12 @@ class ServersViewModel extends ChangeNotifier {
     if (transport == null) {
       return 'Connection testing is unavailable in this build.';
     }
+    hostKeyTrust?.allowPromptAgainVia(
+      candidate.host,
+      candidate.port,
+      candidate.proxyHost,
+      candidate.proxyPort,
+    );
     try {
       final creds = resolveCredentials(
         candidate,
@@ -380,6 +386,8 @@ class ServersViewModel extends ChangeNotifier {
   Future<String?> refreshServer(int serverId, {bool markChecking = true}) async {
     final before = await _app.repository.getServerById(serverId);
     if (before == null) return 'Refresh failed: host was removed.';
+    // Asked for by the user, so a host key they turned down earlier is asked about again.
+    hostKeyTrust?.allowPromptAgainVia(before.host, before.port, before.proxyHost, before.proxyPort);
     // Without a probe nothing would answer, and the host would read "Checking host…" for good.
     if (markChecking && probeHost != null) await _app.markChecking([before]);
     try {

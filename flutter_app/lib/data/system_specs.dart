@@ -3,6 +3,7 @@ library;
 
 import 'dart:typed_data';
 
+import 'host_tools.dart';
 import 'kotlin_strings.dart';
 import 'remote_commands.dart';
 import 'remote_models.dart';
@@ -11,13 +12,14 @@ import 'remote_parsers.dart';
 /// The sections of a host's system specs, in the order they are shown.
 enum SpecKind { system, cpu, memory, storage, gpu, network }
 
-/// Why part of a section is missing, so the screen can say so and offer what would fix it.
+/// Why part of a section is missing, so the screen can say so and offer what would fix it: a
+/// [tool] the host lacks can be installed from the notice.
 enum SpecNotice {
   /// Memory modules come from the firmware tables, which only root can read.
   modulesNeedRoot,
 
   /// Root could read them, but dmidecode is not installed.
-  modulesToolMissing,
+  modulesToolMissing(HostTool.dmidecode),
 
   /// dmidecode ran and the firmware lists no modules (most virtual machines).
   noModulesReported,
@@ -26,7 +28,16 @@ enum SpecNotice {
   driveHealthNeedsRoot,
 
   /// Root could read it, but smartctl is not installed.
-  driveHealthToolMissing,
+  driveHealthToolMissing(HostTool.smartmontools),
+
+  /// NVIDIA's driver is loaded, but nvidia-smi, which reports the card's memory and more, is not
+  /// installed.
+  gpuToolMissing(HostTool.nvidiaSmi);
+
+  const SpecNotice([this.tool]);
+
+  /// A tool the host lacks, which the notice offers to install.
+  final HostTool? tool;
 }
 
 /// One labelled value, e.g. "L2 cache" → "1.5 MiB (6 instances)". An empty label shows the value
@@ -215,8 +226,9 @@ String _specsLinux(String? sudoPassword) =>
     r'"$(basename "$(readlink $d/driver 2>/dev/null)" 2>/dev/null)" "$(cat $d/mem_info_vram_total 2>/dev/null)" '
     r'"$(basename "$(readlink -f $d 2>/dev/null)" 2>/dev/null)"; done; '
     r"""echo '@LSPCI'; lspci -mm 2>/dev/null | grep -iE '"(VGA|3D|Display|Ethernet|Network)'; """
-    "echo '@NVIDIA'; command -v nvidia-smi >/dev/null 2>&1 && ot 10 nvidia-smi --query-gpu=pci.bus_id,name,driver_version,"
+    "echo '@NVIDIA'; if command -v nvidia-smi >/dev/null 2>&1; then ot 10 nvidia-smi --query-gpu=pci.bus_id,name,driver_version,"
     'memory.total,vbios_version,pcie.link.gen.max,pcie.link.width.max,power.limit,temperature.gpu --format=csv,noheader 2>/dev/null; '
+    "elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo '$specsMissing'; fi; "
     // Physical interfaces only (those backed by a device); bridges, veths and tunnels are not hardware.
     r"echo '@NET'; for i in /sys/class/net/*; do [ -e $i/device ] || continue; "
     r'''printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' ${i##*/} "$(cat $i/address 2>/dev/null)" "$(cat $i/operstate 2>/dev/null)" '''
@@ -1138,7 +1150,8 @@ SpecSection _linuxGpu(Map<String, String> s, List<_PciDevice> pci) {
           SpecField('PCI slot', p.slot),
         ]),
   ];
-  return _gpuSection([...items, ...unbound]);
+  final nvidiaSmiMissing = (s['NVIDIA'] ?? '').trim() == specsMissing;
+  return _gpuSection([...items, ...unbound], [if (nvidiaSmiMissing) SpecNotice.gpuToolMissing]);
 }
 
 SpecSection _linuxNetwork(Map<String, String> s, List<_PciDevice> pci) {
@@ -1190,8 +1203,12 @@ SpecSection _linuxNetwork(Map<String, String> s, List<_PciDevice> pci) {
 }
 
 /// The graphics section: its cards, named in the summary.
-SpecSection _gpuSection(List<SpecItem> gpus) =>
-    SpecSection(SpecKind.gpu, summary: gpus.map((g) => g.title).join(', '), items: gpus);
+SpecSection _gpuSection(List<SpecItem> gpus, [List<SpecNotice> notices = const []]) => SpecSection(
+  SpecKind.gpu,
+  summary: gpus.map((g) => g.title).join(', '),
+  items: gpus,
+  notices: notices,
+);
 
 /// The network section: its adapters, counted in the summary.
 SpecSection _networkSection(List<SpecItem> nics) => SpecSection(

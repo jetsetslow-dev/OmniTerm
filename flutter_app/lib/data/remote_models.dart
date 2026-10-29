@@ -8,6 +8,8 @@
 /// here so the porting of call sites is mechanical; the immutable fields stay `final`.
 library;
 
+import 'host_tools.dart';
+
 class SimContainer {
   SimContainer({
     required this.id,
@@ -203,13 +205,21 @@ class DiskRate {
 
 /// What `parseProcessUsage` found: per-pid disk and GPU use.
 class ProcessUsage {
-  const ProcessUsage({required this.disk, required this.gpu, required this.gpuReported});
+  const ProcessUsage({
+    required this.disk,
+    required this.gpu,
+    required this.gpuReported,
+    this.missingTool,
+  });
 
   final Map<int, DiskRate> disk;
   final Map<int, double> gpu;
 
   /// True when the host reported a GPU use source, even if every process was idle on it.
   final bool gpuReported;
+
+  /// A tool the host lacks that would report more, such as nvidia-smi for an NVIDIA card.
+  final HostTool? missingTool;
 }
 
 class SimService {

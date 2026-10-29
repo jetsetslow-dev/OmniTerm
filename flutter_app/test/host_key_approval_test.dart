@@ -22,12 +22,13 @@ void main() {
     ({HostKeyVerdict? Function() verdict}) check(
       SshHostKeyTrust trust, {
       required String host,
+      int port = 22,
       String keyType = 'ssh-ed25519',
       required String fingerprint,
     }) {
       HostKeyVerdict? result;
       unawaited(
-        trust.check(host: host, port: 22, keyType: keyType, fingerprint: fingerprint).then((v) {
+        trust.check(host: host, port: port, keyType: keyType, fingerprint: fingerprint).then((v) {
           debugPrint('DBG verdict=\$v');
           result = v;
         }),
@@ -145,6 +146,53 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(await settled(tester, verdict), HostKeyVerdict.notIncluded);
+    });
+
+    testWidgets('a rejected key is not asked about again until the user connects', (tester) async {
+      // Background checks of the host used to raise the same prompt every few seconds. Kotlin's
+      // `SshHostKeyTrust.rememberRejection` / `allowPromptAgain`.
+      await pump(tester);
+      final first = check(trust, host: 'nas.local', fingerprint: 'SHA256:abcdef');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('hostKey.reject')));
+      await tester.pumpAndSettle();
+      expect(await settled(tester, first), HostKeyVerdict.notIncluded);
+
+      final background = check(trust, host: 'nas.local', fingerprint: 'SHA256:abcdef');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('hostKey.dialog')), findsNothing);
+      expect(await settled(tester, background), HostKeyVerdict.notIncluded);
+
+      trust.allowPromptAgain('nas.local', 22);
+      final connect = check(trust, host: 'nas.local', fingerprint: 'SHA256:abcdef');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('hostKey.dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('hostKey.trust')));
+      await tester.pumpAndSettle();
+      expect(await settled(tester, connect), HostKeyVerdict.ok);
+    });
+
+    testWidgets('tapping outside turns the key down too', (tester) async {
+      await pump(tester);
+      check(trust, host: 'nas.local', fingerprint: 'SHA256:abcdef');
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+
+      check(trust, host: 'nas.local', fingerprint: 'SHA256:abcdef');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('hostKey.dialog')), findsNothing);
+    });
+
+    testWidgets('a host on another port is named with it, as JSch and Kotlin name it', (
+      tester,
+    ) async {
+      await pump(tester);
+      check(trust, host: '10.0.2.2', port: 2201, fingerprint: 'SHA256:abcdef');
+      await tester.pumpAndSettle();
+      expect(find.text('[10.0.2.2]:2201'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('hostKey.reject')));
+      await tester.pumpAndSettle();
     });
 
     testWidgets('two hosts are asked about one at a time', (tester) async {

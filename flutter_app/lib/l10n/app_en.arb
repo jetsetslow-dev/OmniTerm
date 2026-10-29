@@ -329,10 +329,6 @@
   "@authenticateForSudo": {
     "description": "Android R.string.authenticate_for_sudo"
   },
-  "authenticateForSudoMode": "Authenticate for sudo mode",
-  "@authenticateForSudoMode": {
-    "description": "Android R.string.authenticate_for_sudo_mode"
-  },
   "authenticateToContinue": "Authenticate to continue",
   "@authenticateToContinue": {
     "description": "Android R.string.authenticate_to_continue"
@@ -789,21 +785,9 @@
   "@confirmItSYou": {
     "description": "Android R.string.confirm_it_s_you"
   },
-  "confirmToRunSftpOperationsAs": "Confirm to run SFTP operations as root",
-  "@confirmToRunSftpOperationsAs": {
-    "description": "Android R.string.confirm_to_run_sftp_operations_as"
-  },
   "confirmToRunThePrivilegedAction": "Confirm to run the privileged action",
   "@confirmToRunThePrivilegedAction": {
     "description": "Android R.string.confirm_to_run_the_privileged_action"
-  },
-  "confirmToRunThisPrivilegedAction": "Confirm to run this privileged action with the stored sudo password.",
-  "@confirmToRunThisPrivilegedAction": {
-    "description": "Android R.string.confirm_to_run_this_privileged_action"
-  },
-  "confirmYourAppPinToRun": "Confirm your app PIN to run SFTP operations as root.",
-  "@confirmYourAppPinToRun": {
-    "description": "Android R.string.confirm_your_app_pin_to_run"
   },
   "connect": "Connect",
   "@connect": {
@@ -1830,10 +1814,6 @@
   "@enterHostCommandScriptHere": {
     "description": "Android R.string.enter_host_command_script_here"
   },
-  "enterPinForSudoMode": "Enter PIN for sudo mode",
-  "@enterPinForSudoMode": {
-    "description": "Android R.string.enter_pin_for_sudo_mode"
-  },
   "enterThePasswordToDecryptThe": "Enter the password to decrypt the backup.",
   "@enterThePasswordToDecryptThe": {
     "description": "Android R.string.enter_the_password_to_decrypt_the"
@@ -2378,6 +2358,27 @@
     "description": "Android R.string.install_tmux_on",
     "placeholders": {
       "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "installTool": "Install {a1}",
+  "@installTool": {
+    "description": "Android R.string.install_tool",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "installToolOn": "Installing {a1} on {a2}",
+  "@installToolOn": {
+    "description": "Android R.string.install_tool_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
         "type": "Object"
       }
     }
@@ -3594,6 +3595,10 @@
   "@probesSmb445Ftp21Sftp": {
     "description": "Android R.string.probes_smb_445_ftp_21_sftp"
   },
+  "processesGpuToolMissing": "Install nvidia-smi on this host to see each process's use of its NVIDIA GPU.",
+  "@processesGpuToolMissing": {
+    "description": "Android R.string.processes_gpu_tool_missing"
+  },
   "procs": "{a1} Procs",
   "@procs": {
     "description": "Android R.string.procs",
@@ -4221,6 +4226,15 @@
       }
     }
   },
+  "runThisWithSudoOn": "Run this with sudo on {a1}?",
+  "@runThisWithSudoOn": {
+    "description": "Android R.string.run_this_with_sudo_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "runWhoisQuery": "Run WHOIS Query",
   "@runWhoisQuery": {
     "description": "Android R.string.run_whois_query"
@@ -4684,6 +4698,15 @@
   "@servicesSharePodmanPodNamespacesUsing": {
     "description": "Android R.string.services_share_podman_pod_namespaces_using"
   },
+  "sessionEndedExit": "Session ended (exit {a1}). Scrollback kept.",
+  "@sessionEndedExit": {
+    "description": "Android R.string.session_ended_exit",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
   "sessionIsStillOpenButBackground": "Session is still open, but background protection could not start: ",
   "@sessionIsStillOpenButBackground": {
     "description": "Android R.string.session_is_still_open_but_background"
@@ -4874,6 +4897,10 @@
   "specGpu": "Graphics",
   "@specGpu": {
     "description": "Android R.string.spec_gpu"
+  },
+  "specGpuToolMissing": "Install nvidia-smi on this host to see this NVIDIA card's driver version, memory, power limit and temperature.",
+  "@specGpuToolMissing": {
+    "description": "Android R.string.spec_gpu_tool_missing"
   },
   "specMemory": "Memory",
   "@specMemory": {
@@ -5116,6 +5143,10 @@
   "subnetOrHost": "Subnet or host",
   "@subnetOrHost": {
     "description": "Android R.string.subnet_or_host"
+  },
+  "sudoAsksWithoutAScreenLock": "This phone has no screen lock, so OmniTerm asks here before anything runs as root.",
+  "@sudoAsksWithoutAScreenLock": {
+    "description": "Android R.string.sudo_asks_without_a_screen_lock"
   },
   "sudoModeEditsCopyMoveAnd": "Sudo mode: edits, copy/move, and delete run as root",
   "@sudoModeEditsCopyMoveAnd": {
@@ -5498,6 +5529,30 @@
       }
     }
   },
+  "toolNowInstalledOn": "{a1} is now installed on {a2}.",
+  "@toolNowInstalledOn": {
+    "description": "Android R.string.tool_now_installed_on",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
+  "toolStillNotInstalled": "{a1} is still not installed on {a2}. The output above says why.",
+  "@toolStillNotInstalled": {
+    "description": "Android R.string.tool_still_not_installed",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      },
+      "a2": {
+        "type": "Object"
+      }
+    }
+  },
   "topLevelNetworks": "Top-level networks",
   "@topLevelNetworks": {
     "description": "Android R.string.top_level_networks"
@@ -5722,9 +5777,9 @@
   "@useThisWhenAnIncognitoKeyboard": {
     "description": "Android R.string.use_this_when_an_incognito_keyboard"
   },
-  "useYourBiometricPromptToContinue": "Use your biometric prompt to continue.",
-  "@useYourBiometricPromptToContinue": {
-    "description": "Android R.string.use_your_biometric_prompt_to_continue"
+  "useYourScreenLockToContinue": "Use your fingerprint, face or screen lock to continue.",
+  "@useYourScreenLockToContinue": {
+    "description": "Android R.string.use_your_screen_lock_to_continue"
   },
   "user": "User: {a1}",
   "@user": {

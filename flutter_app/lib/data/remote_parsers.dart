@@ -13,6 +13,7 @@ library;
 
 import 'dart:math' as math;
 
+import 'host_tools.dart';
 import 'kotlin_strings.dart';
 import 'remote_commands.dart';
 import 'remote_models.dart';
@@ -168,7 +169,12 @@ ProcessUsage parseProcessUsage(String output) {
       gpu[pid] = math.max(gpu[pid] ?? 0.0, busiest.clamp(0.0, 100.0));
     }
   }
-  return ProcessUsage(disk: disk, gpu: gpu, gpuReported: gpuReported);
+  return ProcessUsage(
+    disk: disk,
+    gpu: gpu,
+    gpuReported: gpuReported,
+    missingTool: output.contains(processNvidiaSmiMissingMarker) ? HostTool.nvidiaSmi : null,
+  );
 }
 
 /// The whitespace-split lines of the section [marker] starts, up to the next one.

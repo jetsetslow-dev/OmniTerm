@@ -1411,10 +1411,12 @@ class ShellViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
+      final stdin = sudoStdin(server.sudoPassword);
       await ssh.execStream(
         creds,
-        tmuxInstallCommand(),
-        stdin: sudoStdin(server.sudoPassword),
+        // No saved password: sudo must refuse at once rather than wait on stdin for one.
+        tmuxInstallCommand(withSudoPassword: stdin != null),
+        stdin: stdin,
         onChunk: (chunk) async {
           if (_disposed || generation != _connectGeneration) return;
           _tmuxInstallOutput = (_tmuxInstallOutput ?? '') + chunk;
@@ -1553,6 +1555,8 @@ class ShellViewModel extends ChangeNotifier {
   Future<void> _connect(_ShellConnectRequest request) async {
     if (_connecting || !_requestStillValid(request)) return;
     final server = request.server;
+    // The user is connecting: a host key they turned down earlier is asked about again.
+    hostKeyTrust?.allowPromptAgainVia(server.host, server.port, server.proxyHost, server.proxyPort);
     final resumeName = request.resumeName;
     final controlMode = request.controlMode;
     final initialCommand = request.initialCommand;
@@ -1831,14 +1835,12 @@ class ShellViewModel extends ChangeNotifier {
       if (generation == _connectGeneration) {
         _failedConnectTarget = server;
         _failedConnectRequest = request;
-        if (e.verdict == HostKeyVerdict.changed) {
-          // Kotlin's "Host Key Changed" dialog: the decision is put to the user there, with
-          // "Remove & Reconnect" for a server that was legitimately rebuilt.
-          _hostKeyChangedServer = server;
-        } else {
-          _error = 'Host key rejected by user.';
-          _rememberPaneFailure(request, _error!);
-        }
+        // Kotlin's wording either way. A first key that was turned down, or never answered, has
+        // not changed, so only a pinned key that no longer matches gets the "Host Key Changed"
+        // dialog, with "Remove & Reconnect" for a server that was legitimately rebuilt.
+        _error = SshFailureKind.hostKey.message;
+        _rememberPaneFailure(request, _error!);
+        if (e.verdict == HostKeyVerdict.changed) _hostKeyChangedServer = server;
       }
     } on SshConnectException catch (e) {
       if (generation == _connectGeneration) {

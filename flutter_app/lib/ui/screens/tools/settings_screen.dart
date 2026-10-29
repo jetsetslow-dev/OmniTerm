@@ -815,11 +815,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // blocking and sensitive-info masking, none of which should be reachable without proving you
     // can already pass the lock.
     if (lock != null && lock.hasStoredPin) {
-      final confirmed = await requestSudoAuth(
-        context,
-        lock,
-        title: 'Authenticate to save settings',
-      );
+      final confirmed = await requestSettingsAuth(context, lock);
       if (!confirmed) return;
       if (!context.mounted) return;
     }

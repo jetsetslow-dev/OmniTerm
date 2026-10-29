@@ -198,12 +198,12 @@ class _SelectorBar extends StatelessWidget {
     );
     if (!(confirmed ?? false) || !context.mounted) return;
 
-    // Re-authenticate before the *stored* sudo password is used. Confirming a reboot answers "did
-    // you mean this"; it does not answer "are you the person who saved that password". Kotlin gates
-    // the same two actions through `withSudoAuth` (`ui/AppViewModel.kt:2521`).
+    // The sudo check, as for every sudo action. Confirming a reboot answers "did you mean this"; it
+    // does not answer "are you the person holding this phone". Kotlin gates it through
+    // `withSudoAuth`.
     final lock = context.read<AppLockController>();
-    if (rebootUsesSudo(vm.knownOs) && lock.requiresSudoAuth(server.sudoPassword)) {
-      if (!await requestSudoAuth(context, lock)) return;
+    if (rebootUsesSudo(vm.knownOs)) {
+      if (!await requestSudoAuth(context, lock, hostName: server.name)) return;
     }
     await vm.rebootMonitoredHost();
   }

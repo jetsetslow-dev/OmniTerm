@@ -148,14 +148,19 @@ void main() {
       await tester.ensureVisible(button);
       await tester.tap(button);
       await tester.pump();
-      expect(find.byKey(const ValueKey('command.stream.dialog')), findsOneWidget);
-      await _waitForPopup(tester, find.byKey(const ValueKey('command.stream.dialog')));
-      await _waitFor(tester, () => find.text('Command finished.').evaluate().isNotEmpty);
+      expect(find.byKey(const ValueKey('actionStream.dialog')), findsOneWidget);
+      await _waitForPopup(tester, find.byKey(const ValueKey('actionStream.dialog')));
+      // Cancel turns into Close once the command has finished.
+      final close = find.byKey(const ValueKey('actionStream.close'));
+      await _waitFor(
+        tester,
+        () => find.descendant(of: close, matching: find.text('Close')).evaluate().isNotEmpty,
+      );
       expect(find.textContaining('SSH Error:'), findsNothing);
       expect(find.textContaining('Command failed:'), findsNothing);
       expect(fleet.activeTab, FleetTab.dashboard);
       expect(fleet.commandText, 'unsent fixture broadcast');
-      await tester.tap(find.text('Close'));
+      await tester.tap(close);
       await tester.pumpAndSettle();
     }
     fleet.commandText = draft;

@@ -95,9 +95,11 @@ void main() {
 
     test('takes the sudo password on stdin, never on the command line', () {
       // `sudo -S` reads it from stdin. Interpolating it here would put it in `ps` output and auditd
-      // execve records on the remote, which is the whole reason [sudoStdin] exists.
-      expect(tmuxInstallCommand(), contains('sudo -S'));
-      expect(tmuxInstallCommand(), isNot(contains('sudo -p')));
+      // execve records on the remote, which is the whole reason [sudoStdin] exists. With no saved
+      // password `sudo -n` refuses at once rather than waiting on stdin for one.
+      expect(tmuxInstallCommand(), contains('SUDO=-S;'));
+      expect(tmuxInstallCommand(withSudoPassword: false), contains('SUDO=-n;'));
+      expect(tmuxInstallCommand(), contains('set -- sudo "\$SUDO" -p \'\' "\$@"'));
     });
 
     test('skips sudo entirely when already root', () {
@@ -105,7 +107,7 @@ void main() {
     });
 
     test('exits early when tmux is already there', () {
-      expect(tmuxInstallCommand(), contains('tmux already installed'));
+      expect(tmuxInstallCommand(), contains("echo 'tmux is already installed'; exit 0"));
     });
 
     test('re-checks rather than trusting the package manager exit code', () {

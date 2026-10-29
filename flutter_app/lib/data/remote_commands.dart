@@ -6,6 +6,7 @@
 library;
 
 import 'dart:convert';
+import 'host_tools.dart';
 import 'kotlin_strings.dart';
 import 'term/tmux_bootstrap.dart' show tmuxPane, tmuxPath, tmuxSafeName;
 
@@ -86,6 +87,10 @@ const processSectionPrefix = '##OMNI-';
 const processSampleMarker = '${processSectionPrefix}SAMPLE';
 const processNvidiaMarker = '${processSectionPrefix}NVIDIA';
 
+/// NVIDIA's driver is loaded but nvidia-smi, the only source of its per-process use, is not
+/// installed. Named apart from [processNvidiaMarker], which the parser finds by prefix.
+const processNvidiaSmiMissingMarker = '${processSectionPrefix}SMI-MISSING';
+
 /// Rates a host has already worked out: "pid readBytesPerSecond writeBytesPerSecond".
 const processRatesMarker = '${processSectionPrefix}RATES';
 
@@ -99,9 +104,11 @@ const processGpuMarker = '${processSectionPrefix}GPU';
 /// Then two samples, a second apart, of what the listed processes did meanwhile: disk bytes from
 /// `/proc/<pid>/io`, and GPU use from the DRM fdinfo that the open drivers publish (engine time from
 /// amdgpu, i915 and most others; engine cycles from Intel's xe). NVIDIA's own driver publishes none,
-/// so `nvidia-smi pmon` answers for it. Another user's counters are unreadable without root; grep
-/// skips those quietly and the parser reports them as unknown, not zero. xargs keeps a process with
-/// thousands of descriptors under the argument limit. See [parseProcessUsage].
+/// so `nvidia-smi pmon` answers for it, and where the driver is loaded without nvidia-smi a marker
+/// says so, to offer installing it. A container sees the host's /proc/driver/nvidia whether or not it
+/// was given the GPU, so the device node must be there too. Another user's counters are unreadable
+/// without root; grep skips those quietly and the parser reports them as unknown, not zero. xargs
+/// keeps a process with thousands of descriptors under the argument limit. See [parseProcessUsage].
 const processesLinux =
     "P=\$(ps -eo pid,user,%cpu,%mem,vsz,etime,stat,comm 2>/dev/null | sort -k3 -rn | head -n 80); "
     "[ -n \"\$P\" ] || P=\$(ps w 2>/dev/null | head -n 80); printf '%s\\n' \"\$P\"; "
@@ -110,7 +117,8 @@ const processesLinux =
     "for d in \$D; do echo \$d/io; ls -d \$d/fdinfo/* 2>/dev/null; done | "
     "xargs grep -H -E '^(read_bytes|write_bytes|drm-client-id|drm-pdev|drm-engine-[a-z0-9-]+|drm-(total-)?cycles-[a-z0-9-]+):' 2>/dev/null; }; "
     's; sleep 1; s; '
-    "if command -v nvidia-smi >/dev/null 2>&1; then echo '$processNvidiaMarker'; nvidia-smi pmon -c 1 -s u 2>/dev/null; fi; true";
+    "if command -v nvidia-smi >/dev/null 2>&1; then echo '$processNvidiaMarker'; nvidia-smi pmon -c 1 -s u 2>/dev/null; "
+    "elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo '$processNvidiaSmiMissingMarker'; fi; true";
 
 /// FreeBSD/macOS: the same eight columns via `-axo` (the keywords differ slightly).
 const processesBsd =
@@ -1364,41 +1372,13 @@ const pmUpdateSeconds = 180;
 /// Bound for the install itself; well under the transport's 30-minute stream cap.
 const pmInstallSeconds = 600;
 
-/// Installs tmux with whichever package manager the host has.
+/// Installs tmux with whichever package manager the host has; see [HostTool.installCommand].
 ///
-/// Ported verbatim from `RemoteCommands.tmuxInstallCommand()` in `data/RemoteParsers.kt:303`.
-///
-/// `sudo -S` reads the password from stdin, so the caller pairs this with [sudoStdin] — the password
-/// never appears in the command line, where `ps` and auditd would see it. A host already running as
-/// root skips sudo entirely rather than requiring it to be installed.
-///
-/// It re-checks at the end instead of trusting the package manager's exit code: several of these
-/// return 0 for "nothing to do" on a broken mirror, and reporting a successful install of something
-/// that is not there would send the user back to a non-resumable shell with no explanation.
-String tmuxInstallCommand() =>
-    "${tmuxPath}set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; "
-    'if [ "\$(id -u)" = 0 ]; then SUDO=; else SUDO=\'sudo -S\'; fi; '
-    // Every package step is bounded and explains a timeout in its own words. A dpkg/apt or dnf lock
-    // held by unattended-upgrades blocks forever; the transport would eventually cut the stream at
-    // _streamTimeout and the user would see a bare "command timed out" half an hour later, with
-    // nothing saying a lock was the reason or that nothing had been installed.
-    'pm(){ n=\$1; shift; s=0; '
-    'if command -v timeout >/dev/null 2>&1; then timeout "\$n" "\$@" || s=\$?; else "\$@" || s=\$?; fi; '
-    'if [ "\$s" = 124 ]; then '
-    'echo "OmniTerm: \$* did not finish within \${n}s. Another package manager is most likely '
-    'holding the lock (unattended-upgrades, an interrupted install, or a stale lock file). '
-    'Nothing was installed - retry once that finishes." >&2; fi; return "\$s"; }; '
-    'if command -v apt-get >/dev/null 2>&1; then pm $pmUpdateSeconds \$SUDO apt-get update && pm $pmInstallSeconds \$SUDO apt-get install -y tmux; '
-    'elif command -v dnf >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO dnf install -y tmux; '
-    'elif command -v yum >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO yum install -y tmux; '
-    'elif command -v pacman >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO pacman -Sy --noconfirm tmux; '
-    'elif command -v apk >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO apk add tmux; '
-    'elif command -v zypper >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO zypper install -y tmux; '
-    'elif command -v pkg >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO pkg install -y tmux; '
-    // Homebrew refuses to run as root and needs no sudo; [tmuxPath] puts it on PATH on a Mac.
-    'elif command -v brew >/dev/null 2>&1; then pm $pmInstallSeconds brew install tmux; '
-    "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; "
-    "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }";
+/// Ported from `RemoteCommands.tmuxInstallCommand()` in `data/RemoteParsers.kt`. The sudo password,
+/// when there is one, goes to `sudo -S` on stdin through [sudoStdin] — never into the command line,
+/// where `ps` and auditd would see it.
+String tmuxInstallCommand({bool withSudoPassword = true}) =>
+    HostTool.tmux.installCommand(withSudoPassword: withSudoPassword);
 
 /// Reads a persistent pane's own scrollback — or nothing at all while a TUI owns the pane.
 ///

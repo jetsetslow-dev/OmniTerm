@@ -2,6 +2,7 @@
 // from app/src/test/java/com/jetsetslow/omniterm/ProcessUsageParserTest.kt.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/data/host_tools.dart';
 import 'package:omniterm/data/kotlin_strings.dart';
 import 'package:omniterm/data/remote_commands.dart';
 import 'package:omniterm/data/remote_models.dart';
@@ -52,6 +53,39 @@ DiskRate _rate(int read, int write) =>
     DiskRate(readBytesPerSecond: read, writeBytesPerSecond: write);
 
 void main() {
+  test(
+    'an nvidia driver without nvidia-smi is named as the tool to install, not as a gpu source',
+    () {
+      final usage = parseProcessUsage(
+        '$_ps\n'
+        '$processSampleMarker 1000000000\n'
+        '/proc/101/io:read_bytes: 1000\n'
+        '/proc/101/io:write_bytes: 500\n'
+        '$processSampleMarker 2000000000\n'
+        '/proc/101/io:read_bytes: 2000\n'
+        '/proc/101/io:write_bytes: 500\n'
+        '$processNvidiaSmiMissingMarker',
+      );
+      expect(usage.missingTool, HostTool.nvidiaSmi);
+      expect(usage.gpuReported, isFalse, reason: 'no GPU use was reported, so no GPU column');
+      expect(usage.disk[101], _rate(1000, 0), reason: 'the samples before the marker still count');
+      expect(
+        processNvidiaSmiMissingMarker.startsWith(processNvidiaMarker),
+        isFalse,
+        reason:
+            "the parser finds pmon output by its marker's prefix, so this one must not share it",
+      );
+      expect(parseProcessUsage(_output).missingTool, isNull);
+      expect(
+        processesLinux,
+        contains(
+          "elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo "
+          "'$processNvidiaSmiMissingMarker'",
+        ),
+      );
+    },
+  );
+
   test('disk rates are the difference over the time between samples', () {
     final usage = parseProcessUsage(_output);
     expect(usage.disk[101], _rate(2097152, 1048576));

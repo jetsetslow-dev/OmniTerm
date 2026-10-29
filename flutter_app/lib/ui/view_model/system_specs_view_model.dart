@@ -46,7 +46,7 @@ class SystemSpecsViewModel extends ChangeNotifier {
   /// Reads [server]'s specs. [withSudo] also reads what needs root (memory modules, drive health)
   /// through sudo; a refresh after that keeps doing so, so the detail does not vanish again.
   ///
-  /// The caller gates [withSudo] behind the app lock, as every use of the saved password is.
+  /// The caller puts [withSudo] behind the sudo check, as every use of sudo is.
   Future<void> load(Server server, {bool? withSudo}) async {
     final sudo = withSudo ?? (_states[server.id]?.elevated ?? false);
     final generation = (_generations[server.id] ?? 0) + 1;
