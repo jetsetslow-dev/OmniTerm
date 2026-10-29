@@ -59,6 +59,8 @@ resolve_release_sboms() {
     fi
     python3 scripts/verify-native-sbom-baselines.py build/reports/cyclonedx/bom.json \
       --configuration "$config"
+    # Kept per graph for scripts/check-dependency-advisories.py; the next graph overwrites bom.json.
+    cp build/reports/cyclonedx/bom.json "build/reports/cyclonedx/$config.bom.json"
     rm -f -- "$log_file"
   done
 }
