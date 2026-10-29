@@ -23,20 +23,18 @@ import javax.crypto.SecretKey
 
 /**
  * The phone's own lock (fingerprint, face, or its PIN, pattern or password) as the check before a
- * privileged action while App Lock is off. It unlocks no secret of its own, but like
- * [BiometricCryptoGate] it counts the check as passed only once a Keystore key that needs that
- * unlock has been used.
+ * privileged action while App Lock is off. It unlocks no secret of its own. On Android 11 and later,
+ * like [BiometricCryptoGate], it counts as passed only once a Keystore key bound to that one prompt
+ * has been used.
  *
- * Android 11 and later bind the key to each prompt. Android 7 to 10 cannot offer the screen lock
- * with a bound key, so they show the system's "Confirm your PIN" screen and use a key that opens for
- * a few seconds after it.
+ * Android 7 to 10 cannot unlock a per-use key with the screen lock, and a key that stays open for a
+ * while after any unlock is weaker than the check it would back. They show the system's "Confirm
+ * your PIN" screen and go by its answer.
  */
 object DeviceCredentialGate {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val PER_USE_KEY_ALIAS = "omniterm_device_credential_gate_key"
-    private const val TIMED_KEY_ALIAS = "omniterm_device_credential_timed_key"
+    private const val KEY_ALIAS = "omniterm_device_credential_gate_key"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
-    private const val UNLOCK_SECONDS = 5
     private val challenge = byteArrayOf(0x4f, 0x6d, 0x6e, 0x69)
     private val requests = AtomicInteger()
 
@@ -49,13 +47,13 @@ object DeviceCredentialGate {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             promptWithBoundKey(activity, title, subtitle, onAuthenticated)
         } else {
-            confirmThenUseTimedKey(activity, title, subtitle, onAuthenticated)
+            confirmCredential(activity, title, subtitle, onAuthenticated)
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
     private fun promptWithBoundKey(activity: AppCompatActivity, title: String, subtitle: String, onAuthenticated: () -> Unit) {
-        val cipher = cipherOrNull(PER_USE_KEY_ALIAS) ?: return
+        val cipher = cipherOrNull() ?: return
         val prompt = BiometricPrompt(
             activity,
             ContextCompat.getMainExecutor(activity),
@@ -76,19 +74,16 @@ object DeviceCredentialGate {
         runCatching { prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher)) }
     }
 
-    private fun confirmThenUseTimedKey(activity: AppCompatActivity, title: String, subtitle: String, onAuthenticated: () -> Unit) {
+    private fun confirmCredential(activity: AppCompatActivity, title: String, subtitle: String, onAuthenticated: () -> Unit) {
         val intent = activity.getSystemService(KeyguardManager::class.java)
             ?.createConfirmDeviceCredentialIntent(title, subtitle) ?: return
-        // Creates the key, or replaces one the system invalidated. The cipher itself is refused
-        // until the person unlocks below.
-        cipherOrNull(TIMED_KEY_ALIAS)
         var launcher: ActivityResultLauncher<Intent>? = null
         launcher = activity.activityResultRegistry.register(
             "omniterm.deviceCredential.${requests.incrementAndGet()}",
             ActivityResultContracts.StartActivityForResult(),
         ) { result ->
             launcher?.unregister()
-            if (result.resultCode == Activity.RESULT_OK && opens(cipherOrNull(TIMED_KEY_ALIAS))) onAuthenticated()
+            if (result.resultCode == Activity.RESULT_OK) onAuthenticated()
         }
         launcher.launch(intent)
     }
@@ -98,39 +93,31 @@ object DeviceCredentialGate {
         runCatching { cipher?.doFinal(challenge)?.isNotEmpty() == true }.getOrDefault(false)
 
     /**
-     * A cipher on [alias]'s key. A key the system has invalidated, because the screen lock or the
-     * fingerprints changed, is replaced. Null when the Keystore refuses it, including a timed key
-     * whose unlock has run out.
+     * A cipher on the gate's key. A key the system has invalidated, because the screen lock or the
+     * fingerprints changed, is replaced. Null when the Keystore refuses it.
      */
-    private fun cipherOrNull(alias: String): Cipher? = runCatching { initCipher(alias) }
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun cipherOrNull(): Cipher? = runCatching { initCipher() }
         .recoverCatching {
             if (it !is KeyPermanentlyInvalidatedException) throw it
-            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(alias)
-            initCipher(alias)
+            KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(KEY_ALIAS)
+            initCipher()
         }
         .getOrNull()
 
-    private fun initCipher(alias: String): Cipher =
-        Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, keyOrCreate(alias)) }
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun initCipher(): Cipher =
+        Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, keyOrCreate()) }
 
-    private fun keyOrCreate(alias: String): SecretKey {
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun keyOrCreate(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getKey(alias, null) as? SecretKey)?.let { return it }
-        val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        val spec = KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setUserAuthenticationRequired(true)
-            .apply {
-                if (alias == PER_USE_KEY_ALIAS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    setUserAuthenticationParameters(
-                        0,
-                        KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    setUserAuthenticationValidityDurationSeconds(UNLOCK_SECONDS)
-                }
-            }
+            .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
             .build()
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
             .apply { init(spec) }
