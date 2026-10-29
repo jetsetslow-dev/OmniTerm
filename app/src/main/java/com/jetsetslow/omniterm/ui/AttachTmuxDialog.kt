@@ -119,7 +119,7 @@ private fun TmuxSessionRow(viewModel: AppViewModel, srv: ServerEntity, session: 
         Column(Modifier.padding(10.dp)) {
             Text(session.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = OmniTextSize.Body)
             Text(
-                listOf(windows, state, stringResource(R.string.started_ago, formatSessionAge(session.createdAtMs))).joinToString(" · "),
+                listOf(windows, state, ageText(R.string.started_ago, R.string.started_just_now, session.createdAtMs)).joinToString(" · "),
                 fontSize = OmniTextSize.Meta,
                 fontFamily = OmniFonts.mono,
             )

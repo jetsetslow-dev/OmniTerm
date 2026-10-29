@@ -648,7 +648,9 @@
     <string name="key_type">"Key type: %1$s"</string>
     <string name="how_to_verify_on_the_server">"How to verify: on the server's own screen (not over SSH), run:\nssh-keygen -lf /etc/ssh/%1$s\nand check it prints the same SHA256 fingerprint."</string>
     <string name="started_ago">"Started %1$s ago"</string>
-    <string name="started_ago_backgrounded_ago">"Started %1$s ago · backgrounded %2$s ago"</string>
+    <string name="started_just_now">"Started just now"</string>
+    <string name="backgrounded_ago">"backgrounded %1$s ago"</string>
+    <string name="backgrounded_just_now">"backgrounded just now"</string>
     <string name="new_session_3">"New session · %1$s"</string>
     <string name="quick_connect_don_t_save_2">"Quick connect (don't save)…"</string>
     <string name="quick_connect_to_another_host">"Quick connect to another host…"</string>
