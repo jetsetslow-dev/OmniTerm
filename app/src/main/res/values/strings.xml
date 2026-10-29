@@ -158,9 +158,7 @@
     <string name="starting_from_100_the_following_deductions">"Starting from 100, the following deductions apply:"</string>
     <string name="thresholds_and_weights_are_editable_in">"Thresholds and weights are editable in Tools → Settings → Health scoring."</string>
     <string name="authenticate_for_sudo">"Authenticate for sudo"</string>
-    <string name="confirm_to_run_this_privileged_action">"Confirm to run this privileged action with the stored sudo password."</string>
     <string name="pin">"PIN"</string>
-    <string name="use_your_biometric_prompt_to_continue">"Use your biometric prompt to continue."</string>
     <string name="confirm">"Confirm"</string>
     <string name="exit_omniterm">"Exit OmniTerm?"</string>
     <string name="exiting_will_terminate_all_active_background">"Exiting will terminate all active background SSH sessions."</string>
@@ -547,8 +545,6 @@
     <string name="all_file_operations_will_run_as">"All file operations will run as root. Only enable this if you intend to edit protected system files."</string>
     <string name="don_t_show_again">"Don't show again"</string>
     <string name="authenticate">"Authenticate"</string>
-    <string name="enter_pin_for_sudo_mode">"Enter PIN for sudo mode"</string>
-    <string name="confirm_your_app_pin_to_run">"Confirm your app PIN to run SFTP operations as root."</string>
     <string name="create_directory">"Create Directory"</string>
     <string name="directory_name">"Directory Name"</string>
     <string name="rename_file">"Rename file"</string>
@@ -885,8 +881,6 @@
     <string name="actions_for">"Actions for %1$s"</string>
     <string name="add_network_share">"Add network share"</string>
     <string name="edit_network_share">"Edit network share"</string>
-    <string name="authenticate_for_sudo_mode">"Authenticate for sudo mode"</string>
-    <string name="confirm_to_run_sftp_operations_as">"Confirm to run SFTP operations as root"</string>
     <string name="compress_to_archive">"Compress to archive"</string>
     <string name="go_to_path">"Go to path"</string>
     <string name="cancel_path_edit">"Cancel path edit"</string>
@@ -1210,4 +1204,13 @@
     <string name="spec_no_modules_reported">"This host's firmware lists no memory modules. Virtual machines usually don't."</string>
     <string name="spec_drive_health_needs_root">"Drive health, temperature, hours in use and wear can only be read as root."</string>
     <string name="spec_drive_health_tool_missing">"Install smartmontools on this host to see drive health, temperature and wear."</string>
+    <string name="run_this_with_sudo_on">"Run this with sudo on %1$s?"</string>
+    <string name="use_your_screen_lock_to_continue">"Use your fingerprint, face or screen lock to continue."</string>
+    <string name="sudo_asks_without_a_screen_lock">"This phone has no screen lock, so OmniTerm asks here before anything runs as root."</string>
+    <string name="install_tool">"Install %1$s"</string>
+    <string name="install_tool_on">"Installing %1$s on %2$s"</string>
+    <string name="tool_now_installed_on">"%1$s is now installed on %2$s."</string>
+    <string name="tool_still_not_installed">"%1$s is still not installed on %2$s. The output above says why."</string>
+    <string name="spec_gpu_tool_missing">"Install nvidia-smi on this host to see this NVIDIA card's driver version, memory, power limit and temperature."</string>
+    <string name="processes_gpu_tool_missing">"Install nvidia-smi on this host to see each process's use of its NVIDIA GPU."</string>
 </resources>

@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.DiskRate
+import com.jetsetslow.omniterm.data.HostTool
 import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.RemoteParsers
 import com.jetsetslow.omniterm.data.SimProcess
@@ -50,6 +51,28 @@ class ProcessUsageParserTest {
         /proc/202/fdinfo/9:drm-client-id:	42
         /proc/202/fdinfo/9:drm-engine-gfx:	2500000000 ns
     """.trimIndent()
+
+    @Test
+    fun `an nvidia driver without nvidia-smi is named as the tool to install, not as a gpu source`() {
+        val usage = RemoteParsers.parseProcessUsage(ps + "\n" + """
+            ${RemoteCommands.PROCESS_SAMPLE_MARKER} 1000000000
+            /proc/101/io:read_bytes: 1000
+            /proc/101/io:write_bytes: 500
+            ${RemoteCommands.PROCESS_SAMPLE_MARKER} 2000000000
+            /proc/101/io:read_bytes: 2000
+            /proc/101/io:write_bytes: 500
+            ${RemoteCommands.PROCESS_NVIDIA_SMI_MISSING_MARKER}
+        """.trimIndent())
+        assertEquals(HostTool.NvidiaSmi, usage.missingTool)
+        assertFalse("no GPU use was reported, so no GPU column", usage.gpuReported)
+        assertEquals("the samples before the marker still count", DiskRate(1000, 0), usage.disk[101])
+        assertFalse(
+            "the parser finds pmon output by its marker's prefix, so this one must not share it",
+            RemoteCommands.PROCESS_NVIDIA_SMI_MISSING_MARKER.startsWith(RemoteCommands.PROCESS_NVIDIA_MARKER),
+        )
+        assertNull(RemoteParsers.parseProcessUsage(output).missingTool)
+        assertTrue(RemoteCommands.PROCESSES.contains("elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo '${RemoteCommands.PROCESS_NVIDIA_SMI_MISSING_MARKER}'"))
+    }
 
     @Test
     fun `disk rates are the difference over the time between samples`() {

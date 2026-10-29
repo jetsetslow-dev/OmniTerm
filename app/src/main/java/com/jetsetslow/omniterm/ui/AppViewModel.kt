@@ -1576,6 +1576,8 @@ class AppViewModel @JvmOverloads constructor(
     var processDiskReported by mutableStateOf(false); private set
     /** Whether the host reported a GPU use source, so the GPU column and sort apply. */
     var processGpuReported by mutableStateOf(false); private set
+    /** A tool the host lacks that would add to the list, offered for install above it. */
+    var processMissingTool by mutableStateOf<HostTool?>(null); private set
     var processesLoading by mutableStateOf(false); private set
 
     var services by mutableStateOf<List<SimService>>(emptyList()); private set
@@ -1584,10 +1586,13 @@ class AppViewModel @JvmOverloads constructor(
     var servicesUnsupported by mutableStateOf(false); private set
     var serviceActionFeedback by mutableStateOf<String?>(null)
 
-    // A privileged action (reboot / service control) waiting on biometric/PIN confirmation before
-    // its stored sudo password is used. Non-null while the SudoAuthDialog is shown; cleared on
-    // confirm or cancel. The UI renders the auth prompt and calls confirm/cancel back.
-    var pendingSudoAction by mutableStateOf<(() -> Unit)?>(null); private set
+    /** A privileged action waiting on the sudo check, and the name of the host it would run on. */
+    class PendingSudoAction(val hostName: String, val run: () -> Unit)
+
+    // Every privileged action (reboot, service control, Read with sudo, installs, SFTP sudo mode)
+    // waits here for the user's say-so. Non-null while the SudoAuthDialog is shown; cleared on
+    // confirm or cancel. The UI renders the check and calls confirm/cancel back.
+    var pendingSudoAction by mutableStateOf<PendingSudoAction?>(null); private set
 
     var logs by mutableStateOf<List<SimLog>>(emptyList()); private set
     var logsLoading by mutableStateOf(false); private set
@@ -1706,12 +1711,17 @@ class AppViewModel @JvmOverloads constructor(
     var sftpSudo by mutableStateOf(false)
     var sftpSudoConfirmDismissed by mutableStateOf(false)
     fun toggleSftpSudo() {
-        val srv = selectedServer
-        if (!sftpSudo && srv != null && !RemoteCommands.hasUnixShell(knownOs(srv))) {
+        if (sftpSudo) {
+            sftpSudo = false
+            return
+        }
+        val srv = selectedServer ?: return
+        if (!RemoteCommands.hasUnixShell(knownOs(srv))) {
             sftpError = "Sudo mode needs a Linux, macOS or BSD host; Windows has no sudo."
             return
         }
-        sftpSudo = !sftpSudo
+        // Turning it on runs every file operation as root from then on, so it asks first.
+        withSudoAuth(srv) { if (selectedServerId == srv.id) sftpSudo = true }
     }
 
     // ── In-directory search ──
@@ -3024,16 +3034,16 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Run a privileged action, optionally gated behind app-lock auth. When [srv] has a stored sudo
-     * password AND an app lock (biometrics or PIN) is configured, we stage [block] in
-     * [pendingSudoAction] so the UI can require confirmation before the password is used. With no
-     * stored sudo password, or no app lock, we run immediately (the password, if any, is still used
-     * by the command builders).
+     * Run a privileged action once the user confirms it: every one asks, saved sudo password or
+     * not. [block] waits in [pendingSudoAction] for the SudoAuthDialog, which checks App Lock when
+     * it is on ([sudoAuthUsesAppLock]), else the phone's own screen lock, else asks plainly.
      */
     private fun withSudoAuth(srv: ServerEntity, block: () -> Unit) {
-        val needsGate = srv.sudoPassword.isNotBlank() && (useBiometrics || savedPin != null)
-        if (needsGate) pendingSudoAction = block else block()
+        pendingSudoAction = PendingSudoAction(srv.name, block)
     }
+
+    /** App Lock's biometrics or PIN confirm sudo actions while it is on. */
+    val sudoAuthUsesAppLock: Boolean get() = isAppLockEnabled && savedPin != null
 
     /**
      * Run [block] with a command that elevates with sudo only when [usesSudo] says so for the host's
@@ -3047,7 +3057,7 @@ class AppViewModel @JvmOverloads constructor(
     fun confirmPendingSudoAction() {
         val action = pendingSudoAction
         pendingSudoAction = null
-        action?.invoke()
+        action?.run?.invoke()
     }
 
     /** Abandon the staged privileged action (user cancelled the auth prompt). */
@@ -6939,13 +6949,18 @@ class AppViewModel @JvmOverloads constructor(
     fun installTmuxAndConnect() {
         val srv = tmuxInstallPromptServer ?: return
         if (tmuxInstalling) return
+        withSudoAuth(srv) { if (tmuxInstallPromptServer?.id == srv.id) runTmuxInstall(srv) }
+    }
+
+    private fun runTmuxInstall(srv: ServerEntity) {
+        if (tmuxInstalling) return
         tmuxInstalling = true
         tmuxInstallOutput = ""
         viewModelScope.launch {
             val creds = buildCredentials(srv)
-            val stdin = srv.sudoPassword.takeIf { it.isNotBlank() }?.let { "$it\n" }
+            val stdin = RemoteCommands.sudoStdin(srv.sudoPassword)
             val result = runCatching {
-                sshTransport.execStream(creds, RemoteCommands.tmuxInstallCommand(), stdin) { chunk ->
+                sshTransport.execStream(creds, RemoteCommands.tmuxInstallCommand(stdin != null), stdin) { chunk ->
                     withContext(Dispatchers.Main) { tmuxInstallOutput = (tmuxInstallOutput ?: "") + chunk }
                 }
             }
@@ -8241,6 +8256,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (srv.id != selectedServerId) return@launch
                 processDiskReported = usage.disk.isNotEmpty()
                 processGpuReported = usage.gpuReported
+                processMissingTool = usage.missingTool
                 // A Disk or GPU sort chosen on another host may not apply to this one.
                 if ((processSort == ProcessSort.Disk && !processDiskReported) || (processSort == ProcessSort.Gpu && !processGpuReported)) {
                     processSort = ProcessSort.Cpu
@@ -8294,8 +8310,34 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    /** Reads again with sudo, behind the same app-lock check as every other use of the saved password. */
+    /** Reads again with sudo, behind the same check as every other use of sudo. */
     fun readSystemSpecsWithSudo(srv: ServerEntity) = withSudoAuth(srv) { loadSystemSpecs(srv, withSudo = true) }
+
+    /**
+     * Installs [tool] on [srv] with its package manager, behind the sudo check, streaming into the
+     * shared action panel. Once the tool answers, [onInstalled] reads again whatever was missing,
+     * behind the panel. Either way the panel stays up with the output and what came of it, and the
+     * user closes it, as with the tmux install.
+     */
+    fun installHostTool(srv: ServerEntity, tool: HostTool, onInstalled: () -> Unit) = withSudoAuth(srv) {
+        val stdin = RemoteCommands.sudoStdin(srv.sudoPassword)
+        val app = getApplication<Application>()
+        runStreamingAction(
+            app.getString(R.string.install_tool_on, tool.displayName, srv.name),
+            tool.installCommand(withSudoPassword = stdin != null),
+            stdin = stdin,
+            server = srv,
+        ) {
+            val epoch = actionStreamEpoch
+            viewModelScope.launch {
+                val installed = executeSshCommand(srv, tool.checkCommand()).trim().endsWith("yes")
+                if (epoch != actionStreamEpoch) return@launch
+                val outcome = if (installed) R.string.tool_now_installed_on else R.string.tool_still_not_installed
+                actionStreamOutput = actionStreamOutput.trimEnd() + "\n\n" + app.getString(outcome, tool.displayName, srv.name)
+                if (installed) onInstalled()
+            }
+        }
+    }
 
     fun openSystemSpecs(srv: ServerEntity) {
         systemSpecsHost = srv
@@ -8338,6 +8380,7 @@ class AppViewModel @JvmOverloads constructor(
         processes = emptyList()
         processDiskReported = false
         processGpuReported = false
+        processMissingTool = null
         expandedProcessPid = null
         services = emptyList()
         servicesUnsupported = false

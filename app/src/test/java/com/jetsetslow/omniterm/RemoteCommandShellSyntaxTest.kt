@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm
 
+import com.jetsetslow.omniterm.data.HostTool
 import com.jetsetslow.omniterm.data.RemoteCommands
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -71,6 +72,12 @@ class RemoteCommandShellSyntaxTest {
             "TMUX_LIST_SESSIONS" to RemoteCommands.TMUX_LIST_SESSIONS,
         )
 
+        HostTool.entries.forEach { tool ->
+            commands["installCommand(${tool.name})"] = tool.installCommand(withSudoPassword = true)
+            commands["installCommand(${tool.name}, no password)"] = tool.installCommand(withSudoPassword = false)
+            commands["checkCommand(${tool.name})"] = tool.checkCommand()
+        }
+
         commands.forEach { (label, script) -> assertParses(label, script) }
     }
 
@@ -107,7 +114,7 @@ class RemoteCommandShellSyntaxTest {
     }
 
     /**
-     * The tmux install must bound every package-manager step through its own `pm` helper.
+     * Every tool install must bound every package-manager step through its own `pm` helper.
      *
      * Same class of trap as [everyCommandThatCallsOtAlsoDefinesIt]: `pm 600 apt-get install` parses
      * happily and then dies with "pm: not found", turning a bounded install back into the unbounded
@@ -116,19 +123,19 @@ class RemoteCommandShellSyntaxTest {
      * is told only "command timed out", with no hint that a lock was the cause.
      */
     @Test
-    fun theTmuxInstallBoundsEveryPackageManagerStep() {
-        val script = RemoteCommands.tmuxInstallCommand()
-        check(script.contains("pm(){")) { "tmuxInstallCommand calls `pm` but never defines it" }
-        listOf(
-            "apt-get update", "apt-get install", "dnf install", "yum install",
-            "pacman -Sy", "apk add", "zypper install", "pkg install",
-        ).forEach { invocation ->
-            // Normal string, not a raw one: in `"""..."""` a `\$` is not an escape and `$SUDO`
-            // would still be read as Kotlin interpolation.
-            val bounded = Regex("pm \\d+ \\\$SUDO " + Regex.escape(invocation))
-            check(bounded.containsMatchIn(script)) {
-                "`" + invocation + "` is not wrapped in a `pm <seconds>` bound:\n" + script
+    fun everyToolInstallBoundsEachPackageManagerStep() {
+        HostTool.entries.forEach { tool ->
+            val script = tool.installCommand()
+            check(script.contains("pm(){")) { "${tool.name}'s install calls `pm` but never defines it" }
+            val all = Regex("(pm \\d+ )?(apt-get update|apt-get install|dnf install|yum install|pacman -Sy|apk add|zypper install|pkg install|brew install)")
+                .findAll(script).toList()
+            check(all.isNotEmpty()) { "${tool.name}'s install runs no package manager:\n$script" }
+            all.forEach { match ->
+                check(match.groupValues[1].isNotEmpty()) {
+                    "${tool.name}: `" + match.groupValues[2] + "` is not wrapped in a `pm <seconds>` bound:\n" + script
+                }
             }
+            check(script.contains("set -- sudo \"\$SUDO\" -p '' \"\$@\"")) { "${tool.name}'s `pm` does not elevate:\n$script" }
         }
     }
 }
