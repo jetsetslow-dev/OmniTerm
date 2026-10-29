@@ -1212,5 +1212,6 @@
     <string name="tool_now_installed_on">"%1$s is now installed on %2$s."</string>
     <string name="tool_still_not_installed">"%1$s is still not installed on %2$s. The output above says why."</string>
     <string name="spec_gpu_tool_missing">"Install nvidia-smi on this host to see this NVIDIA card's driver version, memory, power limit and temperature."</string>
+    <string name="session_ended_exit">"Session ended (exit %1$d). Scrollback kept."</string>
     <string name="processes_gpu_tool_missing">"Install nvidia-smi on this host to see each process's use of its NVIDIA GPU."</string>
 </resources>

@@ -67,6 +67,7 @@ Open **Term** for an interactive SSH shell on the selected host.
 - **Quick connect** (**Unlock OmniTerm** only) — **OPEN › Quick connect** SSHes to a host that is not in your saved list, for one-off access. It offers the same options as Add Host (password, saved key, or credential profile; HTTP/SOCKS5 proxy or SSH jump host, optionally filled from a saved host) and enforces the same validation and host-key trust prompts, but writes nothing to the database. The free Play Store build does not include it — save the host instead, within the 1-host limit. **Remove Ads does not unlock it.**
 - **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically. Remove one you no longer need from the session picker: **Forget** drops it from this device and leaves it running, **End session** stops it on the server too. On a Mac, OmniTerm finds tmux installed with Homebrew or MacPorts, and can install it with Homebrew.
 - Multiple background sessions with session switching and explicit disconnect prompts.
+- When a shell ends on the server (you type `exit`, or tmux ends), its terminal stays open with its scrollback and says how it ended, for example "Session ended (exit 0). Scrollback kept.". Tap **Dismiss** or **✕** when you are done with it.
 - Adjustable, persisted font size with reflowing scrollback on resize.
 - Themes: App theme (follows app light/dark/AMOLED/high-contrast), Omni Dark, Solarized Dark, Matrix, and Light.
 - Hardware and soft keyboard input, a compact special-key bar, and swipe-typing mode.
@@ -148,7 +149,7 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 ## Security & privacy
 - **No OmniTerm backend, no server agents** — administration traffic goes directly from your device to the hosts you configure. The Play Store flavor separately contacts Google for ads, consent, and billing; the source-available flavor omits those SDKs.
 - **On-device encryption** — credentials, private keys, sudo passwords, and proxy passwords use AES-GCM with an Android Keystore-managed key (hardware-backed where the device supports it).
-- **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it.
+- **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it. If you reject a host's key, OmniTerm stops asking about it from background checks; it asks again when you connect to that host, tap **Retry** on it, or test its connection.
 - **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust.
 - **Biometric app lock** — lock the whole app behind biometrics or a PIN. Cold starts always lock;
   warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration

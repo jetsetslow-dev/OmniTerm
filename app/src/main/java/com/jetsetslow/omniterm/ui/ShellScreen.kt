@@ -85,6 +85,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -156,10 +157,12 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                         fontFamily = OmniFonts.mono,
                                     )
                                 }
+                                val ended = s.endedExitStatus
                                 Text(
                                     when {
                                         s.isConnected -> "Connected"
                                         s.reconnecting -> "Reconnecting…"
+                                        ended != null -> stringResource(R.string.session_ended_exit, ended)
                                         else -> "Disconnected${s.disconnectError?.let { " · $it" } ?: ""}"
                                     },
                                     fontSize = 12.sp,
@@ -171,7 +174,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                 )
                             }
                             // Manual reconnect for a dropped session whose auto-retry gave up.
-                            if (!s.isConnected && !s.reconnecting) {
+                            if (!s.isConnected && !s.reconnecting && s.endedExitStatus == null) {
                                 IconButton(onClick = { viewModel.retrySession(s.id) }) {
                                     Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.reconnect), tint = OmniColors.cyan)
                                 }
@@ -620,7 +623,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                         // A dropped session that isn't already retrying gets a manual reconnect here,
                         // so a stuck/exhausted auto-reconnect can be re-kicked without leaving the
                         // terminal view (previously only the session-list picker offered this).
-                        if (actionSession != null && !connected && !reconnecting) {
+                        if (actionSession != null && !connected && !reconnecting && actionSession.endedExitStatus == null) {
                             TerminalHeaderAction(
                                 "RECON",
                                 scheme.onPrimaryContainer,
@@ -2168,7 +2171,8 @@ private fun PaneTerminalContent(
                 }
             }
 
-            if (currentSession.reconnecting || currentSession.disconnectError != null) {
+            val endedExitStatus = currentSession.endedExitStatus
+            if (currentSession.reconnecting || currentSession.disconnectError != null || endedExitStatus != null) {
                 val reconnecting = currentSession.reconnecting
                 val message = if (reconnecting) {
                     if (currentSession.persistent) {
@@ -2176,18 +2180,27 @@ private fun PaneTerminalContent(
                     } else {
                         "Connection lost. Reconnecting…"
                     }
+                } else if (endedExitStatus != null) {
+                    stringResource(R.string.session_ended_exit, endedExitStatus)
                 } else {
                     currentSession.disconnectError ?: "Server disconnected."
                 }
-                val statusContainer =
-                    if (reconnecting) MaterialTheme.colorScheme.tertiaryContainer
-                    else MaterialTheme.colorScheme.errorContainer
-                val statusContent =
-                    if (reconnecting) MaterialTheme.colorScheme.onTertiaryContainer
-                    else MaterialTheme.colorScheme.onErrorContainer
-                val statusBorder =
-                    if (reconnecting) MaterialTheme.colorScheme.tertiary
-                    else MaterialTheme.colorScheme.error
+                // A clean exit is not a failure, so it is not shown in the error colours.
+                val statusContainer = when {
+                    reconnecting -> MaterialTheme.colorScheme.tertiaryContainer
+                    endedExitStatus != null -> MaterialTheme.colorScheme.surfaceContainerHighest
+                    else -> MaterialTheme.colorScheme.errorContainer
+                }
+                val statusContent = when {
+                    reconnecting -> MaterialTheme.colorScheme.onTertiaryContainer
+                    endedExitStatus != null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.onErrorContainer
+                }
+                val statusBorder = when {
+                    reconnecting -> MaterialTheme.colorScheme.tertiary
+                    endedExitStatus != null -> MaterialTheme.colorScheme.outline
+                    else -> MaterialTheme.colorScheme.error
+                }
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -2212,7 +2225,16 @@ private fun PaneTerminalContent(
                         fontSize = 12.sp,
                         fontFamily = OmniFonts.mono,
                     )
-                    if (!reconnecting && !currentSession.isConnected) {
+                    if (endedExitStatus != null) {
+                        // The shell exited on the server, so there is nothing to retry; the
+                        // scrollback stays until this dismisses it.
+                        TextButton(
+                            onClick = { viewModel.requestDisconnectSession(currentSession.id) },
+                            modifier = Modifier.testTag("shell.dismiss"),
+                        ) {
+                            Text(stringResource(R.string.dismiss), color = OmniColors.cyan, fontSize = 11.sp)
+                        }
+                    } else if (!reconnecting && !currentSession.isConnected) {
                         TextButton(onClick = { viewModel.retrySession(currentSession.id) }) {
                             Text(stringResource(R.string.retry), color = OmniColors.cyan, fontSize = 11.sp)
                         }

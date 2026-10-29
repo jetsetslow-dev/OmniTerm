@@ -72,6 +72,24 @@ object TerminalSessionManager {
     }
 
     fun cleanupSession(s: ShellSession) {
+        release(s)
+        activeSessions.remove(s)
+        clearUiReferences(s.id)
+        refreshKeepAlive()
+    }
+
+    /**
+     * A shell that exited on the server keeps its terminal and scrollback on screen, saying how it
+     * ended, until the user dismisses it (through [cleanupSession]). Its connection and everything
+     * else live about it end here, so it no longer counts toward the keep-alive service.
+     */
+    fun endSessionKeepingScrollback(s: ShellSession, exitStatus: Int) {
+        s.endedExitStatus = exitStatus
+        release(s)
+        refreshKeepAlive()
+    }
+
+    private fun release(s: ShellSession) {
         val closing = synchronized(s.sessionOwnershipLock) {
             s.isConnected = false
             s.userClosed = true
@@ -92,8 +110,9 @@ object TerminalSessionManager {
         s.terminalInputQueue?.close()
         s.resizeJob?.cancel()
         s.resizeChannel.close()
-        activeSessions.remove(s)
-        clearUiReferences(s.id)
+    }
+
+    private fun refreshKeepAlive() {
         updateKeepaliveCount()
         if (activeKeepaliveSessionsCount == 0) stopKeepAliveService()
         else startKeepAliveService() // Update remaining notifications

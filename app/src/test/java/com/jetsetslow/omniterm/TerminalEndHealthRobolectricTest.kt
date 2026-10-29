@@ -11,8 +11,10 @@ import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshTransport
 import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.AppViewModel
+import com.jetsetslow.omniterm.ui.ShellSession
 import com.jetsetslow.omniterm.ui.TerminalSessionManager
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -28,7 +30,9 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -41,6 +45,9 @@ import java.util.concurrent.Executors
  * lost. Waiting for current metrics.". Closing a terminal, or the shell exiting on the server, says
  * nothing about the host's metrics and leaves them alone. The Flutter app keeps the same rule, in
  * `shell_view_model_test.dart` and `host_status_probe_test.dart`.
+ *
+ * A shell that exits on the server also stays on screen, ended, with its scrollback and exit status,
+ * as it does in the Flutter app, until the user dismisses it; nothing reconnects it.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -52,9 +59,32 @@ class TerminalEndHealthRobolectricTest {
 
     @Test fun aShellExitingOnTheServerLeavesHealthAlone() = exercise(End.RemoteExit)
 
+    @Test fun anExitedShellStaysWithItsScrollbackUntilDismissed() = exercise(End.RemoteExit) { model, session, transport, main ->
+        withContext(main) {
+            assertTrue(model.activeSessions.contains(session))
+            assertFalse(session.isConnected)
+            assertEquals(3, session.endedExitStatus)
+            assertTrue(model.terminalBufferTextFor(session, full = true).contains(LAST_WORDS))
+            assertEquals("an ended shell keeps nothing alive", 0, TerminalSessionManager.activeKeepaliveSessionsCount)
+            model.retrySession(session.id)
+        }
+        delay(300)
+        withContext(main) {
+            assertFalse("an exit is not a drop and is never reopened", session.reconnecting)
+            assertEquals(1, transport.opened)
+            // Closing it only dismisses it: there is nothing left to disconnect or terminate.
+            model.requestDisconnectSession(session.id)
+            assertNull(model.pendingDisconnectSessionId)
+            assertFalse(model.activeSessions.contains(session))
+        }
+    }
+
     private enum class End { Drop, UserClose, RemoteExit }
 
-    private fun exercise(end: End) = runBlocking {
+    private fun exercise(
+        end: End,
+        afterEnd: (suspend (AppViewModel, ShellSession, ShellOnlyTransport, CoroutineDispatcher) -> Unit)? = null,
+    ) = runBlocking<Unit> {
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
         val store = ViewModelStore()
@@ -86,7 +116,11 @@ class TerminalEndHealthRobolectricTest {
             when (end) {
                 End.Drop -> transport.shell.drop()
                 End.UserClose -> withContext(main) { model.disconnectSession(session.id) }
-                End.RemoteExit -> transport.shell.exitOnServer()
+                End.RemoteExit -> {
+                    transport.shell.print("$LAST_WORDS\r\n")
+                    waitWhileOnMain(main, 10_000) { !model.terminalBufferTextFor(session, full = true).contains(LAST_WORDS) }
+                    transport.shell.exitOnServer(status = 3)
+                }
             }
 
             if (end == End.Drop) {
@@ -94,7 +128,10 @@ class TerminalEndHealthRobolectricTest {
                 assertEquals("Connection lost. Waiting for current metrics.", withContext(main) { model.metricsErrorsById[id] })
                 awaitHealth(repo, id, HEALTH_SCORE_UNKNOWN)
             } else {
-                waitWhileOnMain(main, 10_000) { model.activeSessions.contains(session) }
+                // A close removes the session; an exit on the server leaves it listed, ended.
+                waitWhileOnMain(main, 10_000) {
+                    if (end == End.UserClose) model.activeSessions.contains(session) else session.endedExitStatus == null
+                }
                 // A reset could follow the teardown asynchronously, so health must also stay put.
                 repeat(25) {
                     assertNull(withContext(main) { model.metricsErrorsById[id] })
@@ -102,6 +139,7 @@ class TerminalEndHealthRobolectricTest {
                     delay(20)
                 }
             }
+            afterEnd?.invoke(model, session, transport, main)
         } finally {
             try {
                 clearViewModelsAndAwaitTerminalJobs(store, main)
@@ -123,7 +161,8 @@ class TerminalEndHealthRobolectricTest {
      */
     private class ShellOnlyTransport : SshTransport {
         val shell = EndableShell()
-        @Volatile private var opened = 0
+        @Volatile var opened = 0
+            private set
 
         override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String = awaitCancellation()
 
@@ -160,8 +199,10 @@ class TerminalEndHealthRobolectricTest {
             bytes.close(IOException("Connection reset"))
         }
 
-        fun exitOnServer() {
-            exitStatus.value = 0
+        suspend fun print(text: String) = bytes.send(text.toByteArray())
+
+        fun exitOnServer(status: Int = 0) {
+            exitStatus.value = status
             remoteExited.value = true
             bytes.close()
         }
@@ -172,5 +213,9 @@ class TerminalEndHealthRobolectricTest {
             closed.value = true
             bytes.close()
         }
+    }
+
+    private companion object {
+        const val LAST_WORDS = "logout: the last words before the exit"
     }
 }

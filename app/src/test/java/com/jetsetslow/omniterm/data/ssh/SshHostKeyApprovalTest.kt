@@ -57,6 +57,41 @@ class SshHostKeyApprovalTest {
     }
 
     @Test
+    fun `a rejected key is not asked about again until the user connects themselves`() {
+        val rejected = HostKeyApprovalRequest("[rejected.example]:2201", "ssh-ed25519", "SHA256:rejected", CompletableDeferred())
+        fun again() = HostKeyApprovalRequest(rejected.host, rejected.keyType, rejected.fingerprint, CompletableDeferred())
+        var asked = 0
+        val handler: (HostKeyApprovalRequest) -> Unit = { asked++; it.deferred.complete(true) }
+        try {
+            SshHostKeyTrust.rememberRejection(rejected)
+
+            // Background checks fail closed without a prompt, however often they run.
+            repeat(3) { assertFalse(SshHostKeyTrust.approveFirstKey(handler, again(), 1_000L)) }
+            assertEquals(0, asked)
+            // A different key on the same host is a different question.
+            assertTrue(SshHostKeyTrust.approveFirstKey(handler, HostKeyApprovalRequest(rejected.host, "ecdsa-sha2-nistp256", "SHA256:other", CompletableDeferred()), 1_000L))
+            assertEquals(1, asked)
+            // Another host's connect does not lift it.
+            SshHostKeyTrust.allowPromptAgain("other.example", 2201)
+            assertFalse(SshHostKeyTrust.approveFirstKey(handler, again(), 1_000L))
+
+            SshHostKeyTrust.allowPromptAgain("rejected.example", 2201)
+            assertTrue(SshHostKeyTrust.approveFirstKey(handler, again(), 1_000L))
+            assertEquals(2, asked)
+        } finally {
+            SshHostKeyTrust.allowPromptAgain("rejected.example", 2201)
+        }
+    }
+
+    @Test
+    fun `with no approval UI a first key fails closed`() {
+        val request = request()
+
+        assertFalse(SshHostKeyTrust.approveFirstKey(null, request, 1_000L))
+        assertTrue(request.deferred.isCompleted)
+    }
+
+    @Test
     fun `jump target host key uses stable logical identity instead of ephemeral forward`() {
         val session = JSch().getSession("user", "127.0.0.1", 49152)
 
