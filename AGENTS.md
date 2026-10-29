@@ -197,6 +197,9 @@ when configuring a Codex client to read these agreements.
 - Keep pure coroutine, parser, ordering, and state-machine guarantees in ordinary JVM tests.
 - Exclude Robolectric native-runtime classes during discovery on Linux ARM64; required x86_64 CI
   must exercise them.
+- With a real Main dispatcher, wait on ViewModel state with `waitWhileOnMain`, never a loop on the
+  test thread: an off-main poll can land between related writes. `RealMainPollingPolicyTest`
+  enforces this.
 - Run the Room matrix on API 29 in required CI and API 35 locally when a KVM-capable host exists.
   API 36/37 remain deferred until a stable emulator newer than 37.1.11 boots them reliably.
 - Android regexes use ICU. Escape literal braces/brackets and verify UI-reachable regexes on device.

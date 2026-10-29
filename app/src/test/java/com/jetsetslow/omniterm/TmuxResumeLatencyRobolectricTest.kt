@@ -24,7 +24,6 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,8 +68,8 @@ class TmuxResumeLatencyRobolectricTest {
             repository.upsertPersistentSession(PersistentSessionEntity("omniterm-latency-fixture", id, "Resume fixture"))
             val model = withContext(main) { AppViewModel(application, transport) }
             store.put("test", model)
-            withTimeout(10_000) {
-                while (model.servers.value.none { it.id == id } || model.restorablePersistentSessions.isEmpty()) delay(10)
+            waitWhileOnMain(main, 10_000) {
+                model.servers.value.none { it.id == id } || model.restorablePersistentSessions.isEmpty()
             }
             withContext(main) {
                 model.saveTmuxControlMode(controlMode)
@@ -80,10 +79,7 @@ class TmuxResumeLatencyRobolectricTest {
                 } else model.resumePersistentSession(id, "omniterm-latency-fixture")
             }
             withTimeout(5_000) { transport.opened.await() }
-            val usable = withTimeoutOrNull(2_000) {
-                while (model.currentSessionId == null || model.isTerminalConnecting) delay(10)
-                true
-            } ?: false
+            val usable = clearsOnMainWithin(main, 2_000) { model.currentSessionId == null || model.isTerminalConnecting }
             assertTrue("A ready SSH channel must attach without waiting for an optional screen/history capture", usable)
             assertTrue(transport.shell.writes.any {
                 it.contains(if (fresh) "new-session" else "attach-session -t omniterm-latency-fixture")
@@ -95,7 +91,7 @@ class TmuxResumeLatencyRobolectricTest {
                 assertTrue("Selecting an existing tmux must show progress while checking the host", model.isTerminalConnecting)
                 withTimeout(5_000) { transport.presenceStarted.await() }
                 transport.presenceRelease.complete(Unit)
-                withTimeout(5_000) { while (model.isTerminalConnecting) delay(10) }
+                waitWhileOnMain(main) { model.isTerminalConnecting }
                 assertTrue("Failed host check must be visible", !model.terminalConnectError.isNullOrBlank())
                 // Saved sessions are keyed by host and name, and the database outlives each test, so
                 // only this host's entry counts: an earlier test's host may still have one by this name.
@@ -112,10 +108,7 @@ class TmuxResumeLatencyRobolectricTest {
             }
             if (controlMode) {
                 withTimeout(5_000) { transport.captureStarted.await() }
-                val ready = withTimeoutOrNull(2_000) {
-                    while (model.currentSession?.controlReady != true) delay(10)
-                    true
-                } ?: false
+                val ready = clearsOnMainWithin(main, 2_000) { model.currentSession?.controlReady != true }
                 assertTrue("Control mode must paint and enable input without waiting for full history", ready)
                 val session = checkNotNull(model.currentSession)
                 val beforeHistory = synchronized(session.emulator) { session.emulator.snapshot().rows.toString() }

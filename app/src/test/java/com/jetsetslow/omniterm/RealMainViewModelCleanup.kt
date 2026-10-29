@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.TerminalSessionManager
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * ViewModelStore.clear() cancels work but does not wait for IO continuations/finally blocks.
@@ -36,4 +38,33 @@ internal suspend fun clearViewModelsAndAwaitTerminalJobs(
             children.joinAll()
         }
     }
+}
+
+/**
+ * Waits while [condition] holds, reading it on [main] as the UI reads ViewModel state, and fails
+ * after [timeoutMillis].
+ *
+ * The ViewModel sets related state together in one main-thread task: a message and its error flag,
+ * a screen and its sessions. Polled from the test's own thread, a read can land between two of
+ * those writes, see the first and then assert on the stale second; a release build failed that
+ * way. Read on [main], the condition sees each task's writes all or none, and once it clears, the
+ * test thread sees everything main wrote before it. `RealMainPollingPolicyTest` keeps tests on this.
+ */
+internal suspend fun waitWhileOnMain(
+    main: CoroutineDispatcher,
+    timeoutMillis: Long = 5_000,
+    condition: () -> Boolean,
+) {
+    withTimeout(timeoutMillis) { pollOnMain(main, condition) }
+}
+
+/** [waitWhileOnMain] for a time limit that is itself the assertion: false if it did not clear. */
+internal suspend fun clearsOnMainWithin(
+    main: CoroutineDispatcher,
+    timeoutMillis: Long,
+    condition: () -> Boolean,
+): Boolean = withTimeoutOrNull(timeoutMillis) { pollOnMain(main, condition); true } ?: false
+
+private suspend fun pollOnMain(main: CoroutineDispatcher, condition: () -> Boolean) {
+    while (withContext(main) { condition() }) delay(10)
 }

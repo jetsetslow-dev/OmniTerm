@@ -11,6 +11,7 @@ import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshTransport
 import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.AppViewModel
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.Channel
@@ -60,9 +61,9 @@ class ComposeStackUpdateStreamingRobolectricTest {
      * end. Pull and build are minutes apart on a real host.
      */
     @Test
-    fun updateStreamsEachStageWhileStillRunning() = withUpdate { model, transport ->
+    fun updateStreamsEachStageWhileStillRunning() = withUpdate { model, transport, main ->
         transport.emit("[1/4] Pulling images\n")
-        withTimeout(5_000) { while (!model.actionStreamOutput.contains("[1/4]")) delay(10) }
+        waitWhileOnMain(main) { !model.actionStreamOutput.contains("[1/4]") }
         assertTrue("update must show it is still running", model.actionStreamRunning)
         assertFalse(
             "later stages must not already be present — that would mean output was batched",
@@ -70,12 +71,12 @@ class ComposeStackUpdateStreamingRobolectricTest {
         )
 
         transport.emit("[2/4] Building images\n")
-        withTimeout(5_000) { while (!model.actionStreamOutput.contains("[2/4]")) delay(10) }
+        waitWhileOnMain(main) { !model.actionStreamOutput.contains("[2/4]") }
         assertTrue("an earlier stage must not be dropped as later ones arrive", model.actionStreamOutput.contains("[1/4]"))
 
         transport.emit("[3/4] Recreating services\n[4/4] Checking services\n")
         transport.finish()
-        withTimeout(5_000) { while (model.actionStreamRunning) delay(10) }
+        waitWhileOnMain(main) { model.actionStreamRunning }
         for (stage in listOf("[1/4]", "[2/4]", "[3/4]", "[4/4]")) {
             assertTrue("stage $stage missing from the finished transcript", model.actionStreamOutput.contains(stage))
         }
@@ -87,15 +88,15 @@ class ComposeStackUpdateStreamingRobolectricTest {
      * is indistinguishable from a clean pull.
      */
     @Test
-    fun pullFailureStaysVisibleWhileTheLocalBuildProceeds() = withUpdate { model, transport ->
+    fun pullFailureStaysVisibleWhileTheLocalBuildProceeds() = withUpdate { model, transport, main ->
         transport.emit("[1/4] Pulling images\n")
         transport.emit("Warning: pull failed for fixture-stack, building locally instead\n")
-        withTimeout(5_000) { while (!model.actionStreamOutput.contains("Warning:")) delay(10) }
+        waitWhileOnMain(main) { !model.actionStreamOutput.contains("Warning:") }
         assertTrue("a non-fatal pull failure must not end the run", model.actionStreamRunning)
 
         transport.emit("[2/4] Building images\n[3/4] Recreating services\n[4/4] Checking services\n")
         transport.finish()
-        withTimeout(5_000) { while (model.actionStreamRunning) delay(10) }
+        waitWhileOnMain(main) { model.actionStreamRunning }
 
         assertTrue(
             "the pull warning must survive to the end — it is the only sign the image was built locally",
@@ -108,10 +109,10 @@ class ComposeStackUpdateStreamingRobolectricTest {
 
     /** The Update button must send the audited update script, and send it exactly once. */
     @Test
-    fun updateSendsTheAuditedScriptOnceAndNeverReplaysIt() = withUpdate { model, transport ->
+    fun updateSendsTheAuditedScriptOnceAndNeverReplaysIt() = withUpdate { model, transport, main ->
         transport.emit("SSH Error: connection reset\n")
         transport.finish()
-        withTimeout(5_000) { while (model.actionStreamRunning) delay(10) }
+        waitWhileOnMain(main) { model.actionStreamRunning }
 
         assertEquals(
             "Update must send the same script ComposeCommandTest audits, not a hand-rolled variant",
@@ -158,7 +159,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
         try {
             val model = newModel(transport, store, main)
             withContext(main) { model.loadDocker() }
-            withTimeout(5_000) { while (model.dockerLoading || model.dockerContainers.size != 4) delay(10) }
+            waitWhileOnMain(main) { model.dockerLoading || model.dockerContainers.size != 4 }
             withContext(main) {
                 model.dockerStackServiceAction(project, "/deleted/stack", configFiles, "front", "serviceStop", runtime = "docker")
             }
@@ -170,7 +171,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
         }
     }
 
-    private fun withUpdate(body: suspend (AppViewModel, UpdateTransport) -> Unit) = runBlocking {
+    private fun withUpdate(body: suspend (AppViewModel, UpdateTransport, CoroutineDispatcher) -> Unit) = runBlocking {
         // Real time: AppViewModel does its database work on Dispatchers.IO.
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
@@ -180,7 +181,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
             val model = newModel(transport, store, main)
             withContext(main) { model.dockerStackUpdate(project, workingDir, configFiles, "docker") }
             withTimeout(5_000) { while (transport.commands.isEmpty()) delay(10) }
-            body(model, transport)
+            body(model, transport, main)
         } finally {
             transport.finish()
             store.clear()
@@ -192,7 +193,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
     private suspend fun newModel(
         transport: UpdateTransport,
         store: ViewModelStore,
-        main: kotlinx.coroutines.CoroutineDispatcher,
+        main: CoroutineDispatcher,
     ): AppViewModel {
         val application = ApplicationProvider.getApplicationContext<Application>()
         val repository = AppRepository(AppDatabase.getDatabase(application))
@@ -201,7 +202,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
         ).toInt()
         val model = withContext(main) { AppViewModel(application, transport) }
         store.put("test", model)
-        withTimeout(10_000) { while (model.servers.value.none { it.id == id }) delay(10) }
+        waitWhileOnMain(main, 10_000) { model.servers.value.none { it.id == id } }
         withContext(main) { model.selectedServerId = id }
         return model
     }

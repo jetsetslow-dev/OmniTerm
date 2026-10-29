@@ -56,16 +56,16 @@ class WindowsHostRoutingRobolectricTest {
             ).toInt()
             val model = withContext(main) { AppViewModel(application, transport) }
             store.put("test", model)
-            withTimeout(10_000) { while (model.servers.value.none { it.id == id }) delay(10) }
+            waitWhileOnMain(main, 10_000) { model.servers.value.none { it.id == id } }
             val server = checkNotNull(model.servers.value.first { it.id == id })
             withContext(main) { model.selectedServerId = id }
 
             withContext(main) { model.loadCron() }
-            withTimeout(5_000) { while (!model.cronStatus.contains("Task Scheduler")) delay(10) }
+            waitWhileOnMain(main) { !model.cronStatus.contains("Task Scheduler") }
             assertFalse("the Cron tab must not offer Add on Windows", model.cronReadable)
 
             withContext(main) { model.loadServices() }
-            withTimeout(5_000) { while (model.services.isEmpty()) delay(10) }
+            waitWhileOnMain(main) { model.services.isEmpty() }
             assertEquals("Spooler", model.services.single().name)
             assertTrue(model.services.single().enabled)
 
@@ -76,7 +76,7 @@ class WindowsHostRoutingRobolectricTest {
             withTimeout(5_000) { while (transport.streamed.none { it.startsWith("powershell ") }) delay(10) }
 
             withContext(main) { model.loadDocker() }
-            withTimeout(5_000) { while (model.dockerError?.contains("Linux, macOS or BSD") != true) delay(10) }
+            waitWhileOnMain(main) { model.dockerError?.contains("Linux, macOS or BSD") != true }
 
             withContext(main) { model.toggleSftpSudo() }
             assertFalse("Windows has no sudo to switch on", model.sftpSudo)
