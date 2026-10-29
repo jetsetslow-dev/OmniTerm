@@ -1430,6 +1430,7 @@ class _TerminalOpenButton extends StatelessWidget {
   final LicenseController? licenseController;
 
   Future<void> _open(BuildContext context) async {
+    final l10n = AppLocalizations.of(context);
     final current = vm.current;
     final background = vm.sessions.where((s) => s != current && s != vm.splitSession).toList();
     final saved = vm.resumableSessions;
@@ -1456,11 +1457,11 @@ class _TerminalOpenButton extends StatelessWidget {
           const PopupMenuDivider(),
         ],
         if (background.isNotEmpty) ...[
-          const PopupMenuItem<String>(
+          PopupMenuItem<String>(
             enabled: false,
             child: Text(
-              'Background sessions',
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+              l10n.backgroundSessions,
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
             ),
           ),
           for (final session in background)
@@ -1480,11 +1481,11 @@ class _TerminalOpenButton extends StatelessWidget {
         ],
         if (saved.isNotEmpty) ...[
           if (background.isNotEmpty) const PopupMenuDivider(),
-          const PopupMenuItem<String>(
+          PopupMenuItem<String>(
             enabled: false,
             child: Text(
-              'Resumable tmux',
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+              l10n.resumableTmux,
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
             ),
           ),
           for (final row in saved)

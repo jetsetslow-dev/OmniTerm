@@ -832,11 +832,37 @@ void main() {
     expect(transport.opened.single.closeCalled, isFalse);
     await tester.tap(find.byKey(const ValueKey('shell.open')));
     await tester.pumpAndSettle();
-    expect(find.text('Background sessions'), findsOneWidget);
+    expect(find.text('BACKGROUND SESSIONS'), findsOneWidget);
     await tester.tap(find.byKey(ValueKey('shell.session.${session.id}')));
     await tester.pumpAndSettle();
     expect(vm.current, same(session));
     expect(transport.opened, hasLength(1));
+    await finish(tester);
+  });
+
+  testWidgets('OPEN uses Kotlin\'s headings, and a new session is "Started just now"', (
+    tester,
+  ) async {
+    // As Kotlin's switcher: "RESUMABLE TMUX", and an age line that never reads "just now ago".
+    final id = await repo.insertServer(server(name: 'nas'));
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await repo.upsertPersistentSession(
+      PersistentSessionsCompanion.insert(
+        tmuxName: 'saved-work',
+        serverId: id,
+        serverName: 'nas',
+        createdAt: now - const Duration(hours: 2).inMilliseconds,
+        backgroundedAt: now - const Duration(seconds: 20).inMilliseconds,
+      ),
+    );
+    await pump(tester);
+    await connect(tester);
+    await tester.tap(find.byKey(const ValueKey('shell.open')));
+    await tester.pumpAndSettle();
+    expect(find.text('RESUMABLE TMUX'), findsOneWidget);
+    expect(find.text('Started just now'), findsOneWidget);
+    expect(find.text('Started 2h 00m ago · backgrounded just now'), findsOneWidget);
+    expect(find.textContaining('just now ago'), findsNothing);
     await finish(tester);
   });
 
