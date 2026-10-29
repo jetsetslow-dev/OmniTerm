@@ -1,0 +1,6 @@
+services:
+  smoke:
+    image: alpine:3.22
+    command: ["sh", "-c", "printf 'omniterm-runtime-ready\\n'; sleep 600"]
+    labels:
+      com.jetsetslow.omniterm.fixture: runtime-smoke

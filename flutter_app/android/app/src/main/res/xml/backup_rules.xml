@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   OmniTerm stores SSH credentials, private keys, host-key pins, and its generated encryption key
+   in app-private storage. Auto Backup is disabled in the manifest; these exclusions also protect
+   older backup readers and prevent ciphertext being restored without its Android Keystore key.
+-->
+<full-backup-content>
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="." />
+</full-backup-content>

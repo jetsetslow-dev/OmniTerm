@@ -3,13 +3,16 @@ package com.jetsetslow.omniterm.data
 /** The sections of a host's system specs, in the order they are shown. */
 enum class SpecKind { System, Cpu, Memory, Storage, Gpu, Network }
 
-/** Why part of a section is missing, so the screen can say so and offer what would fix it. */
-enum class SpecNotice {
+/**
+ * Why part of a section is missing, so the screen can say so and offer what would fix it: a
+ * [tool] the host lacks can be installed from the notice.
+ */
+enum class SpecNotice(val tool: HostTool? = null) {
     /** Memory modules come from the firmware tables, which only root can read. */
     ModulesNeedRoot,
 
     /** Root could read them, but dmidecode is not installed. */
-    ModulesToolMissing,
+    ModulesToolMissing(HostTool.Dmidecode),
 
     /** dmidecode ran and the firmware lists no modules (most virtual machines). */
     NoModulesReported,
@@ -18,7 +21,10 @@ enum class SpecNotice {
     DriveHealthNeedsRoot,
 
     /** Root could read it, but smartctl is not installed. */
-    DriveHealthToolMissing,
+    DriveHealthToolMissing(HostTool.Smartmontools),
+
+    /** NVIDIA's driver is loaded, but nvidia-smi, which reports the card's memory and more, is not installed. */
+    GpuToolMissing(HostTool.NvidiaSmi),
 }
 
 /** One labelled value, e.g. "L2 cache" → "1.5 MiB (6 instances)". An empty label shows the value alone. */
@@ -160,8 +166,9 @@ object SystemSpecsCommands {
         append("\"\$(basename \"\$(readlink \$d/driver 2>/dev/null)\" 2>/dev/null)\" \"\$(cat \$d/mem_info_vram_total 2>/dev/null)\" ")
         append("\"\$(basename \"\$(readlink -f \$d 2>/dev/null)\" 2>/dev/null)\"; done; ")
         append("echo '@LSPCI'; lspci -mm 2>/dev/null | grep -iE '\"(VGA|3D|Display|Ethernet|Network)'; ")
-        append("echo '@NVIDIA'; command -v nvidia-smi >/dev/null 2>&1 && ot 10 nvidia-smi --query-gpu=pci.bus_id,name,driver_version,")
+        append("echo '@NVIDIA'; if command -v nvidia-smi >/dev/null 2>&1; then ot 10 nvidia-smi --query-gpu=pci.bus_id,name,driver_version,")
         append("memory.total,vbios_version,pcie.link.gen.max,pcie.link.width.max,power.limit,temperature.gpu --format=csv,noheader 2>/dev/null; ")
+        append("elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo '$MISSING'; fi; ")
         // Physical interfaces only (those backed by a device); bridges, veths and tunnels are not hardware.
         append("echo '@NET'; for i in /sys/class/net/*; do [ -e \$i/device ] || continue; ")
         append("printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \${i##*/} \"\$(cat \$i/address 2>/dev/null)\" \"\$(cat \$i/operstate 2>/dev/null)\" ")
@@ -803,7 +810,8 @@ object SystemSpecsParser {
         val unbound = pci.filter { it.kind.contains("VGA", true) || it.kind.contains("3D", true) || it.kind.contains("Display", true) }
             .filter { p -> seen.none { it.endsWith(p.slot) } }
             .map { p -> SpecItem(p.device, dotted(p.vendor, "no driver loaded"), listOf(SpecField("Vendor", p.vendor), SpecField("PCI slot", p.slot))) }
-        return gpuSection(items + unbound)
+        val nvidiaSmiMissing = s["NVIDIA"].orEmpty().trim() == SystemSpecsCommands.MISSING
+        return gpuSection(items + unbound, listOfNotNull(SpecNotice.GpuToolMissing.takeIf { nvidiaSmiMissing }))
     }
 
     private fun linuxNetwork(s: Map<String, String>, pci: List<PciDevice>): SpecSection {
@@ -841,7 +849,8 @@ object SystemSpecsParser {
         return networkSection(items)
     }
 
-    private fun gpuSection(gpus: List<SpecItem>) = SpecSection(SpecKind.Gpu, summary = gpus.joinToString(", ") { it.title }, items = gpus)
+    private fun gpuSection(gpus: List<SpecItem>, notices: List<SpecNotice> = emptyList()) =
+        SpecSection(SpecKind.Gpu, summary = gpus.joinToString(", ") { it.title }, items = gpus, notices = notices)
 
     private fun networkSection(nics: List<SpecItem>) =
         SpecSection(SpecKind.Network, summary = count(nics.size, "adapter", "adapters").takeIf { nics.isNotEmpty() }.orEmpty(), items = nics)

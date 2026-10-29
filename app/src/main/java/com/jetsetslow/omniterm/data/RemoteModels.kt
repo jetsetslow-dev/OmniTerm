@@ -96,6 +96,8 @@ data class ProcessUsage(
     val gpu: Map<Int, Float>,
     /** True when the host reported a GPU use source, even if every process was idle on it. */
     val gpuReported: Boolean,
+    /** A tool the host lacks that would report more, such as nvidia-smi for an NVIDIA card. */
+    val missingTool: HostTool? = null,
 )
 
 data class SimService(

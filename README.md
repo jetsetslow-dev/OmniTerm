@@ -59,7 +59,7 @@ The first-run flow walks you through creating a server. Authenticate with a pass
 
 Groups make Fleet Broadcast targeting easier; host colors help you tell servers apart across sessions and dashboards. Use the host picker on operational screens to switch the active server, or **swipe left/right** to move between tabs and subtabs outside the terminal. A pull-to-refresh re-checks hosts without moving the picker off the one you are looking at.
 
-The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), **Copy SSH command** (including its jump host or proxy), and **System specs**. **Attach existing tmux…** lists the tmux sessions already running on a Linux, macOS or BSD host (one you started from a desktop, say) and joins one, as `tmux attach` does, so every client sees the same window. Terminate in OmniTerm then ends that session on the server; Leave keeps it running. Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Select several hosts to delete them together, optionally ending their tmux sessions too.
+The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), **Copy SSH command** (including its jump host or proxy), and **System specs**. **Attach existing tmux…** lists the tmux sessions already running on a Linux, macOS or BSD host (one you started from a desktop, say) and joins one, as `tmux attach` does, so every client sees the same window. Terminate in OmniTerm then ends that session on the server; Leave keeps it running. Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. An online host with no current metrics says why on its card and in Monitor (a lost connection, an incomplete reply, a changed address); its **Retry** re-checks that host alone and reports anything still wrong in the refresh banner. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Tunnels already running keep the old connection settings until you restart them, and OmniTerm says so when you save. Select several hosts to delete them together. Deleting a host can also end its tmux sessions on the server; otherwise they keep running.
 
 ### Terminal
 Open **Term** for an interactive SSH shell on the selected host.
@@ -67,6 +67,7 @@ Open **Term** for an interactive SSH shell on the selected host.
 - **Quick connect** (**Unlock OmniTerm** only) — **OPEN › Quick connect** SSHes to a host that is not in your saved list, for one-off access. It offers the same options as Add Host (password, saved key, or credential profile; HTTP/SOCKS5 proxy or SSH jump host, optionally filled from a saved host) and enforces the same validation and host-key trust prompts, but writes nothing to the database. The free Play Store build does not include it — save the host instead, within the 1-host limit. **Remove Ads does not unlock it.**
 - **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically. Remove one you no longer need from the session picker: **Forget** drops it from this device and leaves it running, **End session** stops it on the server too. On a Mac, OmniTerm finds tmux installed with Homebrew or MacPorts, and can install it with Homebrew.
 - Multiple background sessions with session switching and explicit disconnect prompts.
+- When a shell ends on the server (you type `exit`, or tmux ends), its terminal stays open with its scrollback and says how it ended, for example "Session ended (exit 0). Scrollback kept.". Tap **Dismiss** or **✕** when you are done with it.
 - Adjustable, persisted font size with reflowing scrollback on resize.
 - Themes: App theme (follows app light/dark/AMOLED/high-contrast), Omni Dark, Solarized Dark, Matrix, and Light.
 - Hardware and soft keyboard input, a compact special-key bar, and swipe-typing mode.
@@ -109,9 +110,9 @@ Open **Network** for a tabbed suite of diagnostics:
 - **Tunnels** — user-defined SSH port forwards: **local (-L)**, **remote (-R)**, and **dynamic SOCKS (-D)**, each running over a saved host. Start/stop per tunnel; they stay up until you stop them or leave the app.
 
 ### Monitoring
-Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, process count, temperature, per-core usage, and network/disk I/O rates — plus disk mounts with SMART health, and process/service/log/scripts/cron views (including visual cron schedule management). On Linux and Windows hosts the process list also shows how fast each process is reading and writing (on Windows this counts all of a process's I/O, network included, as Task Manager's I/O columns do) and, where the host reports it, how much of the GPU it is using: AMD, Intel and NVIDIA graphics on Linux, and any graphics card on Windows 10 version 1709 or later. You can sort by either.
+Open **Monitor** for live host metrics — CPU, memory, disk, load, uptime, process count, temperature, per-core usage, and network/disk I/O rates — plus disk mounts with SMART health, and process/service/log/scripts/cron views (including visual cron schedule management). On Linux and Windows hosts the process list also shows how fast each process is reading and writing (on Windows this counts all of a process's I/O, network included, as Task Manager's I/O columns do) and, where the host reports it, how much of the GPU it is using: AMD, Intel and NVIDIA graphics on Linux, and any graphics card on Windows 10 version 1709 or later. You can sort by either. NVIDIA's driver reports per-process use only through `nvidia-smi`; when a host runs the driver without it, the process list says so and offers to install it.
 
-The **Specs** tab (also under **⋮ → System specs** on the Hosts list) lists the host's hardware and software in collapsible sections: system and firmware, processor, memory, storage, graphics and network. It works on Linux, FreeBSD, macOS and Windows hosts, and the copy button copies the whole sheet. A few details — each memory module's size, speed and part number, and each drive's health, temperature and wear — can only be read with administrator rights, so OmniTerm never asks for them on its own: tap **Read with sudo** to fetch them using the sudo password saved for that host.
+The **Specs** tab (also under **⋮ → System specs** on the Hosts list) lists the host's hardware and software in collapsible sections: system and firmware, processor, memory, storage, graphics and network. It works on Linux, FreeBSD, macOS and Windows hosts, and the copy button copies the whole sheet. A few details — each memory module's size, speed and part number, and each drive's health, temperature and wear — can only be read with administrator rights, so OmniTerm never asks for them on its own: tap **Read with sudo** to fetch them using the sudo password saved for that host. Some details also need a helper program on the host: `dmidecode` for memory modules, `smartmontools` for drive health, and `nvidia-smi` for an NVIDIA card's driver, memory, power limit and temperature. Where one is missing, its note has an **Install** button: OmniTerm installs it with the host's own package manager (apt, dnf, yum, pacman, apk, zypper, pkg or Homebrew), shows the output as it goes, and reads the specs again once it is in. Close the output when you are done with it. **Attach existing tmux** offers to install tmux the same way.
 
 Monitoring uses each host's own tools. Services are listed and managed through systemd or OpenRC on Linux, rc.d or `rcctl` on the BSDs, launchd on macOS (the jobs your SSH user can manage), and Windows services on Windows. **Reboot** runs `sudo reboot` on Linux, `sudo shutdown -r now` on BSD and macOS, and `shutdown /r` on Windows, and ending a process uses `kill` or, on Windows, `taskkill`. Windows hosts have no cron, tmux or sudo, so the Cron tab, persistent terminal sessions, sudo mode, container management, and Files' search, archives, folder sizes and same-host paste need a Linux, macOS or BSD host; on Windows they say so instead of failing.
 
@@ -148,12 +149,12 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 ## Security & privacy
 - **No OmniTerm backend, no server agents** — administration traffic goes directly from your device to the hosts you configure. The Play Store flavor separately contacts Google for ads, consent, and billing; the source-available flavor omits those SDKs.
 - **On-device encryption** — credentials, private keys, sudo passwords, and proxy passwords use AES-GCM with an Android Keystore-managed key (hardware-backed where the device supports it).
-- **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it.
+- **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it. If you reject a host's key, OmniTerm stops asking about it from background checks; it asks again when you connect to that host, tap **Retry** on it, or test its connection.
 - **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust.
 - **Biometric app lock** — lock the whole app behind biometrics or a PIN. Cold starts always lock;
   warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration
   up to 24 hours. Rotation does not start the background timer.
-- **Authenticated sudo** — enabling sudo-assisted SFTP writes requires device authentication first.
+- **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
 - **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The source-available build has no ads SDK and accesses no advertising ID.
 
@@ -184,7 +185,9 @@ Before pushing a code change, run the repository preflight:
 ```
 
 It runs the release/CI contract tests, both flavor unit suites and lint gates, and both release
-SBOM dependency graphs. If an Android device or emulator is connected, it also runs the Room
+SBOM dependency graphs. It checks those graphs and the pinned GitHub Actions against GitHub's
+advisory database, and runs the same CodeQL analysis as CI (the script says how to install the
+CodeQL CLI). If an Android device or emulator is connected, it also runs the Room
 migration matrix. Robolectric's Android 15 native runtime is unavailable on Linux ARM64, so those
 specific classes are deferred to the required x86_64 PR check there; platform-neutral logic remains
 covered locally by ordinary JVM tests.
@@ -194,8 +197,3 @@ it on API 29 (an older SQLite platform, and cheap on runners without KVM). On a 
 machine it is worth also running it against an **API 35** AVD, which covers the modern end of the
 supported range. API 35 is currently the newest level that boots: emulator 37.1.11 crash-loops on
 any API 36+ image, so Android 16/17 can be compiled and targeted but not yet emulated.
-
-Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[AI-first development policy](AI_FIRST_DEVELOPMENT.md); maintainers should use
-the [release runbook](docs/RELEASE_RUNBOOK.md) and
-[repository security checklist](docs/REPOSITORY_SECURITY.md).

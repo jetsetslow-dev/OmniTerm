@@ -394,34 +394,11 @@ object RemoteCommands {
     const val PM_INSTALL_SECONDS = 600
 
     /**
-     * Best-effort, distro-agnostic tmux install. Tries each common package manager in turn; uses
-     * sudo when not already root. Combined stdout/stderr is surfaced to the user. [sudoPassword] is
-     * fed via stdin to `sudo -S` by the caller (never interpolated into the command string).
+     * Best-effort, distro-agnostic tmux install; see [HostTool.installCommand]. The sudo password,
+     * when there is one, is fed via stdin to `sudo -S` by the caller (never interpolated into the
+     * command string).
      */
-    fun tmuxInstallCommand(): String =
-        TMUX_PATH + "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; " +
-        "if [ \"\$(id -u)\" = 0 ]; then SUDO=; else SUDO='sudo -S'; fi; " +
-        // Every package step is bounded and explains a timeout in its own words. A dpkg/apt or dnf
-        // lock held by unattended-upgrades blocks forever; the transport would eventually cut the
-        // stream at STREAM_TIMEOUT_MS and the user would see a bare "command timed out" half an hour
-        // later, with nothing saying a lock was the reason or that nothing had been installed.
-        "pm(){ n=\$1; shift; s=0; " +
-        "if command -v timeout >/dev/null 2>&1; then timeout \"\$n\" \"\$@\" || s=\$?; else \"\$@\" || s=\$?; fi; " +
-        "if [ \"\$s\" = 124 ]; then " +
-        "echo \"OmniTerm: \$* did not finish within \${n}s. Another package manager is most likely " +
-        "holding the lock (unattended-upgrades, an interrupted install, or a stale lock file). " +
-        "Nothing was installed - retry once that finishes.\" >&2; fi; return \"\$s\"; }; " +
-        "if command -v apt-get >/dev/null 2>&1; then pm $PM_UPDATE_SECONDS \$SUDO apt-get update && pm $PM_INSTALL_SECONDS \$SUDO apt-get install -y tmux; " +
-        "elif command -v dnf >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO dnf install -y tmux; " +
-        "elif command -v yum >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO yum install -y tmux; " +
-        "elif command -v pacman >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO pacman -Sy --noconfirm tmux; " +
-        "elif command -v apk >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO apk add tmux; " +
-        "elif command -v zypper >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO zypper install -y tmux; " +
-        "elif command -v pkg >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS \$SUDO pkg install -y tmux; " +
-        // Homebrew refuses to run as root and needs no sudo; [TMUX_PATH] puts it on PATH on a Mac.
-        "elif command -v brew >/dev/null 2>&1; then pm $PM_INSTALL_SECONDS brew install tmux; " +
-        "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; " +
-        "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }"
+    fun tmuxInstallCommand(withSudoPassword: Boolean = true): String = HostTool.Tmux.installCommand(withSudoPassword)
 
     private val WINDOWS_SHELL_ERRORS =
         listOf("not recognized", "CommandNotFound", "is not a valid statement separator", "ParserError")
@@ -462,6 +439,11 @@ object RemoteCommands {
     const val PROCESS_SECTION_PREFIX = "##OMNI-"
     const val PROCESS_SAMPLE_MARKER = "${PROCESS_SECTION_PREFIX}SAMPLE"
     const val PROCESS_NVIDIA_MARKER = "${PROCESS_SECTION_PREFIX}NVIDIA"
+    /**
+     * NVIDIA's driver is loaded but nvidia-smi, the only source of its per-process use, is not
+     * installed. Named apart from [PROCESS_NVIDIA_MARKER], which the parser finds by prefix.
+     */
+    const val PROCESS_NVIDIA_SMI_MISSING_MARKER = "${PROCESS_SECTION_PREFIX}SMI-MISSING"
     /** Rates a host has already worked out: "pid readBytesPerSecond writeBytesPerSecond". */
     const val PROCESS_RATES_MARKER = "${PROCESS_SECTION_PREFIX}RATES"
     /** Present when the host reports GPU use; then "pid busiestEnginePercent" lines. */
@@ -474,7 +456,10 @@ object RemoteCommands {
     // Then two samples, a second apart, of what the listed processes did meanwhile: disk bytes
     // from /proc/<pid>/io, and GPU use from the DRM fdinfo that the open drivers publish (engine
     // time from amdgpu, i915 and most others; engine cycles from Intel's xe). NVIDIA's own driver
-    // publishes none, so `nvidia-smi pmon` answers for it. Another user's counters are unreadable
+    // publishes none, so `nvidia-smi pmon` answers for it, and where the driver is loaded without
+    // nvidia-smi a marker says so, to offer installing it. A container sees the host's
+    // /proc/driver/nvidia whether or not it was given the GPU, so the device node must be there too.
+    // Another user's counters are unreadable
     // without root; grep skips those quietly and the parser reports them as unknown, not zero.
     // xargs keeps a process with thousands of descriptors under the argument limit.
     // See [RemoteParsers.parseProcessUsage].
@@ -486,7 +471,8 @@ object RemoteCommands {
         "for d in \$D; do echo \$d/io; ls -d \$d/fdinfo/* 2>/dev/null; done | " +
         "xargs grep -H -E '^(read_bytes|write_bytes|drm-client-id|drm-pdev|drm-engine-[a-z0-9-]+|drm-(total-)?cycles-[a-z0-9-]+):' 2>/dev/null; }; " +
         "s; sleep 1; s; " +
-        "if command -v nvidia-smi >/dev/null 2>&1; then echo '$PROCESS_NVIDIA_MARKER'; nvidia-smi pmon -c 1 -s u 2>/dev/null; fi; true"
+        "if command -v nvidia-smi >/dev/null 2>&1; then echo '$PROCESS_NVIDIA_MARKER'; nvidia-smi pmon -c 1 -s u 2>/dev/null; " +
+        "elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo '$PROCESS_NVIDIA_SMI_MISSING_MARKER'; fi; true"
 
     // FreeBSD/macOS BSD ps: same 8 columns via -axo (keywords differ slightly).
     const val PROCESSES_BSD =
@@ -2251,7 +2237,8 @@ object RemoteParsers {
                 gpu[pid] = maxOf(gpu[pid] ?: 0f, busiest.coerceIn(0f, 100f))
             }
         }
-        return ProcessUsage(disk, gpu, gpuReported)
+        val missingTool = HostTool.NvidiaSmi.takeIf { output.contains(RemoteCommands.PROCESS_NVIDIA_SMI_MISSING_MARKER) }
+        return ProcessUsage(disk, gpu, gpuReported, missingTool)
     }
 
     /**
