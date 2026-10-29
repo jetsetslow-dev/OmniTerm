@@ -154,7 +154,7 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 - **Biometric app lock** — lock the whole app behind biometrics or a PIN. Cold starts always lock;
   warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration
   up to 24 hours. Rotation does not start the background timer.
-- **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own fingerprint, face or screen lock; and on a phone without a screen lock, it asks you to confirm.
+- **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
 - **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The source-available build has no ads SDK and accesses no advertising ID.
 
