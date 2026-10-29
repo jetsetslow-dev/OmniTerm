@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm
 
+import com.jetsetslow.omniterm.data.HostTool
 import com.jetsetslow.omniterm.data.SpecKind
 import com.jetsetslow.omniterm.data.SpecNotice
 import com.jetsetslow.omniterm.data.SystemSpecs
@@ -225,6 +226,29 @@ class SystemSpecsParserTest {
         assertEquals("24576 MiB", nvidia.fields.find { it.label == "Video memory" }!!.value)
         assertEquals("Gen 4 x16", nvidia.fields.find { it.label == "PCIe link" }!!.value)
         assertNull(intel.fields.find { it.label == "VBIOS" })
+    }
+
+    @Test
+    fun `an nvidia driver without nvidia-smi offers to install it, and one with it does not`() {
+        val withoutSmi = linuxCommon.replace(
+            Regex("@NVIDIA\n[^\n]*\n"),
+            "@NVIDIA\n${SystemSpecsCommands.MISSING}\n",
+        )
+        val gpu = SystemSpecsParser.parse("Linux", withoutSmi).section(SpecKind.Gpu)!!
+        assertEquals(listOf(SpecNotice.GpuToolMissing), gpu.notices)
+        assertEquals(HostTool.NvidiaSmi, gpu.notices.single().tool)
+        // lspci still names the card; only nvidia-smi's own detail is missing.
+        assertTrue(gpu.items.any { it.title == "GA102 [GeForce RTX 3090]" })
+        assertEquals(emptyList<SpecNotice>(), SystemSpecsParser.parse("Linux", linuxCommon).section(SpecKind.Gpu)!!.notices)
+        assertTrue(SystemSpecsCommands.forOs("Linux").contains("elif [ -e /proc/driver/nvidia/version ] && [ -e /dev/nvidiactl ]; then echo '${SystemSpecsCommands.MISSING}'"))
+    }
+
+    @Test
+    fun `each missing tool notice names the tool that fills it in`() {
+        assertEquals(HostTool.Dmidecode, SpecNotice.ModulesToolMissing.tool)
+        assertEquals(HostTool.Smartmontools, SpecNotice.DriveHealthToolMissing.tool)
+        assertEquals(HostTool.NvidiaSmi, SpecNotice.GpuToolMissing.tool)
+        assertNull("root, not a tool, fills these in", SpecNotice.ModulesNeedRoot.tool ?: SpecNotice.DriveHealthNeedsRoot.tool)
     }
 
     @Test

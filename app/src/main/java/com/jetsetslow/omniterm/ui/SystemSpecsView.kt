@@ -93,6 +93,7 @@ private fun noticeText(notice: SpecNotice): String = stringResource(
         SpecNotice.NoModulesReported -> R.string.spec_no_modules_reported
         SpecNotice.DriveHealthNeedsRoot -> R.string.spec_drive_health_needs_root
         SpecNotice.DriveHealthToolMissing -> R.string.spec_drive_health_tool_missing
+        SpecNotice.GpuToolMissing -> R.string.spec_gpu_tool_missing
     },
 )
 
@@ -156,7 +157,7 @@ fun SystemSpecsContent(
                         } else {
                             emptyList()
                         }
-                        SpecSectionCard(section, titles.getValue(section.kind), extra)
+                        SpecSectionCard(viewModel, srv, section, titles.getValue(section.kind), extra)
                     }
                 }
             }
@@ -186,7 +187,7 @@ private fun SudoBanner(viewModel: AppViewModel, srv: ServerEntity, sudoError: St
 }
 
 @Composable
-private fun SpecSectionCard(section: SpecSection, title: String, extraFields: List<SpecField>) {
+private fun SpecSectionCard(viewModel: AppViewModel, srv: ServerEntity, section: SpecSection, title: String, extraFields: List<SpecField>) {
     var expanded by rememberSaveable(section.kind) { mutableStateOf(false) }
     OmniCard(modifier = Modifier.fillMaxWidth()) {
         ExpandableHeader(expanded, { expanded = !expanded }, title, section.summary, specIcon(section.kind))
@@ -195,7 +196,13 @@ private fun SpecSectionCard(section: SpecSection, title: String, extraFields: Li
                 (extraFields + section.fields).forEach { SpecFieldRow(it) }
                 section.items.forEach { SpecItemCard(it) }
                 section.notices.forEach { notice ->
-                    Text(noticeText(notice), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = OmniTextSize.Meta, modifier = Modifier.padding(top = 4.dp))
+                    val tool = notice.tool
+                    if (tool != null) {
+                        // Reads again as the specs were read, so a read with sudo stays one.
+                        HostToolNotice(viewModel, srv, tool, noticeText(notice), Modifier.padding(top = 4.dp)) { viewModel.loadSystemSpecs(srv) }
+                    } else {
+                        Text(noticeText(notice), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = OmniTextSize.Meta, modifier = Modifier.padding(top = 4.dp))
+                    }
                 }
             }
         }

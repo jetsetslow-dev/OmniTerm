@@ -1616,42 +1616,6 @@ fun SftpFilesTab(viewModel: AppViewModel) {
     var editingPath by remember { mutableStateOf(false) }
     var pathInput by remember { mutableStateOf("") }
 
-    // Entering sudo mode runs every file op as root, so it's gated behind device authentication.
-    // The flow: warning dialog (unless dismissed) -> biometric/device-credential prompt -> on
-    // success toggle sudo on. A PIN dialog is the fallback when the user has an app PIN.
-    var pendingSudoAuth by remember { mutableStateOf(false) }
-    var showSudoPinDialog by remember { mutableStateOf(false) }
-    var sudoPin by remember { mutableStateOf("") }
-    var sudoPinError by remember { mutableStateOf<String?>(null) }
-    val authContext = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(pendingSudoAuth) {
-        if (!pendingSudoAuth) return@LaunchedEffect
-        val activity = authContext.getActivity()
-        val canBiometric = activity != null
-        if (canBiometric) {
-            BiometricCryptoGate.authenticate(
-                activity = activity,
-                title = activity.getString(R.string.authenticate_for_sudo_mode),
-                subtitle = activity.getString(R.string.confirm_to_run_sftp_operations_as),
-                onAuthenticated = {
-                    viewModel.toggleSftpSudo()
-                    pendingSudoAuth = false
-                },
-                onUnavailable = {
-                    pendingSudoAuth = false
-                    if (viewModel.savedPin != null) { sudoPin = ""; sudoPinError = null; showSudoPinDialog = true }
-                },
-                onError = {
-                    pendingSudoAuth = false
-                    if (viewModel.savedPin != null) { sudoPin = ""; sudoPinError = null; showSudoPinDialog = true }
-                },
-            )
-        } else {
-            pendingSudoAuth = false
-            if (viewModel.savedPin != null) { sudoPin = ""; sudoPinError = null; showSudoPinDialog = true }
-        }
-    }
-
     // Scroll the file list back to the top on every directory change. Without an explicit state,
     // Compose reuses the prior scroll offset because common entry names (bin, etc, var…) collide
     // across folders, leaving the new listing scrolled partway down.
@@ -2018,9 +1982,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             when {
                                 // Turning sudo OFF needs no auth.
                                 viewModel.sftpSudo -> viewModel.toggleSftpSudo()
-                                // Turning sudo ON: warning first (unless dismissed), then auth.
+                                // Turning sudo ON: warning first (unless dismissed), then the sudo check.
                                 !viewModel.sftpSudoConfirmDismissed -> showSudoConfirmDialog = true
-                                else -> pendingSudoAuth = true
+                                else -> viewModel.toggleSftpSudo()
                             }
                         }) {
                             Icon(
@@ -2712,48 +2676,12 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     TextButton(onClick = {
                         if (dontShowAgain) viewModel.sftpSudoConfirmDismissed = true
                         showSudoConfirmDialog = false
-                        // Require device authentication before sudo actually turns on.
-                        pendingSudoAuth = true
+                        // The sudo check comes before sudo actually turns on.
+                        viewModel.toggleSftpSudo()
                     }) { Text(stringResource(R.string.authenticate), color = OmniColors.red) }
                 },
                 dismissButton = {
                     TextButton(onClick = { showSudoConfirmDialog = false }) { Text(stringResource(R.string.cancel)) }
-                },
-            )
-        }
-
-        // PIN fallback when biometrics/device credential aren't available but an app PIN is set.
-        if (showSudoPinDialog) {
-            AlertDialog(
-                onDismissRequest = { showSudoPinDialog = false },
-                title = { Text(stringResource(R.string.enter_pin_for_sudo_mode)) },
-                text = {
-                    Column {
-                        Text(stringResource(R.string.confirm_your_app_pin_to_run), fontSize = 14.sp)
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = sudoPin,
-                            onValueChange = { sudoPin = it; sudoPinError = null },
-                            label = { Text(stringResource(R.string.pin)) },
-                            singleLine = true,
-                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        sudoPinError?.let { Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        val err = viewModel.verifyPinForSensitiveAction(sudoPin)
-                        if (err == null) {
-                            showSudoPinDialog = false
-                            viewModel.toggleSftpSudo()
-                        } else sudoPinError = err
-                    }) { Text(stringResource(R.string.confirm)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showSudoPinDialog = false }) { Text(stringResource(R.string.cancel)) }
                 },
             )
         }

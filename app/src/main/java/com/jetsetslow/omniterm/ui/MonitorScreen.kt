@@ -972,7 +972,10 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
     val windows = RemoteCommands.normaliseOs(viewModel.knownOs(srv)) == "Windows"
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (viewModel.processesLoading && simProcesses.isEmpty()) {
+        // Until the first read lands, whether the host reports disk and GPU use is unknown: showing
+        // the sort chips then would show CPU and MEM alone and add DISK and GPU a moment later.
+        val firstRead = viewModel.processesLoading && simProcesses.isEmpty()
+        if (firstRead) {
             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.height(10.dp))
@@ -983,7 +986,13 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             )
         }
-        Row(
+        viewModel.processMissingTool?.takeIf { !firstRead && it == HostTool.NvidiaSmi }?.let { tool ->
+            HostToolNotice(
+                viewModel, srv, tool, stringResource(R.string.processes_gpu_tool_missing),
+                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            ) { viewModel.loadProcesses() }
+        }
+        if (!firstRead) Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
