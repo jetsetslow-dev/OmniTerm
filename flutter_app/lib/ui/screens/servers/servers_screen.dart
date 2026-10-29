@@ -916,11 +916,11 @@ class _ServerCard extends StatelessWidget {
                         if (vm.lastSeenAt(server.id) case final seenAt?)
                           Text(
                             key: ValueKey('servers.card.${server.id}.lastSeen'),
-                            DateTime.now().millisecondsSinceEpoch - seenAt < 60000
-                                ? 'Last seen just now'
-                                : 'Last seen '
-                                      '${formatSessionAge(DateTime.fromMillisecondsSinceEpoch(seenAt))}'
-                                      ' ago',
+                            ageText(
+                              AppLocalizations.of(context).lastSeenAgo,
+                              AppLocalizations.of(context).lastSeenJustNow,
+                              seenAt,
+                            ),
                             style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 10),
                           ),
                       ],

@@ -29,24 +29,28 @@ String describeSessionAge(PersistentSession row, {DateTime? now}) {
   return 'left running ${elapsed.inDays}d ago';
 }
 
-/// How long ago a shell session was opened, ported from `formatSessionAge`
-/// (`ui/OmniComponents.kt:504`).
+/// "Started 12m ago", "Started 3h 04m ago" or "Started 2d 07h ago" through [ago], and [justNow]
+/// ("Started just now") in the first minute, which [ago] would make "Started just now ago". Ported
+/// from `ageText` (`ui/OmniComponents.kt`), and used the same way: a terminal session's start and
+/// backgrounding, a tmux session's start, and when a host was last seen.
 ///
-/// Distinct from `formatUptime`, which reports a *duration the host told us*. This measures against
-/// the clock, so it has two cases uptime does not: a session with no recorded start, and one whose
-/// start is in the future — which a clock adjustment during a long-lived session can produce, and
-/// which must not render as a negative age.
+/// [sinceMs] is epoch milliseconds. Distinct from `formatUptime`, which reports a *duration the host
+/// told us*: this measures against the clock, so it has two cases uptime does not. No recorded time
+/// (0 or less) reads "—", and a time ahead of the clock, which a clock set back produces, counts as
+/// just now rather than a negative age.
+String ageText(String Function(Object age) ago, String justNow, int sinceMs, {DateTime? now}) {
+  final age = _formatAge(sinceMs, now ?? DateTime.now());
+  return age == null ? justNow : ago(age);
+}
+
+/// The age [ageText] puts in "{a1} ago": `12m`, `3h 04m`, `2d 07h`, or null in the first minute.
 ///
 /// Zero-padded minutes and hours (`2h 05m`) so the width does not jitter as the number ticks over,
 /// matching the Kotlin.
-String formatSessionAge(DateTime? startedAt, {DateTime? now}) {
-  if (startedAt == null) return '—';
-  final elapsed = (now ?? DateTime.now()).difference(startedAt);
-  if (elapsed.isNegative) return '—';
-  final totalMinutes = elapsed.inMinutes;
-  // Under a minute is "just now" rather than "0m": a session opened this second has not been
-  // running for zero minutes, it has barely started.
-  if (totalMinutes < 1) return 'just now';
+String? _formatAge(int sinceMs, DateTime now) {
+  if (sinceMs <= 0) return '—';
+  final totalMinutes = (now.millisecondsSinceEpoch - sinceMs) ~/ 60000;
+  if (totalMinutes < 1) return null;
   final days = totalMinutes ~/ 1440;
   final hours = (totalMinutes % 1440) ~/ 60;
   final minutes = totalMinutes % 60;

@@ -1597,17 +1597,24 @@ class _TerminalSessionMenuLabelState extends State<_TerminalSessionMenuLabel> {
   }
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(widget.title, style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12)),
-      if (widget.detail != null) Text(widget.detail!, style: const TextStyle(fontSize: 10)),
-      Text(
-        'Started ${formatSessionAge(DateTime.fromMillisecondsSinceEpoch(widget.startedAt))} ago${widget.backgroundedAt != null && widget.backgroundedAt! > 0 ? ' · backgrounded ${formatSessionAge(DateTime.fromMillisecondsSinceEpoch(widget.backgroundedAt!))} ago' : ''}',
-        style: const TextStyle(fontSize: 10),
-      ),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(widget.title, style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12)),
+        if (widget.detail != null) Text(widget.detail!, style: const TextStyle(fontSize: 10)),
+        Text(
+          [
+            ageText(l10n.startedAgo, l10n.startedJustNow, widget.startedAt),
+            if (widget.backgroundedAt case final at? when at > 0)
+              ageText(l10n.backgroundedAgo, l10n.backgroundedJustNow, at),
+          ].join(' · '),
+          style: const TextStyle(fontSize: 10),
+        ),
+      ],
+    );
+  }
 }
 
 Future<void> _requestCloseSession(

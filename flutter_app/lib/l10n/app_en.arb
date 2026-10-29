@@ -402,6 +402,19 @@
   "@backgroundSessions": {
     "description": "Android R.string.background_sessions"
   },
+  "backgroundedAgo": "backgrounded {a1} ago",
+  "@backgroundedAgo": {
+    "description": "Android R.string.backgrounded_ago",
+    "placeholders": {
+      "a1": {
+        "type": "Object"
+      }
+    }
+  },
+  "backgroundedJustNow": "backgrounded just now",
+  "@backgroundedJustNow": {
+    "description": "Android R.string.backgrounded_just_now"
+  },
   "backup": "Backup",
   "@backup": {
     "description": "Android R.string.backup"
@@ -5032,17 +5045,9 @@
       }
     }
   },
-  "startedAgoBackgroundedAgo": "Started {a1} ago · backgrounded {a2} ago",
-  "@startedAgoBackgroundedAgo": {
-    "description": "Android R.string.started_ago_backgrounded_ago",
-    "placeholders": {
-      "a1": {
-        "type": "Object"
-      },
-      "a2": {
-        "type": "Object"
-      }
-    }
+  "startedJustNow": "Started just now",
+  "@startedJustNow": {
+    "description": "Android R.string.started_just_now"
   },
   "startingFrom100TheFollowingDeductions": "Starting from 100, the following deductions apply:",
   "@startingFrom100TheFollowingDeductions": {

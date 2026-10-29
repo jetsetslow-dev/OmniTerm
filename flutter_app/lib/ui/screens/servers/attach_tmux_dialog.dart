@@ -166,9 +166,7 @@ class _TmuxSessionRow extends StatelessWidget {
         : session.attachedClients > 0
         ? l10n.tmuxAttachedElsewhere
         : l10n.tmuxDetached;
-    final started = l10n.startedAgo(
-      formatSessionAge(DateTime.fromMillisecondsSinceEpoch(session.createdAtMs)),
-    );
+    final started = ageText(l10n.startedAgo, l10n.startedJustNow, session.createdAtMs);
     const meta = TextStyle(fontSize: OmniTextSize.meta, fontFamily: OmniFonts.mono);
     return OmniCard(
       key: ValueKey('tmux.attach.session.${session.name}'),
