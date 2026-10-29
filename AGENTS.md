@@ -26,6 +26,11 @@ These rules apply to every contributor and automation tool working in this repos
 - Keep `scripts/local-pr-check.sh` aligned with `.github/workflows/android-pr-check.yml` whenever
   build, test, lint, migration, SBOM, signing-input, or dependency-verification behavior changes.
 - Run `git diff --check` and `git diff --cached --check` before committing.
+- `--full` also catches what GitHub would only report after the push: dependencies with a known
+  vulnerability (`scripts/check-dependency-advisories.py`, Dependabot's database and graphs) and
+  CodeQL alerts (`scripts/local-codeql.sh`, the workflow's CLI version and `security-extended`
+  queries; it prints how to install the CLI). Bump the CLI pin in that script with the
+  `github/codeql-action` pin in `codeql.yml`.
 - Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.
   `scripts/check-duplicates.py` fails the gate and CI on a new copied block. Its baseline
   (`scripts/duplicate-code-baseline.json`) is empty; only `--update-baseline` adds to it, and that

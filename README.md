@@ -185,7 +185,9 @@ Before pushing a code change, run the repository preflight:
 ```
 
 It runs the release/CI contract tests, both flavor unit suites and lint gates, and both release
-SBOM dependency graphs. If an Android device or emulator is connected, it also runs the Room
+SBOM dependency graphs. It checks those graphs and the pinned GitHub Actions against GitHub's
+advisory database, and runs the same CodeQL analysis as CI (the script says how to install the
+CodeQL CLI). If an Android device or emulator is connected, it also runs the Room
 migration matrix. Robolectric's Android 15 native runtime is unavailable on Linux ARM64, so those
 specific classes are deferred to the required x86_64 PR check there; platform-neutral logic remains
 covered locally by ordinary JVM tests.
