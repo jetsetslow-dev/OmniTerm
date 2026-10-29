@@ -216,6 +216,11 @@ class ShellSession(
     var resizeJob: Job? = null
     var isConnected by mutableStateOf(true)
     var disconnectError by mutableStateOf<String?>(null)
+    /**
+     * The status the remote shell exited with, once it has. The session then stays listed with its
+     * scrollback until the user dismisses it; nothing reconnects it.
+     */
+    var endedExitStatus by mutableStateOf<Int?>(null)
 
     /**
      * When this shell was first opened, for the session-age shown in the switcher. Survives

@@ -97,6 +97,12 @@ if [[ "$MODE" == "--full" ]]; then
   else
     ./scripts/refresh-verification-metadata.sh --verify
   fi
+  # Dependabot's view, before the push: the release graphs just resolved and the pinned actions,
+  # against GitHub's advisory database.
+  python3 ./scripts/check-dependency-advisories.py \
+    --cyclonedx build/reports/cyclonedx/playStoreReleaseRuntimeClasspath.bom.json \
+    --cyclonedx build/reports/cyclonedx/openSourceReleaseRuntimeClasspath.bom.json \
+    --actions .github
 fi
 
 if command -v adb >/dev/null 2>&1 &&
@@ -109,6 +115,11 @@ if command -v adb >/dev/null 2>&1 &&
   ./gradlew connectedOpenSourceDebugAndroidTest "${GRADLE_ARGS[@]}"
 else
   echo "Device matrix (Room migrations + UI instrumentation): no Android device/emulator available; deferred to PR CI"
+fi
+
+if [[ "$MODE" == "--full" ]]; then
+  # Last, because it cleans the build to compile everything under the extractor.
+  ./scripts/local-codeql.sh
 fi
 
 echo "Local PR preflight passed ($MODE)."

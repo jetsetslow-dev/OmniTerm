@@ -64,6 +64,7 @@ import com.jetsetslow.omniterm.billing.LicenseState
 
 import com.jetsetslow.omniterm.billing.createLicenseController
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
+import com.jetsetslow.omniterm.data.DeviceCredentialGate
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
@@ -518,45 +519,83 @@ internal fun AppPinField(pin: String, onPinChange: (String) -> Unit, error: Stri
 }
 
 /**
- * Confirmation gate for a privileged (sudo) action that has been staged in
- * `viewModel.pendingSudoAction`. Presents biometrics (if enabled) and/or a PIN field, then runs
- * or cancels the staged action. Only shown when an action is actually pending.
+ * The check before every privileged (sudo) action staged in `viewModel.pendingSudoAction`, then
+ * runs or cancels it. App Lock's biometrics or PIN while App Lock is on; otherwise the phone's own
+ * fingerprint, face or screen lock; and on a phone with no screen lock, a plain question. It never
+ * runs the action unasked, and never refuses one outright.
  */
 @Composable
 fun SudoAuthDialog(viewModel: AppViewModel) {
-    if (viewModel.pendingSudoAction == null) return
-    var pin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
+    val pending = viewModel.pendingSudoAction ?: return
+    val context = LocalContext.current
+    val question = stringResource(R.string.run_this_with_sudo_on, pending.hostName)
+    val cancel = @Composable { TextButton(onClick = { viewModel.cancelPendingSudoAction() }) { Text(stringResource(R.string.cancel)) } }
 
-    BiometricPromptOnShow(viewModel, R.string.authenticate_for_sudo, R.string.confirm_to_run_the_privileged_action) {
-        viewModel.confirmPendingSudoAction()
-    }
-
-    AlertDialog(
-        onDismissRequest = { viewModel.cancelPendingSudoAction() },
-        title = { Text(stringResource(R.string.authenticate_for_sudo)) },
-        text = {
-            Column {
-                Text(stringResource(R.string.confirm_to_run_this_privileged_action), fontSize = 14.sp)
-                if (viewModel.savedPin != null) {
+    if (viewModel.sudoAuthUsesAppLock) {
+        var pin by remember(pending) { mutableStateOf("") }
+        var error by remember(pending) { mutableStateOf<String?>(null) }
+        BiometricPromptOnShow(viewModel, R.string.authenticate_for_sudo, R.string.confirm_to_run_the_privileged_action) {
+            viewModel.confirmPendingSudoAction()
+        }
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelPendingSudoAction() },
+            title = { Text(stringResource(R.string.authenticate_for_sudo)) },
+            text = {
+                Column {
+                    Text(question, fontSize = 14.sp)
                     Spacer(Modifier.height(8.dp))
                     AppPinField(pin, onPinChange = { pin = it; error = null }, error = error)
-                } else {
-                    Spacer(Modifier.height(8.dp))
-                    Text(stringResource(R.string.use_your_biometric_prompt_to_continue), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-        },
-        confirmButton = {
-            if (viewModel.savedPin != null) {
+            },
+            confirmButton = {
                 TextButton(onClick = {
                     val err = viewModel.verifyPinForSensitiveAction(pin)
                     if (err == null) viewModel.confirmPendingSudoAction() else error = err
                 }) { Text(stringResource(R.string.confirm)) }
+            },
+            dismissButton = cancel,
+        )
+        return
+    }
+
+    val deviceLock = remember(pending) { DeviceCredentialGate.isAvailable(context) }
+    if (deviceLock) {
+        val askDevice = {
+            context.getActivity()?.let { activity ->
+                DeviceCredentialGate.authenticate(
+                    activity,
+                    activity.getString(R.string.authenticate_for_sudo),
+                    question,
+                ) { viewModel.confirmPendingSudoAction() }
             }
-        },
-        dismissButton = { TextButton(onClick = { viewModel.cancelPendingSudoAction() }) { Text(stringResource(R.string.cancel)) } },
-    )
+        }
+        LaunchedEffect(pending) { askDevice() }
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelPendingSudoAction() },
+            title = { Text(stringResource(R.string.authenticate_for_sudo)) },
+            text = {
+                Column {
+                    Text(question, fontSize = 14.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text(stringResource(R.string.use_your_screen_lock_to_continue), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { TextButton(onClick = { askDevice() }) { Text(stringResource(R.string.unlock)) } },
+            dismissButton = cancel,
+        )
+    } else {
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelPendingSudoAction() },
+            title = { Text(question) },
+            text = { Text(stringResource(R.string.sudo_asks_without_a_screen_lock), fontSize = 14.sp) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmPendingSudoAction() }, modifier = Modifier.testTag("sudo.confirm.continue")) {
+                    Text(stringResource(R.string.continue_label))
+                }
+            },
+            dismissButton = cancel,
+        )
+    }
 }
 
 @Composable

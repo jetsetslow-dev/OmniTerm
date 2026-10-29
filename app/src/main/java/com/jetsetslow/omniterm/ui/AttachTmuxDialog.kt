@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.jetsetslow.omniterm.R
+import com.jetsetslow.omniterm.data.HostTool
 import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.RemoteTmuxSession
 import com.jetsetslow.omniterm.data.ServerEntity
@@ -60,7 +61,9 @@ fun AttachTmuxDialog(viewModel: AppViewModel) {
                         fontSize = OmniTextSize.Dense,
                         modifier = Modifier.testTag("tmux.attach.error"),
                     )
-                    sessions == null -> Text(stringResource(R.string.tmux_is_not_installed_on, srv.name), fontSize = OmniTextSize.Dense)
+                    sessions == null -> HostToolNotice(viewModel, srv, HostTool.Tmux, stringResource(R.string.tmux_is_not_installed_on, srv.name)) {
+                        viewModel.refreshAttachTmux()
+                    }
                     sessions.isEmpty() -> Text(
                         stringResource(R.string.no_tmux_sessions_are_running_on, srv.name),
                         fontSize = OmniTextSize.Dense,
