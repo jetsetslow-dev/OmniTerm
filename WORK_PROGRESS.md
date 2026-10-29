@@ -40,7 +40,7 @@ The standard (user, 2026-10-27): both apps are the same app, written in two lang
   - The edit-host fixes.
   - Kotlin's tmux session names: Flutter uses `omniterm-<id>-<millis>`.
 
-## October 28: host delete, attach, edit, metrics reasons, Retry and host health — local complete, device validation pending
+## October 28: host delete, attach, edit, metrics reasons, Retry and host health — validated on device October 29
 
 - **Host management as Kotlin does it** (`4158e0f`, `52c21b5`, `afe0286`, `2b5ac84`, `db4176a`, `d277c38`):
   - Deleting a host, one or several at once, offers to end its tmux sessions.
@@ -59,7 +59,23 @@ The standard (user, 2026-10-27): both apps are the same app, written in two lang
   - In a linked worktree it scanned 0 commits and passed.
   - It now mounts the common git directory, and fails a scan that reads no commits.
 - The Flutter Android wrapper moves to Gradle 9.8.2, as the root wrapper did in #128. The gate's toolchain check caught the mismatch after main was merged in.
-- Full `flutter test` passed with these changes.
+- **`d9bcaf1` `exit` ends the terminal, as in Kotlin.** On the device a plain SSH terminal reconnected after `exit`. The cause was ordering: the terminal reported `closed` before it recorded the remote exit. A live test against the fixture reproduces it and passes with the fix.
+- **`67fd59e`** updates the core device test for the card's "SSH anyway" label. It still looked for "SSH ANYWAY".
+- Full `flutter test` passed (3147). `local-pr-check.sh --full` passed.
+- Device runs on API 35 (`emulator-5554`):
+  - Core profile: 27 tests in 10 files passed.
+  - Host profile: the fixture end-to-end test and the 2 native terminal lifecycle tests passed.
+- Checked by hand on the direct fixture:
+  - Attach existing tmux: the dialog listed the session and the terminal attached.
+  - Closing a terminal ("Leave resumable"): health stayed 100, with no reason.
+  - `exit`: the session ended (exit 0) and health stayed.
+  - A dropped connection: the card showed "Connection lost. Waiting for current metrics.", then recovered.
+  - Rename: the new name reached the card, the terminal and the resumable tmux entry.
+  - Address change: Save anyway, and Retry rechecked the host.
+  - Delete: the tmux option was unticked, and the session stayed on the server.
+- **Open, found on the device:**
+  - Flutter keeps an ended terminal, showing "Session ended (exit 0). Scrollback kept." with RECON. Leaving Term then asks about an "Active SSH session". Kotlin removes an ended session. Under the standing "Flutter-only → Kotlin" rule this goes to Kotlin.
+  - After an unknown host key is rejected, a moved host is asked about again on every check, roughly every 5 seconds. This needs comparing with Kotlin, which also accepts prompts from background checks.
 
 ## October 28: PIN and backup keys as fast as Kotlin — validated October 28
 
