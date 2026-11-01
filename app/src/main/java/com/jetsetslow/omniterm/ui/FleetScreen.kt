@@ -47,12 +47,13 @@ import com.jetsetslow.omniterm.R
 fun FleetScreen(viewModel: AppViewModel) {
     val srvList by viewModel.servers.collectAsStateWithLifecycle()
     val onlineSrvList = srvList.filter { viewModel.isPickableHost(it) }
-    LaunchedEffect(onlineSrvList.map { it.id }) {
-        val onlineIds = onlineSrvList.mapTo(HashSet()) { it.id }
-        viewModel.broadcastTargetServerIds.removeAll { it !in onlineIds }
-        viewModel.fleetLogSelectedServerIds.removeAll { it !in onlineIds }
+    // Broadcast picks survive a host going offline, which is skipped until it is back; dropping it
+    // meant a brief drop silently shrank the next run. Only a removed host or group leaves the picks.
+    LaunchedEffect(srvList.map { it.id to it.groupName }) {
+        val ids = srvList.mapTo(HashSet()) { it.id }
+        viewModel.broadcastTargetServerIds.removeAll { it !in ids }
         viewModel.broadcastTargetGroups.removeAll { group ->
-            onlineSrvList.none { it.groupName.orEmpty() == group }
+            srvList.none { it.groupName.orEmpty() == group }
         }
     }
 
@@ -67,10 +68,6 @@ fun FleetScreen(viewModel: AppViewModel) {
                 selected = viewModel.fleetTabIndex == 1,
                 onClick = { viewModel.fleetTabIndex = 1 }
             ) { Text(stringResource(R.string.broadcast), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-            Tab(
-                selected = viewModel.fleetTabIndex == 2,
-                onClick = { viewModel.fleetTabIndex = 2 }
-            ) { Text(stringResource(R.string.logs), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
         }
 
         Box(
@@ -80,9 +77,8 @@ fun FleetScreen(viewModel: AppViewModel) {
                 .padding(12.dp)
         ) {
             when (viewModel.fleetTabIndex) {
-                1 -> FleetBroadcastView(viewModel, onlineSrvList)
-                2 -> FleetLogsView(viewModel, onlineSrvList)
-                else -> FleetDashboardView(viewModel, onlineSrvList)
+                1 -> FleetBroadcastView(viewModel, onlineSrvList, allHosts = srvList)
+                else -> FleetDashboardView(viewModel, onlineSrvList, allHosts = srvList)
             }
         }
     }
@@ -122,8 +118,9 @@ fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     }
 }
 
+/** Fleet's dashboard: cards for the online hosts in [srvList], and totals over [allHosts]. */
 @Composable
-fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
+fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>, allHosts: List<ServerEntity>) {
     var scoreDialogServer by remember { mutableStateOf<ServerEntity?>(null) }
     OverflowLazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -135,7 +132,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val (total, online, critical, avgScore) = fleetTotals(viewModel, srvList)
+                val (total, online, critical, avgScore) = fleetTotals(viewModel, allHosts)
 
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$total", label = stringResource(R.string.hosts)) }
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = stringResource(R.string.online_3), color = OmniColors.green) }
@@ -248,7 +245,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
 }
 
 @Composable
-fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
+fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, allHosts: List<ServerEntity> = srvList) {
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val quickScripts by viewModel.quickScripts.collectAsStateWithLifecycle()
@@ -265,11 +262,23 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             preset.name.contains(query, ignoreCase = true) ||
             preset.command.contains(query, ignoreCase = true)
     }
-    val groups = srvList.mapNotNull { it.groupName?.takeIf { group -> group.isNotBlank() } }.distinct().sorted()
+    // A picked group stays listed while all its hosts are offline, so it can be unpicked.
+    val groups = (srvList.mapNotNull { it.groupName?.takeIf { group -> group.isNotBlank() } } + viewModel.broadcastTargetGroups)
+        .distinct().sorted()
+    // Picked hosts that are offline right now: they stay picked, and a run skips them.
+    val offlinePicks = allHosts.filter { host ->
+        !viewModel.isPickableHost(host) && when (viewModel.broadcastTargetMode) {
+            FleetTargetMode.Servers -> host.id in viewModel.broadcastTargetServerIds
+            FleetTargetMode.Groups -> host.groupName.orEmpty() in viewModel.broadcastTargetGroups
+        }
+    }
     val selectedTargetCount = when (viewModel.broadcastTargetMode) {
-        FleetTargetMode.Servers -> viewModel.broadcastTargetServerIds.size
+        FleetTargetMode.Servers -> srvList.count { it.id in viewModel.broadcastTargetServerIds }
         FleetTargetMode.Groups -> srvList.count { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
     }
+    // Stop always works; Run needs a command and at least one online target.
+    val canRunOrStop = viewModel.isBroadcastExecuting ||
+        (viewModel.broadcastCommandText.isNotBlank() && selectedTargetCount > 0)
     var controlsExpanded by remember { mutableStateOf(true) }
 
     LaunchedEffect(viewModel.broadcastResults.size) {
@@ -306,6 +315,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             FleetTargetMode.Groups -> srvList.filter { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
         }
         if (targets.isEmpty()) return
+        val skipped = offlinePicks
         val danger = fleetCommandDangerWarning(cmd)
         confirm.ask(
             title = confirm.str(R.string.run_on_host, targets.size, if (targets.size == 1) "" else "s"),
@@ -313,6 +323,12 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 appendLine("$ $cmd")
                 appendLine()
                 targets.forEach { appendLine("• ${HostDisplay.name(it)} (${HostDisplay.userAtHost(it)})") }
+                if (skipped.isNotEmpty()) {
+                    appendLine()
+                    appendLine(confirm.str(R.string.broadcast_skipped_offline, skipped.joinToString(", ") { HostDisplay.name(it) }))
+                }
+                appendLine()
+                appendLine(confirm.str(if (viewModel.broadcastInTmux) R.string.broadcast_tmux_confirm else R.string.broadcast_drop_warning))
                 if (danger != null) {
                     appendLine()
                     append("⚠ $danger")
@@ -350,7 +366,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         }
 
         if (controlsExpanded) {
-            BroadcastTargetPicker(viewModel, srvList, groups)
+            BroadcastTargetPicker(viewModel, srvList, groups, offlinePicks)
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -366,6 +382,25 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 shape = RoundedCornerShape(8.dp),
                 colors = omniTextFieldColors()
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.run_in_tmux), fontWeight = FontWeight.Bold)
+                    Text(
+                        stringResource(R.string.run_in_tmux_explained),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = viewModel.broadcastInTmux,
+                    onCheckedChange = viewModel::updateBroadcastInTmux,
+                    enabled = !viewModel.isBroadcastExecuting,
+                    modifier = Modifier.testTag("fleet.broadcast.tmux"),
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
             Row(
@@ -403,16 +438,18 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             OmniButton(
                 label = if (viewModel.isBroadcastExecuting) "STOP BROADCAST" else "RUN ON $selectedTargetCount HOSTS",
                 onClick = { if (viewModel.isBroadcastExecuting) viewModel.stopFleetBroadcast() else confirmAndRunBroadcast() },
-                modifier = Modifier.fillMaxWidth(),
-                color = if (viewModel.isBroadcastExecuting) OmniColors.red else OmniColors.cyan
+                modifier = Modifier.fillMaxWidth().testTag("fleet.broadcast.run"),
+                color = if (viewModel.isBroadcastExecuting) OmniColors.red else OmniColors.cyan,
+                enabled = canRunOrStop,
             )
         } else {
             OmniButton(
                 label = if (viewModel.isBroadcastExecuting) "STOP" else "RUN $selectedTargetCount",
                 onClick = { if (viewModel.isBroadcastExecuting) viewModel.stopFleetBroadcast() else confirmAndRunBroadcast() },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("fleet.broadcast.run"),
                 color = if (viewModel.isBroadcastExecuting) OmniColors.red else OmniColors.cyan,
                 small = true,
+                enabled = canRunOrStop,
             )
         }
 
@@ -442,6 +479,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     BroadcastStatus.Running -> OmniColors.cyan
                     BroadcastStatus.Success -> OmniColors.green
                     BroadcastStatus.Failure -> OmniColors.red
+                    BroadcastStatus.Reconnecting, BroadcastStatus.Detached, BroadcastStatus.NeedsTmux -> OmniColors.amber
                 }
                 val expanded = collapsedOutputs[item.serverId] != true
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.hostColor(item.serverName)) {
@@ -460,7 +498,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                 Text(item.serverName, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.primary)
                             }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                if (item.status == BroadcastStatus.Running) {
+                                if (item.status == BroadcastStatus.Running || item.status == BroadcastStatus.Reconnecting) {
                                     CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = accent)
                                 }
                                 Text(
@@ -468,6 +506,9 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                         BroadcastStatus.Running -> "streaming"
                                         BroadcastStatus.Success -> "complete"
                                         BroadcastStatus.Failure -> "failed"
+                                        BroadcastStatus.Reconnecting -> "reconnecting"
+                                        BroadcastStatus.Detached -> "disconnected"
+                                        BroadcastStatus.NeedsTmux -> "needs tmux"
                                     },
                                     fontSize = 10.sp,
                                     color = accent,
@@ -480,7 +521,11 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                 buildString {
                                     if (item.truncated) append("[Output truncated; showing latest ${120_000} characters]\n")
                                     append(item.output.ifBlank {
-                                        if (item.status == BroadcastStatus.Running) "Waiting for output..." else "Done (no output)"
+                                        when (item.status) {
+                                            BroadcastStatus.Running, BroadcastStatus.Reconnecting -> "Waiting for output..."
+                                            BroadcastStatus.Success -> "Done (no output)"
+                                            else -> "No output"
+                                        }
                                     })
                                 },
                                 modifier = Modifier.heightIn(min = 72.dp, max = 260.dp),
@@ -488,6 +533,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                 fontSize = 12.sp,
                             )
                         }
+                        BroadcastHostFooter(viewModel, item, accent)
                 }
             }
         }
@@ -601,7 +647,12 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
 }
 
 @Composable
-private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerEntity>, groups: List<String>) {
+private fun BroadcastTargetPicker(
+    viewModel: AppViewModel,
+    srvList: List<ServerEntity>,
+    groups: List<String>,
+    offlinePicks: List<ServerEntity>,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -664,7 +715,7 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
             // strip hides most of the fleet offscreen, so selection state becomes invisible.
             HostPickerField(
                 label = stringResource(R.string.target_hosts),
-                servers = srvList,
+                servers = srvList + offlinePicks,
                 selectedIds = viewModel.broadcastTargetServerIds.toSet(),
                 onToggle = { id ->
                     if (!viewModel.broadcastTargetServerIds.remove(id)) viewModel.broadcastTargetServerIds.add(id)
@@ -776,69 +827,38 @@ fun MetricLineChart(
     }
 }
 
+/**
+ * Under a broadcast card's output: why the host ended as it did or what it waits for, and what can
+ * be done about it (reconnect to a dropped tmux run, attach to a running one, or deal with a host
+ * that has no tmux).
+ */
 @Composable
-fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
-    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.select_hosts_then_tap_fetch_logs), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        HostPickerField(
-            label = stringResource(R.string.log_hosts),
-            servers = srvList,
-            selectedIds = viewModel.fleetLogSelectedServerIds.toSet(),
-            onToggle = { viewModel.toggleFleetLogServer(it) },
-            onSelectAll = {
-                viewModel.fleetLogSelectedServerIds.clear()
-                viewModel.fleetLogSelectedServerIds.addAll(srvList.map { it.id })
-            },
-            onClear = { viewModel.fleetLogSelectedServerIds.clear() },
+private fun BroadcastHostFooter(viewModel: AppViewModel, item: BroadcastResultItem, accent: Color) {
+    item.note?.let {
+        Text(
+            it,
+            fontSize = 11.sp,
+            color = accent,
+            modifier = Modifier.padding(top = 6.dp).testTag("fleet.broadcast.${item.serverId}.note"),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OmniButton(
-                label = if (viewModel.isFleetLogsLoading) "Loading…" else "Fetch Logs",
-                onClick = { if (!viewModel.isFleetLogsLoading) viewModel.loadFleetLogs() },
-                color = OmniColors.cyan,
-            )
-            if (viewModel.fleetLogs.isNotEmpty()) {
-                Text(stringResource(R.string.entries, viewModel.fleetLogs.size), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    val actions = buildList {
+        when (item.status) {
+            BroadcastStatus.Reconnecting -> add(stringResource(R.string.reconnect_now) to { viewModel.reconnectBroadcastHost(item.serverId) })
+            BroadcastStatus.Detached -> add(stringResource(R.string.reconnect) to { viewModel.reconnectBroadcastHost(item.serverId) })
+            BroadcastStatus.Running -> if (item.tmuxRunId != null) {
+                add(stringResource(R.string.attach) to { viewModel.attachBroadcastTmux(item.serverId) })
             }
+            BroadcastStatus.NeedsTmux -> {
+                add(stringResource(R.string.install_tool, "tmux") to { viewModel.installTmuxForBroadcast(item.serverId) })
+                add(stringResource(R.string.run_without_tmux) to { viewModel.runBroadcastHostWithoutTmux(item.serverId) })
+            }
+            BroadcastStatus.Success, BroadcastStatus.Failure -> Unit
         }
-        val logs = viewModel.fleetLogs
-        if (logs.isEmpty() && !viewModel.isFleetLogsLoading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.no_logs_select_hosts_and_tap), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            // Sorted oldest first, so a fetch lands on the newest entries at the end.
-            OverflowLazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                state = rememberTailFollowingLazyListState(logs),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                items(logs) { entry ->
-                    val levelColor = when (entry.level) {
-                        "ERROR" -> OmniColors.red
-                        "WARN" -> OmniColors.amber
-                        else -> MaterialTheme.colorScheme.onSurface
-                    }
-                    OmniCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(entry.serverName, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OmniColors.cyan)
-                                    Text(entry.timestamp, fontSize = 10.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                Text(
-                                    entry.message,
-                                    fontSize = 11.sp,
-                                    fontFamily = OmniFonts.mono,
-                                    color = levelColor,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+    }
+    if (actions.isNotEmpty()) {
+        Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            actions.forEach { (label, onClick) -> OmniButton(label = label, onClick = onClick, color = accent, small = true) }
         }
     }
 }

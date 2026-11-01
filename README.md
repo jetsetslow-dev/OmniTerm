@@ -122,7 +122,8 @@ Open **Infra** to manage containers, compose stacks, images, and volumes (Docker
 - **Compose Builder** — a visual editor for `docker-compose.yml`; deploy new stacks or surgically edit existing ones, with `compose config` validation before every fail-safe deploy.
 
 ### Fleet Broadcast
-Open **Fleet → Broadcast** to run a command across selected online hosts or host groups, with live per-host streaming output and built-in/saved fleet scripts.
+Open **Fleet → Broadcast** to run a command across selected online hosts or host groups, with live per-host streaming output and built-in/saved fleet scripts. **Run** needs a command and at least one online host. A host you picked stays picked if it goes offline: runs skip it, and the confirmation names it, until it is back. Each host's output follows the newest lines; scroll up to read and it stays where you are until you scroll back to the end. When a command does not succeed, its card says why: the exit status, or that the connection was lost before it finished (the command may still be running on the host).
+- **Run in tmux** runs each host's command in its own tmux session, so it keeps running if the connection drops. OmniTerm reconnects every 15 seconds for up to 30 minutes (or tap **Reconnect now**) and finishes with the command's full output. **Attach** opens the running command in the terminal. Each tmux session closes, and its log is removed, when its command ends or you tap **Stop**. A host without tmux waits for you to choose **Install tmux** or **Run without tmux**.
 
 ### Scripts, alerts & Wake-on-LAN
 - **Tools → Scripts** — create, edit, and organize saved scripts; mark each for quick per-host execution, fleet broadcast, or both.

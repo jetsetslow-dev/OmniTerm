@@ -258,23 +258,27 @@ fun OmniTag(label: String, modifier: Modifier = Modifier, color: Color = OmniCol
     }
 }
 
-/** Translucent accent button. */
+/**
+ * Translucent accent button. Pass [enabled] = false while the action cannot run (no command, no
+ * host, already running): the button greys out and ignores taps instead of looking ready.
+ */
 @Composable
-fun OmniButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = OmniColors.cyan, small: Boolean = false, contentDescription: String? = null) {
+fun OmniButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = OmniColors.cyan, small: Boolean = false, contentDescription: String? = null, enabled: Boolean = true) {
     val cdMod = if (contentDescription != null) Modifier.semantics { this.contentDescription = contentDescription } else Modifier
+    val tint = if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     // Minimum heights keep these tappable (a11y touch targets) without inflating dense rows to
     // a full 48dp; the text stays centered when the min height exceeds the padded text height.
     Box(
         modifier.then(cdMod)
             .clip(RoundedCornerShape(6.dp))
-            .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-            .clickable { onClick() }
+            .background(tint.copy(alpha = 0.12f))
+            .border(1.dp, tint.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled) { onClick() }
             .defaultMinSize(minHeight = if (small) 36.dp else 44.dp)
             .padding(horizontal = if (small) 10.dp else 14.dp, vertical = if (small) 5.dp else 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = color, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = if (small) 10.sp else 12.sp, letterSpacing = 0.6.sp)
+        Text(label, color = tint, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = if (small) 10.sp else 12.sp, letterSpacing = 0.6.sp)
     }
 }
 
@@ -566,7 +570,7 @@ fun HostPickerField(
         allHostsOption && 0 in selectedIds -> "All hosts"
         selectedIds.isEmpty() -> "Choose hosts…"
         else -> {
-            val names = servers.filter { it.id in selectedIds }.map { it.name }
+            val names = servers.filter { it.id in selectedIds }.map { if (isSelectable(it)) it.name else "${it.name} (offline)" }
             if (singleSelect) names.firstOrNull() ?: "Choose host…"
             else "${names.size} selected: ${names.joinToString(", ")}"
         }
@@ -690,10 +694,12 @@ fun HostPickerDialog(
                     }
                     items(filtered.size, key = { filtered[it].id }) { idx ->
                         val s = filtered[idx]
-                        val enabled = isSelectable(s)
+                        val selectable = isSelectable(s)
+                        // A host picked earlier can always be unpicked, even once it cannot be picked.
+                        val enabled = selectable || s.id in selectedIds
                         HostPickerRow(
                             name = s.name,
-                            detail = HostDisplay.userAtHost(s) + if (enabled) "" else " · offline",
+                            detail = HostDisplay.userAtHost(s) + if (selectable) "" else " · offline",
                             online = s.status == "online",
                             dotColor = OmniColors.serverAccent(s.serverColor, s.name),
                             checked = s.id in selectedIds,

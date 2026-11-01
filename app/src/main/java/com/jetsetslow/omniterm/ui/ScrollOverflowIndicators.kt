@@ -46,12 +46,24 @@ import androidx.compose.ui.unit.sp
 fun rememberTailFollowingScrollState(): ScrollState {
     val scroll = rememberScrollState()
     var following by remember { mutableStateOf(true) }
-    // Only the user's own scrolling changes the position without the extent changing.
+    // Where this last scrolled to by itself. Arriving there is not the user scrolling away, even when
+    // the extent has moved on: unknown before the first layout, or grown again by newer output. Read
+    // as the user's, either stopped following at the top, where nothing moved the box again.
+    var followedTo by remember { mutableIntStateOf(0) }
     LaunchedEffect(scroll) {
-        snapshotFlow { scroll.value }.collect { following = it >= scroll.maxValue }
+        snapshotFlow { scroll.value }.collect { position ->
+            following = position >= scroll.maxValue || (following && position == followedTo)
+        }
     }
     LaunchedEffect(scroll.maxValue) {
-        if (following) scroll.scrollTo(scroll.maxValue)
+        val end = scroll.maxValue
+        if (end == Int.MAX_VALUE) return@LaunchedEffect // Not laid out yet.
+        // Output that fits (a host's card cleared for a new run) has nothing to scroll back from.
+        if (following || scroll.value >= end) {
+            following = true
+            followedTo = end
+            scroll.scrollTo(end)
+        }
     }
     return scroll
 }

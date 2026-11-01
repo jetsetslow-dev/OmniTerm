@@ -3276,8 +3276,8 @@ fun AddServerSheet(
                 }) { Text(stringResource(R.string.next)) }
             } else {
                 Button(
+                    enabled = !savingServer,
                     onClick = {
-                        if (savingServer) return@Button
                         val candidate = ServerEntity(
                             id = serverToEdit?.id ?: 0, name = name, host = host,
                             port = port.toIntOrNull() ?: 22, username = user,

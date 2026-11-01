@@ -4,6 +4,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
+ * What [SshTransport.execStream] returns after "SSH Error: " when the connection dropped before the
+ * command finished. The command may still be running on the host.
+ */
+const val SSH_CONNECTION_LOST = "connection lost before the command finished"
+
+/**
  * Platform-agnostic SSH abstraction.
  *
  * This interface is intentionally free of JSch (or any JVM-only) types so that, when the

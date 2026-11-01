@@ -56,7 +56,6 @@ class RobustnessStressTest {
             RemoteParsers.parseProcesses(noise)
             RemoteParsers.parseServices(noise)
             RemoteParsers.parseJournal(noise)
-            RemoteParsers.parseFleetJournal(noise, "host", 1)
             RemoteParsers.parseRuntimeList(noise)
             RemoteParsers.parseDockerPs(noise)
             RemoteParsers.parseDockerRestartCounts(noise)

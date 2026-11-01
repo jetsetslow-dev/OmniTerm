@@ -353,6 +353,73 @@ object RemoteCommands {
         return TMUX_PATH + tmuxExactSession(safe) + " && tmux kill-session -t $safe 2>/dev/null"
     }
 
+    /** Printed by [broadcastTmuxStart] when the host has no tmux. */
+    const val BROADCAST_NO_TMUX = "__OMNITERM_NO_TMUX__"
+    private const val BROADCAST_STARTED = "__OMNITERM_STARTED__"
+    /** The last line of [broadcastTmuxFollow] when the session ended without the command finishing. */
+    const val BROADCAST_TMUX_GONE = "__OMNITERM_TMUX_GONE__"
+
+    /** The tmux session a Fleet broadcast run [runId] uses on each host. */
+    fun broadcastTmuxSession(runId: String) = "omniterm-bc-" + tmuxSafeName(runId)
+
+    private fun broadcastFiles(runId: String) =
+        "D=\"\$HOME/.cache/omniterm\"; F=\"\$D/broadcast-${tmuxSafeName(runId)}\"; "
+
+    /**
+     * Fleet broadcast's "Run in tmux": starts the script from [broadcastTmuxRunner], given on
+     * stdin, in its own tmux session, so a dropped connection doesn't stop the command. Prints
+     * [BROADCAST_NO_TMUX] when tmux is missing. Files that a run the app never came back for left
+     * in ~/.cache/omniterm are removed after a day.
+     */
+    fun broadcastTmuxStart(runId: String): String =
+        TMUX_PATH + "command -v tmux >/dev/null 2>&1 || { echo $BROADCAST_NO_TMUX; exit 0; }; " +
+            "umask 077; " + broadcastFiles(runId) + "mkdir -p \"\$D\" || exit 1; " +
+            "find \"\$D\" -name 'broadcast-*' -mtime +0 -exec rm -f {} + 2>/dev/null; " +
+            "cat > \"\$F.sh\" && : > \"\$F.log\" && " +
+            "tmux new-session -d -s ${broadcastTmuxSession(runId)} \"sh '\$F.sh'\" && echo $BROADCAST_STARTED"
+
+    /** Whether [broadcastTmuxStart] printed that its session started. */
+    fun broadcastTmuxStarted(output: String): Boolean = output.lineSequence().any { it.trim() == BROADCAST_STARTED }
+
+    /**
+     * What the run's tmux session executes: [command] in the user's shell, as a plain broadcast runs
+     * it, shown in the pane and written to the log. The exit status is published only once the log
+     * has every byte, and the session closes when the command ends, so nothing lingers.
+     */
+    fun broadcastTmuxRunner(runId: String, command: String): String =
+        broadcastFiles(runId) + "\n" +
+            "{ \"\${SHELL:-/bin/sh}\" -c ${shellQuote(command)}; echo \$? > \"\$F.code\"; } 2>&1 | tee -a \"\$F.log\"\n" +
+            "mv -f \"\$F.code\" \"\$F.exit\"\n" +
+            "tmux kill-session -t ${broadcastTmuxSession(runId)} 2>/dev/null\n"
+
+    /**
+     * Streams the run's log from the start until the command finishes, then exits with the
+     * command's own status. Ends with [BROADCAST_TMUX_GONE] when the session is gone without the
+     * command having finished (killed, or the host restarted) or there is nothing to follow.
+     */
+    fun broadcastTmuxFollow(runId: String): String {
+        val safe = broadcastTmuxSession(runId)
+        return TMUX_PATH + broadcastFiles(runId) +
+            "[ -f \"\$F.log\" ] || { echo $BROADCAST_TMUX_GONE; exit 0; }; off=0; fin=; " +
+            "while :; do [ -f \"\$F.exit\" ] && fin=1; " +
+            "size=\$(wc -c < \"\$F.log\" | tr -d ' '); " +
+            "if [ \"\$size\" -gt \"\$off\" ]; then tail -c +\$((off + 1)) \"\$F.log\" | head -c \$((size - off)); off=\$size; fi; " +
+            "[ -n \"\$fin\" ] && exit \"\$(cat \"\$F.exit\")\"; " +
+            tmuxExactSession(safe) + " || [ -f \"\$F.exit\" ] || { echo; echo $BROADCAST_TMUX_GONE; exit 0; }; " +
+            "sleep 1; done"
+    }
+
+    /** Removes the run's files once the app has its result. */
+    fun broadcastTmuxCleanup(runId: String): String =
+        broadcastFiles(runId) + "rm -f \"\$F.sh\" \"\$F.log\" \"\$F.code\" \"\$F.exit\""
+
+    /** Stop: ends the run's session, and the command in it, then removes its files. */
+    fun broadcastTmuxStop(runId: String): String {
+        val safe = broadcastTmuxSession(runId)
+        return TMUX_PATH + "{ " + tmuxExactSession(safe) + " && tmux kill-session -t $safe 2>/dev/null; }; " +
+            broadcastTmuxCleanup(runId)
+    }
+
     /** Clear only the active pane's server-side history; the visible screen remains intact. */
     fun tmuxClearHistoryCommand(name: String): String =
         TMUX_PATH + "tmux clear-history -t ${tmuxPane(tmuxSafeName(name))} 2>/dev/null || true"
@@ -1642,17 +1709,6 @@ object RemoteParsers {
                 )
             }
             .toList()
-
-    fun parseFleetJournal(output: String, serverName: String, serverId: Int): List<FleetLogEntry> =
-        parseJournal(output).map { log ->
-            FleetLogEntry(
-                serverName = serverName,
-                serverId = serverId,
-                timestamp = log.time,
-                level = log.level,
-                message = if (log.source.isNotBlank() && log.source != "system") "[${log.source}] ${log.message}" else log.message,
-            )
-        }
 
     fun parseDockerPs(output: String): List<SimContainer> =
         output.lineSequence()
