@@ -141,18 +141,20 @@ private fun copySensitiveClipboard(
     }
 }
 
+/** The Tools tiles. Text that sends the user to "Tools → …" names one of these labels. */
+internal val toolsItems = listOf(
+    Triple(Screen.Alerts, "Alerts & rules", Icons.Filled.Notifications),
+    Triple(Screen.QuickScripts, "Scripts", Icons.Filled.Code),
+    Triple(Screen.Network, "Network tools", Icons.Filled.Lan),
+    Triple(Screen.AuthKeys, "Auth & keys", Icons.Filled.Key),
+    Triple(Screen.Backup, "App backup", Icons.Filled.Backup),
+    Triple(Screen.HealthScoring, "Health scoring", Icons.Filled.MonitorHeart),
+    Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
+    Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
+)
+
 @Composable
 fun ToolsScreen(viewModel: AppViewModel) {
-    val toolsItems = listOf(
-        Triple(Screen.Alerts, "Alerts & rules", Icons.Filled.Notifications),
-        Triple(Screen.QuickScripts, "Scripts", Icons.Filled.Code),
-        Triple(Screen.Network, "Network tools", Icons.Filled.Lan),
-        Triple(Screen.AuthKeys, "Auth & keys", Icons.Filled.Key),
-        Triple(Screen.Backup, "App backup", Icons.Filled.Backup),
-        Triple(Screen.HealthScoring, "Health scoring", Icons.Filled.MonitorHeart),
-        Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
-        Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
-    )
 
     Column(modifier = Modifier.fillMaxSize()) {
         SectionHeader("OmniTerm utilities")

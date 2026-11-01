@@ -126,8 +126,8 @@ Open **Fleet → Broadcast** to run a command across selected online hosts or ho
 
 ### Scripts, alerts & Wake-on-LAN
 - **Tools → Scripts** — create, edit, and organize saved scripts; mark each for quick per-host execution, fleet broadcast, or both.
-- **Tools → Alerts & Rules** — CPU/memory/disk/latency threshold rules evaluated during in-app metrics refresh, with an Alerts Center for active and historical incidents. Alert history retention is capped per host.
-- **Tools → Wake on LAN** — save wake targets and send magic packets; scan the LAN from the editor to pick discovered devices.
+- **Tools → Alerts & rules** — CPU/memory/disk/latency threshold rules evaluated during in-app metrics refresh, with an Alerts Center for active and historical incidents. Alert history retention is capped per host.
+- **Tools → Network tools → Wake-on-LAN** — save wake targets and send magic packets; scan the LAN from the editor to pick discovered devices.
 
 ## Settings & customization
 Open **Tools → Settings**:
@@ -138,10 +138,10 @@ Open **Tools → Settings**:
 - Background session keepalive.
 - Alert history entries per host (10–100) and SFTP transfer warnings.
 
-**About → Device & diagnostics** shows app version, build, device info, and an on-device crash-history viewer for bug reports.
+**Tools → About OmniTerm → Device & diagnostics** shows app version, build, device info, and an on-device crash-history viewer for bug reports.
 
 ## Backup & restore
-Open **Tools → Backups Hub** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, credential profiles, scripts, alert data, saved shares, tunnels, and settings).
+Open **Tools → App backup** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, credential profiles, scripts, alert data, saved shares, tunnels, and settings).
 - Backups containing sensitive sections are compressed and encrypted with AES-256-GCM using a passphrase-derived key.
 - App backups never copy files from your remote hosts.
 - OmniTerm does not store the backup passphrase — keep it safe.
@@ -165,7 +165,7 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 - **Infra issues** — confirm Docker/Podman is installed and the SSH user may run it.
 - **Tunnel won't start** — confirm the bind port is free and the destination is reachable *from the SSH host* (for `-L`) or *from this device* (for `-R`).
 
-**Support:** open a GitHub issue with diagnostic logs from **About → Device & diagnostics**, or reach the community on GitHub.
+**Support:** open a GitHub issue with diagnostic logs from **Tools → About OmniTerm → Device & diagnostics**, or reach the community on GitHub.
 
 ## Support the project
 - Buy **Unlock OmniTerm** in the Play Store build.

@@ -2099,7 +2099,12 @@ fun ServersMainView(viewModel: AppViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 12.dp)
+                        .testTag("hosts.list"),
+                    state = rememberTopAnchoredLazyListState(
+                        order = Triple(viewModel.hostSort, viewModel.serverSearchText, viewModel.selectedGroupChip),
+                        keys = filteredList.map { it.id },
+                    ),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Stable keys: only the cards whose host actually changed recompose on the

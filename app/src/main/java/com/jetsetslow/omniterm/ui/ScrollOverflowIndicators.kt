@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -70,6 +71,30 @@ fun rememberTailFollowingLazyListState(items: List<*>): LazyListState {
         val wasAtEnd = previousCount == 0 || lastVisible == null || lastVisible >= previousCount - 1
         if (wasAtEnd && items.isNotEmpty()) state.scrollToItem(items.size - 1)
         previousCount = items.size
+    }
+    return state
+}
+
+/**
+ * List state for items shown in a chosen order, such as the Hosts list. A keyed LazyColumn keeps
+ * its first visible item in view when the items move, so after a re-sort, or after a refresh moved
+ * hosts online, the list sat wherever the old top item had gone. A new [order] (the sort, search or
+ * filter) always shows the top; a reorder from new data keeps the list at the top if it was there.
+ */
+@Composable
+fun rememberTopAnchoredLazyListState(order: Any?, keys: List<Any>): LazyListState {
+    val state = rememberLazyListState()
+    val shown = remember { arrayOf(order, keys) }
+    // Asked here, in the composition that hands the list its new items, so it applies to the very
+    // layout that would otherwise re-anchor on the moved item.
+    val orderChanged = shown[0] != order
+    if (orderChanged || shown[1] != keys) {
+        // The layout still describes the previous list, which is the one the user was reading.
+        // Not observed: following every scroll would recompose the whole screen.
+        val atTop = Snapshot.withoutReadObservation { state.firstVisibleItemIndex == 0 }
+        if (orderChanged || atTop) state.requestScrollToItem(0)
+        shown[0] = order
+        shown[1] = keys
     }
     return state
 }
