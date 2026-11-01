@@ -59,7 +59,7 @@ The first-run flow walks you through creating a server. Authenticate with a pass
 
 Groups make Fleet Broadcast targeting easier; host colors help you tell servers apart across sessions and dashboards. Use the host picker on operational screens to switch the active server, or **swipe left/right** to move between tabs and subtabs outside the terminal. A pull-to-refresh re-checks hosts without moving the picker off the one you are looking at.
 
-The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), **Copy SSH command** (including its jump host or proxy), and **System specs**. **Attach existing tmux…** lists the tmux sessions already running on a Linux, macOS or BSD host (one you started from a desktop, say) and joins one, as `tmux attach` does, so every client sees the same window. Terminate in OmniTerm then ends that session on the server; Leave keeps it running. Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Select several hosts to delete them together, optionally ending their tmux sessions too.
+The **Hosts** list can be sorted by name, status, health, or latency. Each card has **PING** next to SSH/SFTP/DOCKER, and the **⋮** menu adds **Ping**, **Traceroute** (both run from the phone, so they work while the host is offline), **Copy SSH command** (including its jump host or proxy), and **System specs**. **Attach existing tmux…** lists the tmux sessions already running on a Linux, macOS or BSD host (one you started from a desktop, say) and joins one, as `tmux attach` does, so every client sees the same window. Terminate in OmniTerm then ends that session on the server; Leave keeps it running. Offline hosts show when they were last seen and, when a saved Wake-on-LAN target has the same address, a **WAKE** button. Renaming a host updates its open and saved sessions; changing its address resets its health until fresh metrics arrive. Select several hosts to delete them together, optionally ending their tmux sessions too. Deleting a host also deletes everything OmniTerm keeps for it — its Files bookmarks, saved tunnels, alert rules, saved tmux sessions, recorded Compose stacks and monitoring history — and the confirmation lists what will go first. Nothing is moved to another host.
 
 ### Terminal
 Open **Term** for an interactive SSH shell on the selected host.
@@ -87,7 +87,7 @@ Open **Files** to work with remote filesystems.
 - **Editable path bar** — tap it to type a destination and jump straight there.
 - **Sudo mode** is gated behind device biometrics/PIN before it can be enabled.
 
-**Bookmarks** span every SSH host and network share: star a folder in the SFTP or Shares browser and it appears here labelled with its endpoint (offline endpoints are greyed out).
+**Bookmarks** span every SSH host and network share: star a folder in the SFTP or Shares browser and it appears here labelled with its endpoint (offline endpoints are greyed out). Only folders you star are saved.
 
 **Transfers** shows per-file rows with a running rollup; individual transfers (or all of them) can be **cancelled** mid-flight, and they keep running as you navigate the app.
 

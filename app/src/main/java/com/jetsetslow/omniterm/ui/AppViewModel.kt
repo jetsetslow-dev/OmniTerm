@@ -1627,6 +1627,8 @@ class AppViewModel @JvmOverloads constructor(
     private var sftpLoadedServerId: Int? = null
 
     val sftpBookmarks = mutableStateListOf<String>()
+    /** The host [sftpBookmarks] belongs to. */
+    private var sftpBookmarksServerId: Int? = null
     var sftpLoading by mutableStateOf(false); private set
     var sftpError by mutableStateOf<String?>(null); private set
     /** Transient success/info banner for SFTP actions (save confirmed, copied, moved…). Auto-clears. */
@@ -4061,6 +4063,20 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
+     * Everything stored for [serverIds] that deleting them takes too, for the delete dialog to
+     * list. A trusted key is counted only when no remaining host shares its address.
+     */
+    suspend fun hostDeletionCounts(serverIds: Set<Int>): HostDependentCounts {
+        val all = repository.getAllServers()
+        val remaining = all.filter { it.id !in serverIds }
+        val keys = all.filter { it.id in serverIds && !keepTrustedHostKeys(it.host, remaining) }
+            .filter { SshHostKeyTrust.hasPinnedKey(it.host, it.port) }
+            .map { it.host }
+            .distinct()
+        return repository.dependentCounts(serverIds).copy(trustedHostKeys = keys.size)
+    }
+
+    /**
      * Deletes [server] and everything stored for it. Its tmux sessions are left running on the
      * server unless the user ticked [endTmuxSessions] in the delete dialog, which promises the
      * remote machine is otherwise untouched.
@@ -4126,6 +4142,7 @@ class AppViewModel @JvmOverloads constructor(
         // has never met, and showing a sparkline drawn from someone else's readings.
         forgetTelemetryFor(server.id)
         composeDrafts.remove(server.id)
+        forgetFilesStateFor(server.id)
         if (!keepTrustedHostKeys(server.host, remaining)) {
             SshHostKeyTrust.removeHost(server.host, server.port)
         }
@@ -4133,6 +4150,17 @@ class AppViewModel @JvmOverloads constructor(
             selectedServerId = null
         }
         return remoteTmuxKillFailed
+    }
+
+    /** Drops the Files tab's bookmarks and paths for a deleted host. */
+    private fun forgetFilesStateFor(serverId: Int) {
+        allBookmarks.removeAll { it.serverId == serverId }
+        if (sftpBookmarksServerId == serverId) {
+            sftpBookmarksServerId = null
+            sftpBookmarks.clear()
+        }
+        sftpSessionPaths.remove(serverId)
+        if (sftpLoadedServerId == serverId) sftpLoadedServerId = null
     }
 
     /** Drops every per-host cache keyed by [serverId]. See the call in [deleteServer]. */
@@ -10636,37 +10664,34 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Loads the star list for the selected host: only what the user saved. Five suggested folders
+     * used to fill an empty list, and the first star then saved all five as that host's bookmarks,
+     * so the same list turned up on whichever host was starred next.
+     */
     private fun loadSftpBookmarks() {
         val srv = selectedServer ?: return
+        sftpBookmarksServerId = srv.id
+        sftpBookmarks.clear()
         viewModelScope.launch {
-            val raw = repository.getSetting("sftp_bookmarks_${srv.id}")
+            val saved = repository.getSetting("sftp_bookmarks_${srv.id}").orEmpty()
+                .split("|||").filter { it.isNotBlank() }
+            if (sftpBookmarksServerId != srv.id) return@launch
             sftpBookmarks.clear()
-            if (raw.isNullOrBlank()) {
-                sftpBookmarks.addAll(listOf("/root", "/var/log", "/etc", "/opt", "/home"))
-            } else {
-                sftpBookmarks.addAll(raw.split("|||").filter { it.isNotBlank() })
-            }
+            sftpBookmarks.addAll(saved)
         }
     }
 
+    // The star edits the stored row, as the Bookmarks tab does, so it can never write one host's
+    // list under another.
     fun addSftpBookmark(path: String) {
         val srv = selectedServer ?: return
-        if (!sftpBookmarks.contains(path)) {
-            sftpBookmarks.add(path)
-            viewModelScope.launch {
-                repository.insertSetting("sftp_bookmarks_${srv.id}", sftpBookmarks.joinToString("|||"))
-            }
-        }
+        saveEndpointBookmark(srv.id, null, path)
     }
 
     fun removeSftpBookmark(path: String) {
         val srv = selectedServer ?: return
-        if (sftpBookmarks.contains(path)) {
-            sftpBookmarks.remove(path)
-            viewModelScope.launch {
-                repository.insertSetting("sftp_bookmarks_${srv.id}", sftpBookmarks.joinToString("|||"))
-            }
-        }
+        removeEndpointBookmark(EndpointBookmark(srv.id, null, srv.name, path))
     }
 
     // ── Endpoint-scoped bookmarks (Bookmarks tab) ──
@@ -10744,7 +10769,7 @@ class AppViewModel @JvmOverloads constructor(
             repository.insertSetting(key, remaining.joinToString("|||"))
             allBookmarks.remove(bookmark)
             // Keep the per-endpoint lists that drive the star toggles in sync.
-            if (bookmark.serverId == selectedServerId) sftpBookmarks.remove(bookmark.path)
+            if (bookmark.serverId != null && bookmark.serverId == sftpBookmarksServerId) sftpBookmarks.remove(bookmark.path)
             if (bookmark.shareId == browsingShare?.id) shareBookmarks.remove(bookmark.path)
         }
     }
@@ -10768,7 +10793,7 @@ class AppViewModel @JvmOverloads constructor(
                     val remaining = repository.getSetting(oldKey).orEmpty()
                         .split("|||").filter { it.isNotBlank() && it != old.path }
                     repository.insertSetting(oldKey, remaining.joinToString("|||"))
-                    if (old.serverId != null && old.serverId == selectedServerId) sftpBookmarks.remove(old.path)
+                    if (old.serverId != null && old.serverId == sftpBookmarksServerId) sftpBookmarks.remove(old.path)
                     if (old.shareId != null && old.shareId == browsingShare?.id) shareBookmarks.remove(old.path)
                 }
             }
@@ -10778,7 +10803,7 @@ class AppViewModel @JvmOverloads constructor(
                 repository.insertSetting(key, (existing + normalized).joinToString("|||"))
             }
             // Keep the per-endpoint lists that drive the star toggles in sync.
-            if (serverId != null && serverId == selectedServerId && normalized !in sftpBookmarks) sftpBookmarks.add(normalized)
+            if (serverId != null && serverId == sftpBookmarksServerId && normalized !in sftpBookmarks) sftpBookmarks.add(normalized)
             if (shareId != null && shareId == browsingShare?.id && normalized !in shareBookmarks) shareBookmarks.add(normalized)
             loadAllBookmarks()
         }
