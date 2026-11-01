@@ -12118,8 +12118,13 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun appendBroadcastChunk(serverId: Int, chunk: String) {
-        viewModelScope.launch(Dispatchers.Main.immediate) {
+    /**
+     * Adds [chunk] to [serverId]'s card before the transport reads on, as the action stream does.
+     * Launched and left to run, a chunk could land after the run had finished: the card showed
+     * failed with its last output missing, and its note was worded from that partial output.
+     */
+    private suspend fun appendBroadcastChunk(serverId: Int, chunk: String) {
+        withContext(Dispatchers.Main.immediate) {
             val index = broadcastResults.indexOfFirst { it.serverId == serverId }
             if (index >= 0) {
                 val current = broadcastResults[index]
