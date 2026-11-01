@@ -896,6 +896,7 @@
     <string name="delete_bookmark">"Delete bookmark"</string>
     <string name="reconnect">"Reconnect"</string>
     <string name="reconnect_now">"Reconnect now"</string>
+    <string name="compose_host_offline_draft_kept">"%1$s is offline. Your changes stay here until it is back, even if you switch hosts."</string>
     <string name="attach">"Attach"</string>
     <string name="run_in_tmux">"Run in tmux"</string>
     <string name="run_in_tmux_explained">"Keeps each command running if its connection drops, and reconnects to collect the output. Each tmux session closes when its command ends."</string>

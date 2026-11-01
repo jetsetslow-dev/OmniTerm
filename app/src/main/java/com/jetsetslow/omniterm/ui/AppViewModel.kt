@@ -1223,7 +1223,7 @@ class AppViewModel @JvmOverloads constructor(
         get() = _selectedServerId
         set(value) {
             if (value != _selectedServerId) {
-                clearActiveComposeDraft()
+                // Each host keeps its own Compose draft (see [activeComposeDraft]).
                 clearMonitorHostData()
                 clearContainerHostData()
             }
@@ -1480,51 +1480,75 @@ class AppViewModel @JvmOverloads constructor(
     // own 10s poll. The dots key their LaunchedEffect on this value.
     var wolStatusRefreshTick by mutableStateOf(0)
         private set
-    var activeComposeDraft by mutableStateOf<com.jetsetslow.omniterm.ui.ComposeStackDraft?>(null)
-        private set
-    /** Host and generation owning the current draft; prevents delayed Compose effects crossing hosts. */
-    var activeComposeServerId by mutableStateOf<Int?>(null)
-        private set
-    var activeComposeGeneration by mutableIntStateOf(0)
-        private set
-    /** Raw Builder state is VM-owned so rotation/multi-window recreation cannot discard edits. */
-    var activeComposeRawText by mutableStateOf<String?>(null)
-        private set
-    var activeComposeRawMode by mutableStateOf(false)
-        private set
-    var activeComposeRawSeedKey by mutableStateOf<String?>(null)
-        private set
+    /**
+     * One host's Compose Builder work: the draft as edited, the [baseline] it was opened from (what
+     * the edits are diffed against when deployed), and the raw-YAML editor's state, which is kept
+     * here so rotation or multi-window recreation cannot discard edits.
+     */
+    private data class ComposeDraftSlot(
+        val draft: com.jetsetslow.omniterm.ui.ComposeStackDraft,
+        val baseline: com.jetsetslow.omniterm.ui.ComposeStackDraft,
+        val generation: Int,
+        val rawText: String? = null,
+        val rawMode: Boolean = false,
+        val rawSeedKey: String? = null,
+    )
+
+    /**
+     * Compose drafts by host. Switching hosts keeps each host's unsaved draft for when the user comes
+     * back, even while that host is offline; only the Builder's own Clear or Back discards one.
+     */
+    private val composeDrafts = mutableStateMapOf<Int, ComposeDraftSlot>()
+    private var composeDraftGenerations = 0
+    private val composeHostId: Int? get() = selectedServerId ?: selectedServer?.id
+    private val activeComposeSlot: ComposeDraftSlot? get() = composeHostId?.let { composeDrafts[it] }
+
+    /** The selected host's draft. */
+    val activeComposeDraft: com.jetsetslow.omniterm.ui.ComposeStackDraft? get() = activeComposeSlot?.draft
+    /** What [activeComposeDraft] was opened from. */
+    val activeComposeBaseline: com.jetsetslow.omniterm.ui.ComposeStackDraft? get() = activeComposeSlot?.baseline
+    /** Host owning the current draft; prevents delayed Compose effects crossing hosts. */
+    val activeComposeServerId: Int? get() = composeHostId?.takeIf { it in composeDrafts }
+    /** Unique to one draft on one host, so the Builder re-seeds when either changes. */
+    val activeComposeGeneration: Int get() = activeComposeSlot?.generation ?: -1
+    val activeComposeRawText: String? get() = activeComposeSlot?.rawText
+    val activeComposeRawMode: Boolean get() = activeComposeSlot?.rawMode ?: false
+    val activeComposeRawSeedKey: String? get() = activeComposeSlot?.rawSeedKey
 
     fun beginComposeDraft(draft: com.jetsetslow.omniterm.ui.ComposeStackDraft) {
-        activeComposeGeneration++
-        activeComposeServerId = selectedServerId
-        activeComposeRawText = null
-        activeComposeRawMode = false
-        activeComposeRawSeedKey = null
-        activeComposeDraft = draft
+        val host = composeHostId ?: return
+        composeDrafts[host] = ComposeDraftSlot(draft = draft, baseline = draft, generation = ++composeDraftGenerations)
     }
 
     fun updateComposeDraft(
         generation: Int,
         draft: com.jetsetslow.omniterm.ui.ComposeStackDraft,
     ) {
-        if (generation != activeComposeGeneration || activeComposeServerId != selectedServerId) return
-        activeComposeDraft = draft
+        val host = composeHostId ?: return
+        val slot = composeDrafts[host]?.takeIf { it.generation == generation } ?: return
+        composeDrafts[host] = slot.copy(draft = draft)
     }
 
     fun rememberComposeRawState(seedKey: String, text: String, rawMode: Boolean) {
-        activeComposeRawSeedKey = seedKey
-        activeComposeRawText = text
-        activeComposeRawMode = rawMode
+        val host = composeHostId ?: return
+        val slot = composeDrafts[host] ?: return
+        if (slot.rawSeedKey == seedKey && slot.rawText == text && slot.rawMode == rawMode) return
+        composeDrafts[host] = slot.copy(rawSeedKey = seedKey, rawText = text, rawMode = rawMode)
     }
 
     fun clearActiveComposeDraft() {
-        activeComposeGeneration++
-        activeComposeServerId = null
-        activeComposeDraft = null
-        activeComposeRawText = null
-        activeComposeRawMode = false
-        activeComposeRawSeedKey = null
+        composeHostId?.let { composeDrafts.remove(it) }
+    }
+
+    /**
+     * Whether [serverId] holds Compose edits not yet deployed. Containers keeps such a host in its
+     * picker while it is offline, so the user can go back to the draft.
+     */
+    fun hasUnsavedComposeDraft(serverId: Int): Boolean {
+        val slot = composeDrafts[serverId] ?: return false
+        if (slot.draft != slot.baseline) return true
+        val baselineText = slot.baseline.originalText ?: com.jetsetslow.omniterm.ui.generateDockerComposeYaml(slot.baseline)
+        return slot.rawMode && slot.rawText != null && slot.rawText != baselineText
     }
 
     // ── Shared live-action output panel ──
@@ -4101,6 +4125,7 @@ class AppViewModel @JvmOverloads constructor(
         // cumulative counters, measuring its first CPU and network rates against a machine it
         // has never met, and showing a sparkline drawn from someone else's readings.
         forgetTelemetryFor(server.id)
+        composeDrafts.remove(server.id)
         if (!keepTrustedHostKeys(server.host, remaining)) {
             SshHostKeyTrust.removeHost(server.host, server.port)
         }

@@ -42,8 +42,15 @@ fun InfraScreen(viewModel: AppViewModel) {
     val srv = screenHost(viewModel) { if (it != null) viewModel.loadDocker() }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Host picker (mirrors SFTP/Cron) so the user can switch which host's containers they inspect.
-        ServerSelectorBar(viewModel, overrideServer = srv, onServerChange = { viewModel.loadDocker() })
+        // Online hosts, like the other tabs, plus the host in use and any offline host still holding
+        // an unsaved Compose draft, so switching away never strands that draft.
+        ServerSelectorBar(
+            viewModel,
+            overrideServer = srv,
+            onlineOnly = true,
+            alsoOffer = { it.id == srv?.id || viewModel.hasUnsavedComposeDraft(it.id) },
+            onServerChange = { viewModel.loadDocker() },
+        )
         if (srv == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(stringResource(R.string.no_online_hosts_available_container_data), color = MaterialTheme.colorScheme.onSurfaceVariant)

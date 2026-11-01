@@ -93,6 +93,8 @@ fun ServerSelectorBar(
     viewModel: AppViewModel,
     overrideServer: ServerEntity? = null,
     onlineOnly: Boolean = false,
+    // With [onlineOnly], an offline host this returns true for is offered too, marked offline.
+    alsoOffer: (ServerEntity) -> Boolean = { false },
     onServerChange: () -> Unit = {},
     allowSplitSelection: Boolean = false,
     onOpenSplit: (List<Int>) -> Unit = {},
@@ -104,7 +106,7 @@ fun ServerSelectorBar(
     modifier: Modifier = Modifier
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val selectableServers = if (onlineOnly) servers.filter { viewModel.isPickableHost(it) } else servers
+    val selectableServers = if (onlineOnly) servers.filter { viewModel.isPickableHost(it) || alsoOffer(it) } else servers
     val srv = overrideServer
         ?: selectableServers.find { it.id == viewModel.selectedServerId }
         ?: selectableServers.firstOrNull()
@@ -207,7 +209,9 @@ fun ServerSelectorBar(
                 DropdownMenuItem(
                     text = { Text("${HostDisplay.name(s)} — ${HostDisplay.userAtHost(s)}", fontFamily = OmniFonts.mono) },
                     leadingIcon = { StatusDot(online = s.status == "online", color = getServerColor(s), size = 8.dp) },
-                    trailingIcon = if (allowSplitSelection) {
+                    trailingIcon = if (!allowSplitSelection && !viewModel.isPickableHost(s)) {
+                        { Text("offline", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    } else if (allowSplitSelection) {
                         {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (checkedForSplit) {
