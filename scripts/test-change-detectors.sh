@@ -241,6 +241,27 @@ for entry in "${DETECTORS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Shared Android inputs also affect the separate Flutter build and its verification policy.
+if [ -f "$REPO_ROOT/.github/workflows/flutter-pr-check.yml" ]; then
+  flutter_script="$(extract_run "$REPO_ROOT/.github/workflows/flutter-pr-check.yml" filter)"
+  for shared_path in gradle/libs.versions.toml build.gradle.kts \
+    gradle/wrapper/gradle-wrapper.properties gradle/wrapper/gradle-wrapper.jar \
+    scripts/refresh-flutter-android-verification-metadata.sh \
+    scripts/verify-flutter-android-toolchain.py scripts/verify-native-sbom-baselines.py \
+    scripts/local-pr-check.sh; do
+    printf '%s\n' "$shared_path" > "$WORK/shared-android-input"
+    expect "Flutter shared Android input: $shared_path" true \
+      "$(run_detector "$flutter_script" "$WORK/shared-android-input")"
+  done
+  # The duplicate check runs in the Flutter job, so its checker and baseline gate that job too.
+  for dup_path in scripts/check-duplicates.py scripts/test-check-duplicates.sh \
+    scripts/flutter-duplicate-code-baseline.json; do
+    printf '%s\n' "$dup_path" > "$WORK/duplicate-check-input"
+    expect "Flutter duplicate check input: $dup_path" true \
+      "$(run_detector "$flutter_script" "$WORK/duplicate-check-input")"
+  done
+fi
+
 # CodeQL only: push and schedule are the prerelease gate and must never skip.
 # ---------------------------------------------------------------------------
 echo

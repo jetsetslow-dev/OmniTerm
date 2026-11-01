@@ -1,0 +1,3 @@
+#include "Generated.xcconfig"
+// Google's sample app id. Development and unsigned CI builds must never request production ads.
+ADMOB_IOS_APP_ID = ca-app-pub-3940256099942544~1458002511

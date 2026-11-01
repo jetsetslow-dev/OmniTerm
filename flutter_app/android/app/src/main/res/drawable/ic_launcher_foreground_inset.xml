@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the 108dp adaptive foreground inside Android's 72dp safe zone so circle/squircle masks
+     never crop the neon mark. Density-specific source artwork remains unchanged.
+
+     The wrapped `ic_launcher_fg` bitmaps carry the mark on transparency, which is required for the
+     adaptive launcher mask. BiometricPrompt branding deliberately does not use this layer:
+     SystemUI resolves the application's dedicated bitmap `ic_system_brand` through PackageManager.
+     It also never reads `android:logo`, an ActionBar-era attribute. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_fg"
+    android:insetLeft="18dp"
+    android:insetTop="18dp"
+    android:insetRight="18dp"
+    android:insetBottom="18dp" />

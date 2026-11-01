@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar silhouette of the OmniTerm infinity-knot logo.
+
+     Constraints this shape has to satisfy, all of which the previous version missed:
+      * The system renders notification small icons ALPHA-ONLY — every non-transparent pixel is
+        painted flat white (or the accent). Colour and gradients are discarded, so the mark has to
+        read purely as a silhouette.
+      * Artwork must stay inside the centre ~22dp of the 24dp viewport; the outer ring gets trimmed.
+        Stroke width counts: a path ending at 20.8 with a 2.3 stroke actually reaches 21.95.
+      * At status-bar size a thin ribbon smears into an unreadable blob, so the knot is pulled in
+        from the edges (16.6dp x 9.4dp drawn, vs the old 19.9dp x 9.9dp) and given a heavier 2.6
+        stroke, which both survives downscaling and keeps the two lobes visually distinct.
+
+     Explicit fillColor="@android:color/transparent" so the shape stays stroke-only by intent rather
+     than by relying on the VectorDrawable default. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,12 C13.6,8.6 19,8.6 19,12 C19,15.4 13.6,15.4 12,12 C10.4,8.6 5,8.6 5,12 C5,15.4 10.4,15.4 12,12 Z" />
+</vector>

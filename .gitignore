@@ -4,6 +4,7 @@
 .android-sdk/
 /secrets/
 /app/build/
+/shared/build/
 /local.properties
 /.idea/caches
 /.idea/libraries

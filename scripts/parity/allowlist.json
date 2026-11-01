@@ -1,0 +1,7 @@
+{
+ "_comment": "Intentional, permanent Kotlin/Flutter differences only (platform plumbing). Never a Flutter-only feature: those are ported to Kotlin. Format: {section: {entry: reason}}.",
+ "kotlin-only": {},
+ "flutter-only": {},
+ "settings": {},
+ "style": {}
+}

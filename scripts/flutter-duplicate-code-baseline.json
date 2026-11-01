@@ -1,0 +1,12 @@
+{
+  "minTokens": 70,
+  "clones": [
+    {
+      "fingerprint": "3ab8f3a55eedcded",
+      "tokens": 80,
+      "first": "flutter_app/lib/data/backup/backup_payload.dart:679-684",
+      "second": "flutter_app/lib/data/backup/backup_payload.dart:700-705",
+      "copies": 2
+    }
+  ]
+}

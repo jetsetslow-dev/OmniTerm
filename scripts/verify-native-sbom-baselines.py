@@ -17,7 +17,7 @@ def main() -> None:
     parser.add_argument(
         "--configuration",
         required=True,
-        choices=("openSourceReleaseRuntimeClasspath", "playStoreReleaseRuntimeClasspath"),
+        choices=("openSourceReleaseRuntimeClasspath", "playStoreReleaseRuntimeClasspath", "releaseRuntimeClasspath"),
     )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]

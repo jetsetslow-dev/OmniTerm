@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm.ui
 
 import android.content.ClipData
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -503,14 +504,21 @@ fun formatUptime(seconds: Long): String {
 }
 
 /**
- * Compact "how long ago" for a session start time, e.g. "just now", "12m", "3h 04m", "2d 07h".
- * Used on terminal session entries so a backgrounded or resumable tmux session shows its age.
+ * "Started 12m ago", "Started 3h 04m ago" or "Started 2d 07h ago" through [ago], and [justNow]
+ * ("Started just now") in the first minute, which [ago] would make "Started just now ago".
+ * Used on terminal session entries, so a backgrounded or resumable tmux session shows its age, and
+ * for when a host was last seen.
  */
-fun formatSessionAge(startedAtMs: Long, nowMs: Long = System.currentTimeMillis()): String {
-    val elapsed = nowMs - startedAtMs
-    if (startedAtMs <= 0L || elapsed < 0L) return "—"
-    val totalMinutes = elapsed / 60_000L
-    if (totalMinutes < 1L) return "just now"
+@Composable
+fun ageText(@StringRes ago: Int, @StringRes justNow: Int, sinceMs: Long, nowMs: Long = System.currentTimeMillis()): String =
+    formatAge(sinceMs, nowMs)?.let { stringResource(ago, it) } ?: stringResource(justNow)
+
+/** The age [ageText] puts in "%1$s ago": "12m", "3h 04m", "2d 07h", or null in the first minute. */
+private fun formatAge(sinceMs: Long, nowMs: Long): String? {
+    if (sinceMs <= 0L) return "—"
+    // A time ahead of the clock, which was set back since, counts as just now too.
+    val totalMinutes = (nowMs - sinceMs) / 60_000L
+    if (totalMinutes < 1L) return null
     val days = totalMinutes / 1440L
     val hours = (totalMinutes % 1440L) / 60L
     val minutes = totalMinutes % 60L

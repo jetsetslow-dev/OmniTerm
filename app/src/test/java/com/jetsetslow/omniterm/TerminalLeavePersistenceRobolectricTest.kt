@@ -140,10 +140,10 @@ class TerminalLeavePersistenceRobolectricTest {
                     model.navigateTo(Screen.Monitor)
                     model.completeTerminalNavigation(disconnect = false)
                     assertEquals("Navigation must wait for recovery storage", Screen.Shell, model.currentScreen)
-                    assertTrue(model.showDisconnectTerminalDialog)
-                    assertTrue(model.isLeavingTerminalSessions)
+                    assertTrue("The pending leave dialog must stay visible", model.showDisconnectTerminalDialog)
+                    assertTrue("Recovery storage is still pending", model.isLeavingTerminalSessions)
                     assertFalse("A pending save must not suppress SSH recovery", shell.userClosed)
-                    assertFalse(shell.session.closed.value)
+                    assertFalse("The live channel must stay open until storage commits", shell.session.closed.value)
                 }
             } finally {
                 release.complete(Unit)
@@ -154,7 +154,17 @@ class TerminalLeavePersistenceRobolectricTest {
                 if (leaving) check(model.terminalLeaveError == null) { model.terminalLeaveError.orEmpty() }
                 leaving
             }
-            assertTrue(model.restorablePersistentSessions.any { it.tmuxName == shell.tmuxName })
+            withContext(main) {
+                assertTrue(
+                    "Navigation completed without publishing recovery for ${shell.tmuxName}: " +
+                        model.restorablePersistentSessions.map { it.tmuxName },
+                    model.restorablePersistentSessions.any { it.tmuxName == shell.tmuxName },
+                )
+            }
+            assertTrue(
+                "Navigation completed without durable recovery for ${shell.tmuxName}",
+                repository.getPersistentSessions().any { it.tmuxName == shell.tmuxName },
+            )
         } finally {
             release.complete(Unit)
             try {
