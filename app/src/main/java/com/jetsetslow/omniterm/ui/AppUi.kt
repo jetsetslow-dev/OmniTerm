@@ -65,6 +65,7 @@ import com.jetsetslow.omniterm.billing.LicenseState
 import com.jetsetslow.omniterm.billing.createLicenseController
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import com.jetsetslow.omniterm.data.DeviceCredentialGate
+import com.jetsetslow.omniterm.data.HostDependentCounts
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
@@ -482,6 +483,29 @@ fun ConfirmHost(controller: ConfirmController) {
         },
         dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+/**
+ * The host delete dialog's text: [lead], then what else OmniTerm deletes with the hosts. Counted
+ * rows are listed only when there are some.
+ */
+internal fun hostDeleteMessage(confirm: ConfirmController, lead: String, counts: HostDependentCounts): String {
+    fun line(count: Int, one: Int, many: Int): String? = when (count) {
+        0 -> null
+        1 -> confirm.str(one)
+        else -> confirm.str(many, count)
+    }
+    val lines = listOfNotNull(
+        line(counts.bookmarks, R.string.one_files_bookmark, R.string.n_files_bookmarks),
+        line(counts.tunnels, R.string.one_saved_tunnel, R.string.n_saved_tunnels),
+        line(counts.alertRules, R.string.one_alert_rule, R.string.n_alert_rules),
+        line(counts.savedTmuxSessions, R.string.one_saved_tmux_session, R.string.n_saved_tmux_sessions),
+        line(counts.composeStacks, R.string.one_recorded_compose_stack, R.string.n_recorded_compose_stacks),
+        line(counts.trustedHostKeys, R.string.one_trusted_host_key, R.string.n_trusted_host_keys),
+        confirm.str(R.string.monitoring_and_alert_history_and_launcher_shortcuts),
+    )
+    return lead + "\n\n" + confirm.str(R.string.also_deleted_from_omniterm) + "\n" +
+        lines.joinToString("\n") { "• $it" }
 }
 
 /** Shows the system biometric prompt as the dialog opens, when biometrics unlock the app. */
@@ -1838,6 +1862,26 @@ fun ServersMainView(viewModel: AppViewModel) {
     val copyWithConfirmation = rememberCopyWithConfirmation()
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
+    val scope = rememberCoroutineScope()
+    // One dialog for deleting one host or several. It lists what goes with them, and offers to end
+    // their tmux sessions only when there are some: it otherwise promises the remote machine is
+    // left alone.
+    fun askToDeleteHosts(ids: Set<Int>, title: String, lead: String, tmuxOne: Int, tmuxMany: Int, delete: (endTmux: Boolean) -> Unit) {
+        scope.launch {
+            val message = hostDeleteMessage(confirm, lead, viewModel.hostDeletionCounts(ids))
+            val tmuxCount = viewModel.tmuxSessionsOnHosts(ids).size
+            if (tmuxCount == 0) {
+                confirm.ask(title, message, confirmLabel = confirm.str(R.string.delete)) { delete(false) }
+            } else {
+                confirm.askWithOption(
+                    title,
+                    message,
+                    optionLabel = if (tmuxCount == 1) confirm.str(tmuxOne) else confirm.str(tmuxMany, tmuxCount),
+                    confirmLabel = confirm.str(R.string.delete),
+                ) { endTmux -> delete(endTmux) }
+            }
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -2002,26 +2046,13 @@ fun ServersMainView(viewModel: AppViewModel) {
                                 enabled = viewModel.selectedServerIdsForBulk.isNotEmpty(),
                                 onClick = {
                                     val ids = viewModel.selectedServerIdsForBulk.toSet()
-                                    val title = if (ids.size == 1) confirm.str(R.string.delete_one_host) else confirm.str(R.string.delete_n_hosts, ids.size)
-                                    val message = confirm.str(R.string.remove_these_host_connections_and_their)
-                                    // As for one host: offer to end tmux sessions only when there are some.
-                                    val tmuxCount = viewModel.tmuxSessionsOnHosts(ids).size
-                                    if (tmuxCount == 0) {
-                                        confirm.ask(title, message, confirmLabel = confirm.str(R.string.delete)) {
-                                            viewModel.deleteSelectedServers()
-                                        }
-                                    } else {
-                                        confirm.askWithOption(
-                                            title,
-                                            message,
-                                            optionLabel = if (tmuxCount == 1) {
-                                                confirm.str(R.string.also_end_the_tmux_session_on_the_removed_hosts)
-                                            } else {
-                                                confirm.str(R.string.also_end_the_tmux_sessions_on_the_removed_hosts, tmuxCount)
-                                            },
-                                            confirmLabel = confirm.str(R.string.delete),
-                                        ) { endTmux -> viewModel.deleteSelectedServers(endTmuxSessions = endTmux) }
-                                    }
+                                    askToDeleteHosts(
+                                        ids,
+                                        title = if (ids.size == 1) confirm.str(R.string.delete_one_host) else confirm.str(R.string.delete_n_hosts, ids.size),
+                                        lead = confirm.str(R.string.remove_these_host_connections_and_their),
+                                        tmuxOne = R.string.also_end_the_tmux_session_on_the_removed_hosts,
+                                        tmuxMany = R.string.also_end_the_tmux_sessions_on_the_removed_hosts,
+                                    ) { endTmux -> viewModel.deleteSelectedServers(endTmuxSessions = endTmux) }
                                 }
                             ) {
                                 Icon(
@@ -2581,27 +2612,13 @@ fun ServersMainView(viewModel: AppViewModel) {
                         TextButton(
                             onClick = {
                                 selectedForActionSheet = null
-                                // Offer to end the host's tmux sessions only when it has some; the
-                                // dialog otherwise promises the remote machine is left alone.
-                                val tmuxCount = viewModel.tmuxSessionsOnHosts(setOf(srv.id)).size
-                                if (tmuxCount == 0) {
-                                    confirm.ask(
-                                        confirm.str(R.string.delete_2, srv.name),
-                                        confirm.str(R.string.remove_this_host_connection_and_its),
-                                        confirmLabel = confirm.str(R.string.delete),
-                                    ) { viewModel.deleteServer(srv) }
-                                } else {
-                                    confirm.askWithOption(
-                                        confirm.str(R.string.delete_2, srv.name),
-                                        confirm.str(R.string.remove_this_host_connection_and_its),
-                                        optionLabel = if (tmuxCount == 1) {
-                                            confirm.str(R.string.also_end_its_tmux_session_on_the_server)
-                                        } else {
-                                            confirm.str(R.string.also_end_its_tmux_sessions_on_the_server, tmuxCount)
-                                        },
-                                        confirmLabel = confirm.str(R.string.delete),
-                                    ) { endTmux -> viewModel.deleteServer(srv, endTmuxSessions = endTmux) }
-                                }
+                                askToDeleteHosts(
+                                    setOf(srv.id),
+                                    title = confirm.str(R.string.delete_2, srv.name),
+                                    lead = confirm.str(R.string.remove_this_host_connection_and_its),
+                                    tmuxOne = R.string.also_end_its_tmux_session_on_the_server,
+                                    tmuxMany = R.string.also_end_its_tmux_sessions_on_the_server,
+                                ) { endTmux -> viewModel.deleteServer(srv, endTmuxSessions = endTmux) }
                             }
                         ) {
                             Icon(Icons.Filled.Delete, null, tint = Color.Red)

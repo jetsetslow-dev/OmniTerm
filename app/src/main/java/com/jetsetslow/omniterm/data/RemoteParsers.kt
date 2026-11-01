@@ -1222,6 +1222,8 @@ object RemoteCommands {
         append("for d in /sys/block/sd? /sys/block/nvme?n? /sys/block/vd?; do ")
         append("[ -e \"\$d\" ] || continue; n=\$(basename \"\$d\"); ")
         append("h=\$(ot 5 smartctl -H /dev/\$n 2>/dev/null | grep -iE 'overall-health|test result' | sed 's/.*: *//'); ")
+        // A USB drive is read through its enclosure, and most pass SMART through only as SAT.
+        append("[ -n \"\$h\" ] || h=\$(ot 5 smartctl -d sat -H /dev/\$n 2>/dev/null | grep -iE 'overall-health|test result' | sed 's/.*: *//'); ")
         append("[ -n \"\$h\" ] && printf '%s\\t%s\\n' \"\$n\" \"\$h\"; done; ")
         append("else echo '!UNAVAILABLE smartctl is not installed, so drive health cannot be read'; fi; ")
         // Active TCP connection count (ss preferred, /proc fallback).

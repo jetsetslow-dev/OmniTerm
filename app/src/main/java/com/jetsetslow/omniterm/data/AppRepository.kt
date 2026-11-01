@@ -51,6 +51,17 @@ class AppRepository(private val db: AppDatabase) {
         db.appSettingDao().deleteSetting("sftp_bookmarks_$serverId")
         db.serverDao().deleteById(serverId)
     }
+
+    /** What [deleteServerAndDependents] takes with [serverIds], counted for the delete dialog. */
+    suspend fun dependentCounts(serverIds: Set<Int>): HostDependentCounts = HostDependentCounts(
+        bookmarks = serverIds.sumOf { id ->
+            getSetting("sftp_bookmarks_$id").orEmpty().split("|||").count { it.isNotBlank() }
+        },
+        tunnels = getAllPortForwards().count { it.serverId in serverIds },
+        alertRules = getAllRules().count { it.serverId in serverIds },
+        savedTmuxSessions = getPersistentSessions().count { it.serverId in serverIds },
+        composeStacks = serverIds.sumOf { getStacksForServer(it).size },
+    )
     suspend fun keepOnlyServers(keepServerIds: Set<Int>) {
         // Room expands an empty IN-list inconsistently across SQLite versions. A server ID is an
         // auto-generated positive integer, so this impossible sentinel makes the "keep none" case
@@ -223,3 +234,16 @@ class AppRepository(private val db: AppDatabase) {
         private val secureSettingKeys = setOf("app_pin")
     }
 }
+
+/**
+ * The rows stored for some hosts that go when they are deleted. [trustedHostKeys] is filled in by
+ * the caller, which knows which hosts stay.
+ */
+data class HostDependentCounts(
+    val bookmarks: Int = 0,
+    val tunnels: Int = 0,
+    val alertRules: Int = 0,
+    val savedTmuxSessions: Int = 0,
+    val composeStacks: Int = 0,
+    val trustedHostKeys: Int = 0,
+)

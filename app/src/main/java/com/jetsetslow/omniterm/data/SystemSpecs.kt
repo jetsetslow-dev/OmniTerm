@@ -118,11 +118,29 @@ object SystemSpecsCommands {
     private fun privileged(drives: String): String =
         RemoteCommands.OT_HELPER + "echo '@PRIV'; " +
             "echo '@DIMM'; if command -v dmidecode >/dev/null 2>&1; then ot 10 dmidecode -t 16,17 2>&1; else echo '$MISSING'; fi; " +
-            "echo '@SMART'; if command -v smartctl >/dev/null 2>&1; then for d in $drives; do " +
-            "echo \"$DEVICE_MARKER\$d\"; ot 10 smartctl -i -H -A /dev/\$d 2>&1; done; else echo '$MISSING'; fi; true"
+            smart(drives) + "true"
+
+    /**
+     * SMART for each drive in [drives], each after a [DEVICE_MARKER] line. A USB drive is read
+     * through its enclosure, and smartctl's default for one often fails ("A mandatory SMART command
+     * failed", "Unknown USB bridge"): it is tried again as SAT, which most enclosures pass through.
+     * One that passes nothing through is marked [NO_PASSTHROUGH] and read as plain SCSI, which still
+     * names the drive. A card reader slot with no card in it is skipped.
+     */
+    internal fun smart(drives: String): String {
+        val refused = "*'-T permissive'*|*'-d option'*"
+        return "echo '@SMART'; if command -v smartctl >/dev/null 2>&1; then for d in $drives; do " +
+            "[ \"\$(cat /sys/block/\$d/size 2>/dev/null)\" = 0 ] && continue; " +
+            "echo \"$DEVICE_MARKER\$d\"; o=\$(ot 10 smartctl -i -H -A /dev/\$d 2>&1); " +
+            "case \"\$o\" in $refused) o=\$(ot 10 smartctl -d sat -i -H -A /dev/\$d 2>&1);; esac; " +
+            "case \"\$o\" in $refused) echo '$NO_PASSTHROUGH'; ot 10 smartctl -d scsi -i /dev/\$d 2>&1;; " +
+            "*) printf '%s\\n' \"\$o\";; esac; done; else echo '$MISSING'; fi; "
+    }
 
     const val MISSING = "!MISSING"
     const val DEVICE_MARKER = "##DEV "
+    /** A drive whose USB enclosure passes no SMART command through; see [smart]. */
+    const val NO_PASSTHROUGH = "!NOPASSTHROUGH"
 
     private val LINUX_DRIVES =
         "\$(ls /sys/block 2>/dev/null | grep -vE '^(loop|ram|zram|sr|fd|dm-|md|nbd)')"
@@ -392,6 +410,11 @@ object SystemSpecsParser {
             val device = chunk.lineSequence().first().trim()
             val fields = mutableListOf<SpecField>()
             var health: String? = null
+            // Its enclosure passes no SMART through: nothing about health can be read, only the name.
+            if (chunk.lineSequence().any { it.trim() == SystemSpecsCommands.NO_PASSTHROUGH }) {
+                health = "Unavailable"
+                fields += SpecField("SMART", "This drive's USB enclosure does not pass SMART data through, so its health cannot be read.")
+            }
             val attribute = Regex("^\\s*\\d+\\s+(\\S+)\\s+0x[0-9a-fA-F]+\\s+\\d+\\s+\\d+\\s+\\S+\\s+\\S+\\s+\\S+\\s+(\\S+)\\s+(.+)$")
             chunk.lineSequence().drop(1).forEach { line ->
                 val row = attribute.find(line)
@@ -420,7 +443,11 @@ object SystemSpecsParser {
         return byDevice
     }
 
-    private val SMART_SKIP = listOf("Local Time is", "SMART support is", "smartctl", "Copyright", "Device is", "Read SMART", "SMART Status")
+    // smartctl's own errors are not drive properties either.
+    private val SMART_SKIP = listOf(
+        "Local Time is", "SMART support is", "smartctl", "Copyright", "Device is", "Read SMART", "SMART Status",
+        "Read Device Identity", "Read NVMe Identify", "A mandatory SMART command", "Smartctl open device",
+    )
 
     /** A drive's smartctl fields that say something its other fields do not. */
     private fun withSmart(fields: List<SpecField>, smart: List<SpecField>?): List<SpecField> {
