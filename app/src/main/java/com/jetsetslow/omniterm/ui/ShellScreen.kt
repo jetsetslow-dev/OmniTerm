@@ -872,7 +872,7 @@ private fun TerminalOpenPicker(
                                 Text(displayTmuxSessionName(session.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                             }
                             Text(
-                                stringResource(R.string.started_ago, formatSessionAge(session.startedAtMs, ageNowMs)),
+                                ageText(R.string.started_ago, R.string.started_just_now, session.startedAtMs, ageNowMs),
                                 fontSize = 10.sp,
                                 color = scheme.onSurfaceVariant,
                             )
@@ -3336,12 +3336,12 @@ private fun SessionMenuHeader(@StringRes label: Int) {
 /** "Started 5m ago · backgrounded 2m ago" under a session in a picker; the second part once it is backgrounded. */
 @Composable
 private fun SessionAgeLine(startedAtMs: Long, backgroundedAtMs: Long?, ageNowMs: Long) {
-    val started = formatSessionAge(startedAtMs, ageNowMs)
+    val started = ageText(R.string.started_ago, R.string.started_just_now, startedAtMs, ageNowMs)
     Text(
         if (backgroundedAtMs == null) {
-            stringResource(R.string.started_ago, started)
+            started
         } else {
-            stringResource(R.string.started_ago_backgrounded_ago, started, formatSessionAge(backgroundedAtMs, ageNowMs))
+            "$started · ${ageText(R.string.backgrounded_ago, R.string.backgrounded_just_now, backgroundedAtMs, ageNowMs)}"
         },
         fontSize = 10.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

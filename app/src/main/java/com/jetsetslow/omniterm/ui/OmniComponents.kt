@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm.ui
 
 import android.content.ClipData
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -257,23 +258,27 @@ fun OmniTag(label: String, modifier: Modifier = Modifier, color: Color = OmniCol
     }
 }
 
-/** Translucent accent button. */
+/**
+ * Translucent accent button. Pass [enabled] = false while the action cannot run (no command, no
+ * host, already running): the button greys out and ignores taps instead of looking ready.
+ */
 @Composable
-fun OmniButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = OmniColors.cyan, small: Boolean = false, contentDescription: String? = null) {
+fun OmniButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = OmniColors.cyan, small: Boolean = false, contentDescription: String? = null, enabled: Boolean = true) {
     val cdMod = if (contentDescription != null) Modifier.semantics { this.contentDescription = contentDescription } else Modifier
+    val tint = if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     // Minimum heights keep these tappable (a11y touch targets) without inflating dense rows to
     // a full 48dp; the text stays centered when the min height exceeds the padded text height.
     Box(
         modifier.then(cdMod)
             .clip(RoundedCornerShape(6.dp))
-            .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-            .clickable { onClick() }
+            .background(tint.copy(alpha = 0.12f))
+            .border(1.dp, tint.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled) { onClick() }
             .defaultMinSize(minHeight = if (small) 36.dp else 44.dp)
             .padding(horizontal = if (small) 10.dp else 14.dp, vertical = if (small) 5.dp else 8.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = color, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = if (small) 10.sp else 12.sp, letterSpacing = 0.6.sp)
+        Text(label, color = tint, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = if (small) 10.sp else 12.sp, letterSpacing = 0.6.sp)
     }
 }
 
@@ -503,14 +508,21 @@ fun formatUptime(seconds: Long): String {
 }
 
 /**
- * Compact "how long ago" for a session start time, e.g. "just now", "12m", "3h 04m", "2d 07h".
- * Used on terminal session entries so a backgrounded or resumable tmux session shows its age.
+ * "Started 12m ago", "Started 3h 04m ago" or "Started 2d 07h ago" through [ago], and [justNow]
+ * ("Started just now") in the first minute, which [ago] would make "Started just now ago".
+ * Used on terminal session entries, so a backgrounded or resumable tmux session shows its age, and
+ * for when a host was last seen.
  */
-fun formatSessionAge(startedAtMs: Long, nowMs: Long = System.currentTimeMillis()): String {
-    val elapsed = nowMs - startedAtMs
-    if (startedAtMs <= 0L || elapsed < 0L) return "—"
-    val totalMinutes = elapsed / 60_000L
-    if (totalMinutes < 1L) return "just now"
+@Composable
+fun ageText(@StringRes ago: Int, @StringRes justNow: Int, sinceMs: Long, nowMs: Long = System.currentTimeMillis()): String =
+    formatAge(sinceMs, nowMs)?.let { stringResource(ago, it) } ?: stringResource(justNow)
+
+/** The age [ageText] puts in "%1$s ago": "12m", "3h 04m", "2d 07h", or null in the first minute. */
+private fun formatAge(sinceMs: Long, nowMs: Long): String? {
+    if (sinceMs <= 0L) return "—"
+    // A time ahead of the clock, which was set back since, counts as just now too.
+    val totalMinutes = (nowMs - sinceMs) / 60_000L
+    if (totalMinutes < 1L) return null
     val days = totalMinutes / 1440L
     val hours = (totalMinutes % 1440L) / 60L
     val minutes = totalMinutes % 60L
@@ -558,7 +570,7 @@ fun HostPickerField(
         allHostsOption && 0 in selectedIds -> "All hosts"
         selectedIds.isEmpty() -> "Choose hosts…"
         else -> {
-            val names = servers.filter { it.id in selectedIds }.map { it.name }
+            val names = servers.filter { it.id in selectedIds }.map { if (isSelectable(it)) it.name else "${it.name} (offline)" }
             if (singleSelect) names.firstOrNull() ?: "Choose host…"
             else "${names.size} selected: ${names.joinToString(", ")}"
         }
@@ -682,10 +694,12 @@ fun HostPickerDialog(
                     }
                     items(filtered.size, key = { filtered[it].id }) { idx ->
                         val s = filtered[idx]
-                        val enabled = isSelectable(s)
+                        val selectable = isSelectable(s)
+                        // A host picked earlier can always be unpicked, even once it cannot be picked.
+                        val enabled = selectable || s.id in selectedIds
                         HostPickerRow(
                             name = s.name,
-                            detail = HostDisplay.userAtHost(s) + if (enabled) "" else " · offline",
+                            detail = HostDisplay.userAtHost(s) + if (selectable) "" else " · offline",
                             online = s.status == "online",
                             dotColor = OmniColors.serverAccent(s.serverColor, s.name),
                             checked = s.id in selectedIds,

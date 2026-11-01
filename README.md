@@ -117,17 +117,18 @@ The **Specs** tab (also under **⋮ → System specs** on the Hosts list) lists 
 Monitoring uses each host's own tools. Services are listed and managed through systemd or OpenRC on Linux, rc.d or `rcctl` on the BSDs, launchd on macOS (the jobs your SSH user can manage), and Windows services on Windows. **Reboot** runs `sudo reboot` on Linux, `sudo shutdown -r now` on BSD and macOS, and `shutdown /r` on Windows, and ending a process uses `kill` or, on Windows, `taskkill`. Windows hosts have no cron, tmux or sudo, so the Cron tab, persistent terminal sessions, sudo mode, container management, and Files' search, archives, folder sizes and same-host paste need a Linux, macOS or BSD host; on Windows they say so instead of failing.
 
 ### Docker, Podman & stacks
-Open **Infra** to manage containers, compose stacks, images, and volumes (Docker and Podman are detected automatically).
+Open **Containers** to manage containers, compose stacks, images, and volumes (Docker and Podman are detected automatically). The host picker lists online hosts; the host you are on stays selected if it goes offline, and so does any host holding unsaved Compose Builder changes, marked offline.
 - **Containers & stacks** — summary health; expand for ports, streaming **logs**, per-container **stats** (CPU/memory/network/block I/O), one-tap **exec-into-shell**, start/stop/restart/pause, and full stack lifecycle actions.
-- **Compose Builder** — a visual editor for `docker-compose.yml`; deploy new stacks or surgically edit existing ones, with `compose config` validation before every fail-safe deploy.
+- **Compose Builder** — a visual editor for `docker-compose.yml`; deploy new stacks or surgically edit existing ones, with `compose config` validation before every fail-safe deploy. Each host keeps its own unsaved changes while you switch hosts, even while it is offline; Deploy waits until the host is back. Changes are kept until you close the app.
 
 ### Fleet Broadcast
-Open **Fleet → Broadcast** to run a command across selected online hosts or host groups, with live per-host streaming output and built-in/saved fleet scripts.
+Open **Fleet → Broadcast** to run a command across selected online hosts or host groups, with live per-host streaming output and built-in/saved fleet scripts. **Run** needs a command and at least one online host. A host you picked stays picked if it goes offline: runs skip it, and the confirmation names it, until it is back. Each host's output follows the newest lines; scroll up to read and it stays where you are until you scroll back to the end. When a command does not succeed, its card says why: the exit status, or that the connection was lost before it finished (the command may still be running on the host).
+- **Run in tmux** runs each host's command in its own tmux session, so it keeps running if the connection drops. OmniTerm reconnects every 15 seconds for up to 30 minutes (or tap **Reconnect now**) and finishes with the command's full output. **Attach** opens the running command in the terminal. Each tmux session closes, and its log is removed, when its command ends or you tap **Stop**. A host without tmux waits for you to choose **Install tmux** or **Run without tmux**.
 
 ### Scripts, alerts & Wake-on-LAN
 - **Tools → Scripts** — create, edit, and organize saved scripts; mark each for quick per-host execution, fleet broadcast, or both.
-- **Tools → Alerts & Rules** — CPU/memory/disk/latency threshold rules evaluated during in-app metrics refresh, with an Alerts Center for active and historical incidents. Alert history retention is capped per host.
-- **Tools → Wake on LAN** — save wake targets and send magic packets; scan the LAN from the editor to pick discovered devices.
+- **Tools → Alerts & rules** — CPU/memory/disk/latency threshold rules evaluated during in-app metrics refresh, with an Alerts Center for active and historical incidents. Alert history retention is capped per host.
+- **Tools → Network tools → Wake-on-LAN** — save wake targets and send magic packets; scan the LAN from the editor to pick discovered devices.
 
 ## Settings & customization
 Open **Tools → Settings**:
@@ -138,10 +139,10 @@ Open **Tools → Settings**:
 - Background session keepalive.
 - Alert history entries per host (10–100) and SFTP transfer warnings.
 
-**About → Device & diagnostics** shows app version, build, device info, and an on-device crash-history viewer for bug reports.
+**Tools → About OmniTerm → Device & diagnostics** shows app version, build, device info, and an on-device crash-history viewer for bug reports.
 
 ## Backup & restore
-Open **Tools → Backups Hub** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, credential profiles, scripts, alert data, saved shares, tunnels, and settings).
+Open **Tools → App backup** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, credential profiles, scripts, alert data, saved shares, tunnels, and settings).
 - Backups containing sensitive sections are compressed and encrypted with AES-256-GCM using a passphrase-derived key.
 - App backups never copy files from your remote hosts.
 - OmniTerm does not store the backup passphrase — keep it safe.
@@ -165,7 +166,7 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 - **Infra issues** — confirm Docker/Podman is installed and the SSH user may run it.
 - **Tunnel won't start** — confirm the bind port is free and the destination is reachable *from the SSH host* (for `-L`) or *from this device* (for `-R`).
 
-**Support:** open a GitHub issue with diagnostic logs from **About → Device & diagnostics**, or reach the community on GitHub.
+**Support:** open a GitHub issue with diagnostic logs from **Tools → About OmniTerm → Device & diagnostics**, or reach the community on GitHub.
 
 ## Support the project
 - Buy **Unlock OmniTerm** in the Play Store build.

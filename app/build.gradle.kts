@@ -157,6 +157,11 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     "omniterm.regenerateFixture",
     providers.systemProperty("omniterm.regenerateFixture").getOrElse("false"),
   )
+  // ToolsPathTextRobolectricTest checks the README's "Tools → …" paths, so editing only the README
+  // must rerun the tests rather than leave them up to date.
+  inputs.file(rootProject.file("README.md"))
+    .withPathSensitivity(PathSensitivity.RELATIVE)
+    .withPropertyName("readme")
   if (lowResourceBuild || linuxArm64Host) {
     maxParallelForks = 1
     maxHeapSize = "768m"

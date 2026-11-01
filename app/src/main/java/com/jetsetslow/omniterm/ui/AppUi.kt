@@ -93,6 +93,8 @@ fun ServerSelectorBar(
     viewModel: AppViewModel,
     overrideServer: ServerEntity? = null,
     onlineOnly: Boolean = false,
+    // With [onlineOnly], an offline host this returns true for is offered too, marked offline.
+    alsoOffer: (ServerEntity) -> Boolean = { false },
     onServerChange: () -> Unit = {},
     allowSplitSelection: Boolean = false,
     onOpenSplit: (List<Int>) -> Unit = {},
@@ -104,7 +106,7 @@ fun ServerSelectorBar(
     modifier: Modifier = Modifier
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val selectableServers = if (onlineOnly) servers.filter { viewModel.isPickableHost(it) } else servers
+    val selectableServers = if (onlineOnly) servers.filter { viewModel.isPickableHost(it) || alsoOffer(it) } else servers
     val srv = overrideServer
         ?: selectableServers.find { it.id == viewModel.selectedServerId }
         ?: selectableServers.firstOrNull()
@@ -207,7 +209,9 @@ fun ServerSelectorBar(
                 DropdownMenuItem(
                     text = { Text("${HostDisplay.name(s)} — ${HostDisplay.userAtHost(s)}", fontFamily = OmniFonts.mono) },
                     leadingIcon = { StatusDot(online = s.status == "online", color = getServerColor(s), size = 8.dp) },
-                    trailingIcon = if (allowSplitSelection) {
+                    trailingIcon = if (!allowSplitSelection && !viewModel.isPickableHost(s)) {
+                        { Text("offline", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    } else if (allowSplitSelection) {
                         {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (checkedForSplit) {
@@ -2099,7 +2103,12 @@ fun ServersMainView(viewModel: AppViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 12.dp)
+                        .testTag("hosts.list"),
+                    state = rememberTopAnchoredLazyListState(
+                        order = Triple(viewModel.hostSort, viewModel.serverSearchText, viewModel.selectedGroupChip),
+                        keys = filteredList.map { it.id },
+                    ),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Stable keys: only the cards whose host actually changed recompose on the
@@ -2358,11 +2367,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                 )
                                                 viewModel.lastSeenAt[server.id]?.let { seenAt ->
                                                     Text(
-                                                        if (System.currentTimeMillis() - seenAt < 60_000L) {
-                                                            stringResource(R.string.last_seen_just_now)
-                                                        } else {
-                                                            stringResource(R.string.last_seen_ago, formatSessionAge(seenAt))
-                                                        },
+                                                        ageText(R.string.last_seen_ago, R.string.last_seen_just_now, seenAt),
                                                         fontSize = 10.sp,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     )
@@ -3275,8 +3280,8 @@ fun AddServerSheet(
                 }) { Text(stringResource(R.string.next)) }
             } else {
                 Button(
+                    enabled = !savingServer,
                     onClick = {
-                        if (savingServer) return@Button
                         val candidate = ServerEntity(
                             id = serverToEdit?.id ?: 0, name = name, host = host,
                             port = port.toIntOrNull() ?: 22, username = user,

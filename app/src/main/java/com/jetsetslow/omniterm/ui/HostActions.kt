@@ -12,7 +12,7 @@ internal fun wolTargetFor(server: ServerEntity, targets: List<WolTargetEntity>):
 
 /**
  * Asks before sending [target] a magic packet, then says whether it went out. The one wake flow,
- * used by Tools → Wake-on-LAN and by an offline host's card.
+ * used by Tools → Network tools → Wake-on-LAN and by an offline host's card.
  */
 fun confirmAndWake(confirm: ConfirmController, viewModel: AppViewModel, target: WolTargetEntity, context: Context) {
     confirm.ask(

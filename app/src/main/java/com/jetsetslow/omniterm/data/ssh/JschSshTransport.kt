@@ -261,11 +261,16 @@ class JschSshTransport : SshTransport {
             stdoutDecoder.finish().takeIf { it.isNotEmpty() }?.let { accumulated.append(it); onChunk(it) }
             stderrDecoder.finish().takeIf { it.isNotEmpty() }?.let { accumulated.append(it); onChunk(it) }
             val output = accumulated.text()
-            return if (channel.exitStatus == 0) {
-                output
-            } else {
-                val detail = output.ifBlank { "Command exited with status ${channel.exitStatus}" }
-                "SSH Error: command failed (${channel.exitStatus}): $detail"
+            return when {
+                channel.exitStatus == 0 -> output
+                // No exit status and no session: the connection dropped, not the command, which may
+                // still be running on the host. A command killed by a signal also has no status, but
+                // its session is still up.
+                channel.exitStatus == -1 && !session.isConnected -> "SSH Error: $SSH_CONNECTION_LOST"
+                else -> {
+                    val detail = output.ifBlank { "Command exited with status ${channel.exitStatus}" }
+                    "SSH Error: command failed (${channel.exitStatus}): $detail"
+                }
             }
         } catch (e: Throwable) {
             if (lease != null && shouldRetireAfterCommandFailure(e, session)) pool.evict(creds, session)

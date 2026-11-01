@@ -54,14 +54,6 @@ data class SimDockerNetwork(
 
 data class KnownHost(val host: String, val keyType: String, val fingerprint: String)
 
-data class FleetLogEntry(
-    val serverName: String,
-    val serverId: Int,
-    val timestamp: String,
-    val level: String,
-    val message: String,
-)
-
 data class SimProcess(
     val pid: Int,
     val name: String,

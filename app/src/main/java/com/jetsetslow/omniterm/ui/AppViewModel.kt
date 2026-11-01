@@ -26,6 +26,7 @@ import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
 import com.jetsetslow.omniterm.data.ssh.JschSftp
 import com.jetsetslow.omniterm.data.ssh.JschSshTransport
+import com.jetsetslow.omniterm.data.ssh.SSH_CONNECTION_LOST
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshHostKeyTrust
 import com.jetsetslow.omniterm.data.ssh.SshTransport
@@ -88,6 +89,9 @@ private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
 
 /** Default hard stop for one Fleet Broadcast run. */
 private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
+/** How often a tmux broadcast host whose connection dropped is tried again, and for how long. */
+private const val BROADCAST_RECONNECT_EVERY_MS = 15_000L
+private const val BROADCAST_RECONNECT_FOR_MS = 30 * 60 * 1000L
 
 /**
  * A preset is safe to omit from backup only when every persisted field still matches its canonical
@@ -688,7 +692,11 @@ data class RemoteFileRef(
     val size: Long = 0L,
 )
 
-enum class BroadcastStatus { Running, Success, Failure }
+/**
+ * A broadcast host's state. Reconnecting and Detached are tmux runs whose connection dropped (still
+ * trying, and stopped trying); NeedsTmux is a host without tmux, waiting for the user.
+ */
+enum class BroadcastStatus { Running, Success, Failure, Reconnecting, Detached, NeedsTmux }
 
 enum class FleetTargetMode { Servers, Groups }
 
@@ -698,6 +706,10 @@ data class BroadcastResultItem(
     val output: String = "",
     val status: BroadcastStatus = BroadcastStatus.Running,
     val truncated: Boolean = false,
+    /** Why the host ended as it did, or what it is waiting for, shown under its output. */
+    val note: String? = null,
+    /** The tmux run this host's command is in, when Broadcast ran it in tmux. */
+    val tmuxRunId: String? = null,
 )
 
 data class BackupSelection(
@@ -1211,7 +1223,7 @@ class AppViewModel @JvmOverloads constructor(
         get() = _selectedServerId
         set(value) {
             if (value != _selectedServerId) {
-                clearActiveComposeDraft()
+                // Each host keeps its own Compose draft (see [activeComposeDraft]).
                 clearMonitorHostData()
                 clearContainerHostData()
             }
@@ -1275,7 +1287,7 @@ class AppViewModel @JvmOverloads constructor(
     var isLogsLive by mutableStateOf(true)
 
     // FLEET SCREEN MODE
-    var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast, 2: Fleet Logs
+    var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast
     val broadcastTargetServerIds = mutableStateListOf<Int>()
     val broadcastTargetGroups = mutableStateListOf<String>()
     var broadcastTargetMode by mutableStateOf(FleetTargetMode.Servers)
@@ -1283,46 +1295,6 @@ class AppViewModel @JvmOverloads constructor(
     var isBroadcastExecuting by mutableStateOf(false)
     val broadcastResults = mutableStateListOf<BroadcastResultItem>()
     private var broadcastJob: Job? = null
-
-    // FLEET LOGS
-    val fleetLogSelectedServerIds = mutableStateListOf<Int>()
-    var fleetLogs by mutableStateOf<List<FleetLogEntry>>(emptyList()); private set
-    var isFleetLogsLoading by mutableStateOf(false)
-    private val fleetLogSemaphore = kotlinx.coroutines.sync.Semaphore(4)
-
-    fun toggleFleetLogServer(serverId: Int) {
-        if (serverId in fleetLogSelectedServerIds) fleetLogSelectedServerIds.remove(serverId)
-        else fleetLogSelectedServerIds.add(serverId)
-    }
-
-    fun loadFleetLogs() {
-        if (isFleetLogsLoading) return
-        val targets = fleetLogSelectedServerIds.toList()
-        if (targets.isEmpty()) { fleetLogs = emptyList(); return }
-        isFleetLogsLoading = true
-        viewModelScope.launch(Dispatchers.IO) {
-            val allEntries = java.util.concurrent.CopyOnWriteArrayList<FleetLogEntry>()
-            val jobs = targets.map { srvId ->
-                launch {
-                    fleetLogSemaphore.withPermit {
-                        val srv = repository.getServerById(srvId) ?: return@launch
-                        if (srv.status != "online") return@launch
-                        val out = executeSshCommand(srv, RemoteCommands.journal(200, hostOs(srv)))
-                        val entries = RemoteParsers.parseFleetJournal(out, srv.name, srv.id)
-                        allEntries.addAll(entries)
-                    }
-                }
-            }
-            try {
-                jobs.forEach { it.join() }
-                val sorted = allEntries.sortedBy { it.timestamp }
-                withContext(Dispatchers.Main) { fleetLogs = sorted }
-            } finally {
-                // Cancellation (leaving the screen) must not strand the spinner.
-                withContext(NonCancellable + Dispatchers.Main) { isFleetLogsLoading = false }
-            }
-        }
-    }
 
     // SFTP SCREEN FILE BROWSER
     var activeSftpTab by mutableStateOf(0) // 0: Bookmarks, 1: SFTP files, 2: Shares, 3: Transfers
@@ -1508,51 +1480,75 @@ class AppViewModel @JvmOverloads constructor(
     // own 10s poll. The dots key their LaunchedEffect on this value.
     var wolStatusRefreshTick by mutableStateOf(0)
         private set
-    var activeComposeDraft by mutableStateOf<com.jetsetslow.omniterm.ui.ComposeStackDraft?>(null)
-        private set
-    /** Host and generation owning the current draft; prevents delayed Compose effects crossing hosts. */
-    var activeComposeServerId by mutableStateOf<Int?>(null)
-        private set
-    var activeComposeGeneration by mutableIntStateOf(0)
-        private set
-    /** Raw Builder state is VM-owned so rotation/multi-window recreation cannot discard edits. */
-    var activeComposeRawText by mutableStateOf<String?>(null)
-        private set
-    var activeComposeRawMode by mutableStateOf(false)
-        private set
-    var activeComposeRawSeedKey by mutableStateOf<String?>(null)
-        private set
+    /**
+     * One host's Compose Builder work: the draft as edited, the [baseline] it was opened from (what
+     * the edits are diffed against when deployed), and the raw-YAML editor's state, which is kept
+     * here so rotation or multi-window recreation cannot discard edits.
+     */
+    private data class ComposeDraftSlot(
+        val draft: com.jetsetslow.omniterm.ui.ComposeStackDraft,
+        val baseline: com.jetsetslow.omniterm.ui.ComposeStackDraft,
+        val generation: Int,
+        val rawText: String? = null,
+        val rawMode: Boolean = false,
+        val rawSeedKey: String? = null,
+    )
+
+    /**
+     * Compose drafts by host. Switching hosts keeps each host's unsaved draft for when the user comes
+     * back, even while that host is offline; only the Builder's own Clear or Back discards one.
+     */
+    private val composeDrafts = mutableStateMapOf<Int, ComposeDraftSlot>()
+    private var composeDraftGenerations = 0
+    private val composeHostId: Int? get() = selectedServerId ?: selectedServer?.id
+    private val activeComposeSlot: ComposeDraftSlot? get() = composeHostId?.let { composeDrafts[it] }
+
+    /** The selected host's draft. */
+    val activeComposeDraft: com.jetsetslow.omniterm.ui.ComposeStackDraft? get() = activeComposeSlot?.draft
+    /** What [activeComposeDraft] was opened from. */
+    val activeComposeBaseline: com.jetsetslow.omniterm.ui.ComposeStackDraft? get() = activeComposeSlot?.baseline
+    /** Host owning the current draft; prevents delayed Compose effects crossing hosts. */
+    val activeComposeServerId: Int? get() = composeHostId?.takeIf { it in composeDrafts }
+    /** Unique to one draft on one host, so the Builder re-seeds when either changes. */
+    val activeComposeGeneration: Int get() = activeComposeSlot?.generation ?: -1
+    val activeComposeRawText: String? get() = activeComposeSlot?.rawText
+    val activeComposeRawMode: Boolean get() = activeComposeSlot?.rawMode ?: false
+    val activeComposeRawSeedKey: String? get() = activeComposeSlot?.rawSeedKey
 
     fun beginComposeDraft(draft: com.jetsetslow.omniterm.ui.ComposeStackDraft) {
-        activeComposeGeneration++
-        activeComposeServerId = selectedServerId
-        activeComposeRawText = null
-        activeComposeRawMode = false
-        activeComposeRawSeedKey = null
-        activeComposeDraft = draft
+        val host = composeHostId ?: return
+        composeDrafts[host] = ComposeDraftSlot(draft = draft, baseline = draft, generation = ++composeDraftGenerations)
     }
 
     fun updateComposeDraft(
         generation: Int,
         draft: com.jetsetslow.omniterm.ui.ComposeStackDraft,
     ) {
-        if (generation != activeComposeGeneration || activeComposeServerId != selectedServerId) return
-        activeComposeDraft = draft
+        val host = composeHostId ?: return
+        val slot = composeDrafts[host]?.takeIf { it.generation == generation } ?: return
+        composeDrafts[host] = slot.copy(draft = draft)
     }
 
     fun rememberComposeRawState(seedKey: String, text: String, rawMode: Boolean) {
-        activeComposeRawSeedKey = seedKey
-        activeComposeRawText = text
-        activeComposeRawMode = rawMode
+        val host = composeHostId ?: return
+        val slot = composeDrafts[host] ?: return
+        if (slot.rawSeedKey == seedKey && slot.rawText == text && slot.rawMode == rawMode) return
+        composeDrafts[host] = slot.copy(rawSeedKey = seedKey, rawText = text, rawMode = rawMode)
     }
 
     fun clearActiveComposeDraft() {
-        activeComposeGeneration++
-        activeComposeServerId = null
-        activeComposeDraft = null
-        activeComposeRawText = null
-        activeComposeRawMode = false
-        activeComposeRawSeedKey = null
+        composeHostId?.let { composeDrafts.remove(it) }
+    }
+
+    /**
+     * Whether [serverId] holds Compose edits not yet deployed. Containers keeps such a host in its
+     * picker while it is offline, so the user can go back to the draft.
+     */
+    fun hasUnsavedComposeDraft(serverId: Int): Boolean {
+        val slot = composeDrafts[serverId] ?: return false
+        if (slot.draft != slot.baseline) return true
+        val baselineText = slot.baseline.originalText ?: com.jetsetslow.omniterm.ui.generateDockerComposeYaml(slot.baseline)
+        return slot.rawMode && slot.rawText != null && slot.rawText != baselineText
     }
 
     // ── Shared live-action output panel ──
@@ -2348,6 +2344,9 @@ class AppViewModel @JvmOverloads constructor(
     // Above init: the settings collector there assigns it while the constructor is still running.
     var hostSort by mutableStateOf(HostSort.Name)
         private set
+    // Above init for the same reason: whether Fleet Broadcast runs each command in its own tmux session.
+    var broadcastInTmux by mutableStateOf(false)
+        private set
 
     init {
         TerminalSessionManager.init(application)
@@ -2587,6 +2586,7 @@ class AppViewModel @JvmOverloads constructor(
                     list.find { it.key == "measurement_system" }?.value
                 )
                 hostSort = HostSort.fromSetting(list.find { it.key == "host_sort" }?.value)
+                broadcastInTmux = list.find { it.key == "broadcast_in_tmux" }?.value?.toBooleanStrictOrNull() ?: false
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
                     isKeepScreenOnEnabled = keepScreenOn
@@ -3478,7 +3478,7 @@ class AppViewModel @JvmOverloads constructor(
     private fun subtabCount(screen: Screen): Int = when (screen) {
         Screen.Monitor -> if (servers.value.any { it.status == "online" }) MonitorTab.entries.size else 0
         Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) 5 else 0
-        Screen.Fleet -> 3
+        Screen.Fleet -> 2
         Screen.SFTP -> 4
         Screen.Network -> 9
         Screen.Alerts -> 3
@@ -4125,6 +4125,7 @@ class AppViewModel @JvmOverloads constructor(
         // cumulative counters, measuring its first CPU and network rates against a machine it
         // has never met, and showing a sparkline drawn from someone else's readings.
         forgetTelemetryFor(server.id)
+        composeDrafts.remove(server.id)
         if (!keepTrustedHostKeys(server.host, remaining)) {
             SshHostKeyTrust.removeHost(server.host, server.port)
         }
@@ -6712,26 +6713,29 @@ class AppViewModel @JvmOverloads constructor(
         if (!RemoteCommands.isAttachableTmuxName(session.name)) return
         dismissAttachTmux()
         selectedServerId = srv.id
-        viewModelScope.launch {
-            val known = isTmuxSessionOpen(srv.id, session.name) ||
-                restorablePersistentSessions.any { it.serverId == srv.id && it.tmuxName == session.name }
-            if (!known) {
-                persistentSessionMutationMutex.withLock {
-                    repository.upsertPersistentSession(
-                        PersistentSessionEntity(
-                            tmuxName = session.name,
-                            serverId = srv.id,
-                            serverName = srv.name,
-                            createdAt = session.createdAtMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
-                            backgroundedAt = System.currentTimeMillis(),
-                            adopted = true,
-                        ),
-                    )
-                    restorablePersistentSessions = repository.getPersistentSessions()
-                }
+        viewModelScope.launch { attachTmuxSessionOn(srv, session.name, session.createdAtMs) }
+    }
+
+    /** Attaches the tmux session [name] on [srv] by its own name (see [attachHostTmuxSession]). */
+    private suspend fun attachTmuxSessionOn(srv: ServerEntity, name: String, createdAtMs: Long) {
+        val known = isTmuxSessionOpen(srv.id, name) ||
+            restorablePersistentSessions.any { it.serverId == srv.id && it.tmuxName == name }
+        if (!known) {
+            persistentSessionMutationMutex.withLock {
+                repository.upsertPersistentSession(
+                    PersistentSessionEntity(
+                        tmuxName = name,
+                        serverId = srv.id,
+                        serverName = srv.name,
+                        createdAt = createdAtMs.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                        backgroundedAt = System.currentTimeMillis(),
+                        adopted = true,
+                    ),
+                )
+                restorablePersistentSessions = repository.getPersistentSessions()
             }
-            resumePersistentSession(srv.id, session.name)
         }
+        resumePersistentSession(srv.id, name)
     }
 
     private suspend fun remoteTmuxSessionExists(creds: SshCredentials, tmuxName: String): Boolean? {
@@ -11787,6 +11791,25 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     // MULTI-HOST FLEET BROADCAST CODE
+    fun updateBroadcastInTmux(on: Boolean) {
+        broadcastInTmux = on
+        viewModelScope.launch { repository.insertSetting("broadcast_in_tmux", on.toString()) }
+    }
+
+    /** The last run's command and tmux run id, for a host that installs tmux or reconnects later. */
+    private var lastBroadcastCommand = ""
+    private var lastBroadcastRunId = ""
+    /** Hosts the app runs or follows again on their own, after the broadcast itself ended. */
+    private val broadcastHostJobs = mutableMapOf<Int, Job>()
+    /** Set by Stop, so cancelling ends the tmux runs on the hosts; leaving the app does not. */
+    private var broadcastStopRequested = false
+    /** "Reconnect now" for a host waiting between automatic reconnects. */
+    private val broadcastReconnectNow = java.util.concurrent.ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
+
+    private fun updateBroadcastExecuting() {
+        isBroadcastExecuting = broadcastJob?.isActive == true || broadcastHostJobs.values.any { it.isActive }
+    }
+
     /**
      * Executes [command] on the broadcast targets. When [resolvedIds] is given (the list the user
      * just confirmed in the dialog), exactly those hosts are hit — group/online membership is NOT
@@ -11798,6 +11821,11 @@ class AppViewModel @JvmOverloads constructor(
         val cmd = command.trim()
         val targetIds = broadcastTargetServerIds.toList()
         val targetGroups = broadcastTargetGroups.toList()
+        val inTmux = broadcastInTmux
+        val runId = UUID.randomUUID().toString().replace("-", "").take(10)
+        lastBroadcastCommand = cmd
+        lastBroadcastRunId = runId
+        broadcastStopRequested = false
         isBroadcastExecuting = true
         broadcastResults.clear()
 
@@ -11827,41 +11855,29 @@ class AppViewModel @JvmOverloads constructor(
             var cancelled = false
             broadcastResults.addAll(selected.map { BroadcastResultItem(serverId = it.id, serverName = it.name) })
             val limiter = Semaphore(6)
-            try {
-                withTimeout(BROADCAST_TIMEOUT_MS) {
-                    selected.map { srv ->
-                        async {
-                            limiter.withPermit {
-                                try {
-                                    val output = sshTransport.execStream(buildCredentials(srv), cmd) { chunk ->
-                                        appendBroadcastChunk(srv.id, chunk)
-                                    }
-                                    finishBroadcastResult(
-                                        srv.id,
-                                        if (output.startsWith("SSH Error")) BroadcastStatus.Failure else BroadcastStatus.Success,
-                                        when {
-                                            output.startsWith("SSH Error") -> output
-                                            output.isBlank() -> "Done (no output)"
-                                            else -> null
-                                        },
-                                    )
-                                } catch (e: Exception) {
-                                    if (e is CancellationException) throw e
-                                    finishBroadcastResult(srv.id, BroadcastStatus.Failure, "SSH Error: ${e.message ?: "unknown error"}")
-                                }
-                            }
+            suspend fun runAll() = coroutineScope {
+                selected.map { srv ->
+                    async {
+                        limiter.withPermit {
+                            if (inTmux) broadcastHostInTmux(srv, cmd, runId) else broadcastHostPlain(srv, cmd)
                         }
-                    }.awaitAll()
-                }
-                succeeded = broadcastResults.none { it.status == BroadcastStatus.Failure }
+                    }
+                }.awaitAll()
+            }
+            try {
+                // A tmux run outlives a dropped connection, so it is not cut off at the plain
+                // broadcast's limit; Stop ends it.
+                if (inTmux) runAll() else withTimeout(BROADCAST_TIMEOUT_MS) { runAll() }
+                succeeded = broadcastResults.all { it.status == BroadcastStatus.Success }
             } catch (e: TimeoutCancellationException) {
-                markRunningBroadcastsFailed("Timed out after ${BROADCAST_TIMEOUT_MS / 60_000} minutes.")
+                markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_timed_out, BROADCAST_TIMEOUT_MS / 60_000))
             } catch (e: CancellationException) {
                 cancelled = true
-                markRunningBroadcastsFailed("Cancelled.")
+                if (inTmux && broadcastStopRequested) stopBroadcastTmuxRuns(selected.map { it.id })
+                markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_stopped))
             } finally {
-                isBroadcastExecuting = false
                 broadcastJob = null
+                updateBroadcastExecuting()
                 LongOperationNotifications.finish(
                     getApplication(),
                     operationId,
@@ -11873,7 +11889,208 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun stopFleetBroadcast() {
+        broadcastStopRequested = true
         broadcastJob?.cancel()
+        broadcastHostJobs.values.toList().forEach { it.cancel() }
+    }
+
+    private suspend fun broadcastHostPlain(srv: ServerEntity, cmd: String) {
+        val result = try {
+            sshTransport.execStream(buildCredentials(srv), cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            "SSH Error: ${e.message ?: "unknown error"}"
+        }
+        finishBroadcastResult(srv.id, result)
+    }
+
+    /**
+     * Starts [cmd] on [srv] in the run's own tmux session (see [RemoteCommands.broadcastTmuxStart])
+     * and follows its output. A host without tmux waits for the user to install it or to run the
+     * command without tmux.
+     */
+    private suspend fun broadcastHostInTmux(srv: ServerEntity, cmd: String, runId: String) {
+        val app = getApplication<Application>()
+        val started = try {
+            sshTransport.exec(
+                buildCredentials(srv),
+                RemoteCommands.broadcastTmuxStart(runId),
+                stdin = RemoteCommands.broadcastTmuxRunner(runId, cmd),
+            )
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            "SSH Error: ${e.message ?: "unknown error"}"
+        }
+        when {
+            started.lineSequence().any { it.trim() == RemoteCommands.BROADCAST_NO_TMUX } ->
+                updateBroadcastResult(srv.id) {
+                    it.copy(status = BroadcastStatus.NeedsTmux, note = app.getString(R.string.broadcast_tmux_missing, srv.name))
+                }
+            started.startsWith("SSH Error") -> finishBroadcastResult(srv.id, started)
+            !RemoteCommands.broadcastTmuxStarted(started) ->
+                updateBroadcastResult(srv.id) {
+                    it.copy(
+                        status = BroadcastStatus.Failure,
+                        note = app.getString(R.string.broadcast_tmux_failed_to_start, started.trim().ifBlank { "no output" }),
+                    )
+                }
+            else -> followBroadcastTmux(srv, runId)
+        }
+    }
+
+    /**
+     * Follows the run's tmux log on [srv] until its command finishes, then removes the run's files.
+     * A dropped connection doesn't stop the command: the card says so and reconnects every
+     * [BROADCAST_RECONNECT_EVERY_MS], or at once on "Reconnect now", replaying the log from the
+     * start. After [BROADCAST_RECONNECT_FOR_MS] without reaching the host it stops trying and
+     * offers Reconnect.
+     */
+    private suspend fun followBroadcastTmux(srv: ServerEntity, runId: String) {
+        val app = getApplication<Application>()
+        val creds = buildCredentials(srv)
+        var unreachableSince = 0L
+        while (true) {
+            updateBroadcastResult(srv.id) {
+                it.copy(output = "", truncated = false, status = BroadcastStatus.Running, note = null, tmuxRunId = runId)
+            }
+            val attemptStarted = System.currentTimeMillis()
+            val result = try {
+                sshTransport.execStream(creds, RemoteCommands.broadcastTmuxFollow(runId)) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                "SSH Error: ${e.message ?: "unknown error"}"
+            }
+            // Chunks are posted to the main thread; let any still queued land before reading the card.
+            yield()
+            val exit = broadcastExitStatus(result)
+            if (exit == 0 && result.trimEnd().endsWith(RemoteCommands.BROADCAST_TMUX_GONE)) {
+                updateBroadcastResult(srv.id) {
+                    it.copy(
+                        output = it.output.replace(RemoteCommands.BROADCAST_TMUX_GONE, "").trimEnd(),
+                        status = BroadcastStatus.Failure,
+                        note = app.getString(R.string.broadcast_tmux_gone),
+                    )
+                }
+                cleanUpBroadcastTmux(creds, runId)
+                return
+            }
+            if (exit != null) {
+                cleanUpBroadcastTmux(creds, runId)
+                finishBroadcastResult(srv.id, result)
+                return
+            }
+            // The 30-minute stream limit only ends this read; the command is still running.
+            if (result.trimEnd().endsWith("command timed out")) continue
+            val now = System.currentTimeMillis()
+            // A read that ran for a while reached the host, so this is a new drop.
+            if (unreachableSince == 0L || now - attemptStarted > BROADCAST_RECONNECT_EVERY_MS) unreachableSince = now
+            if (now - unreachableSince >= BROADCAST_RECONNECT_FOR_MS) {
+                updateBroadcastResult(srv.id) {
+                    it.copy(
+                        status = BroadcastStatus.Detached,
+                        note = app.getString(R.string.broadcast_gave_up_reconnecting, BROADCAST_RECONNECT_FOR_MS / 60_000),
+                    )
+                }
+                return
+            }
+            updateBroadcastResult(srv.id) {
+                it.copy(status = BroadcastStatus.Reconnecting, note = app.getString(R.string.broadcast_reconnecting))
+            }
+            val retryNow = CompletableDeferred<Unit>()
+            broadcastReconnectNow[srv.id] = retryNow
+            try {
+                withTimeoutOrNull(BROADCAST_RECONNECT_EVERY_MS) { retryNow.await() }
+            } finally {
+                broadcastReconnectNow.remove(srv.id, retryNow)
+            }
+        }
+    }
+
+    /**
+     * The exit status a finished broadcast [result] reports: 0 for plain output, the command's for
+     * "command failed (N)", null when the connection, not the command, ended it.
+     */
+    private fun broadcastExitStatus(result: String): Int? {
+        if (!result.startsWith("SSH Error")) return 0
+        return Regex("""^SSH Error: command failed \((\d+)\)""").find(result)?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    private suspend fun cleanUpBroadcastTmux(creds: SshCredentials, runId: String) {
+        runCatching { withTimeoutOrNull(20_000) { sshTransport.exec(creds, RemoteCommands.broadcastTmuxCleanup(runId)) } }
+    }
+
+    /** Stop: ends each host's tmux run, and the command in it, wherever the host can be reached. */
+    private suspend fun stopBroadcastTmuxRuns(serverIds: List<Int>) = withContext(NonCancellable) {
+        broadcastResults.filter { it.serverId in serverIds && it.tmuxRunId != null }.map { item ->
+            async {
+                val srv = repository.getServerById(item.serverId) ?: return@async
+                val runId = item.tmuxRunId ?: return@async
+                runCatching { withTimeoutOrNull(20_000) { sshTransport.exec(buildCredentials(srv), RemoteCommands.broadcastTmuxStop(runId)) } }
+            }
+        }.awaitAll()
+    }
+
+    /** "Reconnect now" on a card waiting to reconnect, or "Reconnect" on one that stopped trying. */
+    fun reconnectBroadcastHost(serverId: Int) {
+        broadcastReconnectNow[serverId]?.let { it.complete(Unit); return }
+        val runId = broadcastResults.firstOrNull { it.serverId == serverId }?.tmuxRunId ?: return
+        launchBroadcastHostJob(serverId) { srv -> followBroadcastTmux(srv, runId) }
+    }
+
+    /** A host that had no tmux: installs it, behind the sudo check, then starts the run there. */
+    fun installTmuxForBroadcast(serverId: Int) {
+        val cmd = lastBroadcastCommand.takeIf { it.isNotBlank() } ?: return
+        val runId = lastBroadcastRunId
+        viewModelScope.launch {
+            val srv = repository.getServerById(serverId) ?: return@launch
+            installHostTool(srv, HostTool.Tmux) {
+                launchBroadcastHostJob(serverId) { host -> broadcastHostInTmux(host, cmd, runId) }
+            }
+        }
+    }
+
+    /** A host that had no tmux: runs the command there as a plain broadcast does. */
+    fun runBroadcastHostWithoutTmux(serverId: Int) {
+        val cmd = lastBroadcastCommand.takeIf { it.isNotBlank() } ?: return
+        launchBroadcastHostJob(serverId) { srv -> broadcastHostPlain(srv, cmd) }
+    }
+
+    /** Runs [block] for one host's card on its own, outside the broadcast that created the card. */
+    private fun launchBroadcastHostJob(serverId: Int, block: suspend (ServerEntity) -> Unit) {
+        if (broadcastHostJobs[serverId]?.isActive == true) return
+        if (broadcastResults.none { it.serverId == serverId }) return
+        broadcastStopRequested = false
+        updateBroadcastResult(serverId) { it.copy(output = "", truncated = false, status = BroadcastStatus.Running, note = null) }
+        val job = viewModelScope.launch {
+            try {
+                val srv = repository.getServerById(serverId)
+                if (srv == null) {
+                    markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_host_removed), listOf(serverId))
+                    return@launch
+                }
+                block(srv)
+            } catch (e: CancellationException) {
+                if (broadcastStopRequested) stopBroadcastTmuxRuns(listOf(serverId))
+                markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_stopped), listOf(serverId))
+                throw e
+            } finally {
+                broadcastHostJobs.remove(serverId)
+                updateBroadcastExecuting()
+            }
+        }
+        broadcastHostJobs[serverId] = job
+        updateBroadcastExecuting()
+    }
+
+    /** Opens the run's tmux session on [serverId] in Terminal while its command runs. */
+    fun attachBroadcastTmux(serverId: Int) {
+        val runId = broadcastResults.firstOrNull { it.serverId == serverId }?.tmuxRunId ?: return
+        viewModelScope.launch {
+            val srv = repository.getServerById(serverId) ?: return@launch
+            selectedServerId = srv.id
+            attachTmuxSessionOn(srv, RemoteCommands.broadcastTmuxSession(runId), System.currentTimeMillis())
+            navigateTo(Screen.Shell)
+        }
     }
 
     private fun appendBroadcastChunk(serverId: Int, chunk: String) {
@@ -11891,22 +12108,38 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun finishBroadcastResult(serverId: Int, status: BroadcastStatus, fallbackOutput: String? = null) {
+    private fun updateBroadcastResult(serverId: Int, change: (BroadcastResultItem) -> BroadcastResultItem) {
         val index = broadcastResults.indexOfFirst { it.serverId == serverId }
-        if (index >= 0) {
-            val current = broadcastResults[index]
-            broadcastResults[index] = current.copy(
-                status = status,
-                output = if (current.output.isBlank() && fallbackOutput != null) fallbackOutput else current.output,
+        if (index >= 0) broadcastResults[index] = change(broadcastResults[index])
+    }
+
+    /**
+     * Ends [serverId]'s card from the transport's [result]: complete, or failed with a note saying
+     * why (its exit status, a dropped connection, an SSH error) unless its output already ends so.
+     */
+    private fun finishBroadcastResult(serverId: Int, result: String) {
+        val app = getApplication<Application>()
+        val exit = broadcastExitStatus(result)
+        val note = when {
+            exit == 0 -> null
+            exit != null -> app.getString(R.string.broadcast_exited_with, exit)
+            result == "SSH Error: $SSH_CONNECTION_LOST" -> app.getString(R.string.broadcast_connection_lost)
+            else -> result.removePrefix("SSH Error:").trim()
+        }
+        updateBroadcastResult(serverId) { current ->
+            current.copy(
+                status = if (exit == 0) BroadcastStatus.Success else BroadcastStatus.Failure,
+                note = note?.takeUnless { current.output.trimEnd().endsWith(it) },
             )
         }
     }
 
-    private fun markRunningBroadcastsFailed(message: String) {
+    private fun markRunningBroadcastsFailed(message: String, serverIds: List<Int>? = null) {
         for (i in broadcastResults.indices) {
             val current = broadcastResults[i]
-            if (current.status == BroadcastStatus.Running) {
-                broadcastResults[i] = current.copy(status = BroadcastStatus.Failure, output = current.output.ifBlank { message })
+            if (serverIds != null && current.serverId !in serverIds) continue
+            if (current.status in listOf(BroadcastStatus.Running, BroadcastStatus.Reconnecting, BroadcastStatus.Detached)) {
+                broadcastResults[i] = current.copy(status = BroadcastStatus.Failure, note = message)
             }
         }
     }

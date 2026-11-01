@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material3.*
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -1133,6 +1134,7 @@ fun composeRawEditsDiffer(rawText: String, draft: ComposeStackDraft, parsedBasel
 
 @Composable
 fun ComposeBuilder(viewModel: AppViewModel) {
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
     val active = viewModel.activeComposeDraft
     val draftGeneration = viewModel.activeComposeGeneration
     val draftServerId = viewModel.activeComposeServerId
@@ -1149,8 +1151,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         else -> "::new::$draftGeneration"
     }
 
-    // Immutable parsed baseline for surgical diffing — captured ONCE per edit session.
-    val parsedBaseline = remember(seedKey) { active }
+    // Immutable parsed baseline for surgical diffing — captured ONCE per edit session, and kept by
+    // the host's draft so returning to a host diffs against what it was opened from, not its edits.
+    val parsedBaseline = remember(seedKey) { viewModel.activeComposeBaseline }
     var draft by remember(seedKey) { mutableStateOf(active ?: ComposeStackDraft()) }
     // A host with exactly one usable runtime has no runtime picker. Pin new drafts to that runtime
     // once discovery completes so Podman-only controls are not accidentally hidden behind a blank
@@ -1524,12 +1527,25 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 )
             }
 
+            // An offline host keeps its draft here, so the user can come back to it once it is up.
+            // Found in the collected list so the note and Deploy follow the host going offline and
+            // coming back; [AppViewModel.selectedServer] reads the list once and never updated them.
+            val host = servers.find { it.id == viewModel.selectedServerId }
+            val hostOnline = host != null && viewModel.isPickableHost(host)
+            if (host != null && !hostOnline) {
+                Text(
+                    stringResource(R.string.compose_host_offline_draft_kept, host.name),
+                    fontSize = 11.sp,
+                    color = OmniColors.amber,
+                    modifier = Modifier.testTag("compose.builder.offline"),
+                )
+            }
             OmniButton(
                 label = if (deploying) "Deploying…" else if (isExisting) "Validate & Deploy" else "Deploy Stack",
                 color = OmniColors.amber,
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !deploying && hostOnline,
                     onClick = {
-                        if (deploying) return@OmniButton
                         if (viewModel.selectedServer == null) { result = false to "No host selected."; return@OmniButton }
                         if (!rawMode && validationIssues.isNotEmpty()) {
                             result = false to validationIssues.joinToString("\n")
