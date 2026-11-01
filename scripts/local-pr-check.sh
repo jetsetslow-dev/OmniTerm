@@ -62,6 +62,7 @@ python3 ./scripts/check-actions-allowlist.py
 # A copy-pasted block is extracted into shared code instead of kept twice. The baseline lists the
 # known copies, so only a new one fails; CI runs the same check.
 ./scripts/test-check-duplicates.sh
+./scripts/test-repeat-changed-tests.sh
 python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json \
   app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
@@ -88,6 +89,10 @@ fi
 ./gradlew \
   testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest \
   lintOpenSourceDebug lintPlayStoreDebug \
+  "${GRADLE_ARGS[@]}"
+# As PR Check does: the test classes this branch adds or changes, committed or not, five more
+# times, so one that passes only some of the time fails here rather than on main.
+./scripts/repeat-changed-tests.sh --base "${OMNITERM_BASE_REF:-origin/main}" --worktree --runs 5 -- \
   "${GRADLE_ARGS[@]}"
 
 if [[ "$MODE" == "--full" ]]; then

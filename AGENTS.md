@@ -26,6 +26,9 @@ These rules apply to every contributor and automation tool working in this repos
 - Keep `scripts/local-pr-check.sh` aligned with `.github/workflows/android-pr-check.yml` whenever
   build, test, lint, migration, SBOM, signing-input, or dependency-verification behavior changes.
 - Run `git diff --check` and `git diff --cached --check` before committing.
+- The gate and PR Check run every unit-test class the change adds or edits five more times
+  (`scripts/repeat-changed-tests.sh`): a test that depends on timing passed PR Check once and then
+  failed main's release build. Fix such a test's race; never retry it until it passes.
 - `--full` also catches what GitHub would only report after the push: dependencies with a known
   vulnerability (`scripts/check-dependency-advisories.py`, Dependabot's database and graphs) and
   CodeQL alerts (`scripts/local-codeql.sh`, the workflow's CLI version and `security-extended`

@@ -107,6 +107,7 @@ jobs:
           ./scripts/test-release-version.sh
           ./scripts/test-ci-gradle-gate.sh
           ./scripts/test-check-duplicates.sh
+          ./scripts/test-repeat-changed-tests.sh
 
       # Same check as scripts/local-pr-check.sh: a new copy-pasted block fails the build.
       - name: Check for new duplicated code
@@ -132,6 +133,18 @@ jobs:
           --no-daemon --no-configuration-cache
           -Dorg.gradle.jvmargs=-Xmx4g
           -Domniterm.publishScan=true
+
+      # A test that depends on timing can pass once here and fail on main afterwards, as
+      # FleetBroadcastOutcomeRobolectricTest did on the 2ed805c release build. The test classes this
+      # pull request adds or changes run five more times, so such a test fails before the merge.
+      # The checkout is the PR's merge commit; its base parent is all the comparison needs.
+      - name: Repeat changed unit tests
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          ./scripts/repeat-changed-tests.sh --base "$BASE_SHA" --runs 5 -- \
+            --no-daemon --no-configuration-cache -Dorg.gradle.jvmargs=-Xmx4g
 
       - name: Delete debug keystore
         if: always()
