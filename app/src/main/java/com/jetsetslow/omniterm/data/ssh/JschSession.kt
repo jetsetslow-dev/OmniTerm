@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm.data.ssh
 
+import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.Identity
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.KeyPair
@@ -121,10 +122,15 @@ private fun acceptedAlgorithms(extra: List<String>): String =
  *
  * [interactiveAuth] answers the host's sign-in questions beyond the saved password (a one-time
  * code); null for background work, which must never ask. See [KeyboardInteractiveUserInfo].
+ * [hostKeys] is the app's pinned store; only the live sign-in test passes its own.
  */
-internal fun buildJschSession(creds: SshCredentials, interactiveAuth: InteractiveAuth? = null): Session {
+internal fun buildJschSession(
+    creds: SshCredentials,
+    interactiveAuth: InteractiveAuth? = null,
+    hostKeys: HostKeyRepository = SshHostKeyTrust.repository(),
+): Session {
     val jsch = JSch().apply {
-        setHostKeyRepository(SshHostKeyTrust.repository())
+        setHostKeyRepository(hostKeys)
     }
     val signIn = KeyboardInteractiveUserInfo(creds.password, interactiveAuth)
     val algorithms = if (!creds.privateKeyPem.isNullOrBlank()) {

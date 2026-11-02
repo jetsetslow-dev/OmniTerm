@@ -53,6 +53,16 @@ state that a screen reads.
   surface on first navigation, so a screen that merely composes the changed file is impacted.
 - Use `scripts/test-hosts.sh up` for the disposable SSH fleet and `E2eLabHostProvisioner` to seed
   the `E2E Foreground Demo` host. Never validate against a personal or production host.
+- The fleet also covers each way the app signs in: password, key (`keyauth`), passphrase-protected
+  key (`keyauth-passphrase`) and certificate only (`certauth`, which trusts a test CA the script
+  generates next to the keys). `SshSignInLiveTest` signs in through the app's own session builder
+  against `certauth` with certificates, a protected key and software security keys; run it with
+  `-Domniterm.liveSsh=true` while the fleet is up. Real FIDO2 keys and USB serial adapters cannot be
+  faked here: say they are untested rather than imply otherwise.
+- Systems Docker cannot provide come from `scripts/os-lab/os-lab.sh`: opt-in QEMU VMs for FreeBSD
+  (sh, tcsh, zsh and fish logins, a two-step account), Windows Server (PowerShell or cmd) and a k3s
+  node with a real API server. Their disks, keys and passwords stay outside the repository. See
+  `scripts/os-lab/README.md`.
 - `E2eAppSurfaceStressTest` is the required sweep: it walks every route, subtab, theme, and rotation.
   Run it with `-e omniterm_e2e_surfaces yes`. Add `-e omniterm_e2e_sftp_home <path>` when the fixture
   home is not `/home/<user>` (the Docker fleet uses `/config`).
