@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# GitHub's runners use the C.UTF-8 locale. A desktop locale such as en_US.UTF-8 sorts and compares
+# text differently, which once let a check pass here and fail in CI, so the gate runs in CI's.
+export LC_ALL=C.UTF-8
+
 MODE="${1:---full}"
 case "$MODE" in
   --quick|--full) ;;
