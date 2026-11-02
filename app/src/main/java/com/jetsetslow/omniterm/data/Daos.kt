@@ -318,6 +318,21 @@ interface WolTargetDao {
 }
 
 @Dao
+interface TelnetHostDao {
+    @Query("SELECT * FROM telnet_hosts ORDER BY name COLLATE NOCASE ASC")
+    fun getAllTelnetHostsFlow(): Flow<List<TelnetHostEntity>>
+
+    @Query("SELECT * FROM telnet_hosts ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAllTelnetHosts(): List<TelnetHostEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTelnetHost(host: TelnetHostEntity): Long
+
+    @Delete
+    suspend fun deleteTelnetHost(host: TelnetHostEntity)
+}
+
+@Dao
 interface NetworkShareDao {
     @Query("SELECT * FROM network_shares ORDER BY name ASC")
     fun getAllNetworkSharesFlow(): Flow<List<NetworkShareEntity>>

@@ -228,7 +228,7 @@ class AppDatabaseMigrationTest {
 
     /** Existing alert rules keep every value and get an empty target, which only TLS and URL checks read. */
     @Test
-    fun migrationToTwentyFourGivesExistingRulesAnEmptyTarget() {
+    fun migrationToTwentyFourGivesExistingRulesAnEmptyTargetAndAddsTelnetHosts() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val databaseName = "migration-23-rule-target"
         context.deleteDatabase(databaseName)
@@ -254,6 +254,12 @@ class AppDatabaseMigrationTest {
                 assertEquals("10m", cursor.getString(4))
                 assertEquals("backups", cursor.getString(5))
                 assertEquals("", cursor.getString(6))
+            }
+            db.execSQL("INSERT INTO telnet_hosts (name, host, port) VALUES ('core switch', '10.0.0.2', 23)")
+            db.query("SELECT name, host, port FROM telnet_hosts").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("core switch", cursor.getString(0))
+                assertEquals(23, cursor.getInt(2))
             }
         }
         context.deleteDatabase(databaseName)

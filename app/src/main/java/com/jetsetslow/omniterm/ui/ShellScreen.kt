@@ -36,6 +36,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.SettingsEthernet
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -380,7 +382,9 @@ fun ShellScreen(viewModel: AppViewModel) {
     // which warns first. A host with an active/connecting session stays visible even if its
     // probe drops to offline (reconnect UX), and existing sessions keep the screen alive so the
     // session picker stays reachable when every host is offline at once.
-    val srv = headerSession?.let { s -> servers.find { it.id == s.serverId } }
+    // A Quick connect, Telnet or serial session is no saved host; it stands for itself, and keeps
+    // the session picker reachable when no saved host is online (or none exists).
+    val srv = headerSession?.let { s -> servers.find { it.id == s.serverId } ?: s.unsavedHost }
         ?: onlineServers.find { it.id == viewModel.selectedServerId }
         ?: onlineServers.firstOrNull()
         ?: viewModel.selectedServer.takeIf {
@@ -389,11 +393,14 @@ fun ShellScreen(viewModel: AppViewModel) {
                 viewModel.isTerminalConnecting ||
                 viewModel.terminalConnectError != null
         }
+        ?: viewModel.activeSessions.firstNotNullOfOrNull { it.unsavedHost }
     // Quick connect is hosted here rather than inside a branch below, so it stays mounted whether
     // the screen is showing a host, the session picker, or the no-hosts empty state. The
     // entitlement is re-checked at render time, not just at the entry points, so an unlock that
     // lapses while the sheet is open takes the sheet away with it.
     if (viewModel.quickConnectSheetOpen && viewModel.isQuickConnectAvailable) QuickConnectSheet(viewModel)
+    if (viewModel.telnetSheetOpen && viewModel.isQuickConnectAvailable) TelnetConnectDialog(viewModel)
+    if (viewModel.serialSheetOpen && viewModel.isQuickConnectAvailable) SerialConnectDialog(viewModel)
 
     if (srv == null) {
         Box(Modifier.fillMaxSize().background(chrome.background), contentAlignment = Alignment.Center) {
@@ -418,6 +425,10 @@ fun ShellScreen(viewModel: AppViewModel) {
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.quick_connect_don_t_save))
                     }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { viewModel.telnetSheetOpen = true }) { Text(stringResource(R.string.telnet_menu)) }
+                        TextButton(onClick = { viewModel.openSerialSheet() }) { Text(stringResource(R.string.usb_serial_menu)) }
+                    }
                 }
             }
         }
@@ -426,7 +437,7 @@ fun ShellScreen(viewModel: AppViewModel) {
     // Keep the VM selection on the host shown here so Connect / NEW / split-pane actions target
     // exactly what's displayed (the displayed host can differ when the selected one went offline).
     LaunchedEffect(srv.id, headerSession?.id) {
-        if (headerSession == null && !viewModel.isTerminalConnecting && viewModel.selectedServerId != srv.id) {
+        if (headerSession == null && !viewModel.isTerminalConnecting && srv.id > 0 && viewModel.selectedServerId != srv.id) {
             viewModel.selectedServerId = srv.id
         }
     }
@@ -484,7 +495,8 @@ fun ShellScreen(viewModel: AppViewModel) {
                     viewModel = viewModel,
                     // Offline hosts are hidden from the picker — force-connect lives on the Hosts tab.
                     onlineOnly = true,
-                    overrideServer = headerSession?.let { s -> servers.find { it.id == s.serverId } } ?: srv,
+                    overrideServer = headerSession?.let { s -> servers.find { it.id == s.serverId } ?: s.unsavedHost } ?: srv,
+                    subtitle = headerSession?.let { unsavedSessionSubtitle(it) },
                     onServerChange = {
                         val newServerId = viewModel.selectedServerId
                         if (headerSession != null && headerSession.serverId != newServerId) {
@@ -957,7 +969,7 @@ private fun TerminalOpenPicker(
                             Column {
                                 Text(session.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(
-                                    if (session.persistent) displayTmuxSessionName(session.tmuxName) else "Live SSH session",
+                                    if (session.persistent) displayTmuxSessionName(session.tmuxName) else stringResource(R.string.live_transport_session, session.transport.label),
                                     fontSize = 10.sp,
                                     color = scheme.onSurfaceVariant,
                                 )
@@ -1020,8 +1032,43 @@ private fun TerminalOpenPicker(
                         expanded = false
                     },
                 )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.telnet_menu), fontFamily = OmniFonts.mono) },
+                    leadingIcon = { Icon(Icons.Filled.SettingsEthernet, contentDescription = null) },
+                    enabled = !viewModel.isTerminalConnecting,
+                    onClick = {
+                        viewModel.telnetSheetOpen = true
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("terminal.open.telnet"),
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.usb_serial_menu), fontFamily = OmniFonts.mono) },
+                    leadingIcon = { Icon(Icons.Filled.Usb, contentDescription = null) },
+                    enabled = !viewModel.isTerminalConnecting,
+                    onClick = {
+                        viewModel.openSerialSheet()
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("terminal.open.serial"),
+                )
             }
         }
+    }
+}
+
+/**
+ * The header's second line for a session that is no saved host: what it runs over and where.
+ * Null for a saved host, whose header shows its user, address and latency.
+ */
+@Composable
+private fun unsavedSessionSubtitle(session: ShellSession): String? {
+    val shown = session.unsavedHost ?: return null
+    return when (session.transport) {
+        TerminalTransport.Ssh -> "${HostDisplay.userAtHost(shown)} · ${stringResource(R.string.not_saved)}"
+        TerminalTransport.Telnet -> "${session.transport.label} · ${HostDisplay.sensitive("${shown.host}:${shown.port}")}"
+        // A serial session's "host" is its line settings.
+        TerminalTransport.Serial -> "${session.transport.label} · ${shown.host}"
     }
 }
 
@@ -2307,7 +2354,8 @@ private fun PaneTerminalContent(
                         "Connection lost. Reconnecting…"
                     }
                 } else if (endedExitStatus != null) {
-                    stringResource(R.string.session_ended_exit, endedExitStatus)
+                    currentSession.endedBecause?.let { "$it. Scrollback kept." }
+                        ?: stringResource(R.string.session_ended_exit, endedExitStatus)
                 } else {
                     currentSession.disconnectError ?: "Server disconnected."
                 }

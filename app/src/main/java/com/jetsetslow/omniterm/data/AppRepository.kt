@@ -146,6 +146,11 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun deleteScript(script: QuickScriptEntity) = db.quickScriptDao().deleteScript(script)
 
     // WOL Target functions
+    val telnetHostsFlow: Flow<List<TelnetHostEntity>> = db.telnetHostDao().getAllTelnetHostsFlow()
+    suspend fun getAllTelnetHosts(): List<TelnetHostEntity> = db.telnetHostDao().getAllTelnetHosts()
+    suspend fun insertTelnetHost(host: TelnetHostEntity): Long = db.telnetHostDao().insertTelnetHost(host)
+    suspend fun deleteTelnetHost(host: TelnetHostEntity) = db.telnetHostDao().deleteTelnetHost(host)
+
     val wolTargetsFlow: Flow<List<WolTargetEntity>> = db.wolTargetDao().getAllWolTargetsFlow()
     suspend fun getAllWolTargets(): List<WolTargetEntity> = db.wolTargetDao().getAllWolTargets()
     suspend fun insertWolTarget(target: WolTargetEntity) = db.wolTargetDao().insertWolTarget(target)

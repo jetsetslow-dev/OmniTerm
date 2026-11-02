@@ -227,6 +227,15 @@ data class QuickScriptEntity(
 /** When metrics were last recorded for a host; a query result, not a table. */
 data class ServerLastSample(val serverId: Int, val lastAt: Long)
 
+/** A saved Telnet connection: network gear and other hosts reached by Telnet rather than SSH. */
+@Entity(tableName = "telnet_hosts")
+data class TelnetHostEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val host: String,
+    val port: Int = 23,
+)
+
 @Entity(tableName = "wol_targets")
 data class WolTargetEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

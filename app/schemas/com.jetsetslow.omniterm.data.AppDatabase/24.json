@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 24,
-    "identityHash": "f6bab02f324a94688a5976b34638efd2",
+    "identityHash": "77e46baa91ae92952f4a1406704ce5cd",
     "entities": [
       {
         "tableName": "servers",
@@ -1078,11 +1078,47 @@
             "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_stack_registry_serverId_runtime_project` ON `${TABLE_NAME}` (`serverId`, `runtime`, `project`)"
           }
         ]
+      },
+      {
+        "tableName": "telnet_hosts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "port",
+            "columnName": "port",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f6bab02f324a94688a5976b34638efd2')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '77e46baa91ae92952f4a1406704ce5cd')"
     ]
   }
 }

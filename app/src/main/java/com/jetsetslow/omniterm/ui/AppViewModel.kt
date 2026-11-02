@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -22,6 +23,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
 import com.jetsetslow.omniterm.data.*
+import com.jetsetslow.omniterm.data.serial.SerialParity
+import com.jetsetslow.omniterm.data.serial.SerialSettings
+import com.jetsetslow.omniterm.data.serial.SerialStopBits
+import com.jetsetslow.omniterm.data.serial.UsbPermissionReceiver
+import com.jetsetslow.omniterm.data.serial.UsbSerialAdapter
+import com.jetsetslow.omniterm.data.serial.UsbSerialSession
+import com.jetsetslow.omniterm.data.telnet.TelnetSession
+import com.jetsetslow.omniterm.data.term.ByteStreamTerminalSession
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
 import com.jetsetslow.omniterm.data.ssh.INTERACTIVE_AUTH_CANCELLED
@@ -62,6 +71,24 @@ import java.util.UUID
 
 /** Notification channel for fired monitoring alerts (distinct from the session-service channel). */
 private const val ALERT_CHANNEL_ID = "monitoring_alerts"
+
+/** Where the serial settings used last are kept, as [formatSerialSettings] writes them. */
+private const val SERIAL_SETTINGS_KEY = "serial_settings"
+
+/** Serial settings as stored: "115200,8,None,One". */
+internal fun formatSerialSettings(settings: SerialSettings): String =
+    listOf(settings.baudRate, settings.dataBits, settings.parity.name, settings.stopBits.name).joinToString(",")
+
+/** Stored serial settings, or null when [stored] is not what [formatSerialSettings] writes. */
+internal fun parseSerialSettings(stored: String): SerialSettings? {
+    val parts = stored.split(",")
+    if (parts.size != 4) return null
+    val baud = parts[0].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    val dataBits = parts[1].toIntOrNull()?.takeIf { it in 5..8 } ?: return null
+    val parity = SerialParity.entries.find { it.name == parts[2] } ?: return null
+    val stopBits = SerialStopBits.entries.find { it.name == parts[3] } ?: return null
+    return SerialSettings(baud, dataBits, parity, stopBits)
+}
 
 /** TLS and URL checks that may run at once; each can wait up to its timeout. */
 private const val ENDPOINT_CHECK_PARALLELISM = 4
@@ -5651,13 +5678,19 @@ class AppViewModel @JvmOverloads constructor(
     fun dismissTerminalConnectError() {
         terminalConnectError = null
         terminalTmuxRetry = null
+        terminalStreamRetry = null
         terminalConnectionFailure = null
         _terminalConnectionState.value = TerminalConnectionState.Idle
     }
 
     fun retryTerminalConnectError() {
+        val streamRetry = terminalStreamRetry
         val retry = terminalTmuxRetry
-        if (retry != null) resumePersistentSession(retry.serverId, retry.tmuxName)
+        if (streamRetry != null) {
+            terminalStreamRetry = null
+            terminalConnectError = null
+            streamRetry()
+        } else if (retry != null) resumePersistentSession(retry.serverId, retry.tmuxName)
         else if (currentSessionId != null) attachSession(currentSessionId!!)
         else connectTerminal()
     }
@@ -5855,6 +5888,182 @@ class AppViewModel @JvmOverloads constructor(
         connectTerminal(adHoc, forceDisablePersistence = true)
     }
 
+    // ── Telnet and USB serial ──
+
+    val telnetHosts = repository.telnetHostsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** True while the Terminal's Telnet sheet is open. */
+    var telnetSheetOpen by mutableStateOf(false)
+
+    /** True while the Terminal's USB serial sheet is open. */
+    var serialSheetOpen by mutableStateOf(false)
+
+    /** The serial settings last used, offered again next time. */
+    var lastSerialSettings by mutableStateOf(SerialSettings())
+        private set
+
+    /** Retries the last Telnet or serial connection that failed, in place of an SSH retry. */
+    private var terminalStreamRetry: (() -> Unit)? = null
+
+    fun deleteTelnetHost(host: TelnetHostEntity) {
+        viewModelScope.launch { repository.deleteTelnetHost(host) }
+    }
+
+    /**
+     * Opens a Telnet terminal on [host]:[port], first saving it as [name] when [save] and it is
+     * not saved already. Like Quick connect, it needs Unlock on the free Play build, whose
+     * connections all go through the limited host list.
+     */
+    fun connectTelnet(name: String, host: String, port: Int, save: Boolean, onValidationError: (String) -> Unit) {
+        if (!isQuickConnectAvailable) {
+            telnetSheetOpen = false
+            onValidationError(quickConnectLockedMessage())
+            return
+        }
+        val address = host.trim()
+        if (address.isEmpty() || address.any { it.isWhitespace() }) {
+            onValidationError("Enter a host name or IP address.")
+            return
+        }
+        if (port !in 1..65535) {
+            onValidationError("Port must be 1-65535.")
+            return
+        }
+        if (isTerminalConnecting) {
+            onValidationError("A connection is already in progress.")
+            return
+        }
+        val label = name.trim().ifEmpty { if (port == TelnetSession.DEFAULT_PORT) address else "$address:$port" }
+        if (save && telnetHosts.value.none { it.host.equals(address, ignoreCase = true) && it.port == port }) {
+            viewModelScope.launch { repository.insertTelnetHost(TelnetHostEntity(name = label, host = address, port = port)) }
+        }
+        telnetSheetOpen = false
+        val shown = ServerEntity(id = nextAdHocServerId--, name = label, host = address, port = port, username = "", status = "online")
+        connectStreamTerminal(
+            shown, TerminalTransport.Telnet,
+            failurePrefix = "Could not connect to $address:$port",
+            retry = { connectTelnet(label, address, port, save = false, onValidationError) },
+        ) { cols, rows -> TelnetSession.open(address, port, cols, rows) }
+    }
+
+    private val usbManager: UsbManager?
+        get() = getApplication<Application>().getSystemService(UsbManager::class.java)
+
+    /** The USB serial adapters plugged in now; none when the phone cannot host USB devices. */
+    fun usbSerialAdapters(): List<UsbSerialAdapter> = usbManager?.let(UsbSerialAdapter::attached).orEmpty()
+
+    /** Opens the USB serial sheet with the settings used last time. */
+    fun openSerialSheet() {
+        viewModelScope.launch {
+            repository.getSetting(SERIAL_SETTINGS_KEY)?.let(::parseSerialSettings)?.let { lastSerialSettings = it }
+            serialSheetOpen = true
+        }
+    }
+
+    /**
+     * Opens a terminal on [adapter] with [settings], asking Android for permission to use it
+     * first when needed. Needs Unlock on the free Play build, like Telnet and Quick connect.
+     */
+    fun connectSerial(adapter: UsbSerialAdapter, settings: SerialSettings, onValidationError: (String) -> Unit) {
+        if (!isQuickConnectAvailable) {
+            serialSheetOpen = false
+            onValidationError(quickConnectLockedMessage())
+            return
+        }
+        if (isTerminalConnecting) {
+            onValidationError("A connection is already in progress.")
+            return
+        }
+        val manager = usbManager ?: return onValidationError("This phone cannot use USB devices.")
+        lastSerialSettings = settings
+        viewModelScope.launch { repository.insertSetting(SERIAL_SETTINGS_KEY, formatSerialSettings(settings)) }
+        if (!manager.hasPermission(adapter.device)) {
+            UsbPermissionReceiver.request(getApplication(), manager, adapter.device) { granted ->
+                if (granted) {
+                    connectSerial(adapter, settings, onValidationError)
+                } else {
+                    onValidationError("OmniTerm needs permission to use ${adapter.label}.")
+                }
+            }
+            return
+        }
+        serialSheetOpen = false
+        val shown = ServerEntity(id = nextAdHocServerId--, name = adapter.label, host = settings.summary, port = 0, username = "", status = "online")
+        connectStreamTerminal(
+            shown, TerminalTransport.Serial,
+            failurePrefix = "Could not open ${adapter.label}",
+            retry = { connectSerial(adapter, settings, onValidationError) },
+        ) { _, _ -> UsbSerialSession.open(manager, adapter, settings) }
+    }
+
+    /**
+     * Opens a Telnet or serial terminal: the parts of [connectTerminal] that are not SSH. There is
+     * no sign-in, tmux or reconnection; [shown] labels the session in the header, and [retry] is
+     * what Retry does when it fails.
+     */
+    private fun connectStreamTerminal(
+        shown: ServerEntity,
+        transport: TerminalTransport,
+        failurePrefix: String,
+        retry: () -> Unit,
+        open: suspend (cols: Int, rows: Int) -> TerminalSession,
+    ) {
+        if (isTerminalConnecting) return
+        terminalTmuxRetry = null
+        terminalStreamRetry = null
+        if (activeSshTab == 1) exitMultiSsh()
+        navigateTo(Screen.Shell)
+        isTerminalConnecting = true
+        terminalConnectError = null
+        terminalConnectionFailure = null
+        terminalConnectionPhase = "Connecting…"
+        _terminalConnectionState.value = TerminalConnectionState.Connecting(SshConnectionPhase.Connecting)
+        val attemptGeneration = ++terminalConnectGeneration
+
+        terminalConnectJob = viewModelScope.launch {
+            var openedSession: TerminalSession? = null
+            var setupComplete = false
+            try {
+                val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
+                val session = open(termCols, termRows)
+                openedSession = session
+                currentCoroutineContext().ensureActive()
+                check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
+                val shellSession = ShellSession(shown.id, shown.name, session, emulator)
+                shellSession.transport = transport
+                shellSession.unsavedHost = shown
+                shellSession.termCols = termCols
+                shellSession.termRows = termRows
+                shellSession.lastCols = termCols
+                shellSession.lastRows = termRows
+                activeSessions.add(shellSession)
+                openedSession = null // owned by the registered session now
+                showConnectedShell(shellSession, attemptGeneration, targetMultiSshPane = null)
+                wireSessionIo(shellSession)
+                setupComplete = true
+                TerminalSessionManager.updateKeepaliveCount()
+                startKeepAliveService()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (attemptGeneration == terminalConnectGeneration) {
+                    val failure = SshConnectionFailure.Unknown("$failurePrefix: ${e.message ?: e.javaClass.simpleName}")
+                    terminalStreamRetry = retry
+                    terminalConnectionFailure = failure
+                    terminalConnectError = failure.userMessage
+                    _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
+                }
+            } finally {
+                if (!setupComplete) openedSession?.close()
+                if (attemptGeneration == terminalConnectGeneration) {
+                    isTerminalConnecting = false
+                    terminalConnectJob = null
+                    terminalConnectionPhase = "Connecting…"
+                }
+            }
+        }
+    }
+
     /** Split-terminal shortcut entry point; same DB-first resolution as single connects. */
     fun openMultiSshByServerIds(id1: Int, id2: Int) {
         viewModelScope.launch {
@@ -5890,6 +6099,7 @@ class AppViewModel @JvmOverloads constructor(
         if (isTerminalConnecting) return
         allowHostKeyPromptAgain(srv)
         terminalTmuxRetry = null
+        terminalStreamRetry = null
         // Publish/refresh the launcher shortcut for this host; connecting is the usage signal
         // that keeps frequently used hosts ranked in the launcher's dynamic shortcut list.
         // Skipped for ad-hoc hosts (negative id, see quickConnect): they have no database row, so
@@ -6848,6 +7058,8 @@ class AppViewModel @JvmOverloads constructor(
                     if (isUserClose) {
                         cleanupSession(shellSession)
                     } else {
+                        // A Telnet or serial session says why it ended instead of an exit status.
+                        (session as? ByteStreamTerminalSession)?.endedBecause?.let { shellSession.endedBecause = it }
                         TerminalSessionManager.endSessionKeepingScrollback(shellSession, session.exitStatus.value ?: 0)
                     }
                 } else {
@@ -13410,6 +13622,7 @@ class AppViewModel @JvmOverloads constructor(
         activeAlerts: List<ActiveAlertEntity>,
         settings: List<AppSettingEntity>,
         selection: BackupSelection = BackupSelection(),
+        telnetHosts: List<TelnetHostEntity> = emptyList(),
     ): String {
         val closedSelection = selection.withReferentialClosure()
         val serverArr = org.json.JSONArray()
@@ -13533,6 +13746,13 @@ class AppViewModel @JvmOverloads constructor(
                 put("lastWokenTime", w.lastWokenTime)
             })
         }
+        // Saved Telnet connections travel with the hosts.
+        val telnetArr = org.json.JSONArray()
+        for (t in if (closedSelection.servers) telnetHosts else emptyList()) {
+            telnetArr.put(org.json.JSONObject().apply {
+                put("name", t.name); put("host", t.host); put("port", t.port)
+            })
+        }
         val networkShareArr = org.json.JSONArray()
         for (share in if (closedSelection.networkShares) networkShares else emptyList()) {
             networkShareArr.put(org.json.JSONObject().apply {
@@ -13629,6 +13849,7 @@ class AppViewModel @JvmOverloads constructor(
             .put("activeAlerts", activeAlertArr)
             .put("alertHistory", historyArr)
             .put("wolTargets", wolArr)
+            .put("telnetHosts", telnetArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
             .put("settings", settingsObj)
@@ -13739,7 +13960,7 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs",
+            "crashLogs", "telnetHosts",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -13906,7 +14127,8 @@ class AppViewModel @JvmOverloads constructor(
                     try {
                         val json = buildBackupJson(
                             srvs, keys, profiles, scripts, rules, alertHistories, wolTargets,
-                            networkShares, portForwards, activeAlerts, settings, closedSelection
+                            networkShares, portForwards, activeAlerts, settings, closedSelection,
+                            telnetHosts = repository.getAllTelnetHosts(),
                         )
                         val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
                         context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
@@ -14380,6 +14602,20 @@ class AppViewModel @JvmOverloads constructor(
                             importedWol++
                         }
 
+                        // Saved Telnet connections, with the hosts (dedup by address and port).
+                        val existingTelnet = repository.getAllTelnetHosts().mapTo(mutableSetOf()) { "${it.host.lowercase(Locale.ROOT)}:${it.port}" }
+                        val telnetArr = root.optJSONArray("telnetHosts") ?: org.json.JSONArray()
+                        var importedTelnet = 0
+                        for (i in 0 until if (closedSelection.servers) telnetArr.length() else 0) {
+                            val o = telnetArr.getJSONObject(i)
+                            val address = o.optString("host").trim()
+                            val port = o.optInt("port", TelnetSession.DEFAULT_PORT)
+                            if (address.isEmpty() || port !in 1..65535) continue
+                            if (!existingTelnet.add("${address.lowercase(Locale.ROOT)}:$port")) continue
+                            repository.insertTelnetHost(TelnetHostEntity(name = o.optString("name").ifBlank { address }, host = address, port = port))
+                            importedTelnet++
+                        }
+
                         // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
                         // shareIdMap tracks old id → restored/existing id so per-share settings
                         // (share_bookmarks_{id}) can follow their share, mirroring serverIdMap.
@@ -14544,6 +14780,7 @@ class AppViewModel @JvmOverloads constructor(
                             true,
                             "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
+                                (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
                                 "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix +
                                 skippedExistingServers.joinToString(separator = "\n", prefix = if (skippedExistingServers.isEmpty()) "" else "\n"),
                         )

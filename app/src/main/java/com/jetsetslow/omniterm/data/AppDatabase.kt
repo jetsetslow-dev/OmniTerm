@@ -22,7 +22,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AppSettingEntity::class,
         PersistentSessionEntity::class,
         PortForwardEntity::class,
-        StackRegistryEntity::class
+        StackRegistryEntity::class,
+        TelnetHostEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
@@ -47,6 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun persistentSessionDao(): PersistentSessionDao
     abstract fun portForwardDao(): PortForwardDao
     abstract fun stackRegistryDao(): StackRegistryDao
+    abstract fun telnetHostDao(): TelnetHostDao
 
     companion object {
         @Volatile
@@ -283,10 +285,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        // TLS expiry and URL check rules name what they connect to.
+        // TLS expiry and URL check rules name what they connect to, and Telnet connections can be saved.
         private val MIGRATION_23_24 = object : Migration(23, 24) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE alert_rules ADD COLUMN target TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `telnet_hosts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL)"
+                )
             }
         }
 

@@ -133,6 +133,8 @@ fun ServerSelectorBar(
     // Rendered on its own row under the host info so action chips never squeeze out the
     // name/user@host/latency text (used by the terminal's SPLIT/OPEN/BG/DISC actions).
     secondRowContent: (@Composable RowScope.() -> Unit)? = null,
+    // Replaces the "user@host · latency" line, for a terminal session that is no saved host.
+    subtitle: String? = null,
     modifier: Modifier = Modifier
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
@@ -204,7 +206,7 @@ fun ServerSelectorBar(
                 StatusDot(online = viewModel.isPickableHost(srv), color = accent, size = 8.dp)
                 Text(srv.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Text(
-                    "${HostDisplay.userAtHost(srv)} · $latency",
+                    subtitle ?: "${HostDisplay.userAtHost(srv)} · $latency",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
