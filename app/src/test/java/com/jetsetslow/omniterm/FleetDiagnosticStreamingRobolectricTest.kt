@@ -110,7 +110,7 @@ class FleetDiagnosticStreamingRobolectricTest {
             assertEquals(FleetTargetMode.Servers, model.broadcastTargetMode)
         } finally {
             if (!transport.release.isCompleted) transport.release.complete(Unit)
-            store.clear()
+            clearViewModelsAndAwaitTerminalJobs(store, main)
             Dispatchers.resetMain()
             main.close()
         }

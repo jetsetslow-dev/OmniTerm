@@ -162,7 +162,7 @@ class FleetBroadcastOutcomeRobolectricTest {
             block(model, executor, transport)
         } finally {
             transport.release.complete(Unit)
-            store.clear()
+            clearViewModelsAndAwaitTerminalJobs(store, executor)
             Dispatchers.resetMain()
             executor.close()
         }

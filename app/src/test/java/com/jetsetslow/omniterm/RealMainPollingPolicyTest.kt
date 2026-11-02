@@ -28,8 +28,37 @@ class RealMainPollingPolicyTest {
         )
     }
 
+    /**
+     * A test that installs its own Main clears its ViewModels through
+     * [clearViewModelsAndAwaitTerminalJobs]. Clearing the store directly cancels their work without
+     * waiting for it, so `resetMain()` right after races the last dispatch back to Main: four tests
+     * did that and one failed a full local run while passing every run on its own.
+     */
+    @Test
+    fun aTestThatSetsMainWaitsForItsViewModelsBeforeResettingIt() {
+        val root = listOf(File("src/test"), File("app/src/test")).first { it.isDirectory }
+        val offenders = root.walkTopDown()
+            .filter { it.extension == "kt" && it.name !in SHARED_TEARDOWN_AND_ITS_TEST }
+            .filter { file -> file.readText().contains("Dispatchers.setMain(") }
+            .flatMap { file ->
+                file.readLines().withIndex()
+                    .filter { (_, line) -> STORE_CLEAR.containsMatchIn(line) }
+                    .map { (index, line) -> "${file.relativeTo(root)}:${index + 1}: ${line.trim()}" }
+            }.toList()
+        assertTrue(
+            "Clear ViewModels with clearViewModelsAndAwaitTerminalJobs before resetMain:\n" +
+                offenders.joinToString("\n"),
+            offenders.isEmpty(),
+        )
+    }
+
     private companion object {
         /** A loop whose condition reads a ViewModel: `model`, `viewModel`, `vm` and the like. */
         val VIEW_MODEL_POLL = Regex("""\bwhile\s*\(.*\b(\w*[mM]odel|vm)\.""")
+
+        val STORE_CLEAR = Regex("""\b\w*[sS]tore\.clear\(\)""")
+
+        /** The teardown itself, and the test that proves it waits (its fallback clears directly). */
+        val SHARED_TEARDOWN_AND_ITS_TEST = setOf("RealMainViewModelCleanup.kt", "TerminalLeavePersistenceRobolectricTest.kt")
     }
 }

@@ -140,7 +140,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
             assertTrue("the refusal must be explained", model.actionStreamOutput.isNotBlank())
             assertFalse(model.actionStreamRunning)
         } finally {
-            transport.finish(); store.clear(); Dispatchers.resetMain(); main.close()
+            transport.finish(); clearViewModelsAndAwaitTerminalJobs(store, main); Dispatchers.resetMain(); main.close()
         }
     }
 
@@ -167,7 +167,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
             assertEquals("docker stop 'first' 'second' 2>&1", transport.commands.single())
             assertTrue("operation must stay pending while transport waits", model.actionStreamRunning)
         } finally {
-            transport.finish(); store.clear(); Dispatchers.resetMain(); main.close()
+            transport.finish(); clearViewModelsAndAwaitTerminalJobs(store, main); Dispatchers.resetMain(); main.close()
         }
     }
 
@@ -184,7 +184,7 @@ class ComposeStackUpdateStreamingRobolectricTest {
             body(model, transport, main)
         } finally {
             transport.finish()
-            store.clear()
+            clearViewModelsAndAwaitTerminalJobs(store, main)
             Dispatchers.resetMain()
             main.close()
         }
