@@ -63,6 +63,7 @@ python3 ./scripts/check-actions-allowlist.py
 # known copies, so only a new one fails; CI runs the same check.
 ./scripts/test-check-duplicates.sh
 ./scripts/test-repeat-changed-tests.sh
+python3 -B ./scripts/test-check-dependency-updates.py
 python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json \
   app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
@@ -108,6 +109,10 @@ if [[ "$MODE" == "--full" ]]; then
     --cyclonedx build/reports/cyclonedx/playStoreReleaseRuntimeClasspath.bom.json \
     --cyclonedx build/reports/cyclonedx/openSourceReleaseRuntimeClasspath.bom.json \
     --actions .github
+  # And what Dependabot's weekly run would open a pull request for: newer Gradle dependencies,
+  # plugins, wrapper and pinned Actions, under .github/dependabot.yml's holds. Taken here, they
+  # ship in this change instead of arriving as automated PRs.
+  python3 ./scripts/check-dependency-updates.py
 fi
 
 if command -v adb >/dev/null 2>&1 &&

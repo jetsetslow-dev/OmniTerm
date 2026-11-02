@@ -108,6 +108,7 @@ jobs:
           ./scripts/test-ci-gradle-gate.sh
           ./scripts/test-check-duplicates.sh
           ./scripts/test-repeat-changed-tests.sh
+          python3 -B ./scripts/test-check-dependency-updates.py
 
       # Same check as scripts/local-pr-check.sh: a new copy-pasted block fails the build.
       - name: Check for new duplicated code

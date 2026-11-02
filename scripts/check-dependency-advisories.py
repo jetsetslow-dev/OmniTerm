@@ -27,11 +27,20 @@ def cyclonedx(path):
             yield f'{c["group"]}:{c["name"]}', c["version"]
 
 
+PINNED = re.compile(r"uses:\s*([\w.-]+/[\w.-]+)(?:/[^@\s]*)?@([0-9a-f]{40})\s*#\s*v?([\w.-]+)")
+
+
+def pins(root):
+    """(repository, commit, version, file) for each Action pinned to a commit, version in a comment.
+    check-dependency-updates.py reads the same pins."""
+    for path in sorted(pathlib.Path(root).rglob("*.y*ml")):
+        for m in PINNED.finditer(path.read_text()):
+            yield m.group(1), m.group(2), m.group(3), path
+
+
 def actions(root):
-    pinned = re.compile(r"uses:\s*([\w.-]+/[\w.-]+)(?:/[^@\s]*)?@[0-9a-f]{40}\s*#\s*v?([\w.-]+)")
-    for path in pathlib.Path(root).rglob("*.y*ml"):
-        for m in pinned.finditer(path.read_text()):
-            yield m.group(1), m.group(2)
+    for repo, _, version, _ in pins(root):
+        yield repo, version
 
 
 def advisories(ecosystem, packages):
