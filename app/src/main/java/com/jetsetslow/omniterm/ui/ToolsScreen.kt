@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -50,6 +51,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalLocale
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
+import com.jetsetslow.omniterm.data.ssh.SkKeyType
+import com.jetsetslow.omniterm.data.ssh.SshCertificate
 import java.io.InputStream
 import java.text.DateFormat
 import java.util.Date
@@ -2123,6 +2126,8 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
     var authFeedbackOk by remember { mutableStateOf(true) }
     var showAuthOption by remember { mutableStateOf(false) }
     var generatedKeyResult by remember { mutableStateOf<Triple<String, String, String>?>(null) } // alias, priv, pub
+    // The generated key is on a security key: its "private key" is a key file holding no secret.
+    var generatedOnSecurityKey by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboardScope = rememberCoroutineScope()
 
@@ -2204,6 +2209,14 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(key.alias, fontWeight = FontWeight.Bold)
                                 Text(stringResource(R.string.crypto_fingerprint, key.keyType, key.fingerprint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                certificateSummary(key.certificate)?.let { (summary, problem) ->
+                                    Text(
+                                        summary,
+                                        fontSize = 11.sp,
+                                        color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag("authKeys.certificate.${key.id}"),
+                                    )
+                                }
                             }
                             Row {
                                 IconButton(onClick = { editKey = key }) {
@@ -2322,15 +2335,48 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
     if (showCreateKey) {
         var alias by remember { mutableStateOf("") }
-        val keyType = "RSA"
+        // null: RSA on this phone; otherwise a key made on a security key.
+        var securityKeyType by remember { mutableStateOf<SkKeyType?>(null) }
+        var requirePin by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showCreateKey = false },
             title = { Text(stringResource(R.string.generate_cryptographic_keypair)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
+                ) {
                     OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.key_alias_name)) }, modifier = Modifier.fillMaxWidth())
-                    Text(stringResource(R.string.omniterm_will_generate_a_real_rsa), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.key_kind), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    listOf(
+                        null to R.string.key_kind_rsa,
+                        SkKeyType.Ed25519 to R.string.key_kind_ed25519_sk,
+                        SkKeyType.EcdsaP256 to R.string.key_kind_ecdsa_sk,
+                    ).forEach { (kind, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { securityKeyType = kind }
+                                .testTag("authKeys.kind.${kind?.name ?: "Rsa"}"),
+                        ) {
+                            RadioButton(selected = securityKeyType == kind, onClick = { securityKeyType = kind })
+                            Text(stringResource(label), fontSize = 13.sp)
+                        }
+                    }
+                    if (securityKeyType == null) {
+                        Text(stringResource(R.string.omniterm_will_generate_a_real_rsa), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text(stringResource(R.string.security_key_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable { requirePin = !requirePin },
+                        ) {
+                            Checkbox(checked = requirePin, onCheckedChange = { requirePin = it }, modifier = Modifier.testTag("authKeys.requirePin"))
+                            Text(stringResource(R.string.security_key_require_pin), fontSize = 13.sp)
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2339,13 +2385,20 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 Button(
                     enabled = alias.isNotBlank() && !viewModel.sshKeygenRunning,
                     onClick = {
-                        viewModel.generateSshKey(alias, keyType) { ok, msg, priv, pub ->
+                        val onSecurityKey = securityKeyType
+                        val done = { ok: Boolean, msg: String, priv: String?, pub: String? ->
                             authFeedbackOk = ok
                             authFeedback = msg
                             if (ok && priv != null && pub != null) {
+                                generatedOnSecurityKey = onSecurityKey != null
                                 generatedKeyResult = Triple(alias, priv, pub)
                             }
                             showCreateKey = false
+                        }
+                        if (onSecurityKey == null) {
+                            viewModel.generateSshKey(alias, "RSA", done)
+                        } else {
+                            viewModel.generateSecurityKey(alias, onSecurityKey, requirePin, done)
                         }
                     }
                 ) {
@@ -2375,11 +2428,14 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var importAlias by remember { mutableStateOf("") }
         var importedPrivateKey by remember { mutableStateOf("") }
         var importedPublicKey by remember { mutableStateOf("") }
+        var importPassphrase by remember { mutableStateOf("") }
+        var importedCertificate by remember { mutableStateOf("") }
         // Shown inside the dialog: the screen's feedback line sits behind it, so a failed import
         // otherwise looked like a Save button that did nothing.
         var importError by remember { mutableStateOf<String?>(null) }
         val pickPrivateKey = rememberTextFilePicker { importedPrivateKey = it }
         val pickPublicKey = rememberTextFilePicker { importedPublicKey = it }
+        val pickCertificate = rememberTextFilePicker { importedCertificate = it }
 
         AlertDialog(
             onDismissRequest = { showImportKeyDialog = false },
@@ -2396,39 +2452,29 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     )
                     OutlinedTextField(value = importAlias, onValueChange = { importAlias = it }, label = { Text(stringResource(R.string.key_custom_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
-                    Text(stringResource(R.string.private_key_required), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.private_key_required),
                         value = importedPrivateKey,
                         onValueChange = { importedPrivateKey = it },
-                        label = { Text(stringResource(R.string.begin_private_key)) },
-                        modifier = Modifier.fillMaxWidth().height(130.dp),
+                        label = stringResource(R.string.begin_private_key),
+                        height = 130.dp,
                         maxLines = 6,
+                        pickLabel = stringResource(R.string.load_private_key_from_file),
+                        pick = pickPrivateKey,
                     )
-                    OutlinedButton(
-                        onClick = pickPrivateKey,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.load_private_key_from_file))
-                    }
 
-                    Text(stringResource(R.string.public_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.public_key_optional),
                         value = importedPublicKey,
                         onValueChange = { importedPublicKey = it },
-                        label = { Text(stringResource(R.string.ssh_rsa_aaaa_leave_blank_to)) },
-                        modifier = Modifier.fillMaxWidth().height(90.dp),
+                        label = stringResource(R.string.ssh_rsa_aaaa_leave_blank_to),
+                        height = 90.dp,
                         maxLines = 3,
+                        pickLabel = stringResource(R.string.load_public_key_pub_from_file),
+                        pick = pickPublicKey,
                     )
-                    OutlinedButton(
-                        onClick = pickPublicKey,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.load_public_key_pub_from_file))
-                    }
+                    KeyPassphraseField(importPassphrase, { importPassphrase = it }, "authKeys.import.passphrase")
+                    CertificateField(importedCertificate, { importedCertificate = it }, pickCertificate, "authKeys.import.certificate")
                     importError?.let { message ->
                         Text(
                             message,
@@ -2443,7 +2489,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     enabled = importAlias.isNotBlank() && importedPrivateKey.isNotBlank(),
                     onClick = {
                         importError = null
-                        viewModel.addSshKey(importAlias, "", importedPrivateKey, importedPublicKey) { ok, msg ->
+                        viewModel.addSshKey(importAlias, "", importedPrivateKey, importedPublicKey, importPassphrase, importedCertificate) { ok, msg ->
                             authFeedbackOk = ok
                             authFeedback = msg
                             if (ok) showImportKeyDialog = false else importError = msg
@@ -2516,7 +2562,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var alias by remember(key.id) { mutableStateOf(key.alias) }
         var newPrivate by remember(key.id) { mutableStateOf("") }
         var newPublic by remember(key.id) { mutableStateOf("") }
+        var passphrase by remember(key.id) { mutableStateOf("") }
+        var certificate by remember(key.id) { mutableStateOf(key.certificate) }
+        var editError by remember(key.id) { mutableStateOf<String?>(null) }
         val pickPrivateKey = rememberTextFilePicker { newPrivate = it }
+        val pickCertificate = rememberTextFilePicker { certificate = it }
         AlertDialog(
             onDismissRequest = { editKey = null },
             title = { Text(stringResource(R.string.edit_ssh_key)) },
@@ -2531,40 +2581,43 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text(stringResource(R.string.replacement_private_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.replacement_private_key_optional),
                         value = newPrivate,
                         onValueChange = { newPrivate = it },
-                        label = { Text(stringResource(R.string.begin_private_key)) },
-                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        label = stringResource(R.string.begin_private_key),
+                        height = 120.dp,
                         maxLines = 6,
+                        pickLabel = stringResource(R.string.load_private_key_from_file),
+                        pick = pickPrivateKey,
                     )
-                    OutlinedButton(
-                        onClick = pickPrivateKey,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.load_private_key_from_file))
-                    }
-                    Text(stringResource(R.string.replacement_public_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.replacement_public_key_optional),
                         value = newPublic,
                         onValueChange = { newPublic = it },
-                        label = { Text(stringResource(R.string.ssh_leave_blank_to_auto_derive)) },
-                        modifier = Modifier.fillMaxWidth().height(80.dp),
+                        label = stringResource(R.string.ssh_leave_blank_to_auto_derive),
+                        height = 80.dp,
                         maxLines = 3,
                     )
+                    if (newPrivate.isNotBlank()) {
+                        KeyPassphraseField(passphrase, { passphrase = it }, "authKeys.edit.passphrase")
+                    }
+                    CertificateField(certificate, { certificate = it }, pickCertificate, "authKeys.edit.certificate")
+                    editError?.let { message ->
+                        Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("authKeys.edit.error"))
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     enabled = alias.isNotBlank(),
                     onClick = {
-                        viewModel.updateSshKey(key, alias, newPrivate, newPublic) { ok, msg ->
+                        editError = null
+                        val editedCertificate = certificate.takeIf { it.trim() != key.certificate.trim() || newPrivate.isNotBlank() }
+                        viewModel.updateSshKey(key, alias, newPrivate, newPublic, passphrase, editedCertificate) { ok, msg ->
                             authFeedbackOk = ok
                             authFeedback = msg
-                            if (ok) editKey = null
+                            if (ok) editKey = null else editError = msg
                         }
                     }
                 ) { Text(stringResource(R.string.save_changes)) }
@@ -2580,10 +2633,17 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
             title = { Text(stringResource(R.string.generated_key, alias)) },
             text = {
                 Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.warning_private_key_is_shown_only), color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(stringResource(R.string.private_key), fontWeight = FontWeight.Bold)
+                    if (generatedOnSecurityKey) {
+                        Text(stringResource(R.string.security_key_file), fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.security_key_file_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text(stringResource(R.string.warning_private_key_is_shown_only), color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.private_key), fontWeight = FontWeight.Bold)
+                    }
                     OutlinedTextField(value = priv, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(150.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
-                    Button(onClick = { copySensitiveClipboard(context, clipboardScope, "OmniTerm private key", priv) }) { Text(stringResource(R.string.copy_private_key)) }
+                    Button(onClick = { copySensitiveClipboard(context, clipboardScope, "OmniTerm private key", priv) }) {
+                        Text(stringResource(if (generatedOnSecurityKey) R.string.copy_key_file else R.string.copy_private_key))
+                    }
 
                     Text(stringResource(R.string.public_key), fontWeight = FontWeight.Bold)
                     OutlinedTextField(value = pub, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(100.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
@@ -2615,6 +2675,82 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 Button(onClick = { generatedKeyResult = null }) { Text(stringResource(R.string.done)) }
             }
         )
+    }
+}
+
+/** A key's passphrase, asked for when importing it: OmniTerm stores the key opened, encrypted on the phone. */
+@Composable
+private fun KeyPassphraseField(value: String, onValueChange: (String) -> Unit, tag: String) {
+    Text(stringResource(R.string.key_passphrase_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    OmniPasswordField(
+        value = value,
+        onValueChange = onValueChange,
+        label = stringResource(R.string.key_passphrase_optional),
+        modifier = Modifier.fillMaxWidth().testTag(tag),
+    )
+    Text(stringResource(R.string.key_passphrase_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** A key's OpenSSH certificate: pasted, or loaded from its -cert.pub file. */
+@Composable
+private fun CertificateField(value: String, onValueChange: (String) -> Unit, pick: () -> Unit, tag: String) {
+    KeyTextField(
+        title = stringResource(R.string.ssh_certificate_optional),
+        value = value,
+        onValueChange = onValueChange,
+        label = stringResource(R.string.ssh_certificate_hint),
+        height = 90.dp,
+        maxLines = 3,
+        modifier = Modifier.testTag(tag),
+        pickLabel = stringResource(R.string.load_certificate_from_file),
+        pick = pick,
+    )
+    Text(stringResource(R.string.ssh_certificate_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** Key text (a private or public key, a certificate) under its [title], pasted or loaded from a file with [pick]. */
+@Composable
+private fun KeyTextField(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    height: Dp,
+    maxLines: Int,
+    modifier: Modifier = Modifier,
+    pickLabel: String? = null,
+    pick: () -> Unit = {},
+) {
+    Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = modifier.fillMaxWidth().height(height),
+        maxLines = maxLines,
+    )
+    if (pickLabel != null) {
+        OutlinedButton(onClick = pick, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Folder, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(pickLabel)
+        }
+    }
+}
+
+/** What a key's [certificate] says about who and until when, and whether that is a problem now; null without one. */
+@Composable
+private fun certificateSummary(certificate: String): Pair<String, Boolean>? {
+    if (certificate.isBlank()) return null
+    val parsed = remember(certificate) { runCatching { SshCertificate.parse(certificate) }.getOrNull() } ?: return null
+    val now = System.currentTimeMillis() / 1000
+    val date = { seconds: Long -> DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(seconds * 1000)) }
+    val who = parsed.principals.joinToString(", ").ifEmpty { stringResource(R.string.ssh_certificate_any_user) }
+    return when {
+        parsed.isExpired(now) -> stringResource(R.string.ssh_certificate_expired, date(parsed.validBefore)) to true
+        parsed.isNotYetValid(now) -> stringResource(R.string.ssh_certificate_not_yet, date(parsed.validAfter)) to true
+        parsed.validBefore == Long.MAX_VALUE -> stringResource(R.string.ssh_certificate_summary_forever, who) to false
+        else -> stringResource(R.string.ssh_certificate_summary, who, date(parsed.validBefore)) to false
     }
 }
 

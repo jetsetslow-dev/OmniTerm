@@ -9,6 +9,8 @@ OmniTerm uses open-source libraries and assets. Third-party copyrights remain wi
 - Kotlin and kotlinx.coroutines: Apache License 2.0.
 - JSch maintained fork (`com.github.mwiede:jsch`): BSD-style license.
 - Bouncy Castle (`bcprov-jdk18on`): Bouncy Castle license.
+- Yubico YubiKit for Android (`com.yubico.yubikit:android`, `fido`, `core`): Apache License 2.0.
+- SLF4J API (`org.slf4j:slf4j-api`, used by YubiKit): MIT License.
 - OkHttp and logging-interceptor: Apache License 2.0.
 - Retrofit: Apache License 2.0.
 - Moshi and Moshi Kotlin codegen: Apache License 2.0.

@@ -37,6 +37,15 @@ import com.jetsetslow.omniterm.data.ssh.INTERACTIVE_AUTH_CANCELLED
 import com.jetsetslow.omniterm.data.ssh.InteractiveAuth
 import com.jetsetslow.omniterm.data.ssh.InteractiveAuthRequest
 import com.jetsetslow.omniterm.data.ssh.NEEDS_INTERACTIVE_AUTH
+import com.jetsetslow.omniterm.data.ssh.NEEDS_SECURITY_KEY
+import com.jetsetslow.omniterm.data.ssh.SecurityKeyAssertion
+import com.jetsetslow.omniterm.data.ssh.SecurityKeySignRequest
+import com.jetsetslow.omniterm.data.ssh.SkKeyType
+import com.jetsetslow.omniterm.data.ssh.SshKeyMaterial
+import com.jetsetslow.omniterm.data.ssh.SshWire
+import com.jetsetslow.omniterm.data.fido.SecurityKeyCtap
+import com.yubico.yubikit.core.application.CommandState
+import com.yubico.yubikit.fido.ctap.Ctap2Session
 import com.jetsetslow.omniterm.data.ssh.JschSftp
 import com.jetsetslow.omniterm.data.ssh.JschSshTransport
 import com.jetsetslow.omniterm.data.ssh.SSH_CONNECTION_LOST
@@ -397,6 +406,10 @@ private const val RECONNECT_MAX_ATTEMPTS = 12
 internal const val TERMINAL_NEEDS_INTERACTIVE_AUTH =
     "Connection lost. This host asks a sign-in question, such as a verification code: tap Retry to answer it."
 
+/** Why a dropped terminal stopped reconnecting: its key is on a security key nobody was there to touch. */
+internal const val TERMINAL_NEEDS_SECURITY_KEY =
+    "Connection lost. This host signs in with a security key: tap Retry, then touch the key."
+
 /**
  * How many dead-but-retryable sessions to keep around. Enough that a couple of simultaneous drops
  * (say both panes of a split) stay recoverable, few enough that they cannot accumulate unboundedly.
@@ -513,6 +526,25 @@ sealed interface ExternalLaunchRequest {
 /** [request], a host's sign-in questions, waiting in [AppViewModel.pendingInteractiveAuth] for the user's answers. */
 class PendingInteractiveAuth(val hostName: String, val request: InteractiveAuthRequest) {
     internal val reply = CompletableDeferred<List<String>?>()
+}
+
+/** What a security key is wanted for: signing in to a saved host, or making a new SSH key. */
+sealed interface SecurityKeyJob {
+    data class SignIn(val hostName: String, val destination: String) : SecurityKeyJob
+    data class Create(val alias: String, val type: SkKeyType) : SecurityKeyJob
+}
+
+/**
+ * [job] waiting in [AppViewModel.pendingSecurityKey] for the user's security key; [SecurityKeyDialog]
+ * finds the key over USB or NFC and runs [work] on it.
+ */
+class PendingSecurityKey(
+    val job: SecurityKeyJob,
+    /** Ask for the PIN before the first try: the key always wants it. */
+    val pinUpFront: Boolean,
+    internal val work: (Ctap2Session, CharArray?, CommandState) -> Any,
+) {
+    internal val reply = CompletableDeferred<Any?>()
 }
 
 sealed interface SshConnectionPhase {
@@ -2136,12 +2168,17 @@ class AppViewModel @JvmOverloads constructor(
     // One host's questions at a time: a second connection's wait for the first dialog to close.
     private val interactiveAuthTurn = Mutex()
 
+    /** A security key job waiting for the user's key; [SecurityKeyDialog] shows it. */
+    var pendingSecurityKey by mutableStateOf<PendingSecurityKey?>(null)
+        private set
+
     /**
-     * Asks the user [hostName]'s sign-in questions beyond the saved password, for a connection the
-     * user started: a terminal, Test connection, Files. Background work passes none.
+     * Asks the user [hostName]'s sign-in questions beyond the saved password, and for a touch of
+     * their security key, for a connection the user started: a terminal, Test connection, Files.
+     * Background work passes none.
      */
-    private fun interactiveAuthFor(hostName: String) = InteractiveAuth { request ->
-        interactiveAuthTurn.withLock {
+    private fun interactiveAuthFor(hostName: String) = object : InteractiveAuth {
+        override suspend fun answer(request: InteractiveAuthRequest): List<String>? = interactiveAuthTurn.withLock {
             val pending = PendingInteractiveAuth(hostName, request)
             withContext(Dispatchers.Main) { pendingInteractiveAuth = pending }
             try {
@@ -2152,6 +2189,35 @@ class AppViewModel @JvmOverloads constructor(
                 }
             }
         }
+
+        override suspend fun signWithSecurityKey(request: SecurityKeySignRequest): SecurityKeyAssertion? =
+            useSecurityKey(SecurityKeyJob.SignIn(hostName, request.destination), request.key.requiresPin) { session, pin, state ->
+                SecurityKeyCtap.sign(session, request, pin, state)
+            }
+    }
+
+    /** Has the user's security key do [work] for [job]; null when they cancelled. One job at a time. */
+    private suspend fun <T : Any> useSecurityKey(
+        job: SecurityKeyJob,
+        pinUpFront: Boolean,
+        work: (Ctap2Session, CharArray?, CommandState) -> T,
+    ): T? = interactiveAuthTurn.withLock {
+        val pending = PendingSecurityKey(job, pinUpFront, work)
+        withContext(Dispatchers.Main) { pendingSecurityKey = pending }
+        try {
+            @Suppress("UNCHECKED_CAST")
+            pending.reply.await() as T?
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main) {
+                if (pendingSecurityKey === pending) pendingSecurityKey = null
+            }
+        }
+    }
+
+    /** What the security key did for [pending], or null when the user cancelled. */
+    fun finishSecurityKey(pending: PendingSecurityKey, result: Any?) {
+        pending.reply.complete(result)
+        if (pendingSecurityKey === pending) pendingSecurityKey = null
     }
 
     /** The dialog's answers, in its questions' order, or null when the user cancelled. */
@@ -2519,6 +2585,7 @@ class AppViewModel @JvmOverloads constructor(
         pendingHostKeyApproval?.deferred?.complete(false)
         pendingHostKeyApproval = null
         pendingInteractiveAuth?.reply?.complete(null)
+        pendingSecurityKey?.reply?.complete(null)
         while (hostKeyApprovalQueue.isNotEmpty()) {
             hostKeyApprovalQueue.removeFirst().deferred.complete(false)
         }
@@ -4594,51 +4661,20 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Validate a pasted private key. Returns null if it parses (any type/format — RSA, OpenSSH,
-     * ed25519, ECDSA, DSA, encrypted or not), or a human-readable reason it doesn't. Never leaks
-     * JSch's raw "[B@…" byte-array dump.
+     * Import a key. Only [privateStr] is required: the public key is derived when [publicStr] is
+     * blank, [type] is detected when blank, and a key protected by a passphrase needs [passphrase].
+     * [certificate] is its optional OpenSSH certificate. Every key type OpenSSH writes is accepted,
+     * keys on security keys included.
      */
-    private fun privateKeyParseError(privateStr: String): String? {
-        val t = privateStr.trim()
-        if (t.startsWith("ssh-rsa ") || t.startsWith("ssh-ed25519 ") ||
-            t.startsWith("ecdsa-sha2-") || t.startsWith("ssh-dss ")
-        ) {
-            return "That's a public key. Paste the matching PRIVATE key (the file without the .pub extension)."
-        }
-        if (!t.contains("PRIVATE KEY")) {
-            return "That doesn't look like a private key. Include the \"-----BEGIN ... PRIVATE KEY-----\" " +
-                "and \"-----END ... PRIVATE KEY-----\" lines."
-        }
-        return try {
-            // load() parses the key structure for every supported format and does NOT require the
-            // passphrase (encrypted keys still load), so this accepts all key types.
-            val kp = KeyPair.load(JSch(), (t + "\n").toByteArray(Charsets.UTF_8), null)
-            kp.dispose()
-            null
-        } catch (e: Exception) {
-            e.message?.takeUnless { it.contains("[B@") }?.let { "Invalid private key: $it" }
-                ?: "Invalid private key — re-copy the full key text, including the BEGIN/END lines."
-        }
-    }
-
-    /** Best-effort key-type label for display (the inner type of an OpenSSH container isn't in its header). */
-    private fun detectKeyType(privateStr: String, publicStr: String): String = when {
-        publicStr.startsWith("ssh-ed25519") -> "ED25519"
-        publicStr.startsWith("ecdsa-") -> "ECDSA"
-        publicStr.startsWith("ssh-rsa") -> "RSA"
-        publicStr.startsWith("ssh-dss") -> "DSA"
-        privateStr.contains("BEGIN RSA PRIVATE KEY") -> "RSA"
-        privateStr.contains("BEGIN EC PRIVATE KEY") -> "ECDSA"
-        privateStr.contains("BEGIN DSA PRIVATE KEY") -> "DSA"
-        privateStr.contains("BEGIN OPENSSH PRIVATE KEY") -> "OpenSSH"
-        else -> "SSH Key"
-    }
-
-    /**
-     * Import a key. Only [privateStr] is required; [publicStr] is optional (derived when blank) and
-     * [type] is auto-detected when blank. Any supported key format is accepted.
-     */
-    fun addSshKey(alias: String, type: String, privateStr: String, publicStr: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+    fun addSshKey(
+        alias: String,
+        type: String,
+        privateStr: String,
+        publicStr: String,
+        passphrase: String = "",
+        certificate: String = "",
+        onResult: (Boolean, String) -> Unit = { _, _ -> },
+    ) {
         viewModelScope.launch {
             if (repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit) {
                 onResult(false, credentialProfileLimitMessage())
@@ -4647,33 +4683,27 @@ class AppViewModel @JvmOverloads constructor(
             val result = withContext(Dispatchers.IO) {
                 try {
                     if (alias.isBlank()) return@withContext Pair(false, "Key alias is required.")
-                    val priv = privateStr.trim()
-                    if (priv.isBlank()) return@withContext Pair(false, "Private key content is required.")
+                    if (privateStr.isBlank()) return@withContext Pair(false, "Private key content is required.")
                     if (repository.getAllKeys().any { it.alias == alias }) {
                         return@withContext Pair(false, "Key alias already exists.")
                     }
-                    // Reject unparseable keys up front with a clear reason (instead of a cryptic
+                    // Reject unusable keys up front with a clear reason (instead of a cryptic
                     // failure later at connect time).
-                    privateKeyParseError(priv)?.let { return@withContext Pair(false, it) }
-
-                    val pub = publicStr.trim()
-                    val publicKey = pub.takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                        ?: publicKeyFromPrivate(priv)
-                        ?: ""
-                    val fingerprint = publicKey.takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                        ?.let { sshPublicKeyFingerprint(it) }
-                        ?: keyMaterialFingerprint(priv)
-                    val resolvedType = type.ifBlank { detectKeyType(priv, publicKey) }
+                    val key = SshKeyMaterial.prepare(privateStr, publicStr, passphrase, certificate)
+                    val resolvedType = type.ifBlank { key.keyType }
                     repository.insertKey(
                         SshKeyEntity(
                             alias = alias,
                             keyType = resolvedType,
-                            privateKey = priv,
-                            publicKey = publicKey,
-                            fingerprint = fingerprint,
+                            privateKey = key.privateKey,
+                            publicKey = key.publicKey,
+                            fingerprint = key.fingerprint,
+                            certificate = key.certificate,
                         )
                     )
                     Pair(true, "Imported $resolvedType key '$alias'.")
+                } catch (e: IllegalArgumentException) {
+                    Pair(false, e.message ?: "Key import failed.")
                 } catch (e: Exception) {
                     val m = e.message?.takeUnless { it.contains("[B@") } ?: "unknown error"
                     Pair(false, "Key import failed: $m")
@@ -4683,17 +4713,61 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun publicKeyFromPrivate(privateKey: String): String? = try {
-        val keyPair = KeyPair.load(JSch(), (privateKey.trim() + "\n").toByteArray(Charsets.UTF_8), null)
-        val out = ByteArrayOutputStream()
-        try {
-            keyPair.writePublicKey(out, "")
-            out.toString(Charsets.UTF_8.name()).trim().takeIf { it.startsWith("ssh-") }
-        } finally {
-            keyPair.dispose()
+    /**
+     * Make an SSH key on the user's security key, as `ssh-keygen -t ed25519-sk` does. Reports the
+     * key file (no secret in it, but useless without the security key) and the public key line.
+     */
+    fun generateSecurityKey(
+        alias: String,
+        type: SkKeyType,
+        requirePin: Boolean,
+        onResult: (Boolean, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    ) {
+        if (sshKeygenRunning) return
+        sshKeygenRunning = true
+        viewModelScope.launch {
+            try {
+                val problem = withContext(Dispatchers.IO) {
+                    when {
+                        alias.isBlank() -> "Key alias is required."
+                        repository.getAllKeys().any { it.alias == alias } -> "Key alias already exists."
+                        repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit ->
+                            credentialProfileLimitMessage()
+                        else -> null
+                    }
+                }
+                if (problem != null) {
+                    onResult(false, problem, null, null)
+                    return@launch
+                }
+                val key = useSecurityKey(SecurityKeyJob.Create(alias, type), pinUpFront = false) { session, pin, state ->
+                    SecurityKeyCtap.create(session, type, requirePin, pin, state)
+                }
+                if (key == null) {
+                    onResult(false, "No key was made.", null, null)
+                    return@launch
+                }
+                val keyFile = key.keyFile(alias)
+                val publicKey = SshWire.publicLine(key.publicBlob, alias)
+                withContext(Dispatchers.IO) {
+                    repository.insertKey(
+                        SshKeyEntity(
+                            alias = alias,
+                            keyType = type.label,
+                            privateKey = keyFile,
+                            publicKey = publicKey,
+                            fingerprint = SshWire.fingerprint(key.publicBlob),
+                        )
+                    )
+                }
+                onResult(true, "Made ${type.label} key '$alias' on your security key.", keyFile, publicKey)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                onResult(false, "Key generation failed: ${e.message ?: "unknown error"}", null, null)
+            } finally {
+                sshKeygenRunning = false
+            }
         }
-    } catch (_: Exception) {
-        null
     }
 
     private fun sshPublicKeyFingerprint(publicKey: String): String {
@@ -4743,6 +4817,9 @@ class AppViewModel @JvmOverloads constructor(
         newAlias: String,
         newPrivate: String,
         newPublic: String,
+        passphrase: String = "",
+        /** The key's certificate as edited; blank removes it, null keeps it. */
+        certificate: String? = null,
         onResult: (Boolean, String) -> Unit = { _, _ -> },
     ) {
         viewModelScope.launch {
@@ -4756,20 +4833,18 @@ class AppViewModel @JvmOverloads constructor(
                     val priv = newPrivate.trim()
                     val updated = if (priv.isNotBlank()) {
                         // Re-validate and re-derive everything from the new material.
-                        privateKeyParseError(priv)?.let { return@withContext Pair(false, it) }
-                        val pub = newPublic.trim().takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                            ?: publicKeyFromPrivate(priv)
-                            ?: ""
-                        val fingerprint = pub.takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                            ?.let { sshPublicKeyFingerprint(it) }
-                            ?: keyMaterialFingerprint(priv)
+                        val key = SshKeyMaterial.prepare(priv, newPublic, passphrase, certificate ?: "")
                         original.copy(
                             alias = alias,
-                            keyType = detectKeyType(priv, pub),
-                            privateKey = priv,
-                            publicKey = pub,
-                            fingerprint = fingerprint,
+                            keyType = key.keyType,
+                            privateKey = key.privateKey,
+                            publicKey = key.publicKey,
+                            fingerprint = key.fingerprint,
+                            certificate = key.certificate,
                         )
+                    } else if (certificate != null) {
+                        val keyBlob = SshKeyMaterial.publicBlob(original.privateKey, original.publicKey)
+                        original.copy(alias = alias, certificate = SshKeyMaterial.checkedCertificate(certificate, keyBlob))
                     } else {
                         original.copy(alias = alias)
                     }
@@ -5501,23 +5576,26 @@ class AppViewModel @JvmOverloads constructor(
         val allKeys = repository.getAllKeys()
         var user = srv.username
         var pass: String? = srv.authPassword
-        var pem: String? = null
+        var key: SshKeyEntity? = null
         when (srv.authType) {
-            "key" -> pem = allKeys.find { it.alias == srv.authKeyAlias }?.privateKey
+            "key" -> key = allKeys.find { it.alias == srv.authKeyAlias }
             "profile" -> repository.getAllProfiles().find { it.id == srv.authProfileId }?.let { p ->
                 user = p.username
                 if (p.authType == "password") pass = p.password
-                else pem = allKeys.find { it.alias == p.keyAlias }?.privateKey
+                else key = allKeys.find { it.alias == p.keyAlias }
             }
         }
+        val proxyKey = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
         return SshCredentials(
-            srv.host, srv.port, user, pass, pem,
+            srv.host, srv.port, user, pass, key?.privateKey,
             proxyType = srv.proxyType,
             proxyHost = srv.proxyHost,
             proxyPort = srv.proxyPort,
             proxyUser = srv.proxyUser,
             proxyPassword = srv.proxyPassword,
-            proxyKeyPem = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a }?.privateKey },
+            proxyKeyPem = proxyKey?.privateKey,
+            certificate = key?.certificate,
+            proxyCertificate = proxyKey?.certificate,
             keepAliveSeconds = srv.keepAlive,
             compression = srv.sshCompression,
             agentForwarding = srv.agentForwarding,
@@ -5652,23 +5730,25 @@ class AppViewModel @JvmOverloads constructor(
             // can be false on filtered/multi-address networks and is invalid for proxy/jump hosts.
             var user = username
             var pass: String? = password
-            var pem: String? = null
+            val allKeys = repository.getAllKeys()
+            var key: SshKeyEntity? = null
             when (authType) {
-                "key" -> pem = repository.getAllKeys().find { it.alias == keyAlias }?.privateKey
+                "key" -> key = allKeys.find { it.alias == keyAlias }
                 "profile" -> repository.getAllProfiles().find { it.id == profileId }?.let { p ->
                     user = p.username
                     if (p.authType == "password") pass = p.password
-                    else pem = repository.getAllKeys().find { it.alias == p.keyAlias }?.privateKey
+                    else key = allKeys.find { it.alias == p.keyAlias }
                 }
             }
+            val proxyKey = proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
             val err = sshTransport.testConnection(
                 SshCredentials(
-                    host, port, user, pass, pem,
+                    host, port, user, pass, key?.privateKey,
                     proxyType = proxyType, proxyHost = proxyHost, proxyPort = proxyPort,
                     proxyUser = proxyUser, proxyPassword = proxyPassword,
-                    proxyKeyPem = proxyKeyAlias?.let { a ->
-                        repository.getAllKeys().find { it.alias == a }?.privateKey
-                    },
+                    proxyKeyPem = proxyKey?.privateKey,
+                    certificate = key?.certificate,
+                    proxyCertificate = proxyKey?.certificate,
                 ),
                 interactiveAuthFor(displayName.ifBlank { host }),
             )
@@ -7352,6 +7432,10 @@ class AppViewModel @JvmOverloads constructor(
                     when (e.message) {
                         NEEDS_INTERACTIVE_AUTH -> {
                             stoppedBecause = TERMINAL_NEEDS_INTERACTIVE_AUTH
+                            break
+                        }
+                        NEEDS_SECURITY_KEY -> {
+                            stoppedBecause = TERMINAL_NEEDS_SECURITY_KEY
                             break
                         }
                         INTERACTIVE_AUTH_CANCELLED -> {
@@ -10131,9 +10215,9 @@ class AppViewModel @JvmOverloads constructor(
         if (share.protocol.uppercase(Locale.ROOT) == "SFTP" && !share.anonymous && share.authProfileId != null) {
             val profile = repository.getAllProfiles().firstOrNull { it.id == share.authProfileId }
             if (profile != null && profile.authType == "key") {
-                val pem = repository.getAllKeys().find { it.alias == profile.keyAlias }?.privateKey
+                val key = repository.getAllKeys().find { it.alias == profile.keyAlias }
                     ?: throw java.io.IOException("Key \"${profile.keyAlias}\" for profile \"${profile.profileName}\" no longer exists.")
-                return JschSftp(SshCredentials(share.address, share.port, profile.username, privateKeyPem = pem))
+                return JschSftp(SshCredentials(share.address, share.port, profile.username, privateKeyPem = key.privateKey, certificate = key.certificate))
             }
         }
         val (user, pass) = shareCredentials(share)
@@ -14013,6 +14097,7 @@ class AppViewModel @JvmOverloads constructor(
                 put("privateKey", k.privateKey)
                 put("publicKey", k.publicKey)
                 put("fingerprint", k.fingerprint)
+                if (k.certificate.isNotBlank()) put("certificate", k.certificate)
             })
         }
         val profileArr = org.json.JSONArray()
@@ -14661,9 +14746,16 @@ class AppViewModel @JvmOverloads constructor(
                                     privateKey = o.optString("privateKey"),
                                     publicKey = o.optString("publicKey"),
                                     fingerprint = o.optString("fingerprint").ifBlank {
-                                        o.optString("publicKey").takeIf { it.startsWith("ssh-") }?.let { sshPublicKeyFingerprint(it) }
+                                        SshWire.publicBlob(o.optString("publicKey"))?.let(SshWire::fingerprint)
                                             ?: keyMaterialFingerprint(o.optString("privateKey"))
                                     },
+                                    // Only a certificate that still parses and fits the key comes back.
+                                    certificate = runCatching {
+                                        SshKeyMaterial.checkedCertificate(
+                                            o.optString("certificate"),
+                                            SshKeyMaterial.publicBlob(o.optString("privateKey"), o.optString("publicKey")),
+                                        )
+                                    }.getOrDefault(""),
                                 )
                             )
                             existingKeys.add(alias)

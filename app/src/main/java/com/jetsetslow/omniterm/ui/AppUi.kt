@@ -746,6 +746,9 @@ fun MainAppScreen(viewModel: AppViewModel) {
         // A host's one-time code or other sign-in question, for the same reason.
         InteractiveAuthDialog(viewModel)
 
+        // A security key's touch (signing in, or making a key), for the same reason.
+        SecurityKeyDialog(viewModel)
+
         // First-connect tmux install prompt for persistent-session hosts.
         TmuxInstallDialog(viewModel)
 

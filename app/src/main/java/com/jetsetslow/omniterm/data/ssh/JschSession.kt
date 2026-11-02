@@ -1,6 +1,8 @@
 package com.jetsetslow.omniterm.data.ssh
 
+import com.jcraft.jsch.Identity
 import com.jcraft.jsch.JSch
+import com.jcraft.jsch.KeyPair
 import com.jcraft.jsch.ProxyHTTP
 import com.jcraft.jsch.ProxySOCKS5
 import com.jcraft.jsch.Session
@@ -17,9 +19,7 @@ internal fun addPrivateKeyIdentity(jsch: JSch, name: String, privateKey: String,
     val trimmed = privateKey.trim()
 
     // Wrong half of the pair: a public key was pasted into the private-key field.
-    if (trimmed.startsWith("ssh-rsa ") || trimmed.startsWith("ssh-ed25519 ") ||
-        trimmed.startsWith("ecdsa-sha2-") || trimmed.startsWith("ssh-dss ")
-    ) {
+    if (looksLikePublicKey(trimmed)) {
         throw IllegalArgumentException(
             "That looks like a public key. Paste the matching PRIVATE key — the file without " +
                 "the .pub extension, starting with \"-----BEGIN ... PRIVATE KEY-----\".",
@@ -33,10 +33,7 @@ internal fun addPrivateKeyIdentity(jsch: JSch, name: String, privateKey: String,
         )
     }
 
-    // Unify line endings and guarantee a trailing newline (PEM parsers are picky about it, and
-    // pasting on Android often introduces CRLF or strips the final newline).
-    val normalized = (trimmed.replace("\r\n", "\n").replace("\r", "\n") + "\n")
-        .toByteArray(Charsets.UTF_8)
+    val normalized = normalizedKey(trimmed)
     try {
         jsch.addIdentity(
             name,
@@ -55,6 +52,70 @@ internal fun addPrivateKeyIdentity(jsch: JSch, name: String, privateKey: String,
     }
 }
 
+/** True when [text] is a public key line (any type, security keys and certificates included). */
+internal fun looksLikePublicKey(text: String): Boolean =
+    PUBLIC_KEY_PREFIXES.any { text.startsWith(it) } && !text.contains("PRIVATE KEY")
+
+private val PUBLIC_KEY_PREFIXES = listOf("ssh-rsa", "ssh-ed25519", "ssh-dss", "ecdsa-sha2-", "sk-ssh-", "sk-ecdsa-", "rsa-sha2-")
+
+/**
+ * [key] with unified line endings and a trailing newline: PEM parsers are picky about it, and
+ * pasting on Android often introduces CRLF or strips the final newline.
+ */
+private fun normalizedKey(key: String): ByteArray =
+    (key.trim().replace("\r\n", "\n").replace("\r", "\n") + "\n").toByteArray(Charsets.UTF_8)
+
+/**
+ * Register a saved key with [jsch]: a key file, or a key on a security key, and its [certificate]
+ * when it has one. Returns the public key algorithms beyond JSch's defaults the session must offer.
+ *
+ * A security key signs only when [ask] can have the user touch it; [signIn] records when nobody
+ * could. A certificate goes beside the bare key, which still signs in where the key itself is in
+ * `authorized_keys`.
+ */
+internal fun addKeyIdentities(
+    jsch: JSch,
+    name: String,
+    privateKey: String,
+    passphrase: String?,
+    certificate: String?,
+    destination: String,
+    ask: InteractiveAuth?,
+    signIn: KeyboardInteractiveUserInfo,
+): List<String> {
+    val trimmed = privateKey.trim()
+    val securityKeyType = OpenSshKeyFile.keyType(trimmed)?.let(SkKeyType::of)
+    val cert = certificate?.takeIf { it.isNotBlank() }?.let { runCatching { SshCertificate.parse(it) }.getOrNull() }
+    val algorithms = mutableListOf<String>()
+    val inner: Identity = if (securityKeyType != null) {
+        val key = try {
+            SkKey.fromFile(OpenSshKeyFile.read(trimmed, passphrase))
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid security key file: ${e.message}", e)
+        }
+        SecurityKeyIdentity(key, name, destination, ask, signIn).also {
+            jsch.addIdentity(it, null)
+            algorithms += securityKeyType.sshName
+        }
+    } else {
+        addPrivateKeyIdentity(jsch, name, trimmed, passphrase)
+        if (cert == null) return algorithms
+        val keyPair = KeyPair.load(jsch, normalizedKey(trimmed), null)
+        if (keyPair.isEncrypted && !keyPair.decrypt(passphrase?.toByteArray(Charsets.UTF_8))) return algorithms
+        KeyPairIdentity(keyPair, name)
+    }
+    if (cert != null && SshCertificate.mismatch(cert, inner.publicKeyBlob) == null) {
+        val identity = CertificateIdentity(inner, cert)
+        jsch.addIdentity(identity, null)
+        algorithms += identity.algName
+    }
+    return algorithms
+}
+
+/** [extra] offered before JSch's own public key algorithms, for certificates and security keys. */
+private fun acceptedAlgorithms(extra: List<String>): String =
+    (extra + JSch.getConfig("PubkeyAcceptedAlgorithms").split(",")).distinct().joinToString(",")
+
 /**
  * Shared JSch [Session] factory used by both the shell transport and the SFTP client.
  *
@@ -65,20 +126,28 @@ internal fun buildJschSession(creds: SshCredentials, interactiveAuth: Interactiv
     val jsch = JSch().apply {
         setHostKeyRepository(SshHostKeyTrust.repository())
     }
-    if (!creds.privateKeyPem.isNullOrBlank()) {
-        addPrivateKeyIdentity(
+    val signIn = KeyboardInteractiveUserInfo(creds.password, interactiveAuth)
+    val algorithms = if (!creds.privateKeyPem.isNullOrBlank()) {
+        addKeyIdentities(
             jsch,
             "key_${creds.host}_${creds.username}",
             creds.privateKeyPem,
             creds.passphrase,
+            creds.certificate,
+            "${creds.username}@${creds.host}",
+            interactiveAuth,
+            signIn,
         )
+    } else {
+        emptyList()
     }
     val session = jsch.getSession(creds.username, creds.host, creds.port)
     if (!creds.password.isNullOrEmpty()) session.setPassword(creds.password)
-    session.userInfo = KeyboardInteractiveUserInfo(creds.password, interactiveAuth)
+    session.userInfo = signIn
     applyProxy(session, creds)
     session.setConfig(Properties().apply {
         put("StrictHostKeyChecking", "yes")
+        if (algorithms.isNotEmpty()) put("PubkeyAcceptedAlgorithms", acceptedAlgorithms(algorithms))
         put(
             "PreferredAuthentications",
             if (!creds.privateKeyPem.isNullOrBlank()) {
@@ -172,20 +241,28 @@ internal fun buildJumpedJschSession(
         setHostKeyRepository(SshHostKeyTrust.repository())
     }
     val jumpUser = creds.proxyUser.ifEmpty { creds.username }
-    if (!creds.proxyKeyPem.isNullOrBlank()) {
-        addPrivateKeyIdentity(
+    // A bastion may ask for its own one-time code, or its own security key's touch.
+    val jumpSignIn = KeyboardInteractiveUserInfo(creds.proxyPassword, interactiveAuth)
+    val jumpAlgorithms = if (!creds.proxyKeyPem.isNullOrBlank()) {
+        addKeyIdentities(
             jumpJsch,
             "jump_${creds.proxyHost.trim()}_$jumpUser",
             creds.proxyKeyPem,
             null,
+            creds.proxyCertificate,
+            "$jumpUser@${creds.proxyHost.trim()}",
+            interactiveAuth,
+            jumpSignIn,
         )
+    } else {
+        emptyList()
     }
     val jump = jumpJsch.getSession(jumpUser, creds.proxyHost.trim(), creds.proxyPort)
     if (creds.proxyPassword.isNotEmpty()) jump.setPassword(creds.proxyPassword)
-    // A bastion may ask for its own one-time code.
-    jump.userInfo = KeyboardInteractiveUserInfo(creds.proxyPassword, interactiveAuth)
+    jump.userInfo = jumpSignIn
     jump.setConfig(Properties().apply {
         put("StrictHostKeyChecking", "yes")
+        if (jumpAlgorithms.isNotEmpty()) put("PubkeyAcceptedAlgorithms", acceptedAlgorithms(jumpAlgorithms))
         put(
             "PreferredAuthentications",
             // Keyed off the JUMP host's key, not the target's — only identities added to

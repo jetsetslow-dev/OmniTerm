@@ -228,6 +228,10 @@ dependencies {
   }
   // FTP client for the Shares browser. WebDAV rides on the existing OkHttp dependency.
   implementation(libs.commons.net)
+  // FIDO2 (CTAP2) over USB and NFC, for SSH keys kept on a security key (sk-ssh-ed25519,
+  // sk-ecdsa). Yubico's SDK, which talks to any maker's FIDO2 key, not only YubiKeys.
+  implementation(libs.yubikit.android)
+  implementation(libs.yubikit.fido)
   implementation(libs.androidx.compose.material3)
   implementation(libs.androidx.compose.material)
   implementation(libs.androidx.compose.ui)

@@ -139,6 +139,10 @@ data class SshCredentials(
     val proxyPassword: String = "",
     /** OpenSSH/PEM private key contents for the jump host, when proxyType == "ssh". */
     val proxyKeyPem: String? = null,
+    /** The OpenSSH certificate (`-cert.pub` line) that goes with [privateKeyPem], if any. */
+    val certificate: String? = null,
+    /** The OpenSSH certificate that goes with [proxyKeyPem], if any. */
+    val proxyCertificate: String? = null,
     /** SSH protocol keepalive interval. Zero disables protocol keepalives. */
     val keepAliveSeconds: Int = 30,
     /** Negotiate delayed zlib compression for bandwidth-constrained links. */

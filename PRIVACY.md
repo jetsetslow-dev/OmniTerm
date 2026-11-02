@@ -35,9 +35,12 @@ The in-app backup feature is user initiated. It encrypts exported app data with 
 OmniTerm requests only permissions needed for its visible features:
 
 - `INTERNET` for SSH and SFTP connections to user-configured hosts.
+- `ACCESS_LOCAL_NETWORK` (Android 17 and later) to reach hosts, shares and devices on your local network: SSH, SFTP, LAN discovery, tunnels, shares and Wake-on-LAN.
 - `USE_BIOMETRIC` for optional app lock and privileged-action confirmation.
-- `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, and `FOREGROUND_SERVICE_CONNECTED_DEVICE` for the optional background SSH keep-alive notification and monitoring alerts.
+- `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, and `CHANGE_NETWORK_STATE` for the optional background SSH keep-alive notification and monitoring alerts.
+- `FOREGROUND_SERVICE_DATA_SYNC` for the progress notification that keeps a long file copy or other long operation running while the app is in the background.
 - `WAKE_LOCK` to keep an explicitly backgrounded live terminal from being suspended mid-session.
+- `NFC` to talk to a FIDO2 security key you hold to the phone when you sign in with it or make a key on it. USB security keys and USB serial consoles use Android's per-device USB permission prompt instead.
 
 The app does not request Android storage permissions or All Files Access. File import and export use Android's Storage Access Framework.
 

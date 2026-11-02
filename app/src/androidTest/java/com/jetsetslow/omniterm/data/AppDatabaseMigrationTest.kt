@@ -226,7 +226,10 @@ class AppDatabaseMigrationTest {
         context.deleteDatabase(databaseName)
     }
 
-    /** Existing alert rules keep every value and get an empty target, which only TLS and URL checks read. */
+    /**
+     * Existing alert rules keep every value and get an empty target, which only TLS and URL checks
+     * read; existing SSH keys keep theirs and get no certificate.
+     */
     @Test
     fun migrationToTwentyFourGivesExistingRulesAnEmptyTargetAndAddsTelnetHostsAndKubeClusters() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -236,6 +239,10 @@ class AppDatabaseMigrationTest {
             db.execSQL(
                 "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey) " +
                     "VALUES (4, 7, 'Disk Usage', '/srv', 85.0, 'WARNING', '10m', 1, 'backups', NULL)"
+            )
+            db.execSQL(
+                "INSERT INTO ssh_keys (id, alias, keyType, privateKey, publicKey, fingerprint) " +
+                    "VALUES (2, 'laptop', 'ED25519', 'enc:v1:k', 'ssh-ed25519 AAAA laptop', 'SHA256:x')"
             )
         }
 
@@ -254,6 +261,12 @@ class AppDatabaseMigrationTest {
                 assertEquals("10m", cursor.getString(4))
                 assertEquals("backups", cursor.getString(5))
                 assertEquals("", cursor.getString(6))
+            }
+            db.query("SELECT alias, privateKey, certificate FROM ssh_keys WHERE id = 2").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("laptop", cursor.getString(0))
+                assertEquals("enc:v1:k", cursor.getString(1))
+                assertEquals("", cursor.getString(2))
             }
             db.execSQL("INSERT INTO telnet_hosts (name, host, port) VALUES ('core switch', '10.0.0.2', 23)")
             db.query("SELECT name, host, port FROM telnet_hosts").use { cursor ->

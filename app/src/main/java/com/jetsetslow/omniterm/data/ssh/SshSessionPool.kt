@@ -54,11 +54,15 @@ internal class SshSessionPool(
      */
     private val needsUserUntil = ConcurrentHashMap<String, Long>()
 
+    /** What each of [needsUserUntil]'s hosts wants: a question answered, or a security key touched. */
+    private val needsUserBecause = ConcurrentHashMap<String, String>()
+
     private fun key(c: SshCredentials): String =
         "${c.username}@${c.host}:${c.port}" +
             "|pw=${fingerprint(c.password)}|pk=${fingerprint(c.privateKeyPem)}|pp=${fingerprint(c.passphrase)}" +
+            "|cert=${fingerprint(c.certificate)}" +
             "|proxy=${c.proxyType}:${c.proxyUser}@${c.proxyHost}:${c.proxyPort}:${fingerprint(c.proxyPassword)}" +
-            ":${fingerprint(c.proxyKeyPem)}|ka=${c.keepAliveSeconds}|z=${c.compression}"
+            ":${fingerprint(c.proxyKeyPem)}:${fingerprint(c.proxyCertificate)}|ka=${c.keepAliveSeconds}|z=${c.compression}"
 
     private fun fingerprint(secret: String?): String {
         if (secret.isNullOrEmpty()) return "empty"
@@ -81,7 +85,7 @@ internal class SshSessionPool(
             } ?: run {
                 sessions.remove(k)?.let(::retire)
                 if (interactiveAuth == null && (needsUserUntil[k] ?: 0L) > System.currentTimeMillis()) {
-                    throw JSchException(NEEDS_INTERACTIVE_AUTH)
+                    throw JSchException(needsUserBecause[k] ?: NEEDS_INTERACTIVE_AUTH)
                 }
                 val s = buildJschSession(creds, interactiveAuth)
                 try {
@@ -93,10 +97,11 @@ internal class SshSessionPool(
                     fresh
                 } catch (e: Throwable) {
                     runCatching { s.disconnect() }
+                    val message = signInFailureMessage(s, e)
                     if ((s.userInfo as? KeyboardInteractiveUserInfo)?.neededUser == true) {
                         needsUserUntil[k] = System.currentTimeMillis() + NEEDS_USER_RETRY_MS
+                        needsUserBecause[k] = message
                     }
-                    val message = signInFailureMessage(s, e)
                     throw if (message == e.message) e else JSchException(message, e)
                 }
             }

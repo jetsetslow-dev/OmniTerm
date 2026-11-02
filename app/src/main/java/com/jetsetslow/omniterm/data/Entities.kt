@@ -126,10 +126,13 @@ data class MetricHistoryEntity(
 data class SshKeyEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val alias: String,
-    val keyType: String, // "RSA", "Ed25519", "ECDSA"
+    val keyType: String, // "RSA", "ED25519", "ECDSA", "ED25519-SK", "ECDSA-SK"
+    // A key on a security key keeps its key file here: the handle the security key finds it by.
     val privateKey: String,
     val publicKey: String,
-    val fingerprint: String
+    val fingerprint: String,
+    // The key's OpenSSH certificate (the -cert.pub line), "" without one.
+    val certificate: String = "",
 )
 
 @Entity(tableName = "credential_profiles")

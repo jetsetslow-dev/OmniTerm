@@ -26,6 +26,9 @@ data class InteractiveAuthRequest(
  */
 fun interface InteractiveAuth {
     suspend fun answer(request: InteractiveAuthRequest): List<String>?
+
+    /** Has the user's security key sign [request]; null when the user cancelled or nobody can ask. */
+    suspend fun signWithSecurityKey(request: SecurityKeySignRequest): SecurityKeyAssertion? = null
 }
 
 /** What a connection says when the host asked a question only the user can answer, and nobody could be asked. */
@@ -35,6 +38,11 @@ const val NEEDS_INTERACTIVE_AUTH =
 
 /** What a connection says when the user cancelled the host's sign-in questions. */
 const val INTERACTIVE_AUTH_CANCELLED = "Sign-in cancelled."
+
+/** What a connection says when its key is on a security key, and nobody could be asked to touch it. */
+const val NEEDS_SECURITY_KEY =
+    "This host signs in with a security key. Open a terminal to it and touch the key; OmniTerm's " +
+        "checks then use that sign-in."
 
 /**
  * JSch's questions, routed to [ask].
@@ -66,6 +74,24 @@ internal class KeyboardInteractiveUserInfo(
     /** True when the user was asked and cancelled. */
     @Volatile var cancelledByUser = false
         private set
+
+    /** True when [neededUser] was for a security key's touch rather than a question. */
+    @Volatile var neededSecurityKey = false
+        private set
+
+    /** A security key could have signed in, but nobody was there to touch it. */
+    fun securityKeyNeeded() {
+        neededSecurityKey = true
+        neededUser = true
+    }
+
+    fun securityKeyCancelled() {
+        cancelledByUser = true
+    }
+
+    fun securityKeyUsed() {
+        answeredByUser = true
+    }
 
     private var passwordOffered = false
 
@@ -129,6 +155,7 @@ internal class KeyboardInteractiveUserInfo(
 internal fun signInFailureMessage(session: Session?, error: Throwable, fallback: String = "Connection failed"): String {
     val info = session?.userInfo as? KeyboardInteractiveUserInfo
     return when {
+        info?.neededSecurityKey == true -> NEEDS_SECURITY_KEY
         info?.neededUser == true -> NEEDS_INTERACTIVE_AUTH
         info?.cancelledByUser == true -> INTERACTIVE_AUTH_CANCELLED
         // With a UserInfo set, JSch reports a refused saved password as a cancel. Nobody cancelled.

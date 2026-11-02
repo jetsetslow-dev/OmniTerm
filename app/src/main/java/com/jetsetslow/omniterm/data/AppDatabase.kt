@@ -291,6 +291,7 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_23_24 = object : Migration(23, 24) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE alert_rules ADD COLUMN target TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE ssh_keys ADD COLUMN certificate TEXT NOT NULL DEFAULT ''")
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `telnet_hosts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL)"
