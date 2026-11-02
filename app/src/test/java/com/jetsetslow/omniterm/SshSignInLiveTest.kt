@@ -2,6 +2,7 @@ package com.jetsetslow.omniterm
 
 import com.google.common.truth.Truth.assertThat
 import com.jcraft.jsch.ChannelExec
+import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.HostKey
 import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.JSchException
@@ -16,8 +17,11 @@ import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshKeyMaterial
 import com.jetsetslow.omniterm.data.ssh.SshWire
 import com.jetsetslow.omniterm.data.ssh.buildJschSession
+import com.jetsetslow.omniterm.data.ssh.createEmptyFile
 import com.jetsetslow.omniterm.data.ssh.signInFailureMessage
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.IOException
 import org.junit.Assert.assertThrows
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -26,9 +30,9 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /**
- * Certificate and security-key sign-in through the app's own session builder, against a real
- * OpenSSH server: the fleet's `certauth` host, which has no authorized keys and trusts only the
- * fleet's test certificate authority, so a certificate is the only way in.
+ * Certificate and security-key sign-in through the app's own session builder, and SFTP calls over
+ * it, against a real OpenSSH server: the fleet's `certauth` host, which has no authorized keys and
+ * trusts only the fleet's test certificate authority, so a certificate is the only way in.
  *
  * Opt-in, because it needs the fleet running:
  *
@@ -97,6 +101,30 @@ class SshSignInLiveTest {
         val session = session(key.keyFile("live"), certify(pub.path), ask = null)
         val refused = assertThrows(JSchException::class.java) { session.connect(CONNECT_TIMEOUT_MS) }
         assertThat(signInFailureMessage(session, refused)).isEqualTo(NEEDS_SECURITY_KEY)
+    }
+
+    @Test
+    fun aNewFileStartsEmptyAndNeverReplacesOneAlreadyThere() {
+        val session = session(File(keys, "omniterm_test_ed25519").readText(), File(keys, "omniterm_test_ed25519-cert.pub").readText(), ask = null)
+        session.connect(CONNECT_TIMEOUT_MS)
+        val sftp = session.openChannel("sftp") as ChannelSftp
+        try {
+            sftp.connect(CONNECT_TIMEOUT_MS)
+            val path = "${sftp.pwd()}/omniterm-live-${System.nanoTime()}.txt"
+            try {
+                createEmptyFile(sftp, path)
+                assertThat(sftp.lstat(path).size).isEqualTo(0L)
+                sftp.put(ByteArrayInputStream("keep me".toByteArray()), path)
+                val refused = assertThrows(IOException::class.java) { createEmptyFile(sftp, path) }
+                assertThat(refused).hasMessageThat().contains("already exists")
+                assertThat(sftp.lstat(path).size).isEqualTo(7L)
+            } finally {
+                runCatching { sftp.rm(path) }
+            }
+        } finally {
+            sftp.disconnect()
+            session.disconnect()
+        }
     }
 
     private fun touch(token: SoftwareSecurityKey) = object : InteractiveAuth {

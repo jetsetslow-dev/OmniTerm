@@ -96,7 +96,7 @@ See the [terminal compatibility matrix](docs/TERMINAL_COMPATIBILITY.md) for the 
 Open **Files** to work with remote filesystems.
 
 **SFTP** browses the selected SSH host (the host picker lives here):
-- Upload, download, rename, delete, create folders, and **edit text files** in the built-in code editor (line numbers, syntax highlighting, find/replace, sudo-assisted writes).
+- Upload, download, rename, delete, create folders, start a **new text file**, and **edit text files** in the built-in code editor (line numbers, syntax highlighting, find/replace, sudo-assisted writes).
 - **Multi-select** for batch copy/cut/download/delete; **sort** by name/size/date/type; **search** with a live folder filter, recursive tree search, and glob wildcards.
 - **Archive** the selection to zip/tar/tar.gz, or **extract here** an archive into a same-named subfolder — all server-side.
 - **Dual-pane** — toggle a second SFTP browser to view another host alongside the first, and copy/cut files across for a streamed transfer between the two.

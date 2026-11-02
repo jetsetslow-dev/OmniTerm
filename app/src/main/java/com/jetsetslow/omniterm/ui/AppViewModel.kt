@@ -11869,6 +11869,29 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** Create the empty file [name] in this folder and open it in the editor; an existing file is never touched. */
+    fun sftpNewFile(name: String) {
+        if (sftpEntries.any { it.name == name }) {
+            sftpError = "\"$name\" already exists here."
+            return
+        }
+        val srv = selectedServer
+        viewModelScope.launch {
+            try {
+                val path = joinPath(sftpPath, name)
+                // A subshell: a failed redirect on `:` would end the shell before the message.
+                val err = if (sftpSudo && srv != null)
+                    runSftpSudo(srv, "(set -C; : > ${shellQuote(path)}) 2>/dev/null || echo ${shellQuote("Cannot create \"$name\" here.")}")
+                else { sftpClientOrNull()?.createFile(path); null }
+                if (err != null) { sftpError = err; return@launch }
+                sftpStatus = "Created \"$name\"${sudoTag()}"
+                loadSftp(sftpPath).join()
+                openSftpFileForEdit(sftpEntries.firstOrNull { it.name == name } ?: SftpFile(name, isDirectory = false, size = 0, modDate = ""))
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { sftpError = e.message ?: "Create failed" }
+        }
+    }
+
     /**
      * The file name [sftpArchiveSelection] would write for this selection, so the UI can warn before
      * silently replacing an existing archive. Null when the name is timestamped (multi-item

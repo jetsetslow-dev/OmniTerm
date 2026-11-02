@@ -512,6 +512,8 @@
     <string name="rename">"Rename"</string>
     <string name="new_folder">"New folder"</string>
     <string name="folder_name">"Folder name"</string>
+    <string name="new_file">"New file"</string>
+    <string name="file_name">"File name"</string>
     <string name="create">"Create"</string>
     <string name="new_name">"New name"</string>
     <string name="paste_here">"Paste here"</string>
@@ -545,8 +547,6 @@
     <string name="all_file_operations_will_run_as">"All file operations will run as root. Only enable this if you intend to edit protected system files."</string>
     <string name="don_t_show_again">"Don't show again"</string>
     <string name="authenticate">"Authenticate"</string>
-    <string name="create_directory">"Create Directory"</string>
-    <string name="directory_name">"Directory Name"</string>
     <string name="rename_file">"Rename file"</string>
     <string name="new_name_2">"New Name"</string>
     <string name="pick_a_host_to_browse">"Pick a host to browse."</string>

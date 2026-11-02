@@ -4,6 +4,7 @@ import com.jetsetslow.omniterm.data.SftpFile
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.formatFsDate
 import com.jcraft.jsch.ChannelSftp
+import com.jcraft.jsch.SftpException
 import com.jcraft.jsch.SftpProgressMonitor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayInputStream
 import java.io.Closeable
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -158,6 +160,8 @@ class JschSftp(
 
     override suspend fun mkdir(path: String) { withChannel { ch -> ch.mkdir(path) } }
 
+    suspend fun createFile(path: String): Unit = withChannel { ch -> createEmptyFile(ch, path) }
+
     override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) { withChannel { ch -> ch.rename(oldPath, newPath) } }
 
     override suspend fun delete(path: String, isDirectory: Boolean): Unit = withChannel { ch ->
@@ -299,4 +303,20 @@ class JschSftp(
         /** Drop one host's cached SFTP transport after its host or credentials are removed. */
         fun forgetCredentials(creds: SshCredentials) = pool.evict(creds)
     }
+}
+
+/**
+ * Create the empty file [path] over [ch]. Anything already there is refused, never truncated: SFTP
+ * offers no exclusive create here, so a file that appears after the check is opened to append nothing.
+ */
+internal fun createEmptyFile(ch: ChannelSftp, path: String) {
+    val exists = try {
+        ch.lstat(path)
+        true
+    } catch (e: SftpException) {
+        if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) throw e
+        false
+    }
+    if (exists) throw IOException("\"${path.substringAfterLast('/')}\" already exists here.")
+    ByteArrayInputStream(ByteArray(0)).use { ch.put(it, path, ChannelSftp.APPEND) }
 }
