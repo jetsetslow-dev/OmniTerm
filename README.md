@@ -94,10 +94,10 @@ Open **Files** to work with remote filesystems.
 - **Multi-select** for batch copy/cut/download/delete; **sort** by name/size/date/type; **search** with a live folder filter, recursive tree search, and glob wildcards.
 - **Archive** the selection to zip/tar/tar.gz, or **extract here** an archive into a same-named subfolder — all server-side.
 - **Dual-pane** — toggle a second SFTP browser to view another host alongside the first, and copy/cut files across for a streamed transfer between the two.
-- **Editable path bar** — tap it to type a destination and jump straight there.
+- **Editable path bar** — tap it to type a destination and jump straight there. A long path wraps onto more lines, so all of it stays in reach.
 - **Sudo mode** is gated behind device biometrics/PIN before it can be enabled.
 
-**Bookmarks** span every SSH host and network share: star a folder in the SFTP or Shares browser and it appears here labelled with its endpoint (offline endpoints are greyed out). Only folders you star are saved.
+**Bookmarks** span every SSH host and network share: star a folder in the SFTP or Shares browser and it appears here labelled with its endpoint (offline endpoints are greyed out). Only folders you star are saved. Editing a bookmark shows its whole path, however long, with the cursor at the end.
 
 **Transfers** shows per-file rows with a running rollup; individual transfers (or all of them) can be **cancelled** mid-flight, and they keep running as you navigate the app.
 

@@ -1446,7 +1446,7 @@ private fun NetworkShareDialog(
                         colors = omniTextFieldColors(),
                     )
                 }
-                OutlinedTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text(stringResource(R.string.share_path)) }, placeholder = { Text(stringResource(R.string.sharedfolder_or_exports_media)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                PathTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text(stringResource(R.string.share_path)) }, placeholder = { Text(stringResource(R.string.sharedfolder_or_exports_media)) }, modifier = Modifier.fillMaxWidth(), colors = omniTextFieldColors())
                 if (protocol == "WEBDAV") {
                     // Explicit rather than inferred from the port: Basic auth over plain HTTP on a
                     // nonstandard TLS port (Synology's 5006, say) would send the password unseen.
@@ -1828,18 +1828,17 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                   // otherwise overflow with 8 buttons on a phone.
                   Column(modifier = Modifier.weight(1f)) {
                     if (editingPath) {
-                        OutlinedTextField(
+                        PathTextField(
                             value = pathInput,
                             onValueChange = { pathInput = it },
-                            singleLine = true,
                             textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 14.sp),
                             leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = OmniColors.amber) },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = {
+                            imeAction = ImeAction.Go,
+                            onImeAction = {
                                 RemoteCommands.resolveTypedPath(viewModel.sftpPath, pathInput)
                                     ?.let { viewModel.loadSftp(it) }
                                 editingPath = false
-                            }),
+                            },
                             trailingIcon = {
                                 Row {
                                     IconButton(onClick = {
@@ -3373,12 +3372,11 @@ private fun BookmarkEditDialog(
                         }
                     }
                 }
-                OutlinedTextField(
+                PathTextField(
                     value = path,
                     onValueChange = { path = it },
                     label = { Text(stringResource(R.string.path)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("bookmark.path"),
                 )
             }
         },
