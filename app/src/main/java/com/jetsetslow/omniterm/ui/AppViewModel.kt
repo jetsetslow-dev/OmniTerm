@@ -6398,7 +6398,9 @@ class AppViewModel @JvmOverloads constructor(
                         for (event in controlParser.feed(bytes)) when (event) {
                             is TmuxControlEvent.Output ->
                                 if (event.paneId == shellSession.activePaneId) {
-                                    synchronized(emulator) { emulator.feed(event.data) }
+                                    // tmux answers its panes' queries itself; a reply here would
+                                    // reach tmux as a control command.
+                                    synchronized(emulator) { emulator.feed(event.data); emulator.takeReplies() }
                                     fed = true
                                 }
                             is TmuxControlEvent.Reply -> {
@@ -6444,7 +6446,8 @@ class AppViewModel @JvmOverloads constructor(
                         // capture-pane re-sync is only needed after a reconnect (set there).
                         if (!fed) return@collect
                     } else {
-                        synchronized(emulator) { emulator.feed(bytes) }
+                        synchronized(emulator) { emulator.feed(bytes); emulator.takeReplies() }
+                            ?.let { inputQueue.enqueueBatch(listOf(it), TERMINAL_INPUT_QUEUE_MAX_BYTES) }
                         if (shellSession.persistent) shellSession.scrollbackDirty = true
                     }
                     val now = System.currentTimeMillis()

@@ -34,6 +34,31 @@ class TerminalEmulatorTest {
     private fun rowText(e: TerminalEmulator, row: Int): String =
         e.snapshot().rows[row].spans.joinToString("") { it.text }
 
+    /** fish stalls 10 seconds at every login when its device attributes query goes unanswered. */
+    @Test
+    fun answersDeviceQueriesOnceEach() {
+        val e = TerminalEmulator(80, 24)
+        assertEquals(null, e.takeReplies())
+        e.feedStr("${esc}[c${esc}[0c")
+        assertEquals("${esc}[?1;2c${esc}[?1;2c", e.takeReplies()?.decodeToString())
+        assertEquals(null, e.takeReplies())
+        e.feedStr("ab\r\nxyz${esc}[6n${esc}[5n")
+        assertEquals("${esc}[2;4R${esc}[0n", e.takeReplies()?.decodeToString())
+        // Secondary attributes, private status reports and SGR are not questions this terminal answers.
+        e.feedStr("${esc}[>c${esc}[?6n${esc}[?15n${esc}[1m")
+        assertEquals(null, e.takeReplies())
+        assertEquals("xyz", rowText(e, 1).trimEnd())
+    }
+
+    @Test
+    fun unreadRepliesStayBounded() {
+        val e = TerminalEmulator(80, 24)
+        e.feedStr("${esc}[c".repeat(10_000))
+        assertTrue(e.takeReplies()!!.size <= 1024)
+        e.feedStr("${esc}[c${esc}c${esc}[c")
+        assertEquals("${esc}[?1;2c", e.takeReplies()?.decodeToString())
+    }
+
     @Test
     fun plainTextAndCursorAdvance() {
         val e = TerminalEmulator(80, 24)
