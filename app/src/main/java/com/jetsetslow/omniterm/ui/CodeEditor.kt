@@ -28,8 +28,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.automirrored.filled.WrapText
@@ -554,23 +552,9 @@ private fun FindReplaceBar(
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        FindFieldRow(query, onQuery, matchCount, currentIndex, onPrev = onPrev, onNext = onNext, onClose = onClose)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            EditorInput(query, onQuery, "Find", Modifier.weight(1f))
-            Spacer(Modifier.width(6.dp))
-            val countLabel = if (query.isEmpty()) "" else if (matchCount == 0) "0/0" else "${currentIndex + 1}/$matchCount"
-            Text(countLabel, fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            IconButton(onClick = onPrev, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.previous_match), modifier = Modifier.width(18.dp))
-            }
-            IconButton(onClick = onNext, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.next_match), modifier = Modifier.width(18.dp))
-            }
-            IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_find))
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            EditorInput(replacement, onReplacement, "Replace with", Modifier.weight(1f))
+            FindBarInput(replacement, onReplacement, "Replace with", Modifier.weight(1f))
             Spacer(Modifier.width(6.dp))
             // Shown in a read-only editor too, but disabled there: these do nothing when the text
             // cannot change, and an enabled button that does nothing reads as broken.
@@ -582,27 +566,6 @@ private fun FindReplaceBar(
             FilterChip(selected = useRegex, onClick = { onRegex(!useRegex) }, label = { Text(".*", fontSize = 11.sp) })
             if (error != null) Text(error, color = OmniColors.red, fontSize = 11.sp)
         }
-    }
-}
-
-@Composable
-private fun EditorInput(value: String, onChange: (String) -> Unit, hint: String, modifier: Modifier) {
-    Box(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-    ) {
-        if (value.isEmpty()) {
-            Text(hint, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            singleLine = true,
-            textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(OmniColors.amber),
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 

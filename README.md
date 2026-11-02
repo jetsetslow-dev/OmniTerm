@@ -76,6 +76,7 @@ Open **Term** for an interactive SSH shell on the selected host.
 - Outside the terminal, the keyboard closes when you start something that shows output (a ping, a search, a broadcast, a deploy), so it does not cover the results.
 - In landscape, the tabs and the awake, alerts and (free build) **FREE** buttons move to a rail on the left, so every screen keeps its full height. While the keyboard is open in landscape, a screen's header, host picker and tabs (and the free build's ad) step aside until you close it, so what you are typing and its button, such as Fleet's **RUN**, stay in view. The terminal hides the rail too.
 - Natural touch scrolling stays inside the terminal; app-level tab swipes and pull-to-refresh are disabled on the terminal screen.
+- **Find in terminal** — **⋮ OPT › Find in terminal** searches the scrollback and the screen, ignoring case, and highlights every match. The arrows step through them (the keyboard's search key goes to the next one up), and the count shows which one you are on. The matches follow new output while the bar is open; Back or **✕** closes it.
 - Long-press copy tools for the visible screen or full scrollback; a **Bottom** button jumps to the live tail without covering the last terminal rows.
 
 See the [terminal compatibility matrix](docs/TERMINAL_COMPATIBILITY.md) for the implemented xterm/VT subset, tmux control-mode status, and known protocol limitations.

@@ -147,6 +147,10 @@ class ShellSession(
     var shiftArmed by mutableStateOf(false)
     /** Incremented by terminal chrome to ask this pane to open its session options. */
     var terminalOptionsRequestGeneration by mutableStateOf(0L)
+    /** The find bar's text while it is open on this terminal; null while it is closed. */
+    var findQuery by mutableStateOf<String?>(null)
+    /** What [findQuery] found here, and which match is current. */
+    val find = TerminalFindState()
     /**
      * True when output has arrived since the last tmux history re-sync, meaning local scrollback
      * may be missing rows the user never had on screen (tmux collapses fast output into a repaint

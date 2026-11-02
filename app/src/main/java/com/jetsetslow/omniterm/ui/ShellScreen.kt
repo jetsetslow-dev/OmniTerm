@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -52,6 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -112,9 +114,11 @@ import com.jetsetslow.omniterm.data.term.TermRow
 import com.jetsetslow.omniterm.data.term.TerminalEmulator
 import com.jetsetslow.omniterm.data.term.TerminalSnapshot
 import com.jetsetslow.omniterm.ui.theme.OmniColors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.ceil
 import androidx.compose.ui.res.stringResource
@@ -2131,6 +2135,10 @@ private fun PaneTerminalContent(
                 }
             }
 
+            val visibleFindMatches = remember(currentSession.find.matches, snapshot.firstRow, snapshot.rows.size) {
+                val last = snapshot.firstRow + snapshot.rows.size
+                currentSession.find.matches.filter { it.endRow >= snapshot.firstRow && it.row < last }
+            }
             TerminalCanvas(
                 snapshot = snapshot,
                 palette = palette,
@@ -2138,6 +2146,8 @@ private fun PaneTerminalContent(
                 cellWidthPx = cellWidth,
                 cellHeightPx = cellHeight,
                 fontSizePx = fontSizePx,
+                findMatches = visibleFindMatches,
+                currentFindMatch = currentSession.find.currentMatch,
                 modifier = Modifier
                     .fillMaxSize()
                     .semantics {
@@ -2230,6 +2240,61 @@ private fun PaneTerminalContent(
                         modifier = Modifier.size(22.dp),
                     )
                 }
+            }
+
+            // Find in terminal. The search runs again as output arrives while the bar is open, at
+            // most twice a second, so the matches follow the text without a search every frame.
+            val findQuery = currentSession.findQuery
+            val find = currentSession.find
+            val findScope = rememberCoroutineScope()
+            val findBarRows = with(density) { ceil(56.dp.toPx() / cellHeight).toInt() }
+            fun revealFindMatch(match: TerminalMatch?) {
+                match ?: return
+                findScope.launch {
+                    terminalScrollState.stopScroll()
+                    val first = viewport.reveal(match.row, currentSession.terminalScreen.totalRows, visibleRowCount, findBarRows)
+                    viewModel.updateTerminalViewportFor(currentSession, first, visibleRowCount, viewport.followTail)
+                }
+            }
+            LaunchedEffect(findQuery) {
+                if (findQuery == null) {
+                    find.clear()
+                    return@LaunchedEffect
+                }
+                delay(150)
+                var searched = currentSession.terminalScreen
+                find.showResults(
+                    withContext(Dispatchers.Default) { viewModel.terminalMatchesFor(currentSession, findQuery) },
+                    bottomRow = viewport.firstVisibleRow + visibleRowCount - 1,
+                )
+                revealFindMatch(find.currentMatch)
+                while (true) {
+                    delay(500)
+                    val now = currentSession.terminalScreen
+                    if (now === searched) continue
+                    val trimmed = (now.trimmedRows - searched.trimmedRows).toInt()
+                    searched = now
+                    find.refresh(withContext(Dispatchers.Default) { viewModel.terminalMatchesFor(currentSession, findQuery) }, trimmed)
+                }
+            }
+            if (findQuery != null) {
+                fun closeFind() {
+                    currentSession.findQuery = null
+                    if (isFocused && !viewModel.terminalReadOnly) {
+                        focusRequester.requestFocus()
+                        keyboard?.show()
+                    }
+                }
+                BackHandler { closeFind() }
+                TerminalFindBar(
+                    query = findQuery,
+                    onQuery = { currentSession.findQuery = it },
+                    find = find,
+                    onOlder = { revealFindMatch(find.older()) },
+                    onNewer = { revealFindMatch(find.newer()) },
+                    onClose = { closeFind() },
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(4.dp),
+                )
             }
 
             val endedExitStatus = currentSession.endedExitStatus
@@ -2661,6 +2726,20 @@ private fun PaneTerminalContent(
                             }
                         }
                         @Composable
+                        fun FindAction() {
+                            OutlinedButton(
+                                onClick = {
+                                    showCopyOptions = false
+                                    currentSession.findQuery = currentSession.findQuery ?: ""
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.find_in_terminal))
+                            }
+                        }
+                        @Composable
                         fun CopyHeading(withDescription: Boolean) {
                             Text(stringResource(R.string.copy_terminal_text), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             if (withDescription) {
@@ -2684,6 +2763,7 @@ private fun PaneTerminalContent(
                                         SessionOptions()
                                     }
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        FindAction()
                                         CopyHeading(withDescription = false)
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { RangeActions() }
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ClosingActions() }
@@ -2693,6 +2773,7 @@ private fun PaneTerminalContent(
                                 PasteAction()
                                 SessionOptions()
                                 HorizontalDivider()
+                                FindAction()
                                 CopyHeading(withDescription = true)
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { RangeActions() }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ClosingActions() }
@@ -2921,6 +3002,35 @@ private fun TerminalToggleRow(
     }
 }
 
+/** The terminal's find bar, laid over its top rows. The keyboard's search key steps to the next older match. */
+@Composable
+private fun TerminalFindBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    find: TerminalFindState,
+    onOlder: () -> Unit,
+    onNewer: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Surface(modifier, shape = RoundedCornerShape(8.dp), tonalElevation = 6.dp, shadowElevation = 4.dp) {
+        FindFieldRow(
+            query = query,
+            onQuery = onQuery,
+            matchCount = find.matches.size,
+            currentIndex = find.current,
+            onPrev = onOlder,
+            onNext = onNewer,
+            onClose = onClose,
+            modifier = Modifier.padding(start = 8.dp),
+            fieldModifier = Modifier.focusRequester(focus).testTag("terminalFind.query"),
+            onSearch = onOlder,
+        )
+    }
+}
+
 @Composable
 private fun TerminalCanvas(
     snapshot: TerminalSnapshot,
@@ -2930,6 +3040,8 @@ private fun TerminalCanvas(
     cellHeightPx: Float,
     fontSizePx: Float,
     modifier: Modifier = Modifier,
+    findMatches: List<TerminalMatch> = emptyList(),
+    currentFindMatch: TerminalMatch? = null,
 ) {
     val backgroundArgb = palette.background.toArgb()
     val foregroundArgb = palette.foreground.toArgb()
@@ -2958,6 +3070,13 @@ private fun TerminalCanvas(
             val cursorPaint = Paint().apply {
                 style = Paint.Style.FILL
                 color = cursorArgb
+            }
+            // Laid over the text, light enough to read through; the current match also gets a border.
+            val findPaint = Paint().apply { style = Paint.Style.FILL; color = OmniColors.amber.copy(alpha = 0.4f).toArgb() }
+            val findBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 2.dp.toPx()
+                color = OmniColors.amber.toArgb()
             }
             val fm = regularPaint.fontMetrics
             val baselineOffset = (cellHeightPx - fm.ascent - fm.descent) / 2f
@@ -3018,6 +3137,14 @@ private fun TerminalCanvas(
                         native.drawText(glyphs[i], cellCenterX, baselineY, paint)
                         col += glyphWidth
                     }
+                }
+                for (match in findMatches) {
+                    val cols = match.colsOn(absoluteRow, snapshot.cols) ?: continue
+                    if (cols.isEmpty()) continue
+                    val left = cols.first * cellWidthPx
+                    val right = (cols.last + 1).coerceAtMost(snapshot.cols) * cellWidthPx
+                    native.drawRect(left, yTop, right, yTop + cellHeightPx, findPaint)
+                    if (match == currentFindMatch) native.drawRect(left, yTop, right, yTop + cellHeightPx, findBorderPaint)
                 }
                 if (cursorOn && snapshot.cursorVisible && absoluteRow == snapshot.cursorRow) {
                     val cursorX = snapshot.cursorCol * cellWidthPx

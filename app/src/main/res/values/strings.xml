@@ -810,6 +810,7 @@
     <string name="close_editor">"Close editor"</string>
     <string name="previous_match">"Previous match"</string>
     <string name="next_match">"Next match"</string>
+    <string name="find_in_terminal">"Find in terminal"</string>
     <string name="close_find">"Close find"</string>
     <string name="stack_deployed">"Stack deployed"</string>
     <string name="deploy_failed_stack_left_unchanged">"Deploy failed — stack left unchanged"</string>

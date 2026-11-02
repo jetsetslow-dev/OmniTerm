@@ -7246,6 +7246,12 @@ class AppViewModel @JvmOverloads constructor(
         return joinRowsRespectingWraps(termRows)
     }
 
+    /** Every occurrence of [query] in [session]'s scrollback and screen, as they are drawn. */
+    fun terminalMatchesFor(session: ShellSession, query: String): List<TerminalMatch> {
+        val rows = synchronized(session.emulator) { session.emulator.snapshot().rows }
+        return findInTerminal(rows, query)
+    }
+
     fun clearTerminalScrollback() = clearTerminalScrollbackFor(currentSession)
 
     fun clearTerminalScrollbackFor(session: ShellSession?) {

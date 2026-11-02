@@ -84,6 +84,21 @@ class TerminalViewportState {
     }
 
     /**
+     * Bring absolute [row] into view for the find bar, a third of the way down, unless it is
+     * already in view below the [coveredTopRows] the bar is laid over. Returns the new first
+     * visible row for immediate publishing.
+     */
+    fun reveal(row: Int, totalRows: Int, visibleRows: Int, coveredTopRows: Int = 0): Int {
+        val max = maxFirst(totalRows, visibleRows)
+        if (row < firstVisibleRow + coveredTopRows || row >= firstVisibleRow + visibleRows) {
+            remainderPx = 0f
+            firstVisibleRow = (row - maxOf(visibleRows / 3, coveredTopRows)).coerceIn(0, max)
+            followTail = firstVisibleRow == max
+        }
+        return firstVisibleRow
+    }
+
+    /**
      * Shift the anchor after a scrollback swap changed the total row count (tmux history
      * re-sync), keeping the rows in view stationary. Only meaningful while scrolled up.
      */
