@@ -167,7 +167,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
             },
             confirmLabel = confirm.str(R.string.run),
             destructive = danger.isNotEmpty(),
-        ) { viewModel.runStreamingAction(title, command) }
+        ) { viewModel.runStreamingAction(title, command, inLoginShell = true) }
     }
     val visibleScripts = scripts
         .filter { quickScriptMatchesHost(it, metrics) }

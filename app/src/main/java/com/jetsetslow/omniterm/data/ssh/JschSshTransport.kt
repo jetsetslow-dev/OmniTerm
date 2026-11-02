@@ -3,6 +3,7 @@ package com.jetsetslow.omniterm.data.ssh
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.ChannelShell
 import com.jcraft.jsch.Session
+import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.term.Utf8StreamDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -91,6 +92,10 @@ class JschSshTransport : SshTransport {
             }
         }
 
+    /** [command] as the exec channel sends it: in sh when [SshCredentials.posixShell] says so. */
+    private fun remoteCommand(creds: SshCredentials, command: String): String =
+        if (creds.posixShell) RemoteCommands.inPosixShell(command) else command
+
     /**
      * Run [command] on a fresh exec channel of the pooled session; closes only the channel.
      *
@@ -115,7 +120,7 @@ class JschSshTransport : SshTransport {
             currentCoroutineContext().ensureActive()
             channel = (session.openChannel("exec") as ChannelExec).apply {
                 tracked.channel = this
-                setCommand(command)
+                setCommand(remoteCommand(creds, command))
                 // Secrets (sudo passwords) travel via the channel's stdin, never the command string.
                 setInputStream(stdin?.byteInputStream(Charsets.UTF_8))
             }
@@ -143,7 +148,7 @@ class JschSshTransport : SshTransport {
             session.connect(CONNECT_TIMEOUT_MS)
             currentCoroutineContext().ensureActive()
             channel = (session.openChannel("exec") as ChannelExec).apply {
-                setCommand(command)
+                setCommand(remoteCommand(creds, command))
                 setInputStream(stdin?.byteInputStream(Charsets.UTF_8))
             }
             val input = channel.inputStream
@@ -205,7 +210,7 @@ class JschSshTransport : SshTransport {
             if (jumped != null) session.connect(CONNECT_TIMEOUT_MS)
             currentCoroutineContext().ensureActive()
             channel = (session.openChannel("exec") as ChannelExec).apply {
-                setCommand(command)
+                setCommand(remoteCommand(creds, command))
                 setInputStream(stdin?.byteInputStream(Charsets.UTF_8))
             }
             val stdoutStream = channel.inputStream

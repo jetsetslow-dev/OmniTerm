@@ -95,12 +95,29 @@ class RemoteParsersTest {
 
     @Test
     fun parsesDockerComposeLabels() {
-        val out = "abc123\tweb\tnginx:1.25\tUp 3 hours\t80/tcp\tmyproj\tweb\t/opt/app\tcompose.yml,compose.prod.yml\t2026-05-01 00:00:00 +0000 UTC"
+        val out = "docker\tabc123\tweb\tnginx:1.25\tUp 3 hours\t80/tcp\tmyproj\tweb\t/opt/app\tcompose.yml,compose.prod.yml\t2026-05-01 00:00:00 +0000 UTC"
         val container = RemoteParsers.parseDockerPs(out).single()
         assertEquals("myproj", container.group)
         assertEquals("web", container.composeService)
         assertEquals("/opt/app", container.composeWorkingDir)
         assertEquals("compose.yml,compose.prod.yml", container.composeConfigFiles)
+    }
+
+    /** What a FreeBSD host without Docker or Podman once answered, read as a volume with no name. */
+    @Test
+    fun containerListsReadOnlyRuntimeRows() {
+        val noise = "sh: : Permission denied\nawk: syntax error at source line 1\n context is\n" +
+            "\t/^Local Volumes/ { f=1; seen=0; next } f && >>>  \\ <<< \$1==\"VOLUME\"\n" +
+            "NETWORK ID\tNAME\tDRIVER\n"
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerVolumes(noise))
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerNetworks(noise))
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerImages(noise))
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerPs(noise))
+        // A row cut short is skipped, not thrown on.
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerVolumes("docker\tdata"))
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerNetworks("podman\tid\tname"))
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerImages("docker\tsha256:1\tnginx\tlatest\t1MB"))
+        assertEquals(emptyList<Any>(), RemoteParsers.parseDockerPs("docker\tabc\tweb\tnginx"))
     }
 
     @Test

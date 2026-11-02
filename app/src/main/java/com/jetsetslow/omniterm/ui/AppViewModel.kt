@@ -946,6 +946,28 @@ private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
     QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true, presetKey = "fleet.kernel"),
 )
 
+/**
+ * What each built-in Fleet preset runs on a Windows host, by preset key: the PowerShell its text
+ * hands to `powershell -Command "…"`. That text suits cmd only; a PowerShell login shell rejects its
+ * `||` and expands `$_` first. See [AppViewModel.builtInPresetCommand].
+ */
+internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
+    "fleet.cpu" to "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime; Get-CimInstance Win32_OperatingSystem | " +
+        "ForEach-Object { 'TotalMB=' + [int](\$_.TotalVisibleMemorySize/1024) + ' FreeMB=' + [int](\$_.FreePhysicalMemory/1024) }",
+    "fleet.disk" to "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,Size,FreeSpace",
+    "fleet.processes" to "Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet",
+    "fleet.services" to "Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status",
+    "fleet.syslog" to "Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message",
+    "fleet.containers" to "\$f='table {{.Names}}\t{{.Status}}'; if (Get-Command docker -ErrorAction SilentlyContinue) { docker ps --format \$f } " +
+        "elseif (Get-Command podman -ErrorAction SilentlyContinue) { podman ps --format \$f } else { '${RemoteCommands.NO_CONTAINER_RUNTIME}' }",
+    "fleet.ports" to "Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess",
+    "fleet.kernel" to "[Environment]::OSVersion.VersionString",
+)
+
+/** The built-in Fleet presets, for tests that keep [fleetPresetWindowsScripts] in step with them. */
+internal val builtInFleetPresetCommands: Map<String, String> get() =
+    builtInFleetPresets.associate { it.presetKey.orEmpty() to it.command }
+
 class AppViewModel @JvmOverloads constructor(
     application: Application,
     private val sshTransport: SshTransport = JschSshTransport(),
@@ -2629,6 +2651,8 @@ class AppViewModel @JvmOverloads constructor(
     // Per-host caches touched by the concurrent telemetry probes (distinct keys per host, but
     // concurrent resizes still demand thread-safe maps).
     private val osByServer = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    /** Each probed Unix host's login shell, e.g. /usr/local/bin/fish; see [typedLine]. */
+    private val loginShellByServer = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
     /**
      * The host's OS family ([RemoteCommands.normaliseOs]), asked once and then cached. Every
@@ -2639,9 +2663,30 @@ class AppViewModel @JvmOverloads constructor(
         osByServer[srv.id] ?: run {
             val probe = preloadedProbe ?: executeSshCommand(srv, RemoteCommands.OS_PROBE)
             val detected = RemoteCommands.normaliseOs(probe)
-            if (!probe.startsWith("SSH Error")) osByServer[srv.id] = detected
+            if (ranOnHost(probe)) {
+                loginShellByServer[srv.id] = RemoteParsers.parseLoginShell(probe)
+                osByServer[srv.id] = detected
+            }
             detected
         }
+
+    /**
+     * True when the host ran the command, whatever it answered; false when SSH itself failed.
+     * Windows PowerShell rejects the OS probe's `||` and exits 1, which is an answer, not a
+     * connection that failed: read as one, such a host was probed again on every poll, and over a
+     * proxy it was reported as failing to authenticate.
+     */
+    private fun ranOnHost(result: String): Boolean =
+        !result.startsWith("SSH Error") || result.startsWith("SSH Error: command failed")
+
+    /**
+     * [line], to be typed into [srv]'s interactive shell, as that shell can run it
+     * ([RemoteCommands.forInteractiveShell]): csh, tcsh and fish cannot parse the app's sh.
+     */
+    private suspend fun typedLine(srv: ServerEntity, line: String): String {
+        hostOs(srv)
+        return RemoteCommands.forInteractiveShell(line, loginShellByServer[srv.id])
+    }
     // Previous-poll raw counters per host, used to derive per-core CPU%, network, and disk-I/O rates.
     private val prevStatByServer = java.util.concurrent.ConcurrentHashMap<Int, Map<String, Pair<Long, Long>>>()
     private val prevNetByServer = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Map<String, Pair<Long, Long>>>>()
@@ -2833,7 +2878,7 @@ class AppViewModel @JvmOverloads constructor(
                             executeSshCommand(srv, RemoteCommands.OS_PROBE)
                         }.getOrElse { "SSH Error: ${it.message.orEmpty()}" }
                         val sshRtt = (System.currentTimeMillis() - startedAt).toInt().coerceAtLeast(0)
-                        if (osProbe.startsWith("SSH Error")) {
+                        if (!ranOnHost(osProbe)) {
                             val failure = classifySshConnectionFailure(osProbe)
                             val hasLiveSession = sshRevision(srv.id) != revisionAtStart
                             if (hasLiveSession) {
@@ -4175,6 +4220,7 @@ class AppViewModel @JvmOverloads constructor(
         prevNetByServer.remove(serverId)
         prevDiskByServer.remove(serverId)
         osByServer.remove(serverId)
+        loginShellByServer.remove(serverId)
         systemSpecsJobs.remove(serverId)?.cancel()
         systemSpecs.remove(serverId)
         probedServerIds.remove(serverId)
@@ -5194,8 +5240,15 @@ class AppViewModel @JvmOverloads constructor(
             keepAliveSeconds = srv.keepAlive,
             compression = srv.sshCompression,
             agentForwarding = srv.agentForwarding,
+            // Known Unix hosts only: the OS probe itself, and anything sent before it answers, go
+            // to the login shell as written.
+            posixShell = osByServer[srv.id]?.let(RemoteCommands::hasUnixShell) == true,
         )
     }
+
+    /** [srv]'s credentials for a command the user wrote, which runs in the user's own login shell. */
+    private suspend fun loginShellCredentials(srv: ServerEntity): SshCredentials =
+        buildCredentials(srv).copy(posixShell = false)
 
     // ── Port-forward tunnels ──
     /** Ids of tunnels currently up. A Compose snapshot list so the UI recomposes on start/stop. */
@@ -5654,11 +5707,11 @@ class AppViewModel @JvmOverloads constructor(
                     if (shellSession.controlMode) {
                         // Control mode: no attach repaint exists, so seeding (history + screen)
                         // happens in initControlModeSession AFTER I/O is wired.
-                        session.write(RemoteCommands.tmuxControlCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
+                        session.write(typedLine(srv, RemoteCommands.tmuxControlCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit)).toByteArray())
                     } else {
                         // This name is newly allocated, so there is no history to capture before
                         // creation. An optional side channel must not delay an already-open shell.
-                        session.write(RemoteCommands.tmuxCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
+                        session.write(typedLine(srv, RemoteCommands.tmuxCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit)).toByteArray())
                     }
                     check(!session.closed.value) { "SSH channel closed while attaching tmux" }
                 }
@@ -6248,14 +6301,14 @@ class AppViewModel @JvmOverloads constructor(
                 emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
                 if (shellSession.controlMode) {
                     session.write(
-                        RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted).toByteArray(),
+                        typedLine(srv, RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted)).toByteArray(),
                     )
                 } else {
                     // A regular tmux client paints its own screen on attach. Do not block an
                     // already-open SSH channel on optional side-channel screen/cursor captures:
                     // each could wait for the command timeout while the UI said Opening channel.
                     // History hydration below preserves the live screen and runs independently.
-                    session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted).toByteArray())
+                    session.write(typedLine(srv, RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted)).toByteArray())
                 }
                 check(!session.closed.value) { "SSH channel closed while attaching tmux" }
 
@@ -6846,7 +6899,8 @@ class AppViewModel @JvmOverloads constructor(
                         } else {
                             RemoteCommands.tmuxAttachCommand(shellSession.tmuxName, terminalScrollbackLimit, shellSession.adopted)
                         }
-                        newSession.write(attach.toByteArray())
+                        val typed = repository.getServerById(shellSession.serverId)?.let { typedLine(it, attach) } ?: attach
+                        newSession.write(typed.toByteArray())
                         check(!newSession.closed.value) { "SSH channel closed while reattaching tmux" }
                     }
                     currentCoroutineContext().ensureActive()
@@ -7754,7 +7808,8 @@ class AppViewModel @JvmOverloads constructor(
                     val out = outAsync.await()
                     if (srv.id != selectedServerId) return@coroutineScope
                     if (out.startsWith("SSH Error")) {
-                        showDockerError(out)
+                        // Said plainly, without the transport's "command failed (127)" around it.
+                        showDockerError(if (RemoteCommands.NO_CONTAINER_RUNTIME in out) RemoteCommands.NO_CONTAINER_RUNTIME else out)
                     } else {
                         val restarts = runCatching { RemoteParsers.parseDockerRestartCounts(restartsAsync.await()) }.getOrDefault(emptyMap())
                         if (srv.id != selectedServerId) return@coroutineScope
@@ -7894,7 +7949,14 @@ class AppViewModel @JvmOverloads constructor(
      * (the same panel Docker stack actions use). [onComplete] runs once the stream ends, e.g. to
      * refresh the relevant list.
      */
-    fun runStreamingAction(title: String, command: String, stdin: String? = null, server: ServerEntity? = selectedServer, onComplete: (() -> Unit)? = null) {
+    fun runStreamingAction(
+        title: String,
+        command: String,
+        stdin: String? = null,
+        server: ServerEntity? = selectedServer,
+        inLoginShell: Boolean = false,
+        onComplete: (() -> Unit)? = null,
+    ) {
         val srv = server ?: return showActionMessage(title, "No host is selected. Select a host and retry.")
         // Supersede any previous action so its late chunks can't bleed into this one.
         actionStreamJob?.cancel()
@@ -7904,7 +7966,8 @@ class AppViewModel @JvmOverloads constructor(
         actionStreamRunning = true
         actionStreamJob = viewModelScope.launch {
             try {
-                val result = sshTransport.execStream(buildCredentials(srv), command, stdin) { chunk ->
+                val creds = if (inLoginShell) loginShellCredentials(srv) else buildCredentials(srv)
+                val result = sshTransport.execStream(creds, command, stdin) { chunk ->
                     // onChunk runs on the IO dispatcher; apply the snapshot-state write on Main.
                     if (epoch == actionStreamEpoch) withContext(Dispatchers.Main) {
                         if (epoch == actionStreamEpoch) {
@@ -8107,9 +8170,8 @@ class AppViewModel @JvmOverloads constructor(
             )
             var operationSucceeded = false
             try {
-                val b64 = android.util.Base64.encodeToString(yaml.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-                val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles, runtime)
-                val out = executeSshCommand(srv, cmd)
+                val cmd = RemoteCommands.composeDeploy(composeFilePath, project, workingDir, configFiles, runtime)
+                val out = executeSshCommand(srv, cmd, stdin = yaml)
             // Success only when the runtime printed our end-of-pipeline sentinel AND the transport
             // didn't report an SSH/command failure. Any compose validation or `up` error trips this.
                 val ok = !out.startsWith("SSH Error") && out.contains("OMNITERM_DEPLOY_OK")
@@ -8504,9 +8566,8 @@ class AppViewModel @JvmOverloads constructor(
             cronLoading = true
             try {
                 val normalized = text.trimEnd() + "\n"
-                val encoded = android.util.Base64.encodeToString(normalized.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-                val decode = "{ printf '%s' '$encoded' | base64 -d 2>/dev/null || printf '%s' '$encoded' | base64 --decode 2>/dev/null || printf '%s' '$encoded' | base64 -D; }"
-                val out = executeSshCommand(srv, "$decode | crontab - 2>&1").trim()
+                // On stdin, so a long crontab never outgrows the command line.
+                val out = executeSshCommand(srv, "crontab - 2>&1", stdin = normalized).trim()
                 val ok = out.isBlank()
                 if (srv.id == selectedServerId) {
                     if (ok) cronText = normalized.trimEnd()
@@ -11922,9 +11983,22 @@ class AppViewModel @JvmOverloads constructor(
         broadcastHostJobs.values.toList().forEach { it.cancel() }
     }
 
+    /**
+     * [cmd] as [srv] runs it when it is a built-in Fleet preset the user has not edited: the app's
+     * own command, so in sh on a Unix host and as encoded PowerShell on Windows, whatever the login
+     * shell. Null for anything else, which the user wrote for their own shell.
+     */
+    private suspend fun builtInPresetCommand(srv: ServerEntity, cmd: String): String? {
+        val preset = builtInFleetPresets.firstOrNull { it.command == cmd } ?: return null
+        return if (RemoteCommands.hasUnixShell(hostOs(srv))) cmd
+        else fleetPresetWindowsScripts[preset.presetKey]?.let(RemoteCommands::powershell)
+    }
+
     private suspend fun broadcastHostPlain(srv: ServerEntity, cmd: String) {
         val result = try {
-            sshTransport.execStream(buildCredentials(srv), cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            val preset = builtInPresetCommand(srv, cmd)
+            val creds = if (preset != null) buildCredentials(srv) else loginShellCredentials(srv)
+            sshTransport.execStream(creds, preset ?: cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             "SSH Error: ${e.message ?: "unknown error"}"
@@ -11943,7 +12017,7 @@ class AppViewModel @JvmOverloads constructor(
             sshTransport.exec(
                 buildCredentials(srv),
                 RemoteCommands.broadcastTmuxStart(runId),
-                stdin = RemoteCommands.broadcastTmuxRunner(runId, cmd),
+                stdin = RemoteCommands.broadcastTmuxRunner(runId, cmd, userShell = builtInPresetCommand(srv, cmd) == null),
             )
         } catch (e: Exception) {
             if (e is CancellationException) throw e

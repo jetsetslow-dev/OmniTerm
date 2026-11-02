@@ -51,16 +51,47 @@ class ComposeCommandTest {
 
     @Test
     fun deploy_command_is_valid_shell() {
-        val b64 = java.util.Base64.getEncoder().encodeToString("version: \"3.8\"\n".toByteArray())
         // Path with a space to prove quoting holds.
-        val cmd = RemoteCommands.composeDeploy("/srv/my stack/docker-compose.yml", "my_stack", b64)
+        val cmd = RemoteCommands.composeDeploy("/srv/my stack/docker-compose.yml", "my_stack")
         assertValidShell(cmd)
+    }
+
+    /**
+     * The new file arrives on stdin, byte for byte, and nothing before the staging step reads it:
+     * the fake `docker` swallows its stdin on every call, as a tool that reads it would.
+     */
+    @Test
+    fun deploy_writes_exactly_what_arrives_on_stdin() {
+        val sh = File("/bin/sh")
+        org.junit.Assume.assumeTrue(sh.canExecute())
+        val dir = java.nio.file.Files.createTempDirectory("omniterm-deploy").toFile()
+        try {
+            val bin = File(dir, "bin").apply { mkdirs() }
+            File(bin, "docker").apply {
+                writeText("#!/bin/sh\ncat >/dev/null\necho \"docker \$*\" >> \"${dir.absolutePath}/calls\"\nexit 0\n")
+                setExecutable(true)
+            }
+            val path = "${dir.absolutePath}/stack dir/compose.yml"
+            val yaml = "services:\n  web:\n    image: \"nginx:1.27\" # it's ünïcode \$HOME `x` \\ %s\n"
+            val proc = ProcessBuilder(sh.absolutePath, "-c", RemoteCommands.composeDeploy(path, "probe", runtime = "docker"))
+                .redirectErrorStream(true)
+            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
+            val started = proc.start()
+            started.outputStream.use { it.write(yaml.toByteArray()) }
+            val output = started.inputStream.bufferedReader().readText()
+            started.waitFor()
+            assertTrue(output, output.contains("OMNITERM_DEPLOY_OK"))
+            org.junit.Assert.assertEquals(yaml, File(path).readText())
+            assertTrue(File(dir, "calls").readText().contains("up -d"))
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
     fun deploy_resolves_runtime_and_validates_before_swap() {
         val path = "/srv/example/docker-compose.yml"
-        val cmd = RemoteCommands.composeDeploy(path, "example_stack", "eA==")
+        val cmd = RemoteCommands.composeDeploy(path, "example_stack")
         assertTrue("resolves usable docker|podman", cmd.contains("docker ps") && cmd.contains("podman ps"))
         assertTrue("falls back to standalone compose", cmd.contains("docker-compose") && cmd.contains("podman-compose"))
         assertTrue("prefers podman-compose when Podman is the usable runtime", cmd.indexOf("grep -qi podman") < cmd.indexOf("docker-compose"))
@@ -70,7 +101,8 @@ class ComposeCommandTest {
         assertTrue("emits success sentinel", cmd.contains("OMNITERM_DEPLOY_OK"))
         // Operates on the EXACT absolute file via -f, never a guessed relative name.
         assertTrue("uses mktemp staging", cmd.contains("mktemp"))
-        assertTrue("uses portable base64 decode", cmd.contains("base64 -d") && cmd.contains("base64 --decode") && cmd.contains("base64 -D"))
+        assertTrue("stages the file from stdin", cmd.contains("cat > \"\$tmp\"") && !cmd.contains("base64"))
+        assertTrue("resolving the runtime reads no stdin", cmd.startsWith("{ ") && cmd.contains("; } </dev/null"))
         assertTrue("uses -f with the absolute compose path", cmd.contains("-f '$path'"))
         assertTrue("up runs against the same -f path", cmd.contains("-f '$path' -p 'example_stack' up -d"))
         assertTrue("removes failed new stack file", cmd.contains("removing new compose file"))
@@ -87,7 +119,6 @@ class ComposeCommandTest {
         val cmd = RemoteCommands.composeDeploy(
             composeFilePath = "/srv/app/compose.override.yml",
             project = "app",
-            yamlBase64 = "eA==",
             workingDir = "/srv/app",
             configFiles = "compose.yml,compose.override.yml",
         )
@@ -242,14 +273,16 @@ class ComposeCommandTest {
         """.trimIndent()
 
         // The exact awk program embedded in DOCKER_VOLUMES (the part between `awk '` and `'`).
+        // As the shell hands it over: inside single quotes nothing changes, so no unescaping here.
+        // Rewriting `\$` to `$` once hid that awk was really given `\$1`, which no awk parses.
         val program = RemoteCommands.DOCKER_VOLUMES
             .substringAfter("awk '").substringBefore("' ||")
-            .replace("\\\$", "\$").replace("\\t", "\t").replace("\\\"", "\"")
 
         val p = ProcessBuilder(awk, program).redirectErrorStream(false).start()
         p.outputStream.bufferedWriter().use { it.write(sample) }
-        val tsv = p.inputStream.bufferedReader().readText()
-        p.waitFor()
+        val tsv = p.inputStream.bufferedReader().readText().lineSequence().filter { it.isNotEmpty() }
+            .joinToString("\n") { "podman\t$it" }
+        assertTrue("awk accepted the program", p.waitFor() == 0)
 
         val vols = com.jetsetslow.omniterm.data.RemoteParsers.parseDockerVolumes(tsv)
         assertTrue("parsed 3 volumes (got ${vols.size}): $tsv", vols.size == 3)

@@ -127,6 +127,14 @@ data class SshCredentials(
      * for the session's lifetime).
      */
     val agentForwarding: Boolean = false,
+    /**
+     * Run each exec command in `sh` rather than the login shell
+     * ([com.jetsetslow.omniterm.data.RemoteCommands.inPosixShell]).
+     * Set for hosts known to be Unix, whose app commands are all POSIX sh while the user's login
+     * shell may be csh, fish or zsh. Off for Windows hosts, for hosts not yet probed, and for
+     * commands the user typed, which belong to the user's own shell.
+     */
+    val posixShell: Boolean = false,
 )
 
 /** Connection failed before/while establishing the shell or exec channel. */
