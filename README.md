@@ -186,6 +186,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
 ## Troubleshooting
 - **Host offline** — check hostname/IP, SSH port, network route, and firewalls.
 - **Auth fails** — verify username, password/key, and proxy/jump-host config.
+- **"Connection dropped during handshake"** — the server closed the connection before sign-in. It may still be starting, or (OpenSSH 9.8 and later) it is turning your device away for a while after several failed sign-ins. Wait a minute and try again.
 - **"This host asks a sign-in question"** — the host uses two-step sign-in. Open a terminal to it and enter the current code from your authenticator app; its checks then work while that sign-in stays connected.
 - **Empty monitoring** — confirm the host has the expected platform tools (Linux gives the richest metrics). Windows hosts need OpenSSH Server and Windows PowerShell, which OmniTerm runs its Windows checks with.
 - **Infra issues** — confirm Docker/Podman is installed and the SSH user may run it.

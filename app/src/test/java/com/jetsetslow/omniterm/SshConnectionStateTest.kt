@@ -71,6 +71,9 @@ class SshConnectionStateTest {
             .isEqualTo(SshConnectionFailure.NetworkUnreachable)
         assertThat(classifySshConnectionFailure("Broken pipe"))
             .isEqualTo(SshConnectionFailure.Dropped)
+        // JSch's words when sshd drops the connection, as OpenSSH 9.8+ does after failed sign-ins.
+        assertThat(classifySshConnectionFailure("SSH Error: connection is closed by foreign host"))
+            .isEqualTo(SshConnectionFailure.Dropped)
     }
 
     @Test

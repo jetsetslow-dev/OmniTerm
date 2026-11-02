@@ -544,7 +544,9 @@ sealed interface SshConnectionFailure {
         override val userMessage = "Network unreachable — the host can't be reached from this network."
     }
     data object Dropped : SshConnectionFailure {
-        override val userMessage = "Connection dropped during handshake — the server may not be ready yet. Try again in a moment."
+        // OpenSSH 9.8+ also drops new connections for a while after repeated failed sign-ins.
+        override val userMessage = "Connection dropped during handshake — the server may not be ready yet, or it is briefly " +
+            "turning this device away after failed sign-ins. Try again in a moment."
     }
     data object HostKeyVerification : SshConnectionFailure {
         override val userMessage = "Host key verification failed."
@@ -569,7 +571,7 @@ internal fun classifySshConnectionFailure(raw: String): SshConnectionFailure {
         has("UnknownHost", "Name or service not known", "nodename nor servname", "No address associated") ->
             SshConnectionFailure.HostNotFound
         has("Network is unreachable", "No route to host") -> SshConnectionFailure.NetworkUnreachable
-        has("Connection reset", "Broken pipe", "connection closed by") -> SshConnectionFailure.Dropped
+        has("Connection reset", "Broken pipe", "connection closed by", "connection is closed by") -> SshConnectionFailure.Dropped
         has("reject HostKey", "HostKey has been changed") -> SshConnectionFailure.HostKeyVerification
         msg.isBlank() -> SshConnectionFailure.Unknown("Connection failed — the host didn't respond as expected.")
         else -> SshConnectionFailure.Unknown(msg)
