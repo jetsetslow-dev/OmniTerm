@@ -63,6 +63,9 @@ import java.util.UUID
 /** Notification channel for fired monitoring alerts (distinct from the session-service channel). */
 private const val ALERT_CHANNEL_ID = "monitoring_alerts"
 
+/** TLS and URL checks that may run at once; each can wait up to its timeout. */
+private const val ENDPOINT_CHECK_PARALLELISM = 4
+
 /** Notification channel for the low-battery saver engaging. */
 private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
 
@@ -142,7 +145,8 @@ internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRu
         previous.thresholdValue != next.thresholdValue ||
         previous.severity != next.severity ||
         previous.triggerWindow != next.triggerWindow ||
-        previous.enabled != next.enabled
+        previous.enabled != next.enabled ||
+        previous.target != next.target
 
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
 internal const val ANDROID_PING_BINARY = "/system/bin/ping"
@@ -2873,6 +2877,8 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
 
+                startEndpointChecks()
+
                 val cutoff = System.currentTimeMillis() - (metricsRetentionDays * 24L * 60 * 60 * 1000)
                 repository.pruneMetrics(cutoff)
 
@@ -3269,9 +3275,15 @@ class AppViewModel @JvmOverloads constructor(
         cpuTempC: Float? = null,
     ) = alertStateMutex.withLock {
         if (!alertsEnabled) return@withLock
-        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0)).filter { it.enabled }
+        // TLS and URL checks are not host metrics: they run on their own pace (runEndpointChecks),
+        // and here they would read as "not breaching" and close their incidents every poll.
+        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
+            .filter { it.enabled && !EndpointChecks.isEndpointMetric(it.metricName) }
         val activeAlerts = repository.getActiveAlerts()
         val now = System.currentTimeMillis()
+        // A sampling gap longer than a few poll intervals means we observed nothing —
+        // the window must restart rather than count the unobserved time as breached.
+        val staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L)
         for (r in rules) {
             // Disk rules check the rule's own mount point when we have per-mount data; the
             // aggregate figure is only a fallback for the root mount.
@@ -3286,57 +3298,150 @@ class AppViewModel @JvmOverloads constructor(
                 "Temperature" -> cpuTempC
                 else -> null
             }
-            val breachKey = r.id to srv.id
             val overThreshold = currentValue != null && currentValue > r.thresholdValue
-            // A sampling gap longer than a few poll intervals means we observed nothing —
-            // the window must restart rather than count the unobserved time as breached.
-            val staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L)
-            val triggered = alertBreachTracker.onSample(
-                breachKey, overThreshold, now,
-                windowMs = triggerWindowMs(r.triggerWindow),
-                staleGapMs = staleGapMs,
+            applyAlertSample(r, srv, currentValue, overThreshold, activeAlerts, now, staleGapMs)
+        }
+    }
+
+    /**
+     * Feeds one reading of [r] on [srv] to its breach window, then opens or resolves the incident.
+     * Callers hold [alertStateMutex].
+     */
+    private suspend fun applyAlertSample(
+        r: AlertRuleEntity,
+        srv: ServerEntity,
+        currentValue: Float?,
+        overThreshold: Boolean,
+        activeAlerts: List<ActiveAlertEntity>,
+        now: Long,
+        staleGapMs: Long,
+        notificationTarget: String = srv.host,
+    ) {
+        val breachKey = r.id to srv.id
+        val triggered = alertBreachTracker.onSample(
+            breachKey, overThreshold, now,
+            windowMs = triggerWindowMs(r.triggerWindow),
+            staleGapMs = staleGapMs,
+        )
+
+        val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
+        val currentAlert = existing?.let { alert ->
+            if (currentValue != null && alert.currentValue != currentValue) {
+                // Refresh the reading without replacing the incident row. Re-inserting it
+                // would silently clear acknowledgement and mute state.
+                repository.updateAlertCurrentValue(alert.id, currentValue)
+                alert.copy(currentValue = currentValue)
+            } else {
+                alert
+            }
+        }
+
+        if (triggered) {
+            // Check the incident for this rule on this concrete host. Global rules share the
+            // same rule id across hosts, so serverId must be part of the match.
+            val currentlyActive = currentAlert != null
+            val isMuted = currentAlert?.mutedUntil?.let { it > now } ?: false
+
+            if (!currentlyActive && !isMuted) {
+                val alert = ActiveAlertEntity(
+                    ruleId = r.id,
+                    serverId = srv.id,
+                    metricName = r.metricName,
+                    currentValue = currentValue ?: 0f,
+                    thresholdValue = r.thresholdValue,
+                    severity = r.severity,
+                    triggeredTime = now
+                )
+                repository.insertAlert(alert)
+                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget)
+            }
+        } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
+            // Recovered — but only after enough consecutive clean samples (hysteresis),
+            // so one jittery dip doesn't flap an incident closed and re-open.
+            if (currentAlert != null) {
+                recordAlertHistory(currentAlert, "resolved", srv.name)
+                repository.deleteAlert(currentAlert.id)
+                clearAlertNotification(r.id, srv.id)
+            }
+        }
+    }
+
+    /** When each (rule, host) TLS or URL check is next due. */
+    private val endpointChecksDueAt = java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Long>()
+
+    /** What each (rule, host) TLS or URL check last saw, for the rule list. */
+    val endpointCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
+
+    private var endpointCheckJob: Job? = null
+
+    /**
+     * Runs every TLS and URL check that is due, from this phone. Called each telemetry cycle, so
+     * the checks pause with polling (battery saver) and never overlap a previous round.
+     */
+    private fun startEndpointChecks() {
+        if (endpointCheckJob?.isActive == true) return
+        endpointCheckJob = viewModelScope.launch(Dispatchers.IO) { runEndpointChecks() }
+    }
+
+    private suspend fun runEndpointChecks() {
+        if (!alertsEnabled) return
+        val rules = repository.getAllRules().filter { it.enabled && EndpointChecks.isEndpointMetric(it.metricName) }
+        if (rules.isEmpty()) return
+        val servers = repository.getAllServers()
+        val limit = Semaphore(ENDPOINT_CHECK_PARALLELISM)
+        coroutineScope {
+            for (rule in rules) {
+                for (srv in servers.filter { rule.serverId == 0 || it.id == rule.serverId }) {
+                    val key = rule.id to srv.id
+                    if (System.currentTimeMillis() < (endpointChecksDueAt[key] ?: 0L)) continue
+                    launch {
+                        limit.withPermit {
+                            val result = EndpointChecks.run(rule, srv.host)
+                            val now = System.currentTimeMillis()
+                            val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
+                            endpointChecksDueAt[key] = now + endpointCheckIntervalMs(rule, result, breached)
+                            withContext(Dispatchers.Main) { endpointCheckResults[key] = result }
+                            evaluateEndpointRule(rule, srv, result)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * URL checks run every poll, but at most once a minute. A certificate changes rarely, so TLS
+     * checks run every six hours: hourly while one is close to expiry (so a renewal is seen soon),
+     * and every quarter hour after one could not connect.
+     */
+    private fun endpointCheckIntervalMs(rule: AlertRuleEntity, result: EndpointChecks.Result, breached: Boolean): Long = when {
+        rule.metricName == EndpointChecks.URL_CHECK -> telemetryIntervalMs.coerceAtLeast(60_000L)
+        result.value == null -> 15 * 60_000L
+        breached -> 60 * 60_000L
+        else -> 6 * 60 * 60_000L
+    }
+
+    private suspend fun evaluateEndpointRule(rule: AlertRuleEntity, srv: ServerEntity, result: EndpointChecks.Result) =
+        alertStateMutex.withLock {
+            // Nothing observed (no TLS there, an unusable target): leave any incident as it is.
+            val value = result.value ?: return@withLock
+            if (!alertsEnabled) return@withLock
+            // The rule may have been edited or deleted while the check ran.
+            val current = repository.getAllRules().find { it.id == rule.id }
+            if (current != rule) return@withLock
+            applyAlertSample(
+                rule, srv, value, EndpointChecks.breached(rule, value), repository.getActiveAlerts(),
+                now = System.currentTimeMillis(),
+                staleGapMs = endpointCheckIntervalMs(rule, result, breached = true) * 3,
+                notificationTarget = result.target,
             )
+        }
 
-            val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
-            val currentAlert = existing?.let { alert ->
-                if (currentValue != null && alert.currentValue != currentValue) {
-                    // Refresh the reading without replacing the incident row. Re-inserting it
-                    // would silently clear acknowledgement and mute state.
-                    repository.updateAlertCurrentValue(alert.id, currentValue)
-                    alert.copy(currentValue = currentValue)
-                } else {
-                    alert
-                }
-            }
-
-            if (triggered) {
-                // Check the incident for this rule on this concrete host. Global rules share the
-                // same rule id across hosts, so serverId must be part of the match.
-                val currentlyActive = currentAlert != null
-                val isMuted = currentAlert?.mutedUntil?.let { it > now } ?: false
-
-                if (!currentlyActive && !isMuted) {
-                    val alert = ActiveAlertEntity(
-                        ruleId = r.id,
-                        serverId = srv.id,
-                        metricName = r.metricName,
-                        currentValue = currentValue ?: 0f,
-                        thresholdValue = r.thresholdValue,
-                        severity = r.severity,
-                        triggeredTime = now
-                    )
-                    repository.insertAlert(alert)
-                    postAlertNotification(srv, r, currentValue ?: 0f)
-                }
-            } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
-                // Recovered — but only after enough consecutive clean samples (hysteresis),
-                // so one jittery dip doesn't flap an incident closed and re-open.
-                if (currentAlert != null) {
-                    recordAlertHistory(currentAlert, "resolved", srv.name)
-                    repository.deleteAlert(currentAlert.id)
-                    clearAlertNotification(r.id, srv.id)
-                }
-            }
+    /** Forget a rule's check pace and results, so an edited or new rule is checked at once. */
+    private fun resetEndpointChecks(ruleId: Int) {
+        endpointChecksDueAt.keys.removeIf { it.first == ruleId }
+        viewModelScope.launch(Dispatchers.Main) {
+            endpointCheckResults.keys.filter { it.first == ruleId }.forEach(endpointCheckResults::remove)
         }
     }
 
@@ -3360,7 +3465,7 @@ class AppViewModel @JvmOverloads constructor(
     private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
-    private fun postAlertNotification(srv: ServerEntity, rule: AlertRuleEntity, value: Float) {
+    private fun postAlertNotification(srv: ServerEntity, rule: AlertRuleEntity, value: Float, target: String = srv.host) {
         val app = getApplication<Application>()
         val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
         val openAppIntent = Intent(app, MainActivity::class.java)
@@ -3385,9 +3490,14 @@ class AppViewModel @JvmOverloads constructor(
             } else {
                 rule.thresholdValue
             }
+        val text = if (EndpointChecks.isEndpointMetric(rule.metricName)) {
+            EndpointChecks.alertText(rule, target, value)
+        } else {
+            "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
+        }
         val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
             .setContentTitle("${rule.severity}: ${srv.name}")
-            .setContentText("${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)")
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)
@@ -4696,7 +4806,16 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun addAlertRule(serverId: Int, metricName: String, mountPoint: String, threshold: Float, severity: String, triggerWindow: String, notes: String = "") {
+    fun addAlertRule(
+        serverId: Int,
+        metricName: String,
+        mountPoint: String,
+        threshold: Float,
+        severity: String,
+        triggerWindow: String,
+        notes: String = "",
+        target: String = "",
+    ) {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
                 serverId = serverId,
@@ -4706,11 +4825,17 @@ class AppViewModel @JvmOverloads constructor(
                 severity = severity,
                 triggerWindow = triggerWindow,
                 notes = notes,
+                target = target,
             )
             repository.insertRule(rule)
-            // Start the sustained window from the current observed value when available. Without
-            // this, a newly created five-minute rule waits for the next poll before its clock starts.
-            evaluateCachedAlertTargets(serverId)
+            if (EndpointChecks.isEndpointMetric(metricName)) {
+                // Check it now rather than at the next poll, so the rule list shows a result.
+                startEndpointChecks()
+            } else {
+                // Start the sustained window from the current observed value when available. Without
+                // this, a newly created five-minute rule waits for the next poll before its clock starts.
+                evaluateCachedAlertTargets(serverId)
+            }
         }
     }
 
@@ -13220,7 +13345,9 @@ class AppViewModel @JvmOverloads constructor(
                 val evaluationChanged = previous?.let { alertRuleEvaluationChanged(it, rule) } == true
                 if (evaluationChanged) closeAlertsForRule(rule.id)
                 repository.insertRule(rule)
+                if (evaluationChanged) resetEndpointChecks(rule.id)
             }
+            if (EndpointChecks.isEndpointMetric(rule.metricName)) startEndpointChecks()
         }
     }
 
@@ -13229,6 +13356,7 @@ class AppViewModel @JvmOverloads constructor(
             alertStateMutex.withLock {
                 closeAlertsForRule(rule.id)
                 repository.deleteRule(rule)
+                resetEndpointChecks(rule.id)
             }
         }
     }
@@ -13375,6 +13503,7 @@ class AppViewModel @JvmOverloads constructor(
                 put("severity", r.severity); put("triggerWindow", r.triggerWindow); put("enabled", r.enabled)
                 put("notes", r.notes)
                 r.presetKey?.let { put("presetKey", it) }
+                if (r.target.isNotEmpty()) put("target", r.target)
             })
         }
         val historyArr = org.json.JSONArray()
@@ -14107,9 +14236,12 @@ class AppViewModel @JvmOverloads constructor(
                             importedScripts++
                         }
 
-                        // Alert rules (re-point serverId; dedup by server+metric+threshold+window).
+                        // Alert rules (re-point serverId; dedup by server+metric+threshold+window+target).
+                        fun sameRule(rule: AlertRuleEntity, serverId: Int, metric: String, threshold: Float, window: String, target: String) =
+                            rule.serverId == serverId && rule.metricName == metric && rule.thresholdValue == threshold &&
+                                rule.triggerWindow == window && rule.target == target
                         val existingRuleKeys = repository.getAllRules()
-                            .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}" }.toMutableSet()
+                            .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}|${it.target}" }.toMutableSet()
                         val ruleArr = root.optJSONArray("alertRules") ?: org.json.JSONArray()
                         val ruleIdMap = mutableMapOf<Int, Int>()
                         var importedRules = 0
@@ -14121,12 +14253,12 @@ class AppViewModel @JvmOverloads constructor(
                             val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
                             val window = o.optString("triggerWindow", "5m")
                             val metric = o.optString("metricName")
-                            val key = "$mappedServerId|$metric|$threshold|$window"
+                            val target = o.optString("target", "")
+                            val key = "$mappedServerId|$metric|$threshold|$window|$target"
                             if (key in existingRuleKeys) {
                                 if (oldRuleId != 0) {
-                                    repository.getAllRules().find {
-                                        it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
-                                    }?.let { ruleIdMap[oldRuleId] = it.id }
+                                    repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }
+                                        ?.let { ruleIdMap[oldRuleId] = it.id }
                                 }
                                 continue
                             }
@@ -14138,11 +14270,10 @@ class AppViewModel @JvmOverloads constructor(
                                     enabled = o.optBoolean("enabled", true),
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
+                                    target = target,
                                 )
                             )
-                            repository.getAllRules().find {
-                                it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
-                            }?.let { restoredRule ->
+                            repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }?.let { restoredRule ->
                                 if (oldRuleId != 0) ruleIdMap[oldRuleId] = restoredRule.id
                             }
                             existingRuleKeys.add(key)

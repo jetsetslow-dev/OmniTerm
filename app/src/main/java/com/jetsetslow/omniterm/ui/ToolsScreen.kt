@@ -53,15 +53,18 @@ import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import java.io.InputStream
 import java.text.DateFormat
 import java.util.Date
+import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
 /**
- * Display unit for an alert metric: thresholds are percentages except latency and temperature.
+ * Display unit for an alert metric: thresholds are percentages except latency, temperature, and
+ * the TLS and URL checks.
  */
 private fun alertMetricUnit(metricName: String, system: MeasurementSystem): String = when (metricName) {
-    "Latency" -> "ms"
+    "Latency", EndpointChecks.URL_CHECK -> "ms"
     "Temperature" -> temperatureUnit(system)
+    EndpointChecks.TLS_EXPIRY -> "days"
     else -> "%"
 }
 
@@ -82,6 +85,12 @@ internal fun alertThresholdError(
     if (!value.isFinite()) return "Enter a number"
     return when (metricName) {
         "Latency" -> if (value <= 0f) "Must be greater than 0 ms" else null
+        EndpointChecks.TLS_EXPIRY -> if (value < 1f) "Must be 1 day or more" else null
+        EndpointChecks.URL_CHECK -> when {
+            value <= 0f -> "Must be greater than 0 ms"
+            value >= EndpointChecks.URL_TIMEOUT_MS -> "Must be under ${EndpointChecks.URL_TIMEOUT_MS} ms, when a check gives up"
+            else -> null
+        }
         "Temperature" -> {
             // Compare in Celsius so the bound holds in either unit system.
             val celsius = displayTemperatureToCelsius(value, system)
@@ -95,14 +104,44 @@ internal fun alertThresholdError(
     }
 }
 
+/**
+ * Validates what a TLS or URL check connects to, against the hosts the rule is for. Null when it
+ * is usable, otherwise the reason. Other metrics take no target.
+ *
+ * A typed address is one endpoint, so it belongs to one host: on "All hosts" or several hosts it
+ * would be checked, and alert, once per host.
+ */
+internal fun alertTargetError(metricName: String, target: String, hostIds: Collection<Int>): String? {
+    if (!EndpointChecks.isEndpointMetric(metricName)) return null
+    val trimmed = target.trim()
+    if (metricName == EndpointChecks.URL_CHECK) {
+        if (trimmed.isEmpty()) return "Enter the address to check"
+        if (EndpointChecks.checkUrl(trimmed) == null) return "Enter a web address, like https://example.com/health"
+    } else if (trimmed.isNotEmpty() && EndpointChecks.tlsEndpoint(trimmed, hostAddress = "") == null) {
+        return "Enter a host, host:port or URL"
+    }
+    if (trimmed.isNotEmpty() && (hostIds.size != 1 || 0 in hostIds)) return "Pick the one host this address belongs to"
+    return null
+}
+
+/**
+ * An alert value as the user reads it. A TLS or URL reading says what was seen ("12 days left",
+ * "HTTP 503"); its threshold ([threshold] true) is a plain amount.
+ */
 private fun alertMetricDisplay(
     metricName: String,
     canonicalValue: Float,
     system: MeasurementSystem,
-): String = if (metricName == "Temperature") {
-    formatTemperature(canonicalValue, system, decimals = 1)
-} else {
-    "$canonicalValue${alertMetricUnit(metricName, system)}"
+    threshold: Boolean = false,
+): String = when {
+    metricName == "Temperature" -> formatTemperature(canonicalValue, system, decimals = 1)
+    EndpointChecks.isEndpointMetric(metricName) ->
+        if (threshold) {
+            "${canonicalValue.roundToInt()} ${alertMetricUnit(metricName, system)}"
+        } else {
+            EndpointChecks.describe(metricName, canonicalValue)
+        }
+    else -> "$canonicalValue${alertMetricUnit(metricName, system)}"
 }
 
 private val APP_LOCK_TIMEOUT_PRESETS = listOf(
@@ -422,7 +461,7 @@ fun AlertPopupIncidentCard(
                 )
             }
             Text(
-                stringResource(R.string.current_threshold, server?.name ?: "Server", alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem)),
+                stringResource(R.string.current_threshold, server?.name ?: "Server", alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem, threshold = true)),
                 fontSize = OmniTextSize.Meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -612,7 +651,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        stringResource(R.string.threshold_current, alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)),
+                                        stringResource(R.string.threshold_current, alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem, threshold = true), alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)),
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -719,11 +758,19 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(r.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: "host"
+                                    val shownThreshold = alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem, threshold = true)
                                     Text(
-                                        stringResource(R.string.threshold_for, targetName, alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem), r.triggerWindow),
+                                        when (r.metricName) {
+                                            EndpointChecks.TLS_EXPIRY -> stringResource(R.string.tls_rule_summary, targetName, shownThreshold)
+                                            EndpointChecks.URL_CHECK -> stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
+                                            else -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
+                                        },
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    if (EndpointChecks.isEndpointMetric(r.metricName)) {
+                                        EndpointCheckLines(r, serversList, viewModel.endpointCheckResults)
+                                    }
                                     if (r.notes.isNotBlank()) {
                                         Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                                     }
@@ -777,7 +824,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         Text(item.status.uppercase(), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        stringResource(R.string.current_threshold_2, alertMetricDisplay(item.metricName, item.currentValue, measurementSystem), alertMetricDisplay(item.metricName, item.thresholdValue, measurementSystem)) +
+                                        stringResource(R.string.current_threshold_2, alertMetricDisplay(item.metricName, item.currentValue, measurementSystem), alertMetricDisplay(item.metricName, item.thresholdValue, measurementSystem, threshold = true)) +
                                             item.severity,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -817,9 +864,11 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var severitySelect by remember(existing) { mutableStateOf(existing?.severity ?: "CRITICAL") }
         var windowSelect by remember(existing) { mutableStateOf(existing?.triggerWindow ?: "5m") }
         var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
+        var targetInput by remember(existing) { mutableStateOf(existing?.target ?: "") }
         // A rule whose threshold silently fell back to a default is a rule that never fires when the
         // user expects it to, so refuse to save instead of guessing.
         val thresholdError = alertThresholdError(threshInput, metricSelect, measurementSystem)
+        val targetError = alertTargetError(metricSelect, targetInput, selectedSrvIds)
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
@@ -845,7 +894,10 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         },
                     )
                     Text(stringResource(R.string.select_metric_key))
-                    val metricsOptions = listOf("CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature")
+                    val metricsOptions = listOf(
+                        "CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature",
+                        EndpointChecks.TLS_EXPIRY, EndpointChecks.URL_CHECK,
+                    )
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         metricsOptions.forEach { opt ->
@@ -858,7 +910,16 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             "Latency" -> "250"
                                             "Temperature" ->
                                                 celsiusToDisplay(80f, measurementSystem).toString()
+                                            EndpointChecks.TLS_EXPIRY -> "14"
+                                            EndpointChecks.URL_CHECK -> "2000"
                                             else -> "90"
+                                        }
+                                        // A certificate's expiry needs no sustained window; the
+                                        // others start from the usual five minutes.
+                                        windowSelect = when {
+                                            opt == EndpointChecks.TLS_EXPIRY -> "0m"
+                                            windowSelect == "0m" -> "5m"
+                                            else -> windowSelect
                                         }
                                     }
                                 },
@@ -876,6 +937,26 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             color = OmniColors.amber,
                         )
                     }
+                    if (EndpointChecks.isEndpointMetric(metricSelect)) {
+                        val tls = metricSelect == EndpointChecks.TLS_EXPIRY
+                        OutlinedTextField(
+                            value = targetInput,
+                            onValueChange = { targetInput = it },
+                            label = { Text(stringResource(if (tls) R.string.tls_target_label else R.string.url_target_label)) },
+                            placeholder = { Text(if (tls) "example.com:443" else "https://example.com/health") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("alertRule.target"),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            isError = targetError != null,
+                            supportingText = (targetError ?: if (tls && targetInput.isBlank()) stringResource(R.string.tls_target_blank_hint) else null)
+                                ?.let { { Text(it) } },
+                        )
+                        Text(
+                            stringResource(R.string.endpoint_checked_from_phone),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     OutlinedTextField(
                         value = threshInput,
                         onValueChange = { threshInput = it },
@@ -885,11 +966,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         isError = thresholdError != null,
                         supportingText = thresholdError?.let { { Text(it) } },
                     )
-                    Text(stringResource(R.string.trigger_window_label))
-                    @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("2m", "5m", "10m", "15m").forEach { opt ->
-                            FilterChip(selected = windowSelect == opt, onClick = { windowSelect = opt }, label = { Text(opt) })
+                    if (metricSelect != EndpointChecks.TLS_EXPIRY) {
+                        Text(stringResource(R.string.trigger_window_label))
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("2m", "5m", "10m", "15m").forEach { opt ->
+                                FilterChip(selected = windowSelect == opt, onClick = { windowSelect = opt }, label = { Text(opt) })
+                            }
                         }
                     }
                     OutlinedTextField(
@@ -904,7 +987,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null,
+                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null,
                     onClick = {
                         val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
@@ -912,14 +995,15 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         } else {
                             enteredThreshold
                         }
+                        val target = if (EndpointChecks.isEndpointMetric(metricSelect)) targetInput.trim() else ""
                         if (existing == null) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim())
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target)
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim()))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -936,6 +1020,42 @@ fun AlertsToolView(viewModel: AppViewModel) {
 }
 
 
+
+/**
+ * What a TLS or URL rule last saw on each of its hosts, a few hosts at most. A rule for all hosts
+ * names each host; a rule for one host just says what it checked.
+ */
+@Composable
+private fun EndpointCheckLines(
+    rule: AlertRuleEntity,
+    servers: List<ServerEntity>,
+    results: Map<Pair<Int, Int>, EndpointChecks.Result>,
+) {
+    val hosts = servers.filter { rule.serverId == 0 || it.id == rule.serverId }
+    val seen = hosts.mapNotNull { host -> results[rule.id to host.id]?.let { host to it } }
+    Column(Modifier.testTag("alertRule.check.${rule.id}")) {
+        if (seen.isEmpty()) {
+            Text(
+                listOfNotNull(rule.target.ifBlank { null }, stringResource(R.string.endpoint_not_checked_yet)).joinToString(" · "),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        seen.take(3).forEach { (host, result) ->
+            val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
+            Text(
+                (if (rule.serverId == 0) "${host.name}: " else "") + "${result.target} · ${result.summary}",
+                fontSize = 11.sp,
+                color = if (breached) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (seen.size > 3) {
+            Text("+${seen.size - 3}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 // 7.2 CUSTOM SCRIPTS PORTAL PANEL
 @OptIn(ExperimentalFoundationApi::class)

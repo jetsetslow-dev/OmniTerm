@@ -46,7 +46,7 @@ Free with a 1-host limit and a single bottom banner. Both purchases are **one-ti
 OmniTerm is built natively for Android in Kotlin and Jetpack Compose.
 
 - **Connection layer** — SSH, SFTP, and port-forward tunnels use JSch (the maintained `com.github.mwiede` fork) directly from the device. Network shares go through a common `RemoteFsClient` abstraction over smbj (SMB2/3), Apache Commons Net (FTP), OkHttp (WebDAV), and JSch (SFTP), so the file browser and the streamed cross-protocol transfer engine behave identically across protocols.
-- **Data storage** — SQLite via Room stores hosts, keys, credential profiles, scripts, alert rules, saved shares, tunnels, and local metric history. Schemas are versioned and migrated (current schema v18).
+- **Data storage** — SQLite via Room stores hosts, keys, credential profiles, scripts, alert rules, saved shares, tunnels, and local metric history. Schemas are versioned and migrated (current schema v24).
 - **Security** — credentials, private keys, sudo passwords, and proxy passwords are encrypted with AES-GCM using a key managed by Android Keystore. Key size and hardware backing depend on the device's Keystore implementation.
 - **Execution model** — Foreground services and WakeLocks keep SSH terminal sessions (`tmux`-backed when available) alive across network drops and app backgrounding. Monitoring parses standard Linux `/proc` and utility output, so **zero agents** run on your servers.
 
@@ -139,6 +139,7 @@ Open **Fleet → Broadcast** to run a command across selected online hosts or ho
 ### Scripts, alerts & Wake-on-LAN
 - **Tools → Scripts** — create, edit, and organize saved scripts; mark each for quick per-host execution, fleet broadcast, or both.
 - **Tools → Alerts & rules** — CPU/memory/disk/latency threshold rules evaluated during in-app metrics refresh, with an Alerts Center for active and historical incidents. Alert history retention is capped per host.
+- **TLS expiry and URL checks** — two more rule types the phone checks itself, so they keep working when a host is down or has no SSH. **TLS Expiry** reads a server's certificate and alerts when it has that many days or fewer left (14 by default); leave its address blank to check each picked host's own address on port 443, or type a host, `host:port` or URL. A certificate the phone does not trust (self-signed, say) is still read; only its expiry matters. **URL Check** fetches an address about once a minute and alerts when it does not answer, returns an HTTP error, or takes longer than your threshold. The rule list shows what each check last saw. Checks run from the phone while OmniTerm is running, like the other alerts, so the address must be reachable from where the phone is.
 - **Tools → Network tools → Wake-on-LAN** — save wake targets and send magic packets; scan the LAN from the editor to pick discovered devices.
 
 ## Settings & customization

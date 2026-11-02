@@ -688,6 +688,13 @@
     <string name="triggered_recorded">"Triggered %1$s · recorded %2$s"</string>
     <string name="only_triggers_on_hosts_that_report">"Only triggers on hosts that report a CPU temperature. Hosts without a thermal sensor (many VMs and containers) never evaluate this rule."</string>
     <string name="threshold_value">"Threshold value (%1$s)"</string>
+    <string name="tls_rule_summary">"%1$s · Alerts at %2$s or fewer left"</string>
+    <string name="url_rule_summary">"%1$s · Alerts when it fails or takes over %2$s for %3$s"</string>
+    <string name="tls_target_label">"Host, host:port or URL (optional)"</string>
+    <string name="tls_target_blank_hint">"Blank checks each host's own address on port 443."</string>
+    <string name="url_target_label">"Address to check"</string>
+    <string name="endpoint_checked_from_phone">"Checked from this phone, so the address must be reachable from where the phone is."</string>
+    <string name="endpoint_not_checked_yet">"Not checked yet"</string>
     <string name="open_ports">"Open ports: %1$s"</string>
     <string name="already_saved_as">"Already saved as \"%1$s\"."</string>
     <string name="port_2">"Port %1$s"</string>

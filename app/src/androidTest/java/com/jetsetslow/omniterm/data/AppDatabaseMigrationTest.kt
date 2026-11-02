@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 23
+        const val CURRENT_VERSION = 24
     }
 
     @get:Rule
@@ -221,6 +221,39 @@ class AppDatabaseMigrationTest {
             db.query("SELECT COUNT(*) FROM persistent_sessions WHERE tmuxName = 'main'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals(2, cursor.getInt(0))
+            }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /** Existing alert rules keep every value and get an empty target, which only TLS and URL checks read. */
+    @Test
+    fun migrationToTwentyFourGivesExistingRulesAnEmptyTarget() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-23-rule-target"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 23).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey) " +
+                    "VALUES (4, 7, 'Disk Usage', '/srv', 85.0, 'WARNING', '10m', 1, 'backups', NULL)"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT serverId, metricName, mountPoint, thresholdValue, triggerWindow, notes, target FROM alert_rules WHERE id = 4").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(7, cursor.getInt(0))
+                assertEquals("Disk Usage", cursor.getString(1))
+                assertEquals("/srv", cursor.getString(2))
+                assertEquals(85.0, cursor.getDouble(3), 0.0)
+                assertEquals("10m", cursor.getString(4))
+                assertEquals("backups", cursor.getString(5))
+                assertEquals("", cursor.getString(6))
             }
         }
         context.deleteDatabase(databaseName)

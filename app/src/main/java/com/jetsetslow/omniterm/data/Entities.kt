@@ -148,7 +148,8 @@ data class AlertRuleEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val serverId: Int,
     // "CPU Usage", "Memory Usage", "Disk Usage", "Network In", "Network Out", "Latency",
-    // "Temperature" (only evaluates on hosts that expose a thermal sensor)
+    // "Temperature" (only evaluates on hosts that expose a thermal sensor), and the checks the
+    // phone runs itself, "TLS Expiry" and "URL Check" (see EndpointChecks)
     val metricName: String,
     val mountPoint: String = "/",
     val thresholdValue: Float,
@@ -160,7 +161,10 @@ data class AlertRuleEntity(
     // Stable identity of the built-in preset this rule was seeded from (e.g. "alert.cpu"), or null
     // for user-created rules. Survives threshold/severity edits, so the default-rules toggle can
     // delete exactly what it seeded instead of matching on mutable content.
-    val presetKey: String? = null
+    val presetKey: String? = null,
+    // What a TLS or URL check connects to: a URL, or host[:port] for TLS. Blank on a TLS rule
+    // means each host's own address on port 443. Unused by the other metrics.
+    val target: String = "",
 )
 
 @Entity(

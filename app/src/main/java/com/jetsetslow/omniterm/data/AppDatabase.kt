@@ -29,7 +29,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 23,
+    version = 24,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -283,6 +283,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // TLS expiry and URL check rules name what they connect to.
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE alert_rules ADD COLUMN target TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -353,6 +360,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_20_21,
             MIGRATION_21_22,
             MIGRATION_22_23,
+            MIGRATION_23_24,
         )
 
         fun getDatabase(context: Context): AppDatabase {
