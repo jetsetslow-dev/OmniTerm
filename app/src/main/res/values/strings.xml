@@ -1001,6 +1001,7 @@
     <string name="expand_preview">"Expand preview"</string>
     <string name="deploy_changes">"Deploy changes?"</string>
     <string name="deploy_stack">"Deploy stack?"</string>
+    <string name="deploy_removes_dropped_services">"The containers of services you deleted, renamed or commented out are removed."</string>
     <string name="target_file_it_s_validated_first">"Target file: %1$s\n\nIt's validated first; the current file is backed up, and if the deploy fails the previous file is restored automatically."</string>
     <string name="deploy">"Deploy"</string>
     <string name="run_on_host">"Run on %1$s host%2$s?"</string>

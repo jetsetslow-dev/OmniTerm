@@ -203,7 +203,38 @@ class ComposeCommandTest {
             return started.inputStream.bufferedReader().readText() to started.waitFor()
         }
 
+        /** Deploys [yaml] as project `p` through the builder's deploy script; output and exit code. */
+        fun deploy(yaml: String, removeOrphans: Boolean): Pair<String, Int> {
+            val command = RemoteCommands.composeDeploy("${dir.absolutePath}/compose.yml", "p", runtime = "podman", removeOrphans = removeOrphans)
+            val proc = ProcessBuilder("/bin/sh", "-c", command).redirectErrorStream(true)
+            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
+            val started = proc.start()
+            started.outputStream.use { it.write(yaml.toByteArray()) }
+            return started.inputStream.bufferedReader().readText() to started.waitFor()
+        }
+
         override fun close() { dir.deleteRecursively() }
+    }
+
+    /**
+     * A deploy that drops a service removes its container. Compose otherwise leaves it running as
+     * an orphan, and podman-compose ignores --remove-orphans, so the app removes those itself.
+     */
+    @Test
+    fun deploy_that_drops_a_service_removes_its_container() {
+        val docker = RemoteCommands.composeDeploy("/srv/app/compose.yml", "app", removeOrphans = true)
+        assertTrue(docker, docker.contains("-p 'app' up -d --remove-orphans"))
+        assertValidShell(docker)
+        assertTrue(!RemoteCommands.composeDeploy("/srv/app/compose.yml", "app").contains("--remove-orphans"))
+
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost().use { host ->
+            host.state.writeText("p_old_1 old 1 p\nq_old_1 old 1 q\n")
+            val (output, code) = host.deploy("services:\n  w:\n    image: alpine\n", removeOrphans = true)
+            assertEquals(output, 0, code)
+            assertTrue(output, output.contains("Removed p_old_1") && output.contains("OMNITERM_DEPLOY_OK"))
+            assertEquals(listOf("p_w_1", "q_old_1"), host.names())
+        }
     }
 
     @Test

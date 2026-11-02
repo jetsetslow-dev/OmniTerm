@@ -8150,6 +8150,7 @@ class AppViewModel @JvmOverloads constructor(
         configFiles: String = "",
         runtime: String = "",
         expectedServerId: Int? = activeComposeServerId,
+        removeOrphans: Boolean = false,
         onResult: (Boolean, String) -> Unit,
     ) {
         if (expectedServerId == null || expectedServerId != selectedServerId ||
@@ -8170,7 +8171,7 @@ class AppViewModel @JvmOverloads constructor(
             )
             var operationSucceeded = false
             try {
-                val cmd = RemoteCommands.composeDeploy(composeFilePath, project, workingDir, configFiles, runtime)
+                val cmd = RemoteCommands.composeDeploy(composeFilePath, project, workingDir, configFiles, runtime, removeOrphans)
                 val out = executeSshCommand(srv, cmd, stdin = yaml)
             // Success only when the runtime printed our end-of-pipeline sentinel AND the transport
             // didn't report an SSH/command failure. Any compose validation or `up` error trips this.

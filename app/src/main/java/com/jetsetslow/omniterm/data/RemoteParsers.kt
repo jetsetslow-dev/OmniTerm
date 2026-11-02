@@ -1222,6 +1222,7 @@ object RemoteCommands {
         workingDir: String = "",
         configFiles: String = "",
         runtime: String = "",
+        removeOrphans: Boolean = false,
     ): String {
         // Expand a leading ~ at runtime on the remote host; shell won't expand it inside single quotes.
         fun expandPath(p: String) = if (p.startsWith("~/")) "\$HOME/${shellQuote(p.removePrefix("~/"))}" else shellQuote(p)
@@ -1277,9 +1278,16 @@ object RemoteCommands {
             append(" && { if [ -f $file ]; then cp $file $bak; fi; }")
             append(" && mv \"\$tmp\" $file")
             // 5. bring it up via the exact file path; on failure restore the backup and report non-zero
-            append(" && { if ! { ${composeUp(liveFlags, project)}; } 2>&1; then ")
+            //    With [removeOrphans] the containers of services the new file dropped go too.
+            append(" && { if ! { ${composeUp(liveFlags, project, if (removeOrphans) " --remove-orphans" else "")}; } 2>&1; then ")
             append("if [ \"\$existed\" = 1 ] && [ -f $bak ]; then echo 'DEPLOY FAILED — restoring previous compose file' >&2; mv $bak $file; ")
             append("else echo 'DEPLOY FAILED — removing new compose file' >&2; rm -f $file; fi; exit 1; fi; }")
+            // The stack already runs the new file by now, so a container that will not go is
+            // reported without failing the deploy.
+            if (removeOrphans) {
+                append(" && { if $IS_PODMAN_COMPOSE; then { ${removePodmanComposeOrphans("\$OT_COMPOSE $liveFlags", project)}; } 2>&1 ")
+                append("|| echo 'Some containers of removed services could not be removed.' >&2; fi; }")
+            }
             append(" && echo 'OMNITERM_DEPLOY_OK'")
         }
     }

@@ -263,29 +263,34 @@ class ComposeCorpusRegressionTest {
     }
 
     @Test
-    fun map_and_long_form_keys_are_never_rewritten_in_place() {
+    fun long_form_keys_are_never_rewritten_in_place_and_map_form_environment_stays_a_map() {
         val f = fixtures.first { it.file == "v3-swarm.yml" }
         val baseline = parse(f)
         val database = baseline.services.first { it.serviceName == "database" }
-        // Long-syntax ports and a map-form environment are surfaced as empty, not as bogus rows.
+        // Long-syntax ports are surfaced as empty, not as bogus rows. A map-form environment is
+        // shown as its KEY=value rows.
         assertEquals(emptyList<String>(), database.ports)
-        assertEquals(emptyList<String>(), database.environment)
+        assertEquals(listOf("POSTGRES_PASSWORD=example", "POSTGRES_DB=app"), database.environment)
 
-        // Rows typed into them are reported and dropped, rather than spliced over the real block.
+        // Rows typed into long-syntax ports are reported and dropped, rather than spliced over the
+        // real block. An environment row is added to the map, the existing rows kept as written.
         val edited = baseline.copy(
             services = baseline.services.map {
                 if (it.serviceName == "database") {
-                    it.copy(environment = mutableListOf("EXTRA=1"), ports = mutableListOf("15432:5432"))
+                    it.copy(environment = (it.environment + "EXTRA=1").toMutableList(), ports = mutableListOf("15432:5432"))
                 } else {
                     it
                 }
             }.toMutableList(),
         )
         val issues = validateComposeDraft(edited)
-        assertTrue(issues.any { it.startsWith("database declares environment in map or long syntax") })
+        assertFalse(issues.any { it.startsWith("database declares environment") })
         assertTrue(issues.any { it.startsWith("database declares ports in map or long syntax") })
         val out = renderComposeYaml(edited, baseline)
-        assertEquals(load(f.file), out)
+        assertEquals(
+            load(f.file).replace("      POSTGRES_DB: app\n", "      POSTGRES_DB: app\n      EXTRA: \"1\"\n"),
+            out,
+        )
     }
 
     // ── deleting and adding ───────────────────────────────────────────────────────────────────
