@@ -78,6 +78,13 @@ class SftpHostScopeRobolectricTest {
                 val model = withContext(main) { AppViewModel(application, ReachableHosts()) }
                 store.put("test", model)
                 waitWhileOnMain(main, 10_000) { model.servers.value.count { it.id in ids } < 2 }
+                // The model marks every host offline as it starts, and its first probe brings
+                // "Up box" back through "connecting", when no host is online. Shown in between,
+                // the screen would leave the SFTP tab for Bookmarks, so start once that is over.
+                waitWhileOnMain(main, 10_000) {
+                    model.probedServerIds[online] != true ||
+                        model.servers.value.none { it.id == online && it.status == "online" }
+                }
                 withContext(main) {
                     model.selectedServerId = offline
                     model.activeSftpTab = 1
