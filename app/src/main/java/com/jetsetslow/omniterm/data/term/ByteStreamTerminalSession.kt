@@ -46,7 +46,10 @@ abstract class ByteStreamTerminalSession(private val readerName: String) : Termi
     /** Releases the transport. Called once; a blocked [readSome] must return or throw after it. */
     protected abstract fun closeTransport()
 
-    /** What reaching the end of the stream means for this transport, e.g. "Connection closed by the host". */
+    /**
+     * What reaching the end of the stream means for this transport, e.g. "Connection closed by the
+     * host". Read once the stream has ended, so it can say how it ended.
+     */
     protected abstract val endOfStreamReason: String
 
     /** Turns bytes read from the transport into terminal bytes. Telnet strips its commands here. */
@@ -66,7 +69,7 @@ abstract class ByteStreamTerminalSession(private val readerName: String) : Termi
     protected fun start() {
         thread(start = true, isDaemon = true, name = readerName) {
             val buffer = ByteArray(8192)
-            var reason = endOfStreamReason
+            var reason: String? = null
             try {
                 while (!_closed.value) {
                     val read = readSome(buffer)
@@ -80,7 +83,7 @@ abstract class ByteStreamTerminalSession(private val readerName: String) : Termi
                 reason = e.message?.let { "Connection lost: $it" } ?: "Connection lost"
             } finally {
                 if (!_closed.value) {
-                    endedBecause = reason
+                    endedBecause = reason ?: endOfStreamReason
                     _exitStatus.value = 0
                     _remoteExited.value = true
                 }

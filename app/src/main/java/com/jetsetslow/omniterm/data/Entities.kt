@@ -236,6 +236,22 @@ data class TelnetHostEntity(
     val port: Int = 23,
 )
 
+/**
+ * A Kubernetes cluster reached from the phone itself, saved from one context of an imported
+ * kubeconfig. [clientKeyPem] and [token] are encrypted at the repository boundary.
+ */
+@Entity(tableName = "kube_clusters")
+data class KubeClusterEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val server: String,
+    val caPem: String = "",
+    val clientCertPem: String = "",
+    val clientKeyPem: String = "",
+    val token: String = "",
+    val namespace: String = "",
+)
+
 @Entity(tableName = "wol_targets")
 data class WolTargetEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

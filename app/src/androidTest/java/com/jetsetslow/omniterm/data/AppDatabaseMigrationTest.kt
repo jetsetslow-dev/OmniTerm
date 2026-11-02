@@ -228,7 +228,7 @@ class AppDatabaseMigrationTest {
 
     /** Existing alert rules keep every value and get an empty target, which only TLS and URL checks read. */
     @Test
-    fun migrationToTwentyFourGivesExistingRulesAnEmptyTargetAndAddsTelnetHosts() {
+    fun migrationToTwentyFourGivesExistingRulesAnEmptyTargetAndAddsTelnetHostsAndKubeClusters() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val databaseName = "migration-23-rule-target"
         context.deleteDatabase(databaseName)
@@ -260,6 +260,16 @@ class AppDatabaseMigrationTest {
                 assertTrue(cursor.moveToFirst())
                 assertEquals("core switch", cursor.getString(0))
                 assertEquals(23, cursor.getInt(2))
+            }
+            db.execSQL(
+                "INSERT INTO kube_clusters (name, server, caPem, clientCertPem, clientKeyPem, token, namespace) " +
+                    "VALUES ('lab', 'https://10.0.0.5:6443', '', '', '', 'enc:v1:x', 'shop')"
+            )
+            db.query("SELECT name, server, namespace FROM kube_clusters").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("lab", cursor.getString(0))
+                assertEquals("https://10.0.0.5:6443", cursor.getString(1))
+                assertEquals("shop", cursor.getString(2))
             }
         }
         context.deleteDatabase(databaseName)

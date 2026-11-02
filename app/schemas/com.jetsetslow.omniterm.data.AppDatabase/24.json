@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 24,
-    "identityHash": "77e46baa91ae92952f4a1406704ce5cd",
+    "identityHash": "47ecbc62c4624d53834a5c425db1e7e7",
     "entities": [
       {
         "tableName": "servers",
@@ -1114,11 +1114,71 @@
             "id"
           ]
         }
+      },
+      {
+        "tableName": "kube_clusters",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `server` TEXT NOT NULL, `caPem` TEXT NOT NULL, `clientCertPem` TEXT NOT NULL, `clientKeyPem` TEXT NOT NULL, `token` TEXT NOT NULL, `namespace` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "server",
+            "columnName": "server",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "caPem",
+            "columnName": "caPem",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientCertPem",
+            "columnName": "clientCertPem",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clientKeyPem",
+            "columnName": "clientKeyPem",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "token",
+            "columnName": "token",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "namespace",
+            "columnName": "namespace",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '77e46baa91ae92952f4a1406704ce5cd')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '47ecbc62c4624d53834a5c425db1e7e7')"
     ]
   }
 }

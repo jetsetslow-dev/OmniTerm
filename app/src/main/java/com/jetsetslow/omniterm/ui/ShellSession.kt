@@ -101,7 +101,7 @@ internal fun CoroutineScope.launchTerminalResizeConsumer(
 }
 
 /** What a terminal session runs over, as its header names it. */
-enum class TerminalTransport(val label: String) { Ssh("SSH"), Telnet("Telnet"), Serial("USB serial") }
+enum class TerminalTransport(val label: String) { Ssh("SSH"), Telnet("Telnet"), Serial("USB serial"), Kubernetes("Kubernetes") }
 
 /**
  * Represents an active, background-capable SSH terminal session in the app.

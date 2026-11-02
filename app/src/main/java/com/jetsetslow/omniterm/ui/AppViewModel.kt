@@ -3706,7 +3706,7 @@ class AppViewModel @JvmOverloads constructor(
     /** Number of inner subtabs for a screen that supports horizontal subtab paging (0 = none). */
     private fun subtabCount(screen: Screen): Int = when (screen) {
         Screen.Monitor -> if (servers.value.any { it.status == "online" }) MonitorTab.entries.size else 0
-        Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) 5 else 0
+        Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) INFRA_TAB_COUNT else 0
         Screen.Fleet -> 2
         Screen.SFTP -> 4
         Screen.Network -> 9
@@ -8443,6 +8443,342 @@ class AppViewModel @JvmOverloads constructor(
         openTerminalWithCommand(srv, RemoteCommands.dockerExecShell(container.id, container.runtime))
     }
 
+    // ── KUBERNETES (a host's kubectl over SSH, or a saved cluster reached from the phone) ──
+
+    /**
+     * Where a Kubernetes tab is: the context picked (null: kubectl's current one), the namespace
+     * (blank: every namespace) and the list shown.
+     */
+    data class KubeScope(val context: String? = null, val namespace: String = "", val view: KubeView = KubeView.Pods)
+
+    // Eager, so a cluster saved a moment ago is there when its tab first loads.
+    val kubeClusters = repository.kubeClustersFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** The saved cluster each host's Kubernetes tab shows instead of the host's own kubectl. */
+    val kubeSources = mutableStateMapOf<Int, Int>()
+
+    // Kept per host, or per saved cluster, like the Images and Volumes selections: switching hosts
+    // and back finds the cluster where it was left, and nothing loaded for one is shown or acted on
+    // for another. Keyed by [kubeKey].
+    val kubeScopes = mutableStateMapOf<String, KubeScope>()
+    val kubeSnapshots = mutableStateMapOf<String, KubeSnapshot>()
+    val kubeLoading = mutableStateMapOf<String, Boolean>()
+    /** Why a cluster could not be reached at all: no kubectl, or a config it cannot read. */
+    val kubeErrors = mutableStateMapOf<String, String>()
+    private val kubeJobs = mutableMapOf<String, Job>()
+    private val kubeApis = mutableMapOf<Int, Pair<KubeClusterEntity, KubeApi>>()
+
+    /** Where [serverId]'s Kubernetes tab keeps its state: under the saved cluster it shows, or the host. */
+    fun kubeKey(serverId: Int): String = kubeSources[serverId]?.let { "cluster:$it" } ?: "host:$serverId"
+
+    fun kubeScope(serverId: Int): KubeScope = kubeScopes[kubeKey(serverId)] ?: KubeScope()
+
+    /** The saved cluster [serverId]'s tab shows, or null when it shows the host's kubectl. */
+    fun kubeCluster(serverId: Int): KubeClusterEntity? =
+        kubeSources[serverId]?.let { id -> kubeClusters.value.firstOrNull { it.id == id } }
+
+    private fun kubeApi(cluster: KubeClusterEntity): KubeApi {
+        kubeApis[cluster.id]?.takeIf { it.first == cluster }?.let { return it.second }
+        return KubeApi(cluster).also { kubeApis[cluster.id] = cluster to it }
+    }
+
+    /** Loads the cluster [srv]'s tab shows: its contexts, namespaces and every list at once. */
+    fun loadKubernetes(srv: ServerEntity? = selectedServer) {
+        srv ?: return
+        val cluster = kubeCluster(srv.id)
+        // A saved cluster since removed leaves the tab on the host's own kubectl.
+        if (cluster == null && kubeSources.remove(srv.id) != null) return loadKubernetes(srv)
+        val key = kubeKey(srv.id)
+        kubeJobs[key]?.cancel()
+        kubeJobs[key] = viewModelScope.launch {
+            kubeLoading[key] = true
+            try {
+                val snapshot = if (cluster != null) loadKubeDirect(key, cluster) else loadKubeViaHost(key, srv)
+                if (snapshot != null) {
+                    kubeErrors.remove(key)
+                    kubeSnapshots[key] = snapshot
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                kubeErrors[key] = kubeFailure(e)
+                kubeSnapshots.remove(key)
+            } finally {
+                if (kubeJobs[key] == coroutineContext[Job]) {
+                    kubeJobs.remove(key)
+                    kubeLoading.remove(key)
+                }
+            }
+        }
+    }
+
+    /** Null when the cluster cannot be reached at all; [kubeErrors] then says why. */
+    private suspend fun loadKubeViaHost(key: String, srv: ServerEntity): KubeSnapshot? {
+        if (!requireUnixShell(srv, "Kubernetes") { kubeErrors[key] = it; kubeSnapshots.remove(key) }) return null
+        val setupOut = executeSshCommand(srv, Kube.SETUP)
+        val setup = Kube.parseSetup(setupOut)
+        if (setupOut.startsWith("SSH Error") || setup == null) {
+            kubeErrors[key] = Kube.errorText(setupOut).ifBlank { "kubectl printed nothing about its configuration." }
+            kubeSnapshots.remove(key)
+            return null
+        }
+        var scope = kubeScopes[key] ?: KubeScope()
+        // A context since removed from the config falls back to the current one.
+        if (scope.context != null && scope.context !in setup.contexts) {
+            scope = scope.copy(context = null, namespace = "")
+            kubeScopes[key] = scope
+        }
+        val context = scope.context
+        return coroutineScope {
+            val namespacesAsync = async { executeSshCommand(srv, Kube.namespaces(context)) }
+            val listsAsync = KubeView.entries.associateWith { view ->
+                async { executeSshCommand(srv, Kube.list(view, context, scope.namespace)) }
+            }
+            val outputs = listsAsync.mapValues { it.value.await() }
+            val namespacesOut = namespacesAsync.await()
+            val errors = outputs.filterValues { it.startsWith("SSH Error") }.mapValues { Kube.errorText(it.value) }
+            fun output(view: KubeView) = outputs.getValue(view).takeUnless { view in errors }.orEmpty()
+            KubeSnapshot(
+                setup = setup,
+                context = context,
+                namespaces = if (namespacesOut.startsWith("SSH Error")) {
+                    fallbackNamespaces(setup.defaultNamespace, scope.namespace)
+                } else {
+                    Kube.parseNamespaces(namespacesOut)
+                },
+                pods = Kube.parsePods(output(KubeView.Pods)),
+                deployments = Kube.parseDeployments(output(KubeView.Deployments)),
+                services = Kube.parseServices(output(KubeView.Services)),
+                nodes = Kube.parseNodes(output(KubeView.Nodes)),
+                errors = errors,
+            )
+        }
+    }
+
+    private suspend fun loadKubeDirect(key: String, cluster: KubeClusterEntity): KubeSnapshot = coroutineScope {
+        val api = kubeApi(cluster)
+        val namespace = (kubeScopes[key] ?: KubeScope()).namespace
+        suspend fun <T> attempt(block: suspend () -> T): Result<T> = try {
+            Result.success(block())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+        val namespacesAsync = async { attempt { api.namespaces() } }
+        val podsAsync = async { attempt { api.pods(namespace) } }
+        val deploymentsAsync = async { attempt { api.deployments(namespace) } }
+        val servicesAsync = async { attempt { api.services(namespace) } }
+        val nodesAsync = async { attempt { api.nodes() } }
+        val results = mapOf(
+            KubeView.Pods to podsAsync.await(),
+            KubeView.Deployments to deploymentsAsync.await(),
+            KubeView.Services to servicesAsync.await(),
+            KubeView.Nodes to nodesAsync.await(),
+        )
+        val defaultNamespace = cluster.namespace.ifBlank { null }
+        KubeSnapshot(
+            setup = KubeSetup(kubectl = "", kubeconfig = null, contexts = emptyList(), currentContext = null, defaultNamespace = defaultNamespace),
+            context = null,
+            namespaces = namespacesAsync.await().getOrElse { fallbackNamespaces(defaultNamespace, namespace) },
+            pods = podsAsync.await().getOrDefault(emptyList()),
+            deployments = deploymentsAsync.await().getOrDefault(emptyList()),
+            services = servicesAsync.await().getOrDefault(emptyList()),
+            nodes = nodesAsync.await().getOrDefault(emptyList()),
+            errors = results.mapNotNull { (view, result) -> result.exceptionOrNull()?.let { view to kubeFailure(it) } }.toMap(),
+        )
+    }
+
+    /** Someone allowed into one namespace only may not list them; offer theirs. */
+    private fun fallbackNamespaces(defaultNamespace: String?, picked: String) =
+        listOfNotNull(defaultNamespace ?: "default", picked.takeIf { it.isNotBlank() }).distinct()
+
+    private fun kubeFailure(e: Throwable): String {
+        val message = e.message ?: e.javaClass.simpleName
+        return if (e is javax.net.ssl.SSLHandshakeException && "path" in message) {
+            "The cluster's certificate is not signed by the CA in its kubeconfig. ($message)"
+        } else {
+            message
+        }
+    }
+
+    /** Shows the host's own kubectl ([clusterId] null) or a saved cluster on [serverId]'s tab. */
+    fun setKubeSource(serverId: Int, clusterId: Int?) {
+        if (clusterId == null) kubeSources.remove(serverId) else kubeSources[serverId] = clusterId
+        loadKubernetes(servers.value.firstOrNull { it.id == serverId })
+    }
+
+    fun setKubeContext(serverId: Int, context: String?) {
+        kubeScopes[kubeKey(serverId)] = kubeScope(serverId).copy(context = context, namespace = "")
+        loadKubernetes(servers.value.firstOrNull { it.id == serverId })
+    }
+
+    fun setKubeNamespace(serverId: Int, namespace: String) {
+        kubeScopes[kubeKey(serverId)] = kubeScope(serverId).copy(namespace = namespace)
+        loadKubernetes(servers.value.firstOrNull { it.id == serverId })
+    }
+
+    fun setKubeView(serverId: Int, view: KubeView) {
+        kubeScopes[kubeKey(serverId)] = kubeScope(serverId).copy(view = view)
+    }
+
+    /**
+     * Saves the picked contexts of an imported kubeconfig, replacing any saved one with the same
+     * name and address, and shows the first on [serverId]'s tab.
+     */
+    fun saveKubeClusters(serverId: Int, contexts: List<KubeContextConfig>) {
+        if (contexts.isEmpty()) return
+        viewModelScope.launch {
+            val existing = repository.getAllKubeClusters()
+            val ids = contexts.map { c ->
+                val replaces = existing.firstOrNull { it.name == c.name && it.server == c.server }
+                repository.insertKubeCluster(
+                    KubeClusterEntity(
+                        id = replaces?.id ?: 0,
+                        name = c.name,
+                        server = c.server,
+                        caPem = c.caPem.orEmpty(),
+                        clientCertPem = c.clientCertPem.orEmpty(),
+                        clientKeyPem = c.clientKeyPem.orEmpty(),
+                        token = c.token.orEmpty(),
+                        namespace = c.namespace.orEmpty(),
+                    ),
+                ).toInt()
+            }
+            val first = ids.first()
+            withTimeoutOrNull(5_000) { kubeClusters.first { list -> list.any { it.id == first } } }
+            ids.forEach { id ->
+                kubeApis.remove(id)
+                kubeSnapshots.remove("cluster:$id")
+                kubeErrors.remove("cluster:$id")
+            }
+            setKubeSource(serverId, first)
+        }
+    }
+
+    /** Forgets a saved cluster; tabs showing it go back to their host's kubectl. */
+    fun deleteKubeCluster(clusterId: Int) {
+        val shownOn = kubeSources.filterValues { it == clusterId }.keys
+        shownOn.forEach { kubeSources.remove(it) }
+        val key = "cluster:$clusterId"
+        kubeJobs.remove(key)?.cancel()
+        kubeSnapshots.remove(key)
+        kubeErrors.remove(key)
+        kubeLoading.remove(key)
+        kubeScopes.remove(key)
+        kubeApis.remove(clusterId)
+        viewModelScope.launch { repository.deleteKubeCluster(clusterId) }
+        shownOn.forEach { id -> loadKubernetes(servers.value.firstOrNull { it.id == id }) }
+    }
+
+    /**
+     * Runs an action on the cluster [serverId]'s tab shows, with its output in the action panel:
+     * [viaHost]'s command on the host, or [direct] against a saved cluster. [reload] refreshes the
+     * lists once it is done.
+     */
+    private fun kubeAction(
+        serverId: Int,
+        title: String,
+        reload: Boolean,
+        viaHost: (KubeSnapshot) -> String,
+        direct: suspend KubeApi.(append: suspend (String) -> Unit) -> Unit,
+    ) {
+        val srv = servers.value.firstOrNull { it.id == serverId } ?: return
+        val snapshot = kubeSnapshots[kubeKey(serverId)] ?: return
+        val onComplete: (() -> Unit)? = if (reload) ({ loadKubernetes(srv) }) else null
+        val cluster = kubeCluster(serverId)
+        if (cluster == null) {
+            runStreamingAction(title, viaHost(snapshot), server = srv, onComplete = onComplete)
+        } else {
+            streamToActionPanel(title, onComplete) { append ->
+                kubeApi(cluster).direct(append)
+                ""
+            }
+        }
+    }
+
+    fun kubePodLogs(serverId: Int, pod: KubePod, follow: Boolean = false, previous: Boolean = false) {
+        val what = when {
+            follow -> "follow logs"
+            previous -> "previous logs"
+            else -> "logs"
+        }
+        kubeAction(serverId, "$what · ${pod.name}", reload = false, { Kube.podLogs(it.context, pod, follow, previous) }) { append ->
+            logs(pod, follow, previous, append)
+        }
+    }
+
+    fun kubeDeploymentLogs(serverId: Int, deployment: KubeDeployment) =
+        kubeAction(serverId, "logs · ${deployment.name}", reload = false, { Kube.deploymentLogs(it.context, deployment) }) { append ->
+            deploymentLogs(deployment, append)
+        }
+
+    fun kubeDescribe(serverId: Int, kind: String, namespace: String?, name: String) =
+        kubeAction(serverId, "describe · $name", reload = false, { Kube.describe(it.context, kind, namespace, name) }) { append ->
+            append(describe(kind, namespace, name))
+        }
+
+    fun kubeDeletePod(serverId: Int, pod: KubePod) =
+        kubeAction(serverId, "delete · ${pod.name}", reload = true, { Kube.deletePod(it.context, pod) }) { append ->
+            append(deletePod(pod))
+        }
+
+    fun kubeScale(serverId: Int, deployment: KubeDeployment, replicas: Int) =
+        kubeAction(serverId, "scale · ${deployment.name}", reload = true, { Kube.scale(it.context, deployment, replicas) }) { append ->
+            append(scale(deployment, replicas))
+        }
+
+    fun kubeRestart(serverId: Int, deployment: KubeDeployment) =
+        kubeAction(serverId, "restart · ${deployment.name}", reload = true, { Kube.restart(it.context, deployment) }) { append ->
+            append(restart(deployment))
+        }
+
+    fun kubeCordon(serverId: Int, node: KubeNode, cordon: Boolean) =
+        kubeAction(serverId, "${if (cordon) "cordon" else "uncordon"} · ${node.name}", reload = true, { Kube.cordon(it.context, node, cordon) }) { append ->
+            append(cordon(node, cordon))
+        }
+
+    fun kubeEvents(serverId: Int) {
+        val namespace = kubeScope(serverId).namespace
+        kubeAction(serverId, "events · ${namespace.ifBlank { "all namespaces" }}", reload = false, { Kube.events(it.context, namespace) }) { append ->
+            append(events(namespace))
+        }
+    }
+
+    /**
+     * Opens a terminal with a shell inside [pod] ([container], or its default one): through
+     * kubectl on the host, or straight to a saved cluster.
+     */
+    fun kubeExec(serverId: Int, pod: KubePod, container: String? = null) {
+        val srv = servers.value.firstOrNull { it.id == serverId } ?: return
+        val snapshot = kubeSnapshots[kubeKey(serverId)] ?: return
+        val cluster = kubeCluster(serverId)
+        if (cluster == null) {
+            openTerminalWithCommand(srv, Kube.execShell(snapshot.setup, snapshot.context, pod, container))
+            return
+        }
+        val shown = ServerEntity(
+            id = nextAdHocServerId--,
+            name = "${pod.name} · ${cluster.name}",
+            host = runCatching { java.net.URI(cluster.server).host }.getOrNull() ?: cluster.server,
+            port = runCatching { java.net.URI(cluster.server).port }.getOrNull()?.takeIf { it > 0 } ?: 443,
+            username = "",
+            status = "online",
+        )
+        connectStreamTerminal(
+            shown, TerminalTransport.Kubernetes,
+            failurePrefix = "Could not open a shell in ${pod.name}",
+            retry = { kubeExec(serverId, pod, container) },
+        // Inside the attempt, so a saved key that no longer reads fails it with a message.
+        ) { cols, rows -> kubeApi(cluster).exec(pod, container, cols, rows) }
+    }
+
+    /** Opens a terminal on [serverId]'s host that copies k3s's config for this user; sudo asks there. */
+    fun kubeCopyK3sConfig(serverId: Int) {
+        val srv = servers.value.firstOrNull { it.id == serverId } ?: return
+        openTerminalWithCommand(srv, Kube.K3S_COPY_CONFIG)
+    }
+
     // ── Shared streaming-action panel ──
 
     /**
@@ -8459,6 +8795,23 @@ class AppViewModel @JvmOverloads constructor(
         onComplete: (() -> Unit)? = null,
     ) {
         val srv = server ?: return showActionMessage(title, "No host is selected. Select a host and retry.")
+        streamToActionPanel(title, onComplete) { append ->
+            val creds = if (inLoginShell) loginShellCredentials(srv) else buildCredentials(srv)
+            sshTransport.execStream(creds, command, stdin) { chunk -> append(chunk) }
+        }
+    }
+
+    /**
+     * Shows what [produce] passes to its argument in the shared action panel as it arrives, and
+     * runs [onComplete] once it returns. [produce] returns the whole result: shown when nothing
+     * streamed, and appended when it is an "SSH Error:" the stream did not already show. A throw
+     * is shown as the command having failed.
+     */
+    private fun streamToActionPanel(
+        title: String,
+        onComplete: (() -> Unit)?,
+        produce: suspend (append: suspend (String) -> Unit) -> String,
+    ) {
         // Supersede any previous action so its late chunks can't bleed into this one.
         actionStreamJob?.cancel()
         val epoch = ++actionStreamEpoch
@@ -8467,9 +8820,8 @@ class AppViewModel @JvmOverloads constructor(
         actionStreamRunning = true
         actionStreamJob = viewModelScope.launch {
             try {
-                val creds = if (inLoginShell) loginShellCredentials(srv) else buildCredentials(srv)
-                val result = sshTransport.execStream(creds, command, stdin) { chunk ->
-                    // onChunk runs on the IO dispatcher; apply the snapshot-state write on Main.
+                val result = produce { chunk ->
+                    // Chunks arrive on the IO dispatcher; apply the snapshot-state write on Main.
                     if (epoch == actionStreamEpoch) withContext(Dispatchers.Main) {
                         if (epoch == actionStreamEpoch) {
                             val appended = actionStreamOutput + chunk
@@ -13623,6 +13975,7 @@ class AppViewModel @JvmOverloads constructor(
         settings: List<AppSettingEntity>,
         selection: BackupSelection = BackupSelection(),
         telnetHosts: List<TelnetHostEntity> = emptyList(),
+        kubeClusters: List<KubeClusterEntity> = emptyList(),
     ): String {
         val closedSelection = selection.withReferentialClosure()
         val serverArr = org.json.JSONArray()
@@ -13753,6 +14106,14 @@ class AppViewModel @JvmOverloads constructor(
                 put("name", t.name); put("host", t.host); put("port", t.port)
             })
         }
+        // Saved Kubernetes clusters too; their keys and tokens make the backup one to encrypt.
+        val kubeArr = org.json.JSONArray()
+        for (c in if (closedSelection.servers) kubeClusters else emptyList()) {
+            kubeArr.put(org.json.JSONObject().apply {
+                put("name", c.name); put("server", c.server); put("caPem", c.caPem); put("clientCertPem", c.clientCertPem)
+                put("clientKeyPem", c.clientKeyPem); put("token", c.token); put("namespace", c.namespace)
+            })
+        }
         val networkShareArr = org.json.JSONArray()
         for (share in if (closedSelection.networkShares) networkShares else emptyList()) {
             networkShareArr.put(org.json.JSONObject().apply {
@@ -13850,6 +14211,7 @@ class AppViewModel @JvmOverloads constructor(
             .put("alertHistory", historyArr)
             .put("wolTargets", wolArr)
             .put("telnetHosts", telnetArr)
+            .put("kubeClusters", kubeArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
             .put("settings", settingsObj)
@@ -13960,7 +14322,7 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs", "telnetHosts",
+            "crashLogs", "telnetHosts", "kubeClusters",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -14129,6 +14491,7 @@ class AppViewModel @JvmOverloads constructor(
                             srvs, keys, profiles, scripts, rules, alertHistories, wolTargets,
                             networkShares, portForwards, activeAlerts, settings, closedSelection,
                             telnetHosts = repository.getAllTelnetHosts(),
+                            kubeClusters = repository.getAllKubeClusters(),
                         )
                         val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
                         context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
@@ -14616,6 +14979,30 @@ class AppViewModel @JvmOverloads constructor(
                             importedTelnet++
                         }
 
+                        // Saved Kubernetes clusters, with the hosts (dedup by name and address).
+                        val existingKube = repository.getAllKubeClusters().mapTo(mutableSetOf()) { "${it.name}|${it.server}" }
+                        val kubeArr = root.optJSONArray("kubeClusters") ?: org.json.JSONArray()
+                        var importedKube = 0
+                        for (i in 0 until if (closedSelection.servers) kubeArr.length() else 0) {
+                            val o = kubeArr.getJSONObject(i)
+                            val name = o.optString("name").trim()
+                            val server = o.optString("server").trim()
+                            if (name.isEmpty() || !server.startsWith("https://")) continue
+                            if (!existingKube.add("$name|$server")) continue
+                            repository.insertKubeCluster(
+                                KubeClusterEntity(
+                                    name = name,
+                                    server = server,
+                                    caPem = o.optString("caPem"),
+                                    clientCertPem = o.optString("clientCertPem"),
+                                    clientKeyPem = o.optString("clientKeyPem"),
+                                    token = o.optString("token"),
+                                    namespace = o.optString("namespace"),
+                                ),
+                            )
+                            importedKube++
+                        }
+
                         // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
                         // shareIdMap tracks old id → restored/existing id so per-share settings
                         // (share_bookmarks_{id}) can follow their share, mirroring serverIdMap.
@@ -14781,6 +15168,7 @@ class AppViewModel @JvmOverloads constructor(
                             "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
                                 (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
+                                (if (importedKube > 0) "$importedKube Kubernetes cluster(s), " else "") +
                                 "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix +
                                 skippedExistingServers.joinToString(separator = "\n", prefix = if (skippedExistingServers.isEmpty()) "" else "\n"),
                         )

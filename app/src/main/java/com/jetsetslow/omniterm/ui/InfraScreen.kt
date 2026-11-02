@@ -34,6 +34,8 @@ import com.jetsetslow.omniterm.R
 // opening a stack jumps to the builder, and Back out of the builder returns to the stack list.
 internal const val INFRA_TAB_STACKS = 0
 internal const val INFRA_TAB_BUILDER = 1
+internal const val INFRA_TAB_KUBERNETES = 5
+internal const val INFRA_TAB_COUNT = 6
 
 @Composable
 fun InfraScreen(viewModel: AppViewModel) {
@@ -65,7 +67,9 @@ fun InfraScreen(viewModel: AppViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(stringResource(R.string.containers, srv.name), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
-            IconButton(onClick = { viewModel.loadDocker() }) {
+            IconButton(onClick = {
+                if (viewModel.activeInfraTab == INFRA_TAB_KUBERNETES) viewModel.loadKubernetes(srv) else viewModel.loadDocker()
+            }) {
                 Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.reload))
             }
         }
@@ -79,12 +83,16 @@ fun InfraScreen(viewModel: AppViewModel) {
             Tab(selected = viewModel.activeInfraTab == 2, onClick = { viewModel.activeInfraTab = 2 }) { Text(stringResource(R.string.images), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
             Tab(selected = viewModel.activeInfraTab == 3, onClick = { viewModel.activeInfraTab = 3 }) { Text(stringResource(R.string.volumes), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
             Tab(selected = viewModel.activeInfraTab == 4, onClick = { viewModel.activeInfraTab = 4 }) { Text(stringResource(R.string.networks), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
+            Tab(selected = viewModel.activeInfraTab == INFRA_TAB_KUBERNETES, onClick = { viewModel.activeInfraTab = INFRA_TAB_KUBERNETES }, modifier = Modifier.testTag("infra.tab.kubernetes")) { Text(stringResource(R.string.kubernetes), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
         }
 
         Box(modifier = Modifier.fillMaxWidth().weight(1f).padding(12.dp)) {
             when {
                 viewModel.activeInfraTab == 1 ->
                     ComposeBuilder(viewModel)
+                // A cluster's hosts often run no Docker at all, so this tab ignores the container lists' state.
+                viewModel.activeInfraTab == INFRA_TAB_KUBERNETES ->
+                    KubernetesTab(viewModel, srv)
                 viewModel.dockerLoading && viewModel.dockerContainers.isEmpty() ->
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 viewModel.dockerError != null ->
@@ -102,7 +110,15 @@ fun InfraScreen(viewModel: AppViewModel) {
 }
 
 @Composable
-private fun ContainerRuntimeError(error: String) {
+private fun ContainerRuntimeError(error: String) = RemoteErrorPanel(
+    title = stringResource(R.string.could_not_query_containers),
+    error = error,
+    hint = stringResource(R.string.is_docker_or_podman_installed_and),
+)
+
+/** A failed remote query: [title], the [error] as the host said it (selectable and copyable), and a [hint]. */
+@Composable
+internal fun RemoteErrorPanel(title: String, error: String, hint: String?, extra: @Composable ColumnScope.() -> Unit = {}) {
     val copyToClipboard = rememberClipboardCopy()
     val scroll = rememberScrollState()
     Column(
@@ -112,7 +128,7 @@ private fun ContainerRuntimeError(error: String) {
     ) {
         Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = Color.Red, modifier = Modifier.size(40.dp))
         Spacer(Modifier.height(8.dp))
-        Text(stringResource(R.string.could_not_query_containers), fontWeight = FontWeight.Bold)
+        Text(title, fontWeight = FontWeight.Bold)
         Box(
             modifier = Modifier.fillMaxWidth()
                 .heightIn(min = 96.dp, max = 220.dp)
@@ -139,9 +155,10 @@ private fun ContainerRuntimeError(error: String) {
             Spacer(Modifier.width(6.dp))
             Text(stringResource(R.string.copy_error))
         }
-        Text(stringResource(R.string.is_docker_or_podman_installed_and),
+        if (hint != null) Text(hint,
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
         )
+        extra()
     }
 }
 

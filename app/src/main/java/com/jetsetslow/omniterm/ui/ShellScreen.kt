@@ -1066,7 +1066,7 @@ private fun unsavedSessionSubtitle(session: ShellSession): String? {
     val shown = session.unsavedHost ?: return null
     return when (session.transport) {
         TerminalTransport.Ssh -> "${HostDisplay.userAtHost(shown)} · ${stringResource(R.string.not_saved)}"
-        TerminalTransport.Telnet -> "${session.transport.label} · ${HostDisplay.sensitive("${shown.host}:${shown.port}")}"
+        TerminalTransport.Telnet, TerminalTransport.Kubernetes -> "${session.transport.label} · ${HostDisplay.sensitive("${shown.host}:${shown.port}")}"
         // A serial session's "host" is its line settings.
         TerminalTransport.Serial -> "${session.transport.label} · ${shown.host}"
     }

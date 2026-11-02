@@ -24,6 +24,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PortForwardEntity::class,
         StackRegistryEntity::class,
         TelnetHostEntity::class,
+        KubeClusterEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
@@ -49,6 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun portForwardDao(): PortForwardDao
     abstract fun stackRegistryDao(): StackRegistryDao
     abstract fun telnetHostDao(): TelnetHostDao
+    abstract fun kubeClusterDao(): KubeClusterDao
 
     companion object {
         @Volatile
@@ -292,6 +294,11 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `telnet_hosts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `kube_clusters` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `server` TEXT NOT NULL, `caPem` TEXT NOT NULL, `clientCertPem` TEXT NOT NULL, " +
+                        "`clientKeyPem` TEXT NOT NULL, `token` TEXT NOT NULL, `namespace` TEXT NOT NULL)"
                 )
             }
         }
