@@ -739,6 +739,9 @@ fun MainAppScreen(viewModel: AppViewModel) {
         // (Add Server's Test Connection blocks on it), so it lives here, not in ShellScreen.
         HostKeyApprovalDialog(viewModel)
 
+        // A host's one-time code or other sign-in question, for the same reason.
+        InteractiveAuthDialog(viewModel)
+
         // First-connect tmux install prompt for persistent-session hosts.
         TmuxInstallDialog(viewModel)
 
@@ -3180,6 +3183,7 @@ fun AddServerSheet(
                                 dismissKeyboard()
                                 viewModel.testConnectionDraft(
                                     host = host, port = port.toIntOrNull() ?: 22, username = user,
+                                    displayName = name.trim(),
                                     authType = authType, password = effectivePassword(),
                                     keyAlias = selectedKey, profileId = selectedProfileId,
                                     proxyType = proxyType, proxyHost = proxyHost,

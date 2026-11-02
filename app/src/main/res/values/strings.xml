@@ -35,6 +35,8 @@
     <string name="no_online_hosts_available_to_monitor">"No online hosts available to monitor. Offline hosts reappear after the next successful probe."</string>
     <string name="reboot">"Reboot"</string>
     <string name="cancel">"Cancel"</string>
+    <string name="sign_in">"Sign in"</string>
+    <string name="sign_in_to">"Sign in to %1$s"</string>
     <string name="custom_command">"Custom command"</string>
     <string name="enter_host_command_script_here">"Enter host command script here..."</string>
     <string name="save">"Save"</string>

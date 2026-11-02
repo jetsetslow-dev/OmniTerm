@@ -43,7 +43,8 @@ class JschSshTransport : SshTransport {
     private fun isJump(creds: SshCredentials): Boolean =
         creds.proxyType == "ssh" && creds.proxyHost.isNotBlank() && creds.proxyPort > 0
 
-    private fun newSession(creds: SshCredentials): Session = buildJschSession(creds)
+    private fun newSession(creds: SshCredentials, interactiveAuth: InteractiveAuth? = null): Session =
+        buildJschSession(creds, interactiveAuth)
 
     /**
      * The channel and session a call is currently blocked on, so a watchdog can force them shut.
@@ -347,17 +348,33 @@ class JschSshTransport : SshTransport {
         }
     }
 
-    override suspend fun testConnection(creds: SshCredentials): String? =
+    override suspend fun testConnection(creds: SshCredentials): String? = testConnection(creds, null)
+
+    override suspend fun signIn(creds: SshCredentials, interactiveAuth: InteractiveAuth): String? =
+        withContext(Dispatchers.IO) {
+            // Jump-host sessions are never pooled, so there is nothing for later commands to reuse.
+            if (isJump(creds)) return@withContext null
+            try {
+                pool.acquire(creds, interactiveAuth).close()
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                e.message ?: "Connection failed"
+            }
+        }
+
+    override suspend fun testConnection(creds: SshCredentials, interactiveAuth: InteractiveAuth?): String? =
         withContext(Dispatchers.IO) {
             var session: Session? = null
             var jumped: JumpedSession? = null
             try {
                 val jumpedSession = isJump(creds)
                 session = if (jumpedSession) {
-                    jumped = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS)
+                    jumped = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS, interactiveAuth)
                     jumped.target
                 } else {
-                    newSession(creds)
+                    newSession(creds, interactiveAuth)
                 }
                 if (!session.isConnected) session.connect(CONNECT_TIMEOUT_MS)
                 // Prove we can actually run something, not just complete the handshake.
@@ -378,7 +395,7 @@ class JschSshTransport : SshTransport {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                e.message ?: "Connection failed"
+                signInFailureMessage(session, e)
             } finally {
                 // For a jumped session, disconnect both target + jump together.
                 jumped?.disconnect() ?: session?.disconnect()
@@ -390,27 +407,38 @@ class JschSshTransport : SshTransport {
         cols: Int,
         rows: Int,
         onPhaseChange: ((String) -> Unit)?,
+    ): TerminalSession = openShell(creds, cols, rows, null, onPhaseChange)
+
+    override suspend fun openShell(
+        creds: SshCredentials,
+        cols: Int,
+        rows: Int,
+        interactiveAuth: InteractiveAuth?,
+        onPhaseChange: ((String) -> Unit)?,
     ): TerminalSession = withContext(Dispatchers.IO) {
         var session: Session? = null
         var jumped: JumpedSession? = null
         var channel: ChannelShell? = null
+        // A connection the user already signed in to with a one-time code: the terminal opens on it
+        // rather than asking for another code, and leaves it to the pool when it closes.
+        var shared: SshSessionPool.Lease? = if (isJump(creds)) null else pool.leaseSignedIn(creds)
         val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
             if (cause is CancellationException) {
                 runCatching { channel?.disconnect() }
-                jumped?.disconnect() ?: runCatching { session?.disconnect() }
+                closeShellTransport(session, jumped, shared)
             }
         }
         try {
             onPhaseChange?.invoke("Resolving target…")
-            session = if (isJump(creds)) {
+            session = shared?.session ?: if (isJump(creds)) {
                 onPhaseChange?.invoke("Authenticating bastion…")
-                jumped = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS)
+                jumped = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS, interactiveAuth)
                 jumped.target
             } else {
-                newSession(creds)
+                newSession(creds, interactiveAuth)
             }
             onPhaseChange?.invoke("Authenticating target…")
-            session.connect(CONNECT_TIMEOUT_MS)
+            if (!session.isConnected) session.connect(CONNECT_TIMEOUT_MS)
             channel = (session.openChannel("shell") as ChannelShell).apply {
                 setPtyType("xterm-256color")
                 setPtySize(cols.coerceAtLeast(1), rows.coerceAtLeast(1), cols * 8, rows * 16)
@@ -422,17 +450,30 @@ class JschSshTransport : SshTransport {
             val input = channel.inputStream
             val output = channel.outputStream
             channel.connect(CONNECT_TIMEOUT_MS)
-            JschTerminalSession(session, channel, input, output, jumped).also {
+            // A sign-in the user answered cannot be repeated by the app's checks: share it with them.
+            if (shared == null && jumped == null && (session.userInfo as? KeyboardInteractiveUserInfo)?.answeredByUser == true) {
+                shared = pool.adopt(creds, session)
+            }
+            JschTerminalSession(session, channel, input, output, jumped, release = shared?.let { lease -> lease::close }).also {
                 cancellationHandle?.dispose()
             }
         } catch (e: CancellationException) {
             channel?.disconnect()
-            jumped?.disconnect() ?: session?.disconnect()
+            closeShellTransport(session, jumped, shared)
             throw e
         } catch (e: Throwable) {
             channel?.disconnect()
-            jumped?.disconnect() ?: session?.disconnect()
-            throw SshConnectException(e.message ?: "Failed to open shell", e)
+            closeShellTransport(session, jumped, shared)
+            throw SshConnectException(signInFailureMessage(session, e, fallback = "Failed to open shell"), e)
+        }
+    }
+
+    /** Ends what a shell that never opened was using: a pooled connection is only released, never closed. */
+    private fun closeShellTransport(session: Session?, jumped: JumpedSession?, shared: SshSessionPool.Lease?) {
+        when {
+            shared != null -> shared.close()
+            jumped != null -> jumped.disconnect()
+            else -> runCatching { session?.disconnect() }
         }
     }
 
@@ -499,6 +540,8 @@ private class JschTerminalSession(
     private val shellOut: OutputStream,
     // Non-null when reached via an SSH jump host; closed together with this session.
     private val jumped: JumpedSession? = null,
+    // Non-null when the session is the pool's (a sign-in the user answered): released, never closed.
+    private val release: (() -> Unit)? = null,
 ) : TerminalSession {
 
     private val outChannel = Channel<ByteArray>(OUTPUT_BUFFER_CHUNKS)
@@ -600,7 +643,11 @@ private class JschTerminalSession(
             _exitStatus.value = close.exitStatus
             try { channel.disconnect() } catch (_: Throwable) {}
             // For a jumped session, tear down target + jump together; otherwise just this session.
-            if (jumped != null) jumped.disconnect() else try { session.disconnect() } catch (_: Throwable) {}
+            when {
+                jumped != null -> jumped.disconnect()
+                release != null -> release.invoke()
+                else -> try { session.disconnect() } catch (_: Throwable) {}
+            }
             outChannel.close()
         }
     }

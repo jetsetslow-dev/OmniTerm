@@ -55,8 +55,13 @@ internal fun addPrivateKeyIdentity(jsch: JSch, name: String, privateKey: String,
     }
 }
 
-/** Shared JSch [Session] factory used by both the shell transport and the SFTP client. */
-internal fun buildJschSession(creds: SshCredentials): Session {
+/**
+ * Shared JSch [Session] factory used by both the shell transport and the SFTP client.
+ *
+ * [interactiveAuth] answers the host's sign-in questions beyond the saved password (a one-time
+ * code); null for background work, which must never ask. See [KeyboardInteractiveUserInfo].
+ */
+internal fun buildJschSession(creds: SshCredentials, interactiveAuth: InteractiveAuth? = null): Session {
     val jsch = JSch().apply {
         setHostKeyRepository(SshHostKeyTrust.repository())
     }
@@ -70,6 +75,7 @@ internal fun buildJschSession(creds: SshCredentials): Session {
     }
     val session = jsch.getSession(creds.username, creds.host, creds.port)
     if (!creds.password.isNullOrEmpty()) session.setPassword(creds.password)
+    session.userInfo = KeyboardInteractiveUserInfo(creds.password, interactiveAuth)
     applyProxy(session, creds)
     session.setConfig(Properties().apply {
         put("StrictHostKeyChecking", "yes")
@@ -157,7 +163,11 @@ internal fun pinJumpTargetToLogicalHost(session: Session, host: String, port: In
  * pooled one-shot exec/stream path falls back to a direct connection for jump hosts (see
  * JschSshTransport.execOnce / execStreamOnce comments). HTTP/SOCKS5 proxies work everywhere.
  */
-internal fun buildJumpedJschSession(creds: SshCredentials, connectTimeoutMs: Int): JumpedSession {
+internal fun buildJumpedJschSession(
+    creds: SshCredentials,
+    connectTimeoutMs: Int,
+    interactiveAuth: InteractiveAuth? = null,
+): JumpedSession {
     val jumpJsch = JSch().apply {
         setHostKeyRepository(SshHostKeyTrust.repository())
     }
@@ -172,6 +182,8 @@ internal fun buildJumpedJschSession(creds: SshCredentials, connectTimeoutMs: Int
     }
     val jump = jumpJsch.getSession(jumpUser, creds.proxyHost.trim(), creds.proxyPort)
     if (creds.proxyPassword.isNotEmpty()) jump.setPassword(creds.proxyPassword)
+    // A bastion may ask for its own one-time code.
+    jump.userInfo = KeyboardInteractiveUserInfo(creds.proxyPassword, interactiveAuth)
     jump.setConfig(Properties().apply {
         put("StrictHostKeyChecking", "yes")
         put(
@@ -206,7 +218,7 @@ internal fun buildJumpedJschSession(creds: SshCredentials, connectTimeoutMs: Int
             port = lport,
             proxyType = "none",
         )
-        val target = buildJschSession(targetCreds)
+        val target = buildJschSession(targetCreds, interactiveAuth)
         // Session.setHostKeyAlias is the JSch API that checkHost() actually reads. Setting a
         // config entry named HostKeyAlias leaves the alias null and pins 127.0.0.1:<random-port>.
         pinJumpTargetToLogicalHost(target, creds.host, creds.port)

@@ -24,6 +24,10 @@ import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
+import com.jetsetslow.omniterm.data.ssh.INTERACTIVE_AUTH_CANCELLED
+import com.jetsetslow.omniterm.data.ssh.InteractiveAuth
+import com.jetsetslow.omniterm.data.ssh.InteractiveAuthRequest
+import com.jetsetslow.omniterm.data.ssh.NEEDS_INTERACTIVE_AUTH
 import com.jetsetslow.omniterm.data.ssh.JschSftp
 import com.jetsetslow.omniterm.data.ssh.JschSshTransport
 import com.jetsetslow.omniterm.data.ssh.SSH_CONNECTION_LOST
@@ -358,6 +362,10 @@ data class SystemSpecsState(
 private const val RECONNECT_MAX_DELAY_MS = 30_000L
 private const val RECONNECT_MAX_ATTEMPTS = 12
 
+/** Why a dropped terminal stopped reconnecting: its host wants an answer only the user can give. */
+internal const val TERMINAL_NEEDS_INTERACTIVE_AUTH =
+    "Connection lost. This host asks a sign-in question, such as a verification code: tap Retry to answer it."
+
 /**
  * How many dead-but-retryable sessions to keep around. Enough that a couple of simultaneous drops
  * (say both panes of a split) stay recoverable, few enough that they cannot accumulate unboundedly.
@@ -469,6 +477,11 @@ sealed interface ExternalLaunchRequest {
     data object OpenFleet : ExternalLaunchRequest
     data object OpenInfra : ExternalLaunchRequest
     data object OpenBackup : ExternalLaunchRequest
+}
+
+/** [request], a host's sign-in questions, waiting in [AppViewModel.pendingInteractiveAuth] for the user's answers. */
+class PendingInteractiveAuth(val hostName: String, val request: InteractiveAuthRequest) {
+    internal val reply = CompletableDeferred<List<String>?>()
 }
 
 sealed interface SshConnectionPhase {
@@ -2083,6 +2096,36 @@ class AppViewModel @JvmOverloads constructor(
     // The status can be stale, so we warn-and-confirm rather than hard-block; null = no prompt.
     var offlineConnectPromptServer by mutableStateOf<com.jetsetslow.omniterm.data.ServerEntity?>(null)
     var pendingHostKeyApproval by mutableStateOf<com.jetsetslow.omniterm.data.ssh.HostKeyApprovalRequest?>(null)
+
+    /** A host's sign-in questions (a one-time code) waiting for the user; [InteractiveAuthDialog] shows them. */
+    var pendingInteractiveAuth by mutableStateOf<PendingInteractiveAuth?>(null)
+        private set
+    // One host's questions at a time: a second connection's wait for the first dialog to close.
+    private val interactiveAuthTurn = Mutex()
+
+    /**
+     * Asks the user [hostName]'s sign-in questions beyond the saved password, for a connection the
+     * user started: a terminal, Test connection, Files. Background work passes none.
+     */
+    private fun interactiveAuthFor(hostName: String) = InteractiveAuth { request ->
+        interactiveAuthTurn.withLock {
+            val pending = PendingInteractiveAuth(hostName, request)
+            withContext(Dispatchers.Main) { pendingInteractiveAuth = pending }
+            try {
+                pending.reply.await()
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    if (pendingInteractiveAuth === pending) pendingInteractiveAuth = null
+                }
+            }
+        }
+    }
+
+    /** The dialog's answers, in its questions' order, or null when the user cancelled. */
+    fun answerInteractiveAuth(answers: List<String>?) {
+        pendingInteractiveAuth?.reply?.complete(answers)
+        pendingInteractiveAuth = null
+    }
     // Approvals beyond the one on screen wait here (first fleet probe can surface several at
     // once); approveHostKey() pops the next so every blocked JSch thread eventually gets an answer.
     private val hostKeyApprovalQueue = ArrayDeque<com.jetsetslow.omniterm.data.ssh.HostKeyApprovalRequest>()
@@ -2442,6 +2485,7 @@ class AppViewModel @JvmOverloads constructor(
         SshHostKeyTrust.clearApprovalHandler(hostKeyApprovalOwner)
         pendingHostKeyApproval?.deferred?.complete(false)
         pendingHostKeyApproval = null
+        pendingInteractiveAuth?.reply?.complete(null)
         while (hostKeyApprovalQueue.isNotEmpty()) {
             hostKeyApprovalQueue.removeFirst().deferred.complete(false)
         }
@@ -5358,6 +5402,8 @@ class AppViewModel @JvmOverloads constructor(
         password: String?, keyAlias: String?, profileId: Int?,
         proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0,
         proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null,
+        // What a sign-in question is titled with; the address until the host is named.
+        displayName: String = "",
         onResult: (String?) -> Unit,
     ) {
         if (host.isBlank()) { onResult("Host is required."); return }
@@ -5386,7 +5432,8 @@ class AppViewModel @JvmOverloads constructor(
                     proxyKeyPem = proxyKeyAlias?.let { a ->
                         repository.getAllKeys().find { it.alias == a }?.privateKey
                     },
-                )
+                ),
+                interactiveAuthFor(displayName.ifBlank { host }),
             )
             isTestingConnection = false
             onResult(err?.let { cleanSshError(it) })
@@ -5662,6 +5709,9 @@ class AppViewModel @JvmOverloads constructor(
             var setupComplete = false
             try {
                 val creds = buildCredentials(srv)
+                // A host that asks a one-time code is asked once, here: the checks below and the shell
+                // then reuse this sign-in. For any other host this is the connection they would open.
+                sshTransport.signIn(creds, interactiveAuthFor(srv.name))?.let { throw IllegalStateException(it) }
                 var usePersistence = srv.persistentSession && !forceDisablePersistence
 
                 // Persistent sessions need tmux on the host. On the first connect where it's missing,
@@ -5670,9 +5720,12 @@ class AppViewModel @JvmOverloads constructor(
                 // every connect; the "Install tmux" action re-runs connect afterwards.
                 if (usePersistence && srv.id !in tmuxVerifiedServerIds) {
                     terminalConnectionPhase = "Checking tmux…"
+                    // On probe failure, don't block the connect. exec reports one as "SSH Error: …"
+                    // rather than throwing, which once read as "tmux missing" and offered to install it.
                     val present = runCatching {
-                        sshTransport.exec(creds, RemoteCommands.TMUX_CHECK).trim().endsWith("yes")
-                    }.getOrDefault(true) // on probe failure, don't block the connect
+                        val reply = sshTransport.exec(creds, RemoteCommands.TMUX_CHECK).trim()
+                        reply.startsWith("SSH Error") || reply.endsWith("yes")
+                    }.getOrDefault(true)
                     if (present) {
                         tmuxVerifiedServerIds.add(srv.id)
                     } else if (!RemoteCommands.hasUnixShell(hostOs(srv))) {
@@ -5687,7 +5740,7 @@ class AppViewModel @JvmOverloads constructor(
                 }
 
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = openTerminalChannel(creds, attemptGeneration)
+                val session = openTerminalChannel(creds, srv.name, attemptGeneration)
                 openedSession = session
                 val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = usePersistence
@@ -6175,8 +6228,8 @@ class AppViewModel @JvmOverloads constructor(
      * [attemptGeneration] is still the current attempt. The caller owns the channel until a
      * registered shell takes it over.
      */
-    private suspend fun openTerminalChannel(creds: SshCredentials, attemptGeneration: Long): TerminalSession =
-        sshTransport.openShell(creds, termCols, termRows) { phase ->
+    private suspend fun openTerminalChannel(creds: SshCredentials, hostName: String, attemptGeneration: Long): TerminalSession =
+        sshTransport.openShell(creds, termCols, termRows, interactiveAuthFor(hostName)) { phase ->
             viewModelScope.launch(Dispatchers.Main) {
                 if (attemptGeneration == terminalConnectGeneration) {
                     val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
@@ -6258,6 +6311,7 @@ class AppViewModel @JvmOverloads constructor(
             var setupComplete = false
             try {
                 val creds = buildCredentials(srv)
+                sshTransport.signIn(creds, interactiveAuthFor(srv.name))?.let { throw IllegalStateException(it) }
                 val presenceReply = sshTransport.exec(creds, RemoteCommands.tmuxHasSessionCommand(tmuxName)).trim()
                 if (presenceReply.startsWith("SSH Error")) throw IllegalStateException(presenceReply)
                 when (parseRemoteTmuxSessionPresence(presenceReply)) {
@@ -6288,7 +6342,7 @@ class AppViewModel @JvmOverloads constructor(
                     true -> Unit
                 }
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = openTerminalChannel(creds, attemptGeneration)
+                val session = openTerminalChannel(creds, srv.name, attemptGeneration)
                 openedSession = session
                 val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = true
@@ -6843,7 +6897,8 @@ class AppViewModel @JvmOverloads constructor(
         repository.getServerById(shellSession.serverId)?.let { runCatching { buildCredentials(it) }.getOrNull() }
             ?: shellSession.creds
 
-    private fun reconnectSession(shellSession: ShellSession) {
+    /** [askUser]: the user asked for this reconnect, so the host's sign-in questions may be put to them. */
+    private fun reconnectSession(shellSession: ShellSession, askUser: Boolean = false) {
         if (shellSession.tmuxSessionMissing) return
         if (shellSession.reconnectJob?.isActive == true) return
         if (shellSession.creds == null) return
@@ -6853,15 +6908,35 @@ class AppViewModel @JvmOverloads constructor(
         TerminalSessionManager.startKeepAliveService()
         shellSession.reconnectJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
             var delayMs = RECONNECT_BASE_DELAY_MS
+            // Why the attempts stopped early, when trying again cannot work without the user.
+            var stoppedBecause: String? = null
             for (attempt in 1..RECONNECT_MAX_ATTEMPTS) {
                 if (shellSession.userClosed) return@launch
                 delay(delayMs)
                 delayMs = (delayMs * 2).coerceAtMost(RECONNECT_MAX_DELAY_MS)
                 val creds = reconnectCredentials(shellSession) ?: return@launch
                 val newSession = try {
-                    sshTransport.openShell(creds, shellSession.lastCols, shellSession.lastRows)
+                    sshTransport.openShell(
+                        creds,
+                        shellSession.lastCols,
+                        shellSession.lastRows,
+                        if (askUser) interactiveAuthFor(shellSession.serverName) else null,
+                    )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
+                    // Only the user can answer this host's sign-in question (or they declined to).
+                    // Each further attempt would be one more failed sign-in in the host's log, and a
+                    // dozen of them trip fail2ban, so stop and let Retry ask.
+                    when (e.message) {
+                        NEEDS_INTERACTIVE_AUTH -> {
+                            stoppedBecause = TERMINAL_NEEDS_INTERACTIVE_AUTH
+                            break
+                        }
+                        INTERACTIVE_AUTH_CANCELLED -> {
+                            stoppedBecause = INTERACTIVE_AUTH_CANCELLED
+                            break
+                        }
+                    }
                     null
                 } ?: continue
                 var adopted = false
@@ -6972,10 +7047,10 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 return@launch
             }
-            // Exhausted attempts.
+            // Exhausted attempts, or stopped early.
             withContext(Dispatchers.Main) {
                 shellSession.reconnecting = false
-                shellSession.disconnectError = "Connection lost — reconnect failed."
+                shellSession.disconnectError = stoppedBecause ?: "Connection lost — reconnect failed."
                 rememberRestorablePersistentSession(shellSession)
                 if (shellSession.persistent) {
                     cleanupSession(shellSession)
@@ -7027,7 +7102,7 @@ class AppViewModel @JvmOverloads constructor(
     fun retrySession(sessionId: String) {
         val s = activeSessions.find { it.id == sessionId } ?: return
         if (s.isConnected || s.reconnecting || s.endedExitStatus != null) return
-        reconnectSession(s)
+        reconnectSession(s, askUser = true)
     }
 
     // ── tmux (persistent session) install gating ──
@@ -10405,10 +10480,10 @@ class AppViewModel @JvmOverloads constructor(
 
     // ── SFTP (real ChannelSftp) ──
     private suspend fun sftpClientOrNull(): JschSftp? =
-        selectedServer?.let { JschSftp(buildCredentials(it)) }
+        selectedServer?.let { JschSftp(buildCredentials(it), interactiveAuthFor(it.name)) }
 
     private suspend fun sftpClientFor(server: ServerEntity): JschSftp =
-        JschSftp(buildCredentials(server))
+        JschSftp(buildCredentials(server), interactiveAuthFor(server.name))
 
     // ── Dual-pane: a second, independent SFTP browser (pane B) ──
     // Kept separate from the primary SFTP state so the two panes never clobber each other. Pane B is

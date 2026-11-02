@@ -28,7 +28,11 @@ import java.io.OutputStream
  * Each operation gets its own short-lived channel so a long transfer never blocks a folder listing
  * on the same connection. Jump-host sessions are not pooled (see [buildJumpedJschSession]).
  */
-class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
+class JschSftp(
+    private val creds: SshCredentials,
+    // Answers the host's sign-in questions (a one-time code) when a browse needs a new connection.
+    private val interactiveAuth: InteractiveAuth? = null,
+) : RemoteFsClient {
 
     private val activeChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<ChannelSftp>()
     private val activeStreams = java.util.concurrent.ConcurrentHashMap.newKeySet<Closeable>()
@@ -59,7 +63,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
     private suspend fun <T> withPooledChannel(retryBlockOnStaleSession: Boolean, block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
-            val lease = pool.acquire(creds)
+            val lease = pool.acquire(creds, interactiveAuth)
             val session = lease.session
             val channel: ChannelSftp = try {
                 (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
@@ -115,7 +119,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
             }
         }
         try {
-            val session = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS).also { jumped = it }.target
+            val session = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS, interactiveAuth).also { jumped = it }.target
             session.connect(CONNECT_TIMEOUT_MS)
             channel = (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
             activeChannels += channel

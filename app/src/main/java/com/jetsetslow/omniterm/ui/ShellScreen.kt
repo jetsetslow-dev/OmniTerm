@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
@@ -94,6 +95,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -753,6 +755,62 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
         dismissButton = {
             TextButton(onClick = { viewModel.approveHostKey(false) }) {
                 Text(stringResource(R.string.reject))
+            }
+        },
+    )
+}
+
+
+/**
+ * A host's sign-in questions beyond the saved password: a one-time code, a new password. Hosted by
+ * MainAppScreen with the host key dialog, since Test connection and Files ask them too.
+ */
+@Composable
+fun InteractiveAuthDialog(viewModel: AppViewModel) {
+    val pending = viewModel.pendingInteractiveAuth ?: return
+    val prompts = pending.request.prompts
+    val answers = remember(pending) { prompts.map { mutableStateOf("") } }
+    val firstField = remember(pending) { FocusRequester() }
+    val submit = { viewModel.answerInteractiveAuth(answers.map { it.value }) }
+    LaunchedEffect(pending) { runCatching { firstField.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = { viewModel.answerInteractiveAuth(null) },
+        title = { Text(stringResource(R.string.sign_in_to, pending.hostName)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                pending.request.name.takeIf { it.isNotBlank() }?.let { Text(it, fontWeight = FontWeight.Bold) }
+                pending.request.instruction.takeIf { it.isNotBlank() }?.let {
+                    Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                prompts.forEachIndexed { i, prompt ->
+                    val last = i == prompts.lastIndex
+                    OutlinedTextField(
+                        value = answers[i].value,
+                        onValueChange = { answers[i].value = it },
+                        label = { Text(prompt.text.trim().removeSuffix(":")) },
+                        singleLine = true,
+                        visualTransformation = if (prompt.echo) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = if (prompt.echo) KeyboardType.Text else KeyboardType.Password,
+                            imeAction = if (last) ImeAction.Done else ImeAction.Next,
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("interactiveAuth.answer.$i")
+                            .let { if (i == 0) it.focusRequester(firstField) else it },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = submit, modifier = Modifier.testTag("interactiveAuth.signIn")) {
+                Text(stringResource(R.string.sign_in))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.answerInteractiveAuth(null) }, modifier = Modifier.testTag("interactiveAuth.cancel")) {
+                Text(stringResource(R.string.cancel))
             }
         },
     )
@@ -2229,6 +2287,8 @@ private fun PaneTerminalContent(
                         color = statusContent,
                         fontSize = 12.sp,
                         fontFamily = OmniFonts.mono,
+                        // A message longer than the row wraps rather than pushing Retry off screen.
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (endedExitStatus != null) {
                         // The shell exited on the server, so there is nothing to retry; the
