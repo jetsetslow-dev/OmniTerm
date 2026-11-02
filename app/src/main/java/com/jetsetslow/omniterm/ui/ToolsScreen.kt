@@ -730,14 +730,14 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 }
                                 Row {
                                     IconButton(onClick = { editRule = r }) {
-                                        Icon(Icons.Filled.Edit, null, tint = OmniColors.cyan)
+                                        Icon(Icons.Filled.Edit, "Edit rule", tint = OmniColors.cyan)
                                     }
                                     IconButton(onClick = {
                                         confirm.ask(confirm.str(R.string.delete_rule), confirm.str(R.string.delete_the_alert_rule_for, r.metricName, srv?.name ?: "this host"), confirmLabel = confirm.str(R.string.delete)) {
                                             viewModel.deleteAlertRule(r)
                                         }
                                     }) {
-                                        Icon(Icons.Filled.Delete, null, tint = Color.Red)
+                                        Icon(Icons.Filled.Delete, "Delete rule", tint = Color.Red)
                                     }
                                 }
                             }
@@ -2086,7 +2086,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                         viewModel.deleteProfile(profile)
                                     }
                                 }) {
-                                    Icon(Icons.Filled.Delete, null, tint = Color.Red)
+                                    Icon(Icons.Filled.Delete, "Delete profile", tint = Color.Red)
                                 }
                             }
                         }
@@ -2114,7 +2114,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                         viewModel.deleteKey(key)
                                     }
                                 }) {
-                                    Icon(Icons.Filled.Delete, null, tint = Color.Red)
+                                    Icon(Icons.Filled.Delete, "Delete key", tint = Color.Red)
                                 }
                             }
                         }
@@ -4837,7 +4837,7 @@ private fun TunnelEditorDialog(
                     OutlinedTextField(
                         value = when (kind) { "remote" -> "Remote (-R)"; "dynamic" -> "Dynamic SOCKS (-D)"; else -> "Local (-L)" },
                         onValueChange = {}, readOnly = true, label = { Text(stringResource(R.string.type)) },
-                        trailingIcon = { IconButton(onClick = { kindMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
+                        trailingIcon = { IconButton(onClick = { kindMenu = true }) { Icon(Icons.Filled.ArrowDropDown, "Pick ${stringResource(R.string.type)}") } },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OverflowDropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
@@ -4852,7 +4852,7 @@ private fun TunnelEditorDialog(
                     OutlinedTextField(
                         value = servers.find { it.id == serverId }?.name ?: "Select host",
                         onValueChange = {}, readOnly = true, label = { Text(stringResource(R.string.ssh_host)) },
-                        trailingIcon = { IconButton(onClick = { serverMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
+                        trailingIcon = { IconButton(onClick = { serverMenu = true }) { Icon(Icons.Filled.ArrowDropDown, "Pick ${stringResource(R.string.ssh_host)}") } },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OverflowDropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {

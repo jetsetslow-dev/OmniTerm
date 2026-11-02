@@ -184,7 +184,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                 }
                             }
                             IconButton(onClick = { viewModel.requestDisconnectSession(s.id) }) {
-                                Icon(Icons.Filled.Close, null, tint = OmniColors.red)
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close), tint = OmniColors.red)
                             }
                         }
                     }
