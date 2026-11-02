@@ -28,6 +28,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +78,7 @@ private tailrec fun Context.activity(): Activity? = when (this) {
 fun SecurityKeyDialog(viewModel: AppViewModel) {
     val pending = viewModel.pendingSecurityKey ?: return
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var pin by remember(pending) { mutableStateOf("") }
     var askPin by remember(pending) { mutableStateOf(pending.pinUpFront) }
@@ -104,14 +106,14 @@ fun SecurityKeyDialog(viewModel: AppViewModel) {
                     askPin = true
                     pin = ""
                     when {
-                        !e.wrongPin -> context.getString(R.string.security_key_pin_needed)
-                        e.retries != null -> context.getString(R.string.security_key_pin_wrong_tries, e.retries)
-                        else -> context.getString(R.string.security_key_pin_wrong)
+                        !e.wrongPin -> resources.getString(R.string.security_key_pin_needed)
+                        e.retries != null -> resources.getString(R.string.security_key_pin_wrong_tries, e.retries)
+                        else -> resources.getString(R.string.security_key_pin_wrong)
                     }
                 }
                 is SecurityKeyCtap.Failure -> e.message
-                is ApplicationNotAvailableException -> context.getString(R.string.security_key_not_fido2)
-                else -> context.getString(R.string.security_key_failed, e.message ?: e.javaClass.simpleName)
+                is ApplicationNotAvailableException -> resources.getString(R.string.security_key_not_fido2)
+                else -> resources.getString(R.string.security_key_failed, e.message ?: e.javaClass.simpleName)
             }
         }
     }
@@ -121,7 +123,7 @@ fun SecurityKeyDialog(viewModel: AppViewModel) {
         if (working) return
         if (device is UsbYubiKeyDevice) usbKey = device
         if (askPin && pin.isEmpty()) {
-            problem = context.getString(R.string.security_key_pin_needed)
+            problem = resources.getString(R.string.security_key_pin_needed)
             return
         }
         working = true
