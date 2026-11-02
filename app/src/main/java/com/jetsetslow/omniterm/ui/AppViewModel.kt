@@ -11396,7 +11396,7 @@ class AppViewModel @JvmOverloads constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (paneBServerId == srv.id) paneBError = e.message ?: "Could not list folder"
+                if (paneBServerId == srv.id) paneBError = e.message?.let(::cleanSshError) ?: "Could not list folder"
             } finally {
                 paneBLoading = false
             }
@@ -11514,7 +11514,7 @@ class AppViewModel @JvmOverloads constructor(
                 // an error — swallow it so "StandaloneCoroutine was cancelled" never reaches the UI.
                 throw e
             } catch (e: Exception) {
-                if (selectedServerId == targetServerId) sftpError = e.message ?: "SFTP error"
+                if (selectedServerId == targetServerId) sftpError = e.message?.let(::cleanSshError) ?: "SFTP error"
             } finally {
                 // Only the job that's still current should clear the spinner; a cancelled one bows out.
                 if (sftpJob == coroutineContext[Job]) sftpLoading = false

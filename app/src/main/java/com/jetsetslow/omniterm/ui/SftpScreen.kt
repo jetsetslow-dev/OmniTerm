@@ -85,7 +85,8 @@ private fun CompactSftpIconToggleButton(
 
 @Composable
 fun SftpScreen(viewModel: AppViewModel) {
-    val srv = screenHost(viewModel) {
+    // Online hosts only, as the SFTP host bar lists: an offline selection is left for the first online host.
+    val srv = screenHost(viewModel, onlineOnly = true) {
         if (it != null) viewModel.ensureSftpLoadedForSelectedServer()
         // Only the SFTP subtab needs an online SSH host; Bookmarks/Shares/Transfers work without.
         else if (viewModel.activeSftpTab == 1) viewModel.activeSftpTab = 0

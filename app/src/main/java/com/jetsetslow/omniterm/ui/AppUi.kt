@@ -3532,13 +3532,19 @@ internal fun ManualRefreshErrorBanner(viewModel: AppViewModel, modifier: Modifie
 
 /**
  * The host a host-scoped screen works on: the selected host, even while it is offline, else the
- * first online one, which then becomes the selection. [onHostChange] runs each time that host
- * changes, with null while there is none.
+ * first online one, which then becomes the selection. With [onlineOnly] the selection counts only
+ * while it is online, for a screen whose host bar lists online hosts only: otherwise the bar shows
+ * an online host while the screen keeps working on the offline one it no longer lists. [onHostChange]
+ * runs each time that host changes, with null while there is none.
  */
 @Composable
-internal fun screenHost(viewModel: AppViewModel, onHostChange: (ServerEntity?) -> Unit): ServerEntity? {
+internal fun screenHost(
+    viewModel: AppViewModel,
+    onlineOnly: Boolean = false,
+    onHostChange: (ServerEntity?) -> Unit = {},
+): ServerEntity? {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
+    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId && (!onlineOnly || viewModel.isPickableHost(it)) }
     val srv = explicitlySelected ?: servers.firstOrNull { viewModel.isPickableHost(it) }
     LaunchedEffect(srv?.id) {
         if (srv != null && explicitlySelected == null && viewModel.selectedServerId != srv.id) {
