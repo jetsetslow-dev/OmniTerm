@@ -63,7 +63,8 @@ while IFS= read -r path; do
   class="${path#"$TEST_ROOT"/}"
   class="${class%.kt}"
   CLASSES+=("${class//\//.}")
-done < <(changed_paths | sort -u)
+# The C locale, so the order is the same on every machine: en_US sorts inner/ before LocalTest.kt.
+done < <(changed_paths | LC_ALL=C sort -u)
 
 if [[ "$LIST" == "true" ]]; then
   [[ ${#CLASSES[@]} -eq 0 ]] || printf '%s\n' "${CLASSES[@]}"

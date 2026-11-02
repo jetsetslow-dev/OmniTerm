@@ -43,8 +43,11 @@ expected="com.example.AddedTest
 com.example.EditedTest
 com.example.inner.MovedTest"
 [[ "$(listed)" == "$expected" ]] || fail "committed changes listed as: $(listed)"
-[[ "$(listed --worktree)" == "$expected
-com.example.LocalTest" ]] || fail "--worktree listed as: $(listed --worktree)"
+# The script sorts in the C locale whatever the caller uses, so LocalTest comes before inner/.
+[[ "$(LC_ALL=en_US.UTF-8 listed --worktree 2>/dev/null)" == "com.example.AddedTest
+com.example.EditedTest
+com.example.LocalTest
+com.example.inner.MovedTest" ]] || fail "--worktree listed as: $(listed --worktree)"
 
 FAKE_GRADLEW="$WORK/gradlew"
 cat > "$FAKE_GRADLEW" <<'EOF'
