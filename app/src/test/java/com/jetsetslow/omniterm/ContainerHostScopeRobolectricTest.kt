@@ -7,6 +7,7 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
+import com.jetsetslow.omniterm.data.SimContainer
 import com.jetsetslow.omniterm.data.SimDockerImage
 import com.jetsetslow.omniterm.data.SimDockerVolume
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
@@ -124,6 +125,23 @@ class ContainerHostScopeRobolectricTest {
             images.joinToString("; ") { RemoteCommands.dockerImageAction(it.id, "remove", it.runtime) },
             transport.streamed.single().second,
         )
+    }
+
+    @Test
+    fun aContainerShellOpensOnTheContainersHostEvenAfterARename() = withHosts { model, _, a, b ->
+        val repository = AppRepository(AppDatabase.getDatabase(ApplicationProvider.getApplicationContext<Application>()))
+        val container = SimContainer(
+            id = "c0ffee000001", name = "web", image = "nginx", ports = "—", status = "running",
+            group = "standalone", serverId = a,
+        )
+        // Matched by name, a renamed host no longer matched and the shell opened on the selected one.
+        repository.updateServer(checkNotNull(repository.getServerById(a)).copy(name = "a renamed"))
+        waitWhileOnMain(main) { model.servers.value.none { it.name == "a renamed" } }
+        withContext(main) {
+            model.selectedServerId = b
+            model.dockerExecIntoContainer(container)
+        }
+        assertEquals(a, model.selectedServerId)
     }
 
     private lateinit var main: CoroutineDispatcher

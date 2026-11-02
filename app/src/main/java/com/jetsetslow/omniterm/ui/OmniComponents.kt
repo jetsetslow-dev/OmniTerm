@@ -701,7 +701,7 @@ fun HostPickerDialog(
                             name = s.name,
                             detail = HostDisplay.userAtHost(s) + if (selectable) "" else " · offline",
                             online = s.status == "online",
-                            dotColor = OmniColors.serverAccent(s.serverColor, s.name),
+                            dotColor = OmniColors.serverAccent(s.serverColor, s.id),
                             checked = s.id in selectedIds,
                             enabled = enabled,
                             singleSelect = singleSelect,

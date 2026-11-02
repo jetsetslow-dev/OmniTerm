@@ -709,7 +709,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     }
                     items(rules) { r ->
                         val srv = serversList.find { it.id == r.serverId }
-                        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
+                        // A rule for one host carries that host's colour; one for all hosts has none.
+                        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = srv?.let(::getServerColor) ?: OmniColors.cyan) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1578,6 +1579,7 @@ private fun TargetHostFields(viewModel: AppViewModel) {
 @Composable
 private fun PingTab(viewModel: AppViewModel) {
     var pingTries by remember { mutableStateOf("4") }
+    val dismissKeyboard = rememberDismissKeyboard()
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TargetHostFields(viewModel)
@@ -1595,11 +1597,15 @@ private fun PingTab(viewModel: AppViewModel) {
         )
         Button(
             onClick = {
-                if (viewModel.pingRunning) viewModel.stopPing()
-                else viewModel.startPing(
-                    viewModel.portScannerTarget,
-                    pingTries.trim().toIntOrNull() ?: return@Button,
-                )
+                if (viewModel.pingRunning) {
+                    viewModel.stopPing()
+                } else {
+                    dismissKeyboard()
+                    viewModel.startPing(
+                        viewModel.portScannerTarget,
+                        pingTries.trim().toIntOrNull() ?: return@Button,
+                    )
+                }
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.pingRunning ||
@@ -1632,12 +1638,17 @@ private fun PingTab(viewModel: AppViewModel) {
 // ── Traceroute (device-side) ──
 @Composable
 private fun TracerouteTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TargetHostFields(viewModel)
         Button(
             onClick = {
-                if (viewModel.tracerouteRunning) viewModel.stopTraceroute()
-                else viewModel.startTraceroute(viewModel.portScannerTarget)
+                if (viewModel.tracerouteRunning) {
+                    viewModel.stopTraceroute()
+                } else {
+                    dismissKeyboard()
+                    viewModel.startTraceroute(viewModel.portScannerTarget)
+                }
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.tracerouteRunning || viewModel.portScannerTarget.isNotBlank(),
@@ -1669,6 +1680,7 @@ private fun TracerouteTab(viewModel: AppViewModel) {
 // ── Port Scan (uses the shared target host) ──
 @Composable
 private fun PortScanTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         LanHostPicker(viewModel)
 
@@ -1689,7 +1701,10 @@ private fun PortScanTab(viewModel: AppViewModel) {
         )
 
         Button(
-            onClick = { viewModel.runPortScanner() },
+            onClick = {
+                dismissKeyboard()
+                viewModel.runPortScanner()
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.portScannerTarget.isNotBlank() && !viewModel.isPortScannerScanning
         ) {
@@ -4434,6 +4449,7 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
 private fun DnsLookupTab(viewModel: AppViewModel) {
     var dropdownExpanded by remember { mutableStateOf(false) }
     val dnsTypes = listOf("A", "AAAA", "MX", "CNAME", "TXT", "NS")
+    val dismissKeyboard = rememberDismissKeyboard()
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
@@ -4472,7 +4488,10 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
         }
 
         Button(
-            onClick = { viewModel.runDnsLookup() },
+            onClick = {
+                dismissKeyboard()
+                viewModel.runDnsLookup()
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.dnsLookupTarget.isNotBlank() && !viewModel.isDnsLookupRunning
         ) {
@@ -4517,6 +4536,7 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
 
 @Composable
 private fun WhoisTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
             value = viewModel.whoisTarget,
@@ -4528,7 +4548,10 @@ private fun WhoisTab(viewModel: AppViewModel) {
         )
 
         Button(
-            onClick = { viewModel.runWhois() },
+            onClick = {
+                dismissKeyboard()
+                viewModel.runWhois()
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.whoisTarget.isNotBlank() && !viewModel.isWhoisRunning
         ) {
@@ -4576,6 +4599,7 @@ private fun WhoisTab(viewModel: AppViewModel) {
 
 @Composable
 private fun SpeedTestTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.measures_this_device_s_download_throughput),
             fontSize = 12.sp,
@@ -4646,7 +4670,14 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
         }
 
         Button(
-            onClick = { if (viewModel.isSpeedTestRunning) viewModel.cancelSpeedTest() else viewModel.runSpeedTest() },
+            onClick = {
+                if (viewModel.isSpeedTestRunning) {
+                    viewModel.cancelSpeedTest()
+                } else {
+                    dismissKeyboard()
+                    viewModel.runSpeedTest()
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.speedTestUrl.isNotBlank(),
             colors = if (viewModel.isSpeedTestRunning) ButtonDefaults.buttonColors(containerColor = OmniColors.amber) else ButtonDefaults.buttonColors(),

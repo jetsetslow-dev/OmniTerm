@@ -1134,6 +1134,7 @@ fun composeRawEditsDiffer(rawText: String, draft: ComposeStackDraft, parsedBasel
 
 @Composable
 fun ComposeBuilder(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val active = viewModel.activeComposeDraft
     val draftGeneration = viewModel.activeComposeGeneration
@@ -1566,6 +1567,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                             confirm.str(R.string.target_file_it_s_validated_first, composeFilePath),
                         confirmLabel = confirm.str(R.string.deploy),
                     ) {
+                        dismissKeyboard()
                         deploying = true
                         result = null
                             viewModel.deployComposeStack(

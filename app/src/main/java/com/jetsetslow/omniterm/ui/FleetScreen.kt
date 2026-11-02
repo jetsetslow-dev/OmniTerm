@@ -279,24 +279,25 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     // Stop always works; Run needs a command and at least one online target.
     val canRunOrStop = viewModel.isBroadcastExecuting ||
         (viewModel.broadcastCommandText.isNotBlank() && selectedTargetCount > 0)
+    val dismissKeyboard = rememberDismissKeyboard()
     var controlsExpanded by remember { mutableStateOf(true) }
 
     LaunchedEffect(viewModel.broadcastResults.size) {
         if (viewModel.broadcastResults.isNotEmpty()) controlsExpanded = false
     }
 
-    // Collapsed output cards, by server id. This MUST be hoisted out of the results LazyColumn:
-    // holding it per-item meant LazyColumn discarded it the moment a card scrolled out of the
-    // viewport, so collapsing a card and then scrolling to the top or bottom of the list brought it
-    // back expanded. Absent = expanded, so new results still default to expanded, and the only thing
-    // that ever writes to this map is the user tapping a card header.
-    val collapsedOutputs = remember { mutableStateMapOf<Int, Boolean>() }
+    // Expanded output cards, by server id. Cards start collapsed, so a run on many hosts shows every
+    // host's status at once and a card opens only when its output is wanted. Held here, not per
+    // item: LazyColumn drops item state once a card scrolls out of view, which would collapse a card
+    // the user opened as soon as they scrolled. Held only while Broadcast is shown, so coming back
+    // from another tab or screen finds every card collapsed again. Only the user tapping a card
+    // header writes to it.
+    val expandedOutputs = remember { mutableStateMapOf<Int, Boolean>() }
 
-    // Clearing the outputs or kicking off a new broadcast starts everyone expanded again — carrying
-    // a previous run's collapse choices onto fresh output would hide results the user just asked for.
+    // A new broadcast, or cleared outputs, starts every card collapsed again.
     LaunchedEffect(viewModel.isBroadcastExecuting, viewModel.broadcastResults.isEmpty()) {
         if (viewModel.isBroadcastExecuting || viewModel.broadcastResults.isEmpty()) {
-            collapsedOutputs.clear()
+            expandedOutputs.clear()
         }
     }
 
@@ -310,6 +311,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     fun confirmAndRunBroadcast() {
         val cmd = viewModel.broadcastCommandText.trim()
         if (cmd.isBlank() || viewModel.isBroadcastExecuting) return
+        dismissKeyboard()
         val targets = when (viewModel.broadcastTargetMode) {
             FleetTargetMode.Servers -> srvList.filter { it.id in viewModel.broadcastTargetServerIds }
             FleetTargetMode.Groups -> srvList.filter { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
@@ -481,11 +483,11 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                     BroadcastStatus.Failure -> OmniColors.red
                     BroadcastStatus.Reconnecting, BroadcastStatus.Detached, BroadcastStatus.NeedsTmux -> OmniColors.amber
                 }
-                val expanded = collapsedOutputs[item.serverId] != true
-                OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.hostColor(item.serverName)) {
+                val expanded = expandedOutputs[item.serverId] == true
+                OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = hostAccent(allHosts, item.serverId)) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                                .clickable { collapsedOutputs[item.serverId] = expanded },
+                                .clickable { expandedOutputs[item.serverId] = !expanded },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

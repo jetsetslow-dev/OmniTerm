@@ -1744,7 +1744,7 @@ object RemoteParsers {
                     health = healthRaw,
                     ports = t.getOrElse(4) { "" }.ifBlank { "—" },
                     group = t.getOrElse(5) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty().ifEmpty { "standalone" },
-                    host = "",
+                    serverId = 0,
                     composeService = t.getOrElse(6) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty(),
                     composeWorkingDir = t.getOrElse(7) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty(),
                     composeConfigFiles = t.getOrElse(8) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty(),

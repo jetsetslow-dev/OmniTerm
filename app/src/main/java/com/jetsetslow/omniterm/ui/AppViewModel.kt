@@ -38,6 +38,7 @@ import com.jetsetslow.omniterm.data.term.TerminalSnapshot
 import com.jetsetslow.omniterm.data.term.TmuxControlCommands
 import com.jetsetslow.omniterm.data.term.TmuxControlEvent
 import com.jetsetslow.omniterm.data.term.TmuxControlParser
+import com.jetsetslow.omniterm.ui.theme.OmniColors
 import androidx.compose.runtime.mutableStateMapOf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
@@ -7756,7 +7757,7 @@ class AppViewModel @JvmOverloads constructor(
                         if (srv.id != selectedServerId) return@coroutineScope
 
                         val parsedContainers = RemoteParsers.parseDockerPs(out).map {
-                            it.copy(host = srv.name, restartCount = restarts["${it.runtime}:${it.id}"] ?: restarts[it.id] ?: it.restartCount)
+                            it.copy(serverId = srv.id, restartCount = restarts["${it.runtime}:${it.id}"] ?: restarts[it.id] ?: it.restartCount)
                         }
                         dockerContainers = parsedContainers
                         syncStackRegistry(srv, parsedContainers)
@@ -7873,12 +7874,11 @@ class AppViewModel @JvmOverloads constructor(
 
     /**
      * Open an interactive shell inside a container: connects a fresh terminal to the container's host
-     * and runs `docker/podman exec -it … bash||sh`. Needs the host it runs on — [SimContainer.host]
-     * carries the server name, matched back to the ServerEntity.
+     * and runs `docker/podman exec -it … bash||sh`. Needs the host it runs on, found by
+     * [SimContainer.serverId]: matching by name opened the wrong host when two shared a name.
      */
     fun dockerExecIntoContainer(container: SimContainer) {
-        val srv = selectedServer?.takeIf { it.name == container.host }
-            ?: servers.value.firstOrNull { it.name == container.host }
+        val srv = servers.value.firstOrNull { it.id == container.serverId }
             ?: selectedServer
             ?: return
         openTerminalWithCommand(srv, RemoteCommands.dockerExecShell(container.id, container.runtime))
@@ -13796,7 +13796,7 @@ class AppViewModel @JvmOverloads constructor(
                                 ServerEntity(
                                     name = nm, host = o.getString("host"), port = o.optInt("port", 22),
                                     username = o.optString("username"), groupName = o.optString("groupName", "Default"),
-                                    serverColor = o.optString("serverColor", "Default"), authType = o.optString("authType", "password"),
+                                    serverColor = OmniColors.hostColorName(o.optString("serverColor", "Default")), authType = o.optString("authType", "password"),
                                     authKeyAlias = jsonNullableString(o, "authKeyAlias"),
                                     authPassword = jsonNullableString(o, "authPassword"),
                                     sudoPassword = o.optString("sudoPassword", ""),

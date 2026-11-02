@@ -64,7 +64,7 @@ data class ServerEntity(
     val port: Int = 22,
     val username: String,
     val groupName: String? = "Default",
-    val serverColor: String = "Default", // Can be "Default", "Blue", "Red", "Green", "Purple", "Orange"
+    val serverColor: String = "Default", // "Default" or a name in OmniColors.namedColors; older rows' names are read through OmniColors.hostColorName
     val authType: String = "password", // "password", "key", "profile"
     val authKeyAlias: String? = null,
     val authPassword: String? = null,

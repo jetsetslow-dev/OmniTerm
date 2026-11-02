@@ -144,6 +144,7 @@ private fun NoOnlineSshHostMessage() {
 
 @Composable
 private fun NetworkSharesTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     // A share is open in the file browser — the browser owns the tab until Back closes it.
     viewModel.browsingShare?.let { share ->
         ShareBrowserView(viewModel, share)
@@ -240,7 +241,10 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                         },
                         browsable = viewModel.isShareBrowsable(share),
                         onBrowse = { viewModel.openShareBrowser(share) },
-                        onTest = { viewModel.testNetworkShare(share) },
+                        onTest = {
+                            dismissKeyboard()
+                            viewModel.testNetworkShare(share)
+                        },
                         onEdit = {
                             editingShare = share
                             showDialog = true
@@ -541,6 +545,7 @@ private fun shareAvailabilityUi(status: String): ShareAvailabilityUi =
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity) {
+    val dismissKeyboard = rememberDismissKeyboard()
     val context = androidx.compose.ui.platform.LocalContext.current
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
@@ -811,7 +816,12 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                             }
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { if (viewModel.shareSearchRecursive) viewModel.runShareSearch() }),
+                        keyboardActions = KeyboardActions(onSearch = {
+                            if (viewModel.shareSearchRecursive) {
+                                dismissKeyboard()
+                                viewModel.runShareSearch()
+                            }
+                        }),
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(6.dp))
@@ -829,7 +839,10 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                         Spacer(Modifier.weight(1f))
                         if (viewModel.shareSearchRecursive) {
                             Button(
-                                onClick = { viewModel.runShareSearch() },
+                                onClick = {
+                                    dismissKeyboard()
+                                    viewModel.runShareSearch()
+                                },
                                 enabled = viewModel.shareSearchQuery.isNotBlank() && !viewModel.shareSearchRunning,
                             ) { Text(stringResource(R.string.search)) }
                         }
@@ -1594,6 +1607,7 @@ private fun shareProtocolColor(protocol: String): Color = when (protocol.upperca
 )
 @Composable
 fun SftpFilesTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     val srv = viewModel.selectedServer ?: return
     val filesList = viewModel.sftpVisibleEntries
     val currentPath = viewModel.sftpPath.ifBlank { "~" }
@@ -2057,7 +2071,10 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
-                            if (viewModel.sftpSearchRecursive) viewModel.runSftpSearch()
+                            if (viewModel.sftpSearchRecursive) {
+                                dismissKeyboard()
+                                viewModel.runSftpSearch()
+                            }
                         }),
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -2080,7 +2097,10 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         Spacer(modifier = Modifier.weight(1f))
                         if (viewModel.sftpSearchRecursive) {
                             Button(
-                                onClick = { viewModel.runSftpSearch() },
+                                onClick = {
+                                    dismissKeyboard()
+                                    viewModel.runSftpSearch()
+                                },
                                 enabled = viewModel.sftpSearchQuery.isNotBlank() && !viewModel.sftpSearchRunning,
                             ) { Text(stringResource(R.string.search)) }
                         }
@@ -3223,7 +3243,11 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                     share != null -> !shareUnavailable(share)
                     else -> false
                 }
-                val endpointColor = if (bmk.shareId != null) shareProtocolColor(share?.protocol ?: "") else OmniColors.cyan
+                val endpointColor = when {
+                    bmk.shareId != null -> shareProtocolColor(share?.protocol ?: "")
+                    bmk.serverId != null -> hostAccent(servers, bmk.serverId)
+                    else -> OmniColors.cyan
+                }
                 OmniCard(
                     modifier = Modifier
                         .fillMaxWidth()

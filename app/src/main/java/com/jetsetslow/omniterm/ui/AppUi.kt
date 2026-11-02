@@ -1,5 +1,7 @@
 package com.jetsetslow.omniterm.ui
 
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.annotation.StringRes
 import android.content.res.Resources
 import com.jetsetslow.omniterm.ui.theme.OmniColors
@@ -45,6 +47,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -82,7 +85,31 @@ fun Context.getActivity(): AppCompatActivity? = when (this) {
 
 // User-defined accent colour for a server (falls back to a per-name colour for "Default").
 fun getServerColor(server: ServerEntity): Color =
-    OmniColors.serverAccent(server.serverColor, server.name)
+    OmniColors.serverAccent(server.serverColor, server.id)
+
+/**
+ * The colour assigned to host [serverId] among [servers], for a card that holds only the host's id
+ * (a broadcast result, a terminal session). Colouring by name ignored the colour the user picked.
+ */
+fun hostAccent(servers: List<ServerEntity>, serverId: Int): Color =
+    servers.firstOrNull { it.id == serverId }?.let(::getServerColor) ?: OmniColors.hostColor(serverId)
+
+/**
+ * Hides the soft keyboard and clears focus. Every action that starts output calls it, so the
+ * keyboard does not cover the output it started, and focus does not bring it back once a dialog
+ * over the field closes.
+ */
+@Composable
+fun rememberDismissKeyboard(): () -> Unit {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    return remember(keyboard, focus) {
+        {
+            focus.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
+}
 
 /**
  * Reusable host picker (mirrors the Monitor screen's selector) so SFTP, Containers, etc. all
@@ -280,7 +307,11 @@ fun ServerSelectorBar(
  */
 @Composable
 fun ActionStreamDialog(viewModel: AppViewModel) {
+    // Read from the screen, not from inside the dialog, so it reaches the field that has focus.
+    val dismissKeyboard = rememberDismissKeyboard()
     if (!viewModel.actionStreamRunning && viewModel.actionStreamOutput.isBlank()) return
+    // Output has started: the keyboard must not cover it, whichever screen started the action.
+    LaunchedEffect(Unit) { dismissKeyboard() }
     val copyToClipboard = rememberClipboardCopy()
     AlertDialog(
         onDismissRequest = {
@@ -1839,6 +1870,7 @@ fun isToolSubScreen(screen: Screen): Boolean {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ServersMainView(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     val srvList by viewModel.servers.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showAddSheet by remember { mutableStateOf(false) }
@@ -2364,7 +2396,10 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             )
                                             OmniButton(
                                                 label = stringResource(R.string.ping_2),
-                                                onClick = { viewModel.runHostCheck(server, HostCheck.Ping) },
+                                                onClick = {
+                                                    dismissKeyboard()
+                                                    viewModel.runHostCheck(server, HostCheck.Ping)
+                                                },
                                                 color = identityColor,
                                                 small = true
                                             )
@@ -2424,7 +2459,10 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                 )
                                                 OmniButton(
                                                     label = stringResource(R.string.ping_2),
-                                                    onClick = { viewModel.runHostCheck(server, HostCheck.Ping) },
+                                                    onClick = {
+                                                        dismissKeyboard()
+                                                        viewModel.runHostCheck(server, HostCheck.Ping)
+                                                    },
                                                     color = identityColor,
                                                     small = true,
                                                 )
@@ -2558,6 +2596,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         TextButton(
                             onClick = {
                                 selectedForActionSheet = null
+                                dismissKeyboard()
                                 viewModel.runHostCheck(srv, HostCheck.Ping)
                             }
                         ) {
@@ -2568,6 +2607,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         TextButton(
                             onClick = {
                                 selectedForActionSheet = null
+                                dismissKeyboard()
                                 viewModel.runHostCheck(srv, HostCheck.Traceroute)
                             }
                         ) {
@@ -2754,6 +2794,7 @@ fun AddServerSheet(
     prefillAddress: AppViewModel.NewServerPrefill? = null,
     onDismiss: () -> Unit,
 ) {
+    val dismissKeyboard = rememberDismissKeyboard()
     var activeTab by remember { mutableStateOf(0) } // 0: Connect, 1: Auth, 2: Adv
 
     // Source for pre-filling non-secret fields: the edited host, else a duplicate's source, else none.
@@ -2774,7 +2815,7 @@ fun AddServerSheet(
     var port by remember { mutableStateOf((src?.port ?: prefillAddress?.port ?: 22).toString()) }
     var user by remember { mutableStateOf(src?.username ?: "") }
     var group by remember { mutableStateOf(src?.groupName ?: "Default") }
-    var serverColor by remember { mutableStateOf(src?.serverColor ?: "Default") }
+    var serverColor by remember { mutableStateOf(OmniColors.hostColorName(src?.serverColor ?: "Default")) }
 
     // Existing group labels (so a typo can't silently fork a new label).
     val allServers by viewModel.servers.collectAsStateWithLifecycle()
@@ -3021,6 +3062,10 @@ fun AddServerSheet(
                                             shape = androidx.compose.foundation.shape.CircleShape,
                                         )
                                         .clickable { serverColor = cname }
+                                        .semantics {
+                                            contentDescription = cname
+                                            selected = serverColor == cname
+                                        }
                                 )
                             }
                         }
@@ -3132,6 +3177,7 @@ fun AddServerSheet(
                                 // Bind the eventual OK to the fields as they were when the test
                                 // started — edits made while it runs still require a retest.
                                 val signatureAtStart = connectionSignature()
+                                dismissKeyboard()
                                 viewModel.testConnectionDraft(
                                     host = host, port = port.toIntOrNull() ?: 22, username = user,
                                     authType = authType, password = effectivePassword(),

@@ -99,6 +99,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -122,7 +123,9 @@ import com.jetsetslow.omniterm.R
 private fun SessionPicker(viewModel: AppViewModel) {
     val chrome = shellChromePalette()
     val sessions = viewModel.activeSessions
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
     val restorableSessions = viewModel.resumableSavedSessions
+    val ageNowMs = rememberSessionAgeClock(active = true)
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text(stringResource(R.string.active_sessions), color = chrome.text, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
@@ -141,7 +144,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             viewModel.attachSession(s.id)
                         },
                         leftAccent = when {
-                            s.isConnected -> OmniColors.hostColor(s.serverName)
+                            s.isConnected -> hostAccent(servers, s.serverId)
                             s.reconnecting -> OmniColors.amber
                             else -> Color.Gray
                         }
@@ -157,6 +160,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                         fontFamily = OmniFonts.mono,
                                     )
                                 }
+                                SessionAgeLine(s.startedAtMs, s.backgroundedAtMs, ageNowMs, fontSize = 12.sp, color = chrome.mutedText)
                                 val ended = s.endedExitStatus
                                 Text(
                                     when {
@@ -199,7 +203,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             modifier = Modifier.fillMaxWidth().clickable {
                                 viewModel.resumePersistentSession(s.serverId, s.tmuxName)
                             },
-                            leftAccent = OmniColors.amber
+                            leftAccent = hostAccent(servers, s.serverId)
                         ) {
                             Row(
                                 Modifier.padding(12.dp),
@@ -214,6 +218,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                         color = chrome.mutedText,
                                         fontFamily = OmniFonts.mono,
                                     )
+                                    SessionAgeLine(s.createdAt, s.backgroundedAt, ageNowMs, fontSize = 12.sp, color = chrome.mutedText)
                                     Text(stringResource(R.string.tap_to_reattach_tmux_session), fontSize = 12.sp, color = OmniColors.amber)
                                 }
                                 IconButton(onClick = { viewModel.resumePersistentSession(s.serverId, s.tmuxName) }) {
@@ -3333,9 +3338,18 @@ private fun SessionMenuHeader(@StringRes label: Int) {
     )
 }
 
-/** "Started 5m ago · backgrounded 2m ago" under a session in a picker; the second part once it is backgrounded. */
+/**
+ * "Started 5m ago · backgrounded 2m ago" under a session in the Open menu and the session list; the
+ * second part once it is backgrounded.
+ */
 @Composable
-private fun SessionAgeLine(startedAtMs: Long, backgroundedAtMs: Long?, ageNowMs: Long) {
+private fun SessionAgeLine(
+    startedAtMs: Long,
+    backgroundedAtMs: Long?,
+    ageNowMs: Long,
+    fontSize: TextUnit = 10.sp,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     val started = ageText(R.string.started_ago, R.string.started_just_now, startedAtMs, ageNowMs)
     Text(
         if (backgroundedAtMs == null) {
@@ -3343,8 +3357,8 @@ private fun SessionAgeLine(startedAtMs: Long, backgroundedAtMs: Long?, ageNowMs:
         } else {
             "$started · ${ageText(R.string.backgrounded_ago, R.string.backgrounded_just_now, backgroundedAtMs, ageNowMs)}"
         },
-        fontSize = 10.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = fontSize,
+        color = color,
     )
 }
 
