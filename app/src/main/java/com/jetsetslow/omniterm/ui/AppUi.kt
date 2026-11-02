@@ -1124,9 +1124,15 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
     // global bars mounted in that state left the terminal with zero drawable rows (and made split
     // panes effectively unusable). Terminal-local controls remain available; the global chrome
     // returns as soon as the IME closes.
-    val compactTerminalIme = viewModel.currentScreen == Screen.Shell &&
-        WindowInsets.isImeVisible &&
-        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val landscapeIme = typingInLandscape()
+    val compactTerminalIme = viewModel.currentScreen == Screen.Shell && landscapeIme
+    // A phone in landscape has tablet width but very little height. Keeping the 52dp app bar, the
+    // free-plan banner, the ad and the bottom navigation left Fleet's broadcast no room at all, so
+    // the destinations and global actions move to a scrollable side rail instead.
+    val landscapeRail = landscape && !compactTerminalIme
+    val showFreePlan = showMonetizationUi && !licenseState.unlocked
+    val showAd = showMonetizationUi && !licenseState.adsRemoved
 
     val pullRefreshState = rememberPullRefreshState(
         refreshing = viewModel.isRefreshing,
@@ -1135,7 +1141,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
     Scaffold(
         topBar = {
-            if (!compactTerminalIme) Column {
+            if (!compactTerminalIme && !landscapeRail) Column {
                 OmniAppBar(
                     activeColor = activeColor,
                     alertCount = visibleAlertCount,
@@ -1148,14 +1154,14 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 // This banner previously existed only inside ToolsScreen, which meant a refresh
                 // that failed on the Servers list -- where the gesture is used most -- said nothing.
                 ManualRefreshErrorBanner(viewModel, Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
-                if (showMonetizationUi && !licenseState.unlocked) {
+                if (showFreePlan) {
                     FreePlanBanner(licenseState, licenseController)
                 }
             }
         },
         bottomBar = {
-            if (!compactTerminalIme) Column {
-                if (showMonetizationUi && !licenseState.adsRemoved) {
+            if (!compactTerminalIme && !landscapeRail) Column {
+                if (showAd) {
                     AdBanner()
                 }
                 OmniBottomNav(
@@ -1167,384 +1173,420 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
         },
     ) { innerPadding ->
         val allowGlobalGestures = viewModel.currentScreen != Screen.Shell
-        Box(
+        // The rail and the ad come and go beside the screen, never around it: the screen keeps its
+        // place in the tree, so rotating or opening the keyboard keeps its fields and focus.
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
                 // Mark the scaffold padding as consumed so child imePadding() (terminal) does
                 // not double-count the bottom bar / nav bar and leave a black gap by the keyboard.
                 .consumeWindowInsets(innerPadding)
-                .then(if (allowGlobalGestures) Modifier.pullRefresh(pullRefreshState) else Modifier)
-                // Swipe horizontally to page between subtabs and, at the edges, adjacent top tabs.
-                .then(if (allowGlobalGestures) Modifier.swipeTabs { forward -> viewModel.swipeNavigate(forward) } else Modifier)
+                // Every screen ends at the keyboard, as the Flutter app's do: the bars stay behind
+                // it, and a field or button near the bottom (Fleet's Run) is no longer covered.
+                .imePadding()
         ) {
-            when (viewModel.currentScreen) {
-                Screen.Servers -> ServersMainView(viewModel)
-                Screen.Fleet -> FleetScreen(viewModel)
-                Screen.Monitor -> MonitorScreen(viewModel)
-                Screen.Shell -> ShellScreen(viewModel)
-                Screen.SFTP -> SftpScreen(viewModel)
-                Screen.Infra -> InfraScreen(viewModel)
-                // Tools Screen inside Servers tab context
-                Screen.Tools -> ToolsScreen(viewModel)
-                Screen.Alerts -> AlertsToolView(viewModel)
-                Screen.QuickScripts -> QuickScriptsToolView(viewModel)
-                Screen.Network -> NetworkToolView(viewModel)
-                Screen.AuthKeys -> AuthKeysToolView(viewModel)
-                Screen.Backup -> BackupToolView(viewModel)
-                Screen.HealthScoring -> HealthScoringToolView(viewModel)
-                Screen.Settings -> SettingsToolView(viewModel)
-                Screen.About -> AboutToolView(viewModel)
+            if (landscapeRail) {
+                OmniLandscapeNav(
+                    items = navItems,
+                    isActive = { activeFor(it) },
+                    onNavigate = { viewModel.navigateTo(it as Screen) },
+                    activeColor = activeColor,
+                    alertCount = visibleAlertCount,
+                    keepScreenOn = viewModel.isKeepScreenOnEnabled,
+                    showFreePlan = showFreePlan,
+                    onHome = { viewModel.navigateTo(Screen.Servers) },
+                    onAlerts = { viewModel.openAlertsPopup() },
+                    onToggleKeepScreenOn = { viewModel.requestKeepScreenOnToggle() },
+                    onUnlock = { context.getActivity()?.let(licenseController::launchPurchase) },
+                )
             }
-
-            // In a landscape terminal the IME intentionally hides both global bars to preserve
-            // usable rows. Keep alerts independently reachable even in that compact state.
-            if (compactTerminalIme) {
-                FloatingActionButton(
-                    onClick = { viewModel.openAlertsPopup() },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(44.dp),
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    BadgedBox(
-                        badge = {
-                            if (visibleAlertCount > 0) Badge {
-                                Text(visibleAlertCount.coerceAtMost(99).toString())
-                            }
-                        },
-                    ) {
-                        Icon(
-                            Icons.Filled.Notifications,
-                            contentDescription = stringResource(R.string.open_alerts_popup),
-                            tint = if (visibleAlertCount > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                if (landscapeRail) {
+                    ManualRefreshErrorBanner(viewModel, Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
                 }
-            }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .then(if (allowGlobalGestures) Modifier.pullRefresh(pullRefreshState) else Modifier)
+                        // Swipe horizontally to page between subtabs and, at the edges, adjacent top tabs.
+                        .then(if (allowGlobalGestures) Modifier.swipeTabs { forward -> viewModel.swipeNavigate(forward) } else Modifier)
+                ) {
+                    when (viewModel.currentScreen) {
+                        Screen.Servers -> ServersMainView(viewModel)
+                        Screen.Fleet -> FleetScreen(viewModel)
+                        Screen.Monitor -> MonitorScreen(viewModel)
+                        Screen.Shell -> ShellScreen(viewModel)
+                        Screen.SFTP -> SftpScreen(viewModel)
+                        Screen.Infra -> InfraScreen(viewModel)
+                        // Tools Screen inside Servers tab context
+                        Screen.Tools -> ToolsScreen(viewModel)
+                        Screen.Alerts -> AlertsToolView(viewModel)
+                        Screen.QuickScripts -> QuickScriptsToolView(viewModel)
+                        Screen.Network -> NetworkToolView(viewModel)
+                        Screen.AuthKeys -> AuthKeysToolView(viewModel)
+                        Screen.Backup -> BackupToolView(viewModel)
+                        Screen.HealthScoring -> HealthScoringToolView(viewModel)
+                        Screen.Settings -> SettingsToolView(viewModel)
+                        Screen.About -> AboutToolView(viewModel)
+                    }
 
-            if (allowGlobalGestures) {
-                PullRefreshIndicator(
-                    refreshing = viewModel.isRefreshing,
-                    state = pullRefreshState,
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    backgroundColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            // Global live-output panel for any button-triggered remote action, regardless of tab.
-            ActionStreamDialog(viewModel)
-
-            // Global, navigation-free incident panel. It intentionally overlays Shell as well as
-            // ordinary tabs so alert triage never invokes the terminal disconnect/background gate.
-            if (viewModel.showAlertsPopup) {
-                AlertsPopup(
-                    viewModel = viewModel,
-                    onDismiss = { viewModel.closeAlertsPopup() },
-                )
-            }
-
-            // Biometric/PIN gate for privileged (sudo) actions, shown when one is staged.
-            SudoAuthDialog(viewModel)
-
-            // Reaching the threshold is advisory: do not interrupt foreground work until the user
-            // explicitly accepts the power-saving actions.
-            if (viewModel.showBatterySaverDialog) {
-                AlertDialog(
-                    onDismissRequest = viewModel::dismissBatterySaverPrompt,
-                    title = { Text(stringResource(R.string.battery_saver_available)) },
-                    text = {
-                        Text(
-                            stringResource(R.string.battery_reached_threshold_omniterm_can_release, viewModel.batterySaverEngagedAtPct, viewModel.batterySaverThresholdPct)
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = viewModel::confirmBatterySaver) { Text(stringResource(R.string.start_saving)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = viewModel::dismissBatterySaverPrompt) { Text(stringResource(R.string.battery_saver_not_now)) }
-                    },
-                )
-            }
-
-            // Toolbar and automatic leave actions share the same persistence feedback as navigation.
-            if (!viewModel.showDisconnectTerminalDialog &&
-                (viewModel.isLeavingTerminalSessions || viewModel.terminalLeaveError != null)) {
-                AlertDialog(
-                    onDismissRequest = {
-                        if (!viewModel.isLeavingTerminalSessions) viewModel.dismissTerminalLeaveError()
-                    },
-                    title = { Text(if (viewModel.isLeavingTerminalSessions) stringResource(R.string.saving_session_recovery) else stringResource(R.string.session_recovery_not_saved)) },
-                    text = {
-                        Column(Modifier.verticalScrollWithIndicators(rememberScrollState())) {
-                            if (viewModel.isLeavingTerminalSessions) {
-                                LinearProgressIndicator(Modifier.fillMaxWidth())
-                                Text(stringResource(R.string.saving_resumable_sessions_please_wait))
-                            }
-                            viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                        }
-                    },
-                    confirmButton = {
-                        if (!viewModel.isLeavingTerminalSessions) {
-                            TextButton(onClick = { viewModel.dismissTerminalLeaveError() }) { Text(stringResource(R.string.close)) }
-                        }
-                    },
-                )
-            }
-
-            // Disconnect dialog safety check
-            if (viewModel.showKeepScreenOnBatteryWarning) {
-                AlertDialog(
-                    onDismissRequest = { viewModel.showKeepScreenOnBatteryWarning = false },
-                    title = { Text(stringResource(R.string.keep_screen_on)) },
-                    text = { Text(stringResource(R.string.keeping_the_screen_on_prevents_display)) },
-                    confirmButton = {
-                        TextButton(
-                            onClick = {
-                                viewModel.isKeepScreenOnEnabled = true
-                                viewModel.showKeepScreenOnBatteryWarning = false
-                            }
+                    // In a landscape terminal the IME intentionally hides both global bars to preserve
+                    // usable rows. Keep alerts independently reachable even in that compact state.
+                    if (compactTerminalIme) {
+                        FloatingActionButton(
+                            onClick = { viewModel.openAlertsPopup() },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp)
+                                .size(44.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
                         ) {
-                            Text(stringResource(R.string.enable))
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { viewModel.showKeepScreenOnBatteryWarning = false }) {
-                            Text(stringResource(R.string.cancel))
-                        }
-                    },
-                )
-            }
-
-            // Disconnect dialog safety check
-            if (viewModel.showDisconnectTerminalDialog) {
-                val sessions = viewModel.pendingTerminalNavigationSessions
-                val count = sessions.size
-                val allPersistent = sessions.isNotEmpty() && sessions.all { it.persistent }
-                val hasPersistent = sessions.any { it.persistent }
-                val hasNormal = sessions.any { !it.persistent }
-                val connecting = viewModel.pendingTerminalNavigationIncludesConnectAttempt
-                AlertDialog(
-                    onDismissRequest = { if (!viewModel.isLeavingTerminalSessions) viewModel.cancelTerminalNavigation() },
-                    title = {
-                        Text(
-                            when {
-                                count > 1 -> "$count active SSH sessions"
-                                allPersistent -> "Persistent SSH session"
-                                connecting && count == 0 -> "SSH connection in progress"
-                                else -> "Active SSH session"
-                            }
-                        )
-                    },
-                    text = {
-                        Column(Modifier.verticalScrollWithIndicators(rememberScrollState())) {
-                        Text(
-                            when {
-                                count == 1 && allPersistent ->
-                                    "Leave ${sessions.first().serverName} resumable, or terminate its tmux session and stop anything running there?"
-                                count > 1 && hasPersistent && hasNormal ->
-                                    "Choose what to do with the terminal sessions in both panes. Persistent sessions can be left resumable; other SSH sessions stay connected in the background."
-                                count > 1 && allPersistent ->
-                                    "Leave both persistent sessions resumable, or terminate them and stop anything running there?"
-                                count > 1 ->
-                                    "Choose what to do with the active SSH sessions in both panes. Sending them to the background keeps OmniTerm active and may increase battery consumption."
-                                connecting && count == 0 ->
-                                    "Cancel the connection attempt, or let it finish in the background?"
-                                connecting ->
-                                    "Choose what to do with the active terminal session and connection attempt."
-                                else ->
-                                    "Choose what to do with the active SSH terminal session.\n\n" +
-                                        "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
-                            }
-                        )
-                            if (viewModel.isLeavingTerminalSessions) {
-                                LinearProgressIndicator(Modifier.fillMaxWidth())
-                                Text(stringResource(R.string.saving_resumable_sessions_please_wait))
-                            }
-                            viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(
-                            enabled = !viewModel.isLeavingTerminalSessions,
-                            onClick = { viewModel.completeTerminalNavigation(disconnect = true) }
-                        ) {
-                            Text(
-                                when {
-                                    connecting && count == 0 -> "Cancel connection"
-                                    count > 1 -> "Disconnect all"
-                                    else -> "Disconnect"
-                                },
-                                color = Color.Red,
-                            )
-                        }
-                    },
-                    dismissButton = {
-                        Row {
-                            TextButton(
-                                enabled = !viewModel.isLeavingTerminalSessions,
-                                onClick = { viewModel.completeTerminalNavigation(disconnect = false) }
-                            ) {
-                                Text(
-                                    when {
-                                        connecting && count == 0 -> "Continue in background"
-                                        allPersistent -> "Leave resumable"
-                                        hasPersistent && hasNormal -> "Keep sessions"
-                                        else -> "Send to background"
+                            BadgedBox(
+                                badge = {
+                                    if (visibleAlertCount > 0) Badge {
+                                        Text(visibleAlertCount.coerceAtMost(99).toString())
                                     }
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Filled.Notifications,
+                                    contentDescription = stringResource(R.string.open_alerts_popup),
+                                    tint = if (visibleAlertCount > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            TextButton(
-                                enabled = !viewModel.isLeavingTerminalSessions,
-                                onClick = { viewModel.cancelTerminalNavigation() }
-                            ) {
-                                Text(stringResource(R.string.stay))
-                            }
                         }
                     }
-                )
-            }
 
-            viewModel.pendingDisconnectSessionId?.let { sessionId ->
-                val session = viewModel.activeSessions.find { it.id == sessionId }
-                AlertDialog(
-                    onDismissRequest = { viewModel.cancelPendingDisconnect() },
-                    title = { Text(if (session?.persistent == true) stringResource(R.string.terminate_tmux_session) else stringResource(R.string.disconnect_session)) },
-                    text = {
-                        Text(
-                            if (session?.persistent == true) {
-                                "This disconnects the local SSH session and terminates its remote tmux session, stopping anything running inside it. Use Leave in the terminal toolbar when you want to resume it later."
-                            } else {
-                                "Disconnect ${session?.serverName ?: "this terminal session"} and stop anything running in that terminal? Use Background in the terminal toolbar to keep it connected."
+                    if (allowGlobalGestures) {
+                        PullRefreshIndicator(
+                            refreshing = viewModel.isRefreshing,
+                            state = pullRefreshState,
+                            modifier = Modifier.align(Alignment.TopCenter),
+                            backgroundColor = MaterialTheme.colorScheme.surface,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    // Global live-output panel for any button-triggered remote action, regardless of tab.
+                    ActionStreamDialog(viewModel)
+
+                    // Global, navigation-free incident panel. It intentionally overlays Shell as well as
+                    // ordinary tabs so alert triage never invokes the terminal disconnect/background gate.
+                    if (viewModel.showAlertsPopup) {
+                        AlertsPopup(
+                            viewModel = viewModel,
+                            onDismiss = { viewModel.closeAlertsPopup() },
+                        )
+                    }
+
+                    // Biometric/PIN gate for privileged (sudo) actions, shown when one is staged.
+                    SudoAuthDialog(viewModel)
+
+                    // Reaching the threshold is advisory: do not interrupt foreground work until the user
+                    // explicitly accepts the power-saving actions.
+                    if (viewModel.showBatterySaverDialog) {
+                        AlertDialog(
+                            onDismissRequest = viewModel::dismissBatterySaverPrompt,
+                            title = { Text(stringResource(R.string.battery_saver_available)) },
+                            text = {
+                                Text(
+                                    stringResource(R.string.battery_reached_threshold_omniterm_can_release, viewModel.batterySaverEngagedAtPct, viewModel.batterySaverThresholdPct)
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = viewModel::confirmBatterySaver) { Text(stringResource(R.string.start_saving)) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = viewModel::dismissBatterySaverPrompt) { Text(stringResource(R.string.battery_saver_not_now)) }
+                            },
+                        )
+                    }
+
+                    // Toolbar and automatic leave actions share the same persistence feedback as navigation.
+                    if (!viewModel.showDisconnectTerminalDialog &&
+                        (viewModel.isLeavingTerminalSessions || viewModel.terminalLeaveError != null)) {
+                        AlertDialog(
+                            onDismissRequest = {
+                                if (!viewModel.isLeavingTerminalSessions) viewModel.dismissTerminalLeaveError()
+                            },
+                            title = { Text(if (viewModel.isLeavingTerminalSessions) stringResource(R.string.saving_session_recovery) else stringResource(R.string.session_recovery_not_saved)) },
+                            text = {
+                                Column(Modifier.verticalScrollWithIndicators(rememberScrollState())) {
+                                    if (viewModel.isLeavingTerminalSessions) {
+                                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                                        Text(stringResource(R.string.saving_resumable_sessions_please_wait))
+                                    }
+                                    viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                }
+                            },
+                            confirmButton = {
+                                if (!viewModel.isLeavingTerminalSessions) {
+                                    TextButton(onClick = { viewModel.dismissTerminalLeaveError() }) { Text(stringResource(R.string.close)) }
+                                }
+                            },
+                        )
+                    }
+
+                    // Disconnect dialog safety check
+                    if (viewModel.showKeepScreenOnBatteryWarning) {
+                        AlertDialog(
+                            onDismissRequest = { viewModel.showKeepScreenOnBatteryWarning = false },
+                            title = { Text(stringResource(R.string.keep_screen_on)) },
+                            text = { Text(stringResource(R.string.keeping_the_screen_on_prevents_display)) },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.isKeepScreenOnEnabled = true
+                                        viewModel.showKeepScreenOnBatteryWarning = false
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.enable))
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { viewModel.showKeepScreenOnBatteryWarning = false }) {
+                                    Text(stringResource(R.string.cancel))
+                                }
+                            },
+                        )
+                    }
+
+                    // Disconnect dialog safety check
+                    if (viewModel.showDisconnectTerminalDialog) {
+                        val sessions = viewModel.pendingTerminalNavigationSessions
+                        val count = sessions.size
+                        val allPersistent = sessions.isNotEmpty() && sessions.all { it.persistent }
+                        val hasPersistent = sessions.any { it.persistent }
+                        val hasNormal = sessions.any { !it.persistent }
+                        val connecting = viewModel.pendingTerminalNavigationIncludesConnectAttempt
+                        AlertDialog(
+                            onDismissRequest = { if (!viewModel.isLeavingTerminalSessions) viewModel.cancelTerminalNavigation() },
+                            title = {
+                                Text(
+                                    when {
+                                        count > 1 -> "$count active SSH sessions"
+                                        allPersistent -> "Persistent SSH session"
+                                        connecting && count == 0 -> "SSH connection in progress"
+                                        else -> "Active SSH session"
+                                    }
+                                )
+                            },
+                            text = {
+                                Column(Modifier.verticalScrollWithIndicators(rememberScrollState())) {
+                                Text(
+                                    when {
+                                        count == 1 && allPersistent ->
+                                            "Leave ${sessions.first().serverName} resumable, or terminate its tmux session and stop anything running there?"
+                                        count > 1 && hasPersistent && hasNormal ->
+                                            "Choose what to do with the terminal sessions in both panes. Persistent sessions can be left resumable; other SSH sessions stay connected in the background."
+                                        count > 1 && allPersistent ->
+                                            "Leave both persistent sessions resumable, or terminate them and stop anything running there?"
+                                        count > 1 ->
+                                            "Choose what to do with the active SSH sessions in both panes. Sending them to the background keeps OmniTerm active and may increase battery consumption."
+                                        connecting && count == 0 ->
+                                            "Cancel the connection attempt, or let it finish in the background?"
+                                        connecting ->
+                                            "Choose what to do with the active terminal session and connection attempt."
+                                        else ->
+                                            "Choose what to do with the active SSH terminal session.\n\n" +
+                                                "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
+                                    }
+                                )
+                                    if (viewModel.isLeavingTerminalSessions) {
+                                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                                        Text(stringResource(R.string.saving_resumable_sessions_please_wait))
+                                    }
+                                    viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    enabled = !viewModel.isLeavingTerminalSessions,
+                                    onClick = { viewModel.completeTerminalNavigation(disconnect = true) }
+                                ) {
+                                    Text(
+                                        when {
+                                            connecting && count == 0 -> "Cancel connection"
+                                            count > 1 -> "Disconnect all"
+                                            else -> "Disconnect"
+                                        },
+                                        color = Color.Red,
+                                    )
+                                }
+                            },
+                            dismissButton = {
+                                Row {
+                                    TextButton(
+                                        enabled = !viewModel.isLeavingTerminalSessions,
+                                        onClick = { viewModel.completeTerminalNavigation(disconnect = false) }
+                                    ) {
+                                        Text(
+                                            when {
+                                                connecting && count == 0 -> "Continue in background"
+                                                allPersistent -> "Leave resumable"
+                                                hasPersistent && hasNormal -> "Keep sessions"
+                                                else -> "Send to background"
+                                            }
+                                        )
+                                    }
+                                    TextButton(
+                                        enabled = !viewModel.isLeavingTerminalSessions,
+                                        onClick = { viewModel.cancelTerminalNavigation() }
+                                    ) {
+                                        Text(stringResource(R.string.stay))
+                                    }
+                                }
                             }
                         )
-                    },
-                    confirmButton = {
-                        TextButton(
-                            onClick = {
-                                viewModel.disconnectSession(sessionId)
-                                viewModel.cancelPendingDisconnect()
-                            }
-                        ) {
-                            Text(if (session?.persistent == true) stringResource(R.string.terminate) else stringResource(R.string.disconnect), color = Color.Red)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text(stringResource(R.string.cancel)) }
-                    },
-                )
-            }
+                    }
 
-            if (viewModel.pendingDisconnectAllSessions) {
-                AlertDialog(
-                    onDismissRequest = { viewModel.cancelPendingDisconnect() },
-                    title = { Text(stringResource(R.string.disconnect_all_sessions)) },
-                    text = { Text(stringResource(R.string.disconnect_all_active_terminal_sessions_any)) },
-                    confirmButton = {
-                        TextButton(
-                            onClick = {
-                                viewModel.closeAllSessions()
-                                viewModel.cancelPendingDisconnect()
-                            }
-                        ) {
-                            Text(stringResource(R.string.disconnect_all), color = Color.Red)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text(stringResource(R.string.cancel)) }
-                    },
-                )
-            }
+                    viewModel.pendingDisconnectSessionId?.let { sessionId ->
+                        val session = viewModel.activeSessions.find { it.id == sessionId }
+                        AlertDialog(
+                            onDismissRequest = { viewModel.cancelPendingDisconnect() },
+                            title = { Text(if (session?.persistent == true) stringResource(R.string.terminate_tmux_session) else stringResource(R.string.disconnect_session)) },
+                            text = {
+                                Text(
+                                    if (session?.persistent == true) {
+                                        "This disconnects the local SSH session and terminates its remote tmux session, stopping anything running inside it. Use Leave in the terminal toolbar when you want to resume it later."
+                                    } else {
+                                        "Disconnect ${session?.serverName ?: "this terminal session"} and stop anything running in that terminal? Use Background in the terminal toolbar to keep it connected."
+                                    }
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.disconnectSession(sessionId)
+                                        viewModel.cancelPendingDisconnect()
+                                    }
+                                ) {
+                                    Text(if (session?.persistent == true) stringResource(R.string.terminate) else stringResource(R.string.disconnect), color = Color.Red)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text(stringResource(R.string.cancel)) }
+                            },
+                        )
+                    }
 
-            viewModel.savedSessionPendingRemoval?.let { saved ->
-                SavedSessionRemovalDialog(viewModel, saved)
-            }
+                    if (viewModel.pendingDisconnectAllSessions) {
+                        AlertDialog(
+                            onDismissRequest = { viewModel.cancelPendingDisconnect() },
+                            title = { Text(stringResource(R.string.disconnect_all_sessions)) },
+                            text = { Text(stringResource(R.string.disconnect_all_active_terminal_sessions_any)) },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.closeAllSessions()
+                                        viewModel.cancelPendingDisconnect()
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.disconnect_all), color = Color.Red)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text(stringResource(R.string.cancel)) }
+                            },
+                        )
+                    }
 
-            if (viewModel.hostLimitReconciliationRequired) {
-                HostLimitReconciliationDialog(viewModel)
-            }
+                    viewModel.savedSessionPendingRemoval?.let { saved ->
+                        SavedSessionRemovalDialog(viewModel, saved)
+                    }
 
-            // Android 17 gates all direct local TCP/UDP traffic behind a runtime permission.
-            // Prompt after a host exists (or when entering a network tool), so a fresh install
-            // gets the request in context rather than at launch.
-            val context = androidx.compose.ui.platform.LocalContext.current
-            var hasLocalNetworkPermission by remember {
-                mutableStateOf(
-                    android.os.Build.VERSION.SDK_INT < 37 ||
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            android.Manifest.permission.ACCESS_LOCAL_NETWORK,
-                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                )
-            }
-            var localNetworkPromptDismissed by rememberSaveable { mutableStateOf(false) }
-            val localNetworkPermissionLauncher =
-                androidx.activity.compose.rememberLauncherForActivityResult(
-                    androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-                ) { granted ->
-                    hasLocalNetworkPermission = granted
-                    if (!granted) localNetworkPromptDismissed = true
-                }
-            val needsLocalNetworkAccess =
-                android.os.Build.VERSION.SDK_INT >= 37 &&
-                    !hasLocalNetworkPermission &&
-                    (
-                        configuredServers.isNotEmpty() ||
-                            current in setOf(Screen.Network, Screen.SFTP, Screen.Fleet, Screen.Monitor)
-                    )
+                    if (viewModel.hostLimitReconciliationRequired) {
+                        HostLimitReconciliationDialog(viewModel)
+                    }
 
-            // Background-session permissions are separate and only become relevant for an active
-            // keep-alive session.
-            var needsPermissions by remember { mutableStateOf(false) }
-            var permissionPromptDismissed by rememberSaveable { mutableStateOf(false) }
-            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-            val backgroundKeepAlive = viewModel.isBackgroundKeepAlive
-            val activeSessionCount = viewModel.activeSessions.size
-            fun refreshPermissionNeed() {
-                val hasNotif = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
-                    ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                val pm = context.getSystemService(android.os.PowerManager::class.java)
-                val hasBatt = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
-                needsPermissions = backgroundKeepAlive && activeSessionCount > 0 && (!hasNotif || !hasBatt)
-            }
-            // The lifecycle observer is installed after the Activity's initial ON_RESUME. React to
-            // in-app state changes too, otherwise enabling keep-alive for an already-connected
-            // session stays silent until an unrelated background/foreground cycle.
-            LaunchedEffect(backgroundKeepAlive, activeSessionCount) { refreshPermissionNeed() }
-            DisposableEffect(lifecycleOwner, backgroundKeepAlive, activeSessionCount) {
-                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                        refreshPermissionNeed()
-                        if (android.os.Build.VERSION.SDK_INT >= 37) {
-                            hasLocalNetworkPermission =
+                    // Android 17 gates all direct local TCP/UDP traffic behind a runtime permission.
+                    // Prompt after a host exists (or when entering a network tool), so a fresh install
+                    // gets the request in context rather than at launch.
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    var hasLocalNetworkPermission by remember {
+                        mutableStateOf(
+                            android.os.Build.VERSION.SDK_INT < 37 ||
                                 ContextCompat.checkSelfPermission(
                                     context,
                                     android.Manifest.permission.ACCESS_LOCAL_NETWORK,
                                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        )
+                    }
+                    var localNetworkPromptDismissed by rememberSaveable { mutableStateOf(false) }
+                    val localNetworkPermissionLauncher =
+                        androidx.activity.compose.rememberLauncherForActivityResult(
+                            androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+                        ) { granted ->
+                            hasLocalNetworkPermission = granted
+                            if (!granted) localNetworkPromptDismissed = true
                         }
+                    val needsLocalNetworkAccess =
+                        android.os.Build.VERSION.SDK_INT >= 37 &&
+                            !hasLocalNetworkPermission &&
+                            (
+                                configuredServers.isNotEmpty() ||
+                                    current in setOf(Screen.Network, Screen.SFTP, Screen.Fleet, Screen.Monitor)
+                            )
+
+                    // Background-session permissions are separate and only become relevant for an active
+                    // keep-alive session.
+                    var needsPermissions by remember { mutableStateOf(false) }
+                    var permissionPromptDismissed by rememberSaveable { mutableStateOf(false) }
+                    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+                    val backgroundKeepAlive = viewModel.isBackgroundKeepAlive
+                    val activeSessionCount = viewModel.activeSessions.size
+                    fun refreshPermissionNeed() {
+                        val hasNotif = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        val pm = context.getSystemService(android.os.PowerManager::class.java)
+                        val hasBatt = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+                        needsPermissions = backgroundKeepAlive && activeSessionCount > 0 && (!hasNotif || !hasBatt)
+                    }
+                    // The lifecycle observer is installed after the Activity's initial ON_RESUME. React to
+                    // in-app state changes too, otherwise enabling keep-alive for an already-connected
+                    // session stays silent until an unrelated background/foreground cycle.
+                    LaunchedEffect(backgroundKeepAlive, activeSessionCount) { refreshPermissionNeed() }
+                    DisposableEffect(lifecycleOwner, backgroundKeepAlive, activeSessionCount) {
+                        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                                refreshPermissionNeed()
+                                if (android.os.Build.VERSION.SDK_INT >= 37) {
+                                    hasLocalNetworkPermission =
+                                        ContextCompat.checkSelfPermission(
+                                            context,
+                                            android.Manifest.permission.ACCESS_LOCAL_NETWORK,
+                                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                }
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
+
+                    if (
+                        needsLocalNetworkAccess &&
+                        !localNetworkPromptDismissed &&
+                        !viewModel.hostLimitReconciliationRequired
+                    ) {
+                        LocalNetworkPermissionDialog(
+                            onGrant = {
+                                localNetworkPermissionLauncher.launch(
+                                    android.Manifest.permission.ACCESS_LOCAL_NETWORK
+                                )
+                            },
+                            onNotNow = { localNetworkPromptDismissed = true },
+                        )
+                    } else if (needsPermissions && !permissionPromptDismissed) {
+                        FirstRunDialog(viewModel) { permissionPromptDismissed = true }
                     }
                 }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-            }
-
-            if (
-                needsLocalNetworkAccess &&
-                !localNetworkPromptDismissed &&
-                !viewModel.hostLimitReconciliationRequired
-            ) {
-                LocalNetworkPermissionDialog(
-                    onGrant = {
-                        localNetworkPermissionLauncher.launch(
-                            android.Manifest.permission.ACCESS_LOCAL_NETWORK
-                        )
-                    },
-                    onNotNow = { localNetworkPromptDismissed = true },
-                )
-            } else if (needsPermissions && !permissionPromptDismissed) {
-                FirstRunDialog(viewModel) { permissionPromptDismissed = true }
+                // A landscape keyboard leaves no height to spare: the ad steps aside while the user
+                // types, as all of the global chrome does in the terminal, and returns with the bars.
+                if (landscapeRail && showAd && !landscapeIme) {
+                    AdBanner()
+                }
             }
         }
     }

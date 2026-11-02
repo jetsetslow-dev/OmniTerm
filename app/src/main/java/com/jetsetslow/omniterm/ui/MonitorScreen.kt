@@ -65,8 +65,9 @@ fun MonitorScreen(viewModel: AppViewModel) {
     var showScoreDialog by remember { mutableStateOf(false) }
     var showRebootDialog by remember { mutableStateOf(false) }
 
+    val typing = typingInLandscape()
     Column(modifier = Modifier.fillMaxSize()) {
-        ServerSelectorBar(
+        if (!typing) ServerSelectorBar(
             viewModel = viewModel,
             onlineOnly = true,
             leadingContent = {
@@ -101,7 +102,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
         }
 
         // Subtabs selection navigation bar
-        PrimaryScrollableTabRow(
+        if (!typing) PrimaryScrollableTabRow(
             selectedTabIndex = viewModel.activeMonitorTab,
             edgePadding = 12.dp,
             modifier = Modifier.fillMaxWidth()

@@ -755,6 +755,11 @@
     <string name="authenticate_to_continue">"Authenticate to continue"</string>
     <string name="use_fingerprint_to_unlock">"Use fingerprint to unlock"</string>
     <string name="open_alerts_popup">"Open alerts popup"</string>
+    <string name="servers_home">"Servers home"</string>
+    <string name="awake">"Awake"</string>
+    <string name="alerts">"Alerts"</string>
+    <string name="free_plan_rail_label">"FREE"</string>
+    <string name="free_plan_unlock_unlimited_hosts">"Free plan — unlock unlimited hosts"</string>
     <string name="saving_session_recovery">"Saving session recovery"</string>
     <string name="session_recovery_not_saved">"Session recovery not saved"</string>
     <string name="terminate_tmux_session">"Terminate tmux session?"</string>

@@ -91,8 +91,9 @@ fun SftpScreen(viewModel: AppViewModel) {
         else if (viewModel.activeSftpTab == 1) viewModel.activeSftpTab = 0
     }
 
+    val typing = typingInLandscape()
     Column(modifier = Modifier.fillMaxSize()) {
-        if (srv != null && viewModel.activeSftpTab == 1) {
+        if (srv != null && viewModel.activeSftpTab == 1 && !typing) {
             // The host picker belongs to the SFTP subtab only — Transfers and Bookmarks span every
             // endpoint and Shares has its own list, so a host bar there is misleading clutter.
             // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host.
@@ -102,7 +103,7 @@ fun SftpScreen(viewModel: AppViewModel) {
         }
         // Subtab order puts the Bookmarks jump list first, then the two browsing surfaces
         // (SFTP host, then network Shares), and the Transfers activity log last.
-        PrimaryTabRow(selectedTabIndex = viewModel.activeSftpTab) {
+        if (!typing) PrimaryTabRow(selectedTabIndex = viewModel.activeSftpTab) {
             Tab(selected = viewModel.activeSftpTab == 0, onClick = { viewModel.activeSftpTab = 0 }) { Text(stringResource(R.string.bookmarks), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(selected = viewModel.activeSftpTab == 1, enabled = srv != null, onClick = { viewModel.activeSftpTab = 1 }) { Text(stringResource(R.string.sftp), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(selected = viewModel.activeSftpTab == 2, onClick = { viewModel.activeSftpTab = 2 }) { Text(stringResource(R.string.shares), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }

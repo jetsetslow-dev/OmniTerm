@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -58,16 +59,18 @@ fun FleetScreen(viewModel: AppViewModel) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        FleetSummaryBar(viewModel, srvList)
-        PrimaryTabRow(selectedTabIndex = viewModel.fleetTabIndex) {
-            Tab(
-                selected = viewModel.fleetTabIndex == 0,
-                onClick = { viewModel.fleetTabIndex = 0 }
-            ) { Text(stringResource(R.string.dashboard), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-            Tab(
-                selected = viewModel.fleetTabIndex == 1,
-                onClick = { viewModel.fleetTabIndex = 1 }
-            ) { Text(stringResource(R.string.broadcast), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+        if (!typingInLandscape()) {
+            FleetSummaryBar(viewModel, srvList)
+            PrimaryTabRow(selectedTabIndex = viewModel.fleetTabIndex) {
+                Tab(
+                    selected = viewModel.fleetTabIndex == 0,
+                    onClick = { viewModel.fleetTabIndex = 0 }
+                ) { Text(stringResource(R.string.dashboard), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+                Tab(
+                    selected = viewModel.fleetTabIndex == 1,
+                    onClick = { viewModel.fleetTabIndex = 1 }
+                ) { Text(stringResource(R.string.broadcast), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            }
         }
 
         Box(
@@ -343,7 +346,11 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    // The inputs stay above an output list that scrolls on its own, and scroll themselves within the
+    // room the outputs leave. Run stays outside them, so it is never scrolled away or left under the
+    // keyboard or the ad banner. Below a usable height (the keyboard open in a short window) the tab
+    // becomes one scrolling page with a fixed-height output pane, and Run sits at its foot.
+    val header = @Composable {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -366,77 +373,74 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 )
             }
         }
+    }
+    val inputs = @Composable {
+        BroadcastTargetPicker(viewModel, srvList, groups, offlinePicks)
 
-        if (controlsExpanded) {
-            BroadcastTargetPicker(viewModel, srvList, groups, offlinePicks)
+        Spacer(modifier = Modifier.height(8.dp))
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            OutlinedTextField(
-                value = viewModel.broadcastCommandText,
-                onValueChange = { viewModel.broadcastCommandText = it },
-                label = { Text(stringResource(R.string.command)) },
-                placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
-                prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
-                textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(8.dp),
-                colors = omniTextFieldColors()
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.run_in_tmux), fontWeight = FontWeight.Bold)
-                    Text(
-                        stringResource(R.string.run_in_tmux_explained),
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = viewModel.broadcastInTmux,
-                    onCheckedChange = viewModel::updateBroadcastInTmux,
-                    enabled = !viewModel.isBroadcastExecuting,
-                    modifier = Modifier.testTag("fleet.broadcast.tmux"),
+        OutlinedTextField(
+            value = viewModel.broadcastCommandText,
+            onValueChange = { viewModel.broadcastCommandText = it },
+            label = { Text(stringResource(R.string.command)) },
+            placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
+            prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
+            textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(8.dp),
+            colors = omniTextFieldColors()
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.run_in_tmux), fontWeight = FontWeight.Bold)
+                Text(
+                    stringResource(R.string.run_in_tmux_explained),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Switch(
+                checked = viewModel.broadcastInTmux,
+                onCheckedChange = viewModel::updateBroadcastInTmux,
+                enabled = !viewModel.isBroadcastExecuting,
+                modifier = Modifier.testTag("fleet.broadcast.tmux"),
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(
+                onClick = {
+                    presetSearch = ""
+                    showPresetPicker = true
+                },
+                modifier = Modifier.weight(1f),
             ) {
-                OutlinedButton(
-                    onClick = {
-                        presetSearch = ""
-                        showPresetPicker = true
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.presets))
-                }
-                OutlinedButton(
-                    enabled = viewModel.broadcastCommandText.isNotBlank(),
-                    onClick = { openPresetEditor() },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.save_command))
-                }
+                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.presets))
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Parallel executor actions buttons
+            OutlinedButton(
+                enabled = viewModel.broadcastCommandText.isNotBlank(),
+                onClick = { openPresetEditor() },
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.save_command))
+            }
+        }
+    }
+    val runButton = @Composable {
+        if (controlsExpanded) {
             OmniButton(
                 label = if (viewModel.isBroadcastExecuting) "STOP BROADCAST" else "RUN ON $selectedTargetCount HOSTS",
                 onClick = { if (viewModel.isBroadcastExecuting) viewModel.stopFleetBroadcast() else confirmAndRunBroadcast() },
@@ -454,9 +458,8 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 enabled = canRunOrStop,
             )
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
+    }
+    val outputsHeader = @Composable {
         // Terminal text nodes feed displaying returned parallel response packages
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.execution_outputs), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -468,12 +471,10 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 )
             }
         }
-
+    }
+    val outputs = @Composable { modifier: Modifier ->
         OverflowLazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(top = 6.dp),
+            modifier = modifier.fillMaxWidth().padding(top = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(viewModel.broadcastResults, key = { it.serverId }) { item ->
@@ -537,6 +538,40 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                         }
                         BroadcastHostFooter(viewModel, item, accent)
                 }
+            }
+        }
+    }
+    val pageScroll = rememberScrollState()
+    val inputsScroll = rememberScrollState()
+    val fontScale = LocalDensity.current.fontScale.coerceIn(1f, 2f)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // The headers and Run grow with the text size, so the room kept for them grows too.
+        val inputsMaxHeight = (maxHeight - 210.dp * fontScale).coerceAtLeast(0.dp)
+        // Opening the keyboard switches between the two, so they share one tree and differ only in
+        // modifiers: rebuilding the focused command field would drop focus and close the keyboard.
+        val onePage = maxHeight < 320.dp
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.weight(1f).then(if (onePage) Modifier.verticalScrollWithIndicators(pageScroll) else Modifier)) {
+                header()
+                if (controlsExpanded) {
+                    Column(
+                        if (onePage) Modifier else
+                            Modifier.heightIn(max = inputsMaxHeight).verticalScrollWithIndicators(inputsScroll),
+                    ) {
+                        inputs()
+                    }
+                }
+                if (!onePage) {
+                    if (controlsExpanded) Spacer(modifier = Modifier.height(20.dp))
+                    runButton()
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                outputsHeader()
+                outputs(if (onePage) Modifier.height(160.dp) else Modifier.weight(1f))
+            }
+            if (onePage) {
+                Spacer(modifier = Modifier.height(8.dp))
+                runButton()
             }
         }
     }

@@ -74,6 +74,7 @@ Open **Term** for an interactive SSH shell on the selected host.
 - Themes: App theme (follows app light/dark/AMOLED/high-contrast), Omni Dark, Solarized Dark, Matrix, and Light.
 - Hardware and soft keyboard input, a compact special-key bar, and swipe-typing mode.
 - Outside the terminal, the keyboard closes when you start something that shows output (a ping, a search, a broadcast, a deploy), so it does not cover the results.
+- In landscape, the tabs and the awake, alerts and (free build) **FREE** buttons move to a rail on the left, so every screen keeps its full height. While the keyboard is open in landscape, a screen's header, host picker and tabs (and the free build's ad) step aside until you close it, so what you are typing and its button, such as Fleet's **RUN**, stay in view. The terminal hides the rail too.
 - Natural touch scrolling stays inside the terminal; app-level tab swipes and pull-to-refresh are disabled on the terminal screen.
 - Long-press copy tools for the visible screen or full scrollback; a **Bottom** button jumps to the live tail without covering the last terminal rows.
 

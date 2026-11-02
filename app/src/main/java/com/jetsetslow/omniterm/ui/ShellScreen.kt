@@ -4,7 +4,6 @@ import androidx.annotation.StringRes
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -361,8 +360,7 @@ fun ShellScreen(viewModel: AppViewModel) {
     val scheme = MaterialTheme.colorScheme
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    val compactIme = WindowInsets.isImeVisible &&
-        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val compactIme = typingInLandscape()
     val currentSession = viewModel.currentSession
     // The header identifies exactly the focused terminal. Do not fall back to the other split pane
     // when the focused pane is empty; that made the top host name actively misleading.

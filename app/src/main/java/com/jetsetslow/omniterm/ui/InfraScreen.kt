@@ -41,10 +41,11 @@ fun InfraScreen(viewModel: AppViewModel) {
     // whenever the host changes.
     val srv = screenHost(viewModel) { if (it != null) viewModel.loadDocker() }
 
+    val typing = typingInLandscape()
     Column(modifier = Modifier.fillMaxSize()) {
         // Online hosts, like the other tabs, plus the host in use and any offline host still holding
         // an unsaved Compose draft, so switching away never strands that draft.
-        ServerSelectorBar(
+        if (!typing) ServerSelectorBar(
             viewModel,
             overrideServer = srv,
             onlineOnly = true,
@@ -58,7 +59,7 @@ fun InfraScreen(viewModel: AppViewModel) {
             return@Column
         }
 
-        Row(
+        if (!typing) Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -68,7 +69,7 @@ fun InfraScreen(viewModel: AppViewModel) {
                 Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.reload))
             }
         }
-        PrimaryScrollableTabRow(
+        if (!typing) PrimaryScrollableTabRow(
             selectedTabIndex = viewModel.activeInfraTab,
             edgePadding = 0.dp,
             modifier = Modifier.fillMaxWidth()
