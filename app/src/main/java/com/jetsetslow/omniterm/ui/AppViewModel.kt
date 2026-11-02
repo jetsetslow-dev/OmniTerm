@@ -4058,6 +4058,89 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Saves the chosen hosts of an ssh_config file. A host signs in with the saved key named like
+     * its IdentityFile (`~/.ssh/id_ed25519` → `id_ed25519`) when there is one, and otherwise with a
+     * password added by editing it; its notes say which. [defaultUser] stands in where the file
+     * sets no User. A host already saved (same address, port and user) is left alone, a name in use
+     * gets a number, and the free build stops at its host limit. [onResult] gets a summary.
+     */
+    fun importSshConfigHosts(hosts: List<SshConfigHost>, defaultUser: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val keyAliases = repository.getAllKeys().map { it.alias }
+            fun keyFor(identityFile: String?): String? {
+                val file = identityFile?.substringAfterLast('/')?.removeSuffix(".pub") ?: return null
+                return keyAliases.firstOrNull { it.equals(file, ignoreCase = true) }
+            }
+            val added = mutableListOf<Int>()
+            val notAdded = mutableListOf<String>()
+            for (host in hosts) {
+                if (repository.getAllServers().size >= hostLimit) {
+                    notAdded += "${host.alias}: ${hostLimitMessage()}"
+                    continue
+                }
+                val user = host.user.ifBlank { defaultUser.trim() }
+                if (user.isEmpty()) {
+                    notAdded += "${host.alias}: the file sets no user."
+                    continue
+                }
+                val keyAlias = keyFor(host.identityFile)
+                val notes = buildList {
+                    add("Imported from ssh_config.")
+                    addAll(host.notes)
+                    when {
+                        keyAlias != null -> Unit
+                        host.identityFile != null -> add("Its key ${host.identityFile} is not saved in OmniTerm: import it under Tools → Auth & keys, then pick it here.")
+                        else -> add("Add its password or pick its key here before connecting.")
+                    }
+                }.joinToString(" ")
+                val jump = host.jump
+                val draft = ServerEntity(
+                    name = host.alias,
+                    host = host.hostName,
+                    port = host.port,
+                    username = user,
+                    authType = if (keyAlias != null) "key" else "password",
+                    authKeyAlias = keyAlias,
+                    notes = notes,
+                    keepAlive = host.keepAliveSeconds ?: 30,
+                    sshCompression = host.compression,
+                    agentForwarding = host.forwardAgent,
+                    proxyType = if (jump != null) "ssh" else "none",
+                    proxyHost = jump?.host.orEmpty(),
+                    proxyPort = jump?.port ?: 0,
+                    proxyUser = jump?.user?.ifBlank { user }.orEmpty(),
+                    proxyKeyAlias = jump?.let { keyFor(it.identityFile) ?: keyAlias },
+                )
+                val existing = repository.findMatchingServer(draft)
+                if (existing != null) {
+                    notAdded += "${host.alias}: already saved as \"${existing.name}\"."
+                    continue
+                }
+                var name = host.alias
+                var n = 2
+                while (repository.getServerByName(name) != null) name = "${host.alias} (${n++})"
+                try {
+                    added += repository.saveUniqueServer(draft.copy(name = name)).toInt()
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    notAdded += "${host.alias}: ${error.message ?: "could not be saved."}"
+                }
+            }
+            refreshHomeWidgets()
+            onResult(
+                buildString {
+                    append(if (added.size == 1) "Imported 1 host." else "Imported ${added.size} hosts.")
+                    if (notAdded.isNotEmpty()) append(" Not imported: ").append(notAdded.joinToString(" "))
+                },
+            )
+            withContext(Dispatchers.IO) {
+                added.forEach { id -> repository.getServerById(id)?.let { probeServer(it) } }
+            }
+            refreshHomeWidgets()
+        }
+    }
+
     /** Shown once after a host edit that running tunnels did not pick up; see [updateServer]. */
     var hostEditNotice by mutableStateOf<String?>(null)
         private set

@@ -1988,26 +1988,6 @@ private fun WolLanScanner(viewModel: AppViewModel, onPick: (AppViewModel.Scanned
 
 // 7.5 CREDENTIAL KEYCHAINS PANEL
 
-/** Opens the system file picker for an SSH key file and hands over its text; an unreadable file says so. */
-@Composable
-private fun rememberKeyFilePicker(onRead: (String) -> Unit): () -> Unit {
-    val context = LocalContext.current
-    val resources = LocalResources.current
-    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openInputStream(uri)?.use { onRead(it.reader().readText()) }
-            } catch (e: Exception) {
-                android.util.Log.w("ToolsScreen", "Failed to read key file", e)
-                android.widget.Toast.makeText(context, resources.getString(R.string.could_not_read_file, e.message), android.widget.Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-    return { launcher.launch(arrayOf("*/*")) }
-}
-
 @Composable
 fun AuthKeysToolView(viewModel: AppViewModel) {
     val confirm = rememberConfirm()
@@ -2278,8 +2258,8 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         // Shown inside the dialog: the screen's feedback line sits behind it, so a failed import
         // otherwise looked like a Save button that did nothing.
         var importError by remember { mutableStateOf<String?>(null) }
-        val pickPrivateKey = rememberKeyFilePicker { importedPrivateKey = it }
-        val pickPublicKey = rememberKeyFilePicker { importedPublicKey = it }
+        val pickPrivateKey = rememberTextFilePicker { importedPrivateKey = it }
+        val pickPublicKey = rememberTextFilePicker { importedPublicKey = it }
 
         AlertDialog(
             onDismissRequest = { showImportKeyDialog = false },
@@ -2416,7 +2396,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var alias by remember(key.id) { mutableStateOf(key.alias) }
         var newPrivate by remember(key.id) { mutableStateOf("") }
         var newPublic by remember(key.id) { mutableStateOf("") }
-        val pickPrivateKey = rememberKeyFilePicker { newPrivate = it }
+        val pickPrivateKey = rememberTextFilePicker { newPrivate = it }
         AlertDialog(
             onDismissRequest = { editKey = null },
             title = { Text(stringResource(R.string.edit_ssh_key)) },
@@ -3918,20 +3898,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
 
 
 
-private fun readBackupTextLimited(input: InputStream, maxChars: Int = BACKUP_MAX_INPUT_CHARS): String {
-    input.reader(Charsets.UTF_8).use { reader ->
-        val out = StringBuilder()
-        val buffer = CharArray(8192)
-        while (true) {
-            val read = reader.read(buffer)
-            if (read < 0) return out.toString()
-            if (out.length + read > maxChars) {
-                throw IllegalArgumentException("Backup file is too large to import safely.")
-            }
-            out.append(buffer, 0, read)
-        }
-    }
-}
+private fun readBackupTextLimited(input: InputStream, maxChars: Int = BACKUP_MAX_INPUT_CHARS): String =
+    readTextLimited(input, maxChars, "Backup file is too large to import safely.")
 
 /** PIN/biometric confirmation before applying staged settings (shown only when app lock is on). */
 @Composable

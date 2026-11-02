@@ -11,9 +11,6 @@ import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.PortForwardEntity
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.StackRegistryEntity
-import com.jetsetslow.omniterm.data.ssh.SshCredentials
-import com.jetsetslow.omniterm.data.ssh.SshTransport
-import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.ConfirmController
 import com.jetsetslow.omniterm.ui.hostDeleteMessage
@@ -158,26 +155,5 @@ class HostDeleteCascadeRobolectricTest {
                 main.close()
             }
         }
-    }
-
-    /** Hosts that answer nothing. */
-    private class QuietHosts : SshTransport {
-        override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String = ""
-
-        override suspend fun execStream(
-            creds: SshCredentials,
-            command: String,
-            stdin: String?,
-            onChunk: suspend (String) -> Unit,
-        ): String = ""
-
-        override suspend fun testConnection(creds: SshCredentials): String? = null
-
-        override suspend fun openShell(
-            creds: SshCredentials,
-            cols: Int,
-            rows: Int,
-            onPhaseChange: ((String) -> Unit)?,
-        ): TerminalSession = error("No shell is opened in these tests")
     }
 }

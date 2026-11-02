@@ -971,6 +971,12 @@
     <string name="add_configuration">"Add configuration"</string>
     <string name="auth_keys_profiles">"Auth Keys &amp; Profiles"</string>
     <string name="could_not_read_file">"Could not read file: %1$s"</string>
+    <string name="import_from_ssh_config">"Import from ssh_config"</string>
+    <string name="import_from_ssh_config_file">"Import from an ssh_config file…"</string>
+    <string name="no_hosts_found_in_this_file">"No hosts found in this file. Each host needs a Host line with a name and no wildcards."</string>
+    <string name="user_for_hosts_that_set_none">"User for hosts that set none"</string>
+    <string name="already_saved">"Already saved"</string>
+    <string name="import_n_hosts">"Import (%1$d)"</string>
     <string name="password_leave_blank_to_keep_current">"Password (leave blank to keep current)"</string>
     <string name="restore_backup_2">"Restore Backup"</string>
     <string name="choose_what_to_include">"Choose what to include"</string>

@@ -72,6 +72,8 @@ import com.jetsetslow.omniterm.data.HostDependentCounts
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
+import com.jetsetslow.omniterm.data.SshConfigFile
+import com.jetsetslow.omniterm.data.SshConfigParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
@@ -1919,6 +1921,8 @@ fun ServersMainView(viewModel: AppViewModel) {
     val srvList by viewModel.servers.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showAddSheet by remember { mutableStateOf(false) }
+    var sshConfigFile by remember { mutableStateOf<SshConfigFile?>(null) }
+    val pickSshConfig = rememberTextFilePicker { text -> sshConfigFile = SshConfigParser.parse(text) }
     // The "New host" static launcher shortcut lands here with a one-shot request flag.
     LaunchedEffect(viewModel.addServerSheetRequested) {
         if (viewModel.addServerSheetRequested) {
@@ -2543,10 +2547,18 @@ fun ServersMainView(viewModel: AppViewModel) {
                 viewModel = viewModel,
                 serverToEdit = null,
                 prefillAddress = viewModel.pendingNewServerPrefill,
+                onImportSshConfig = {
+                    showAddSheet = false
+                    viewModel.consumeNewServerPrefill()
+                    pickSshConfig()
+                },
             ) {
                 showAddSheet = false
                 viewModel.consumeNewServerPrefill()
             }
+        }
+        sshConfigFile?.let { file ->
+            SshConfigImportDialog(viewModel, file) { sshConfigFile = null }
         }
 
         editingServer?.let { s ->
@@ -2837,6 +2849,8 @@ fun AddServerSheet(
     // it carries no credentials and no saved row, so the sheet stays an ordinary add form and every
     // validation and trust gate applies unchanged.
     prefillAddress: AppViewModel.NewServerPrefill? = null,
+    // Offered on a blank new host only: picks an ssh_config file to import hosts from instead.
+    onImportSshConfig: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val dismissKeyboard = rememberDismissKeyboard()
@@ -3044,6 +3058,13 @@ fun AddServerSheet(
                     .heightIn(max = 560.dp)
                     .verticalScrollWithIndicators(rememberScrollState())
             ) {
+                if (onImportSshConfig != null && serverToEdit == null && prefillFrom == null && prefillAddress == null) {
+                    TextButton(onClick = onImportSshConfig, modifier = Modifier.testTag("addHost.importSshConfig")) {
+                        Icon(Icons.Filled.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.import_from_ssh_config_file))
+                    }
+                }
                 PrimaryTabRow(selectedTabIndex = activeTab) {
                     Tab(selected = activeTab == 0, onClick = { activeTab = 0 }) { Text(stringResource(R.string.connection), fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
                     Tab(selected = activeTab == 1, onClick = { activeTab = 1 }) { Text(stringResource(R.string.credentials), fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
