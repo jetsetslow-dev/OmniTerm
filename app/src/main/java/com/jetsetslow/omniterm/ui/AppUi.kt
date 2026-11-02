@@ -3158,17 +3158,19 @@ fun AddServerSheet(
                             verticalArrangement = Arrangement.Center,
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = authType == "password", onClick = { authType = "password" })
-                                Text(stringResource(R.string.password))
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = authType == "key", onClick = { authType = "key" })
-                                Text(stringResource(R.string.ssh_private_key))
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = authType == "profile", onClick = { authType = "profile" })
-                                Text(stringResource(R.string.profile))
+                            // The label picks too, not just the circle beside it.
+                            listOf("password" to R.string.password, "key" to R.string.ssh_private_key, "profile" to R.string.profile).forEach { (type, label) ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { authType = type }
+                                        .padding(end = 8.dp)
+                                        .testTag("addHost.auth.$type"),
+                                ) {
+                                    RadioButton(selected = authType == type, onClick = { authType = type })
+                                    Text(stringResource(label))
+                                }
                             }
                         }
 
