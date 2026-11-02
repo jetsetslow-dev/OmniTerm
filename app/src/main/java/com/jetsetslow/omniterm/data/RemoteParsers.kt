@@ -999,12 +999,19 @@ object RemoteCommands {
             "'{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}' ${shellQuote(id)} 2>&1"
 
     /**
-     * The command to run inside the terminal to exec an interactive shell in a container. Tries
-     * bash, falls back to sh — the common pattern for minimal images. Runs as the container's
-     * default user; the terminal PTY drives it interactively.
+     * The shell to start inside a container: bash where the image has it, sh where it does not.
+     * `exec bash || exec sh` never reached sh, because a shell exits when exec cannot find its
+     * program, so no shell opened in a container without bash (Alpine images among them).
+     */
+    const val CONTAINER_SHELL_SCRIPT = "command -v bash >/dev/null 2>&1 && exec bash || exec sh"
+    const val CONTAINER_SHELL = "sh -c '$CONTAINER_SHELL_SCRIPT'"
+
+    /**
+     * The command to run inside the terminal to exec an interactive shell in a container. Runs as
+     * the container's default user; the terminal PTY drives it interactively.
      */
     fun dockerExecShell(id: String, runtime: String = ""): String =
-        "${runtimeCommand(runtime)} exec -it ${shellQuote(id)} sh -c 'exec bash 2>/dev/null || exec sh'"
+        "${runtimeCommand(runtime)} exec -it ${shellQuote(id)} $CONTAINER_SHELL"
 
     // ── Archive create / extract over the SFTP host's shell ──
 
