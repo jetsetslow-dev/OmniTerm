@@ -13,9 +13,13 @@ import com.jetsetslow.omniterm.data.ssh.SshWriter
 import java.io.ByteArrayOutputStream
 import org.bouncycastle.util.encoders.Base64
 import org.junit.Assert.assertThrows
+import org.junit.Rule
 import org.junit.Test
 
 class SshCertificateTest {
+    @get:Rule
+    val jdkProviders = JdkSecurityProviders()
+
     /**
      * Made by OpenSSH 10.2's `ssh-keygen -s ca -I omniterm-test -n alice,bob -z 42 -V …` for
      * [REAL_KEY]. Public material only: the user's public key, the authority's, its signature.

@@ -122,15 +122,17 @@ private fun acceptedAlgorithms(extra: List<String>): String =
  *
  * [interactiveAuth] answers the host's sign-in questions beyond the saved password (a one-time
  * code); null for background work, which must never ask. See [KeyboardInteractiveUserInfo].
- * [hostKeys] is the app's pinned store; only the live sign-in test passes its own.
+ * [hostKeys] replaces the app's pinned store; only the live sign-in test passes its own. The
+ * pinned store is looked up here, not as a default argument: a default runs before the call
+ * reaches this function, so it would need the store even where tests stand in for the factory.
  */
 internal fun buildJschSession(
     creds: SshCredentials,
     interactiveAuth: InteractiveAuth? = null,
-    hostKeys: HostKeyRepository = SshHostKeyTrust.repository(),
+    hostKeys: HostKeyRepository? = null,
 ): Session {
     val jsch = JSch().apply {
-        setHostKeyRepository(hostKeys)
+        setHostKeyRepository(hostKeys ?: SshHostKeyTrust.repository())
     }
     val signIn = KeyboardInteractiveUserInfo(creds.password, interactiveAuth)
     val algorithms = if (!creds.privateKeyPem.isNullOrBlank()) {

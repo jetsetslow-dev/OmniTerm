@@ -46,6 +46,9 @@ class SshSignInLiveTest {
     @get:Rule
     val temp = TemporaryFolder()
 
+    @get:Rule
+    val jdkProviders = JdkSecurityProviders()
+
     // Unit tests run from the module directory.
     private val fleet = File("../scripts/test-hosts")
     private val keys = File(fleet, "keys")
