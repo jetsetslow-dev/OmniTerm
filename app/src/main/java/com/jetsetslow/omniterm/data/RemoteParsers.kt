@@ -1072,51 +1072,124 @@ object RemoteCommands {
         return "cd ${shellQuote(dir)} && mkdir -p $destQuoted && $extract 2>&1"
     }
 
+    /** True on the host when the resolved compose provider is podman-compose. */
+    private const val IS_PODMAN_COMPOSE = "[ \"\$OT_COMPOSE\" = podman-compose ]"
+
+    /**
+     * `up -d` whose exit status means what it means with Docker Compose.
+     *
+     * podman-compose creates every container of the stack on each `up`. On a stack that already
+     * exists each one fails with "the container name … is already in use", is started anyway, and
+     * the run exits 125, so Up, Update, Scale and redeploying a running Podman stack all read as
+     * failed. Those lines are dropped and alone do not fail the run when the container belongs to
+     * [project]; any other error still does. Other providers run `up` unchanged.
+     */
+    private fun composeUp(flags: String, project: String, extra: String = ""): String {
+        val up = "\$OT_COMPOSE $flags up -d$extra"
+        val owner = "\$(podman inspect -f '{{index .Config.Labels \"io.podman.compose.project\"}}' \"\$n\" 2>/dev/null)"
+        return "if $IS_PODMAN_COMPOSE; then { $up 2>&1; echo \"__OT_RC=\$?\"; } | ( rc=1; used=0; other=0; " +
+            "while IFS= read -r line; do case \$line in " +
+            "__OT_RC=*) rc=\${line#__OT_RC=} ;; " +
+            "*'is already in use'*) n=\${line#*container name \\\"}; n=\${n%%\\\"*}; " +
+            "if [ \"$owner\" = ${shellQuote(project)} ]; then used=1; else other=1; printf '%s\\n' \"\$line\"; fi ;; " +
+            "*) case \$line in Error*) other=1 ;; esac; printf '%s\\n' \"\$line\" ;; esac; done; " +
+            "[ \"\$rc\" = 0 ] || { [ \"\$used\" = 1 ] && [ \"\$other\" = 0 ]; } || exit \"\$rc\" ); " +
+            "else $up; fi"
+    }
+
+    /**
+     * Removes the podman-compose containers of [project] (narrowed by [filter]) for which [keep]
+     * fails; [keep] sees each container's name as `$n` and the label in [label] as `$v`.
+     */
+    private fun removePodmanComposeContainers(project: String, filter: String, label: String, keep: String): String =
+        "podman ps -a --filter label=io.podman.compose.project=${shellQuote(project)}$filter " +
+            "--format '{{.Names}} {{index .Labels \"$label\"}}' | ( failed=0; while read -r n v; do " +
+            "$keep && continue; if podman rm -f \"\$n\" >/dev/null; then echo \"Removed \$n\"; else failed=1; fi; " +
+            "done; exit \$failed )"
+
+    /**
+     * Removes the podman-compose containers of [project] whose service the config ([c] is the
+     * compose command with its -f flags) no longer defines. podman-compose's `up` accepts
+     * --remove-orphans but ignores it.
+     */
+    private fun removePodmanComposeOrphans(c: String, project: String): String =
+        "services=\$($c config --services) && " + removePodmanComposeContainers(
+            project, "", "com.docker.compose.service", "printf '%s\\n' \"\$services\" | grep -qxF -- \"\$v\"",
+        )
+
     fun dockerComposeAction(project: String, workingDir: String, configFiles: String, action: String, service: String? = null, replicas: Int? = null, removeOrphans: Boolean = false, runtime: String = ""): String {
         val flags = composeFlags(project, configFiles)
         val orphansFlag = if (removeOrphans) " --remove-orphans" else ""
         val resolver = composeResolve(runtime)
+        val c = "\$OT_COMPOSE $flags"
 
         // "update" is multi-step and must stay guarded by the `cd`, so it builds its own tail rather
         // than plugging a single verb into the shared `$OT_COMPOSE $flags <verb>` template below.
         // Steps: pull registry images (skipping buildable services; non-fatal so a login hiccup can't
         // block the build), then `build --pull` to (re)build Dockerfile images + refresh their bases,
         // then `up -d` to recreate, then `ps`. build/up/ps are `&&`-chained so a real failure exits
-        // non-zero; the whole tail runs only after `cd` succeeds.
+        // non-zero; the whole tail runs only after `cd` succeeds. podman-compose skips buildable
+        // services on its own and has no --ignore-buildable, and its `up` recreates a container only
+        // when the compose file changed, never for a newer image, so it recreates them all.
         if (action == "update") {
-            val c = "\$OT_COMPOSE $flags"
             val tail = "printf '[1/4] Pulling images\\n'; " +
-                "if ! $c pull --ignore-buildable; then " +
+                "if $IS_PODMAN_COMPOSE; then $c pull || printf 'Warning: image pull failed; continuing with build/local images. Review the errors above.\\n'; " +
+                "elif ! $c pull --ignore-buildable; then " +
                 "printf 'Warning: selective pull failed; retrying a full pull.\\n'; " +
                 "$c pull || printf 'Warning: image pull failed; continuing with build/local images. Review the errors above.\\n'; fi; " +
                 "printf '[2/4] Building images\\n' && BUILDKIT_PROGRESS=plain $c build --pull && " +
-                "printf '[3/4] Recreating services\\n' && $c up -d$orphansFlag && " +
+                "printf '[3/4] Recreating services\\n' && " +
+                "if $IS_PODMAN_COMPOSE; then ${composeUp(flags, project, " --force-recreate --remove-orphans")}; " +
+                "else $c up -d$orphansFlag; fi && " +
                 "printf '[4/4] Checking services\\n' && $c ps"
             return "$resolver && cd ${shellQuote(workingDir)} && { $tail; } 2>&1"
         }
 
-        val verb = when (action) {
-            // Build (and refresh base images) without pulling registry images or recreating.
-            "build" -> "build --pull"
-            "pull" -> "pull"
-            "down" -> "down$orphansFlag"
-            "up" -> "up -d$orphansFlag"
-            "forceRecreate" -> "up -d --force-recreate$orphansFlag"
-            "restart" -> "restart"
-            "logs" -> "logs --tail 200"
-            "followLogs" -> "logs -f --tail 100"
-            "config" -> "config"
-            "ps" -> "ps"
-            "serviceLogs" -> "logs --tail 200 ${shellQuote(service.orEmpty())}"
-            "serviceRestart" -> "restart ${shellQuote(service.orEmpty())}"
-            "serviceStop" -> "stop ${shellQuote(service.orEmpty())}"
-            "serviceRemove" -> "rm -sf ${shellQuote(service.orEmpty())}"
-            "scale" -> "up -d --scale ${shellQuote(service.orEmpty())}=${replicas?.coerceAtLeast(0) ?: 1}"
-            "removeOrphans" -> "up -d --remove-orphans"
-            else -> "ps"
+        val svc = shellQuote(service.orEmpty())
+        val count = replicas?.coerceAtLeast(0) ?: 1
+        // podman-compose knows only what the compose file declares: `up --scale` (1.4 and later)
+        // never removes a replica, `up` ignores --remove-orphans, `down` leaves extra replicas
+        // behind and then cannot remove the stack's pod or network, and there is no `rm`. Those
+        // actions work on the project's labelled containers directly instead.
+        val serviceFilter = " --filter label=com.docker.compose.service=$svc"
+        val podmanBody: String? = when (action) {
+            "down" -> "if $c down --help 2>/dev/null | grep -q -- --remove-orphans; then $c down --remove-orphans; " +
+                "else $c down$orphansFlag; fi"
+            "forceRecreate" -> composeUp(flags, project, " --force-recreate --remove-orphans")
+            "serviceRemove" -> removePodmanComposeContainers(project, serviceFilter, "com.docker.compose.service", "false")
+            "scale" -> composeUp(flags, project, " --scale $svc=$count $svc") + " && " +
+                removePodmanComposeContainers(
+                    project, serviceFilter, "com.docker.compose.container-number",
+                    "! [ \"\${v:-0}\" -gt $count ] 2>/dev/null",
+                ) + " && made=\$((\$(podman ps -aq --filter label=io.podman.compose.project=${shellQuote(project)}$serviceFilter | wc -l))) && " +
+                "{ [ \"\$made\" -eq $count ] || { printf 'podman-compose made %s of %s containers for %s. " +
+                "Scaling a service needs podman-compose 1.4 or later.\\n' \"\$made\" $count $svc >&2; false; }; }"
+            "removeOrphans" -> removePodmanComposeOrphans(c, project) + " && " + composeUp(flags, project)
+            else -> null
         }
+        val body = when (action) {
+            // Build (and refresh base images) without pulling registry images or recreating.
+            "build" -> "$c build --pull"
+            "pull" -> "$c pull"
+            "down" -> "$c down$orphansFlag"
+            "up" -> composeUp(flags, project, orphansFlag)
+            "forceRecreate" -> "$c up -d --force-recreate$orphansFlag"
+            "restart" -> "$c restart"
+            "logs" -> "$c logs --tail 200"
+            "followLogs" -> "$c logs -f --tail 100"
+            "config" -> "$c config"
+            "ps" -> "$c ps"
+            "serviceLogs" -> "$c logs --tail 200 $svc"
+            "serviceRestart" -> "$c restart $svc"
+            "serviceStop" -> "$c stop $svc"
+            "serviceRemove" -> "$c rm -sf $svc"
+            "scale" -> "$c up -d --scale $svc=$count"
+            "removeOrphans" -> "$c up -d --remove-orphans"
+            else -> "$c ps"
+        }
+        val run = if (podmanBody == null) body else "if $IS_PODMAN_COMPOSE; then $podmanBody; else $body; fi"
         // Resolve the compose entrypoint (docker/podman, builtin or standalone) before running.
-        return "$resolver && cd ${shellQuote(workingDir)} && \$OT_COMPOSE $flags $verb 2>&1"
+        return "$resolver && cd ${shellQuote(workingDir)} && { $run; } 2>&1"
     }
 
     /**
@@ -1204,7 +1277,7 @@ object RemoteCommands {
             append(" && { if [ -f $file ]; then cp $file $bak; fi; }")
             append(" && mv \"\$tmp\" $file")
             // 5. bring it up via the exact file path; on failure restore the backup and report non-zero
-            append(" && { if ! \$OT_COMPOSE $liveFlags up -d 2>&1; then ")
+            append(" && { if ! { ${composeUp(liveFlags, project)}; } 2>&1; then ")
             append("if [ \"\$existed\" = 1 ] && [ -f $bak ]; then echo 'DEPLOY FAILED — restoring previous compose file' >&2; mv $bak $file; ")
             append("else echo 'DEPLOY FAILED — removing new compose file' >&2; rm -f $file; fi; exit 1; fi; }")
             append(" && echo 'OMNITERM_DEPLOY_OK'")

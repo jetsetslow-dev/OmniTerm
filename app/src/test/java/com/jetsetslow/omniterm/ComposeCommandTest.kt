@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.RemoteCommands
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -124,6 +125,143 @@ class ComposeCommandTest {
         )
         assertTrue("base file kept in validation", cmd.contains("-f '/srv/app/compose.yml' -f \"\$tmp\" -p 'app' config > /dev/null"))
         assertTrue("base file kept in deploy", cmd.contains("-f '/srv/app/compose.yml' -f '/srv/app/compose.override.yml' -p 'app' up -d"))
+        assertValidShell(cmd)
+    }
+
+    /**
+     * A podman-compose host: `up` creates every container of the stack each time, reports those
+     * that already exist as "already in use", starts them anyway and exits 125, as 1.4 does. With
+     * [scales] false it ignores `--scale`, as every release before 1.4 does. Containers live in a
+     * file as `name service number project`; a fake `podman` reads and removes them.
+     */
+    private class PodmanComposeHost(private val scales: Boolean = true) : AutoCloseable {
+        val dir: File = java.nio.file.Files.createTempDirectory("omniterm-podman-compose").toFile()
+        private val bin = File(dir, "bin").apply { mkdirs() }
+        val state = File(dir, "containers").apply { writeText("") }
+
+        init {
+            val d = dir.absolutePath
+            script(
+                "podman-compose",
+                """
+                echo "podman-compose ${'$'}*" >> "$d/calls"
+                case " ${'$'}* " in
+                *" down --help "*) echo "  --remove-orphans  Remove containers for services not defined"; exit 0 ;;
+                *" config --services "*) echo w; exit 0 ;;
+                *" up "*)
+                  n=1; ${if (scales) "for a; do case ${'$'}a in w=*) n=${'$'}{a#w=} ;; esac; done" else ":"}
+                  rc=0; i=1
+                  while [ "${'$'}i" -le "${'$'}n" ]; do
+                    if grep -q "^p_w_${'$'}i " "$d/containers"; then
+                      echo "Error: creating container storage: the container name \"p_w_${'$'}i\" is already in use by abc${'$'}i. You have to remove that container to be able to reuse that name: that name is already in use" >&2
+                      rc=125
+                    else echo "p_w_${'$'}i w ${'$'}i p" >> "$d/containers"; fi
+                    echo "p_w_${'$'}i"; i=${'$'}((i + 1))
+                  done
+                  exit ${'$'}rc ;;
+                esac
+                """,
+            )
+            script(
+                "podman",
+                """
+                echo "podman ${'$'}*" >> "$d/calls"
+                case "${'$'}1" in
+                inspect) for n; do :; done; awk -v n="${'$'}n" '${'$'}1 == n { print ${'$'}4 }' "$d/containers" ;;
+                rm) shift; [ "${'$'}1" = -f ] && shift
+                  for n; do grep -v "^${'$'}n " "$d/containers" > "$d/next"; mv "$d/next" "$d/containers"; echo "${'$'}n"; done ;;
+                ps) shift; proj=; svc=; quiet=0; fmt=
+                  while [ ${'$'}# -gt 0 ]; do
+                    case ${'$'}1 in
+                    -aq) quiet=1 ;;
+                    --filter) shift; case ${'$'}1 in
+                      label=io.podman.compose.project=*) proj=${'$'}{1#label=io.podman.compose.project=} ;;
+                      label=com.docker.compose.service=*) svc=${'$'}{1#label=com.docker.compose.service=} ;; esac ;;
+                    --format) shift; fmt=${'$'}1 ;;
+                    esac; shift
+                  done
+                  awk -v p="${'$'}proj" -v s="${'$'}svc" -v q="${'$'}quiet" -v f="${'$'}fmt" '${'$'}4 == p && (s == "" || ${'$'}2 == s) {
+                    if (q == 1) print ${'$'}1; else if (f ~ /container-number/) print ${'$'}1, ${'$'}3; else print ${'$'}1, ${'$'}2 }' "$d/containers" ;;
+                esac
+                """,
+            )
+        }
+
+        private fun script(name: String, body: String) =
+            File(bin, name).apply { writeText("#!/bin/sh\n" + body.trimIndent() + "\n"); setExecutable(true) }
+
+        fun names(): List<String> = state.readLines().filter { it.isNotBlank() }.map { it.substringBefore(' ') }.sorted()
+
+        fun calls(): String = File(dir, "calls").takeIf { it.exists() }?.readText().orEmpty()
+
+        /** Runs [action] for project `p`, service `w`, as the host's sh would; output and exit code. */
+        fun run(action: String, replicas: Int? = null): Pair<String, Int> {
+            val command = RemoteCommands.dockerComposeAction("p", dir.absolutePath, "compose.yml", action, "w", replicas, runtime = "podman")
+            val proc = ProcessBuilder("/bin/sh", "-c", command).redirectErrorStream(true)
+            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
+            val started = proc.start()
+            return started.inputStream.bufferedReader().readText() to started.waitFor()
+        }
+
+        override fun close() { dir.deleteRecursively() }
+    }
+
+    @Test
+    fun podman_compose_up_on_a_running_stack_succeeds() {
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost().use { host ->
+            assertEquals(0, host.run("up").second)
+            val (output, code) = host.run("up")
+            assertEquals(output, 0, code)
+            assertTrue(output, output.contains("p_w_1") && !output.contains("already in use"))
+
+            host.state.writeText("p_w_1 w 1 someone-else\n")
+            val (foreign, foreignCode) = host.run("up")
+            assertEquals("a container another project owns is a real conflict", 125, foreignCode)
+            assertTrue(foreign, foreign.contains("already in use"))
+        }
+    }
+
+    @Test
+    fun podman_compose_scales_both_ways_and_removes_only_its_own_containers() {
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost().use { host ->
+            host.state.writeText("p_old_1 old 1 p\nq_w_2 w 2 q\n")
+            assertEquals(0, host.run("up").second)
+            val (up, upCode) = host.run("scale", 3)
+            assertEquals(up, 0, upCode)
+            assertEquals(listOf("p_old_1", "p_w_1", "p_w_2", "p_w_3", "q_w_2"), host.names())
+
+            val (down, downCode) = host.run("scale", 1)
+            assertEquals(down, 0, downCode)
+            assertTrue(down, down.contains("Removed p_w_3") && down.contains("Removed p_w_2"))
+            assertEquals(listOf("p_old_1", "p_w_1", "q_w_2"), host.names())
+
+            assertEquals(0, host.run("removeOrphans").second)
+            assertEquals(listOf("p_w_1", "q_w_2"), host.names())
+
+            assertEquals(0, host.run("serviceRemove").second)
+            assertEquals(listOf("q_w_2"), host.names())
+
+            host.run("down")
+            assertTrue(host.calls(), host.calls().contains("down --remove-orphans"))
+        }
+    }
+
+    @Test
+    fun podman_compose_that_cannot_scale_says_so() {
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost(scales = false).use { host ->
+            val (output, code) = host.run("scale", 2)
+            assertTrue(output, code != 0)
+            assertTrue(output, output.contains("podman-compose made 1 of 2 containers for w. Scaling a service needs podman-compose 1.4 or later."))
+        }
+    }
+
+    @Test
+    fun podman_compose_update_recreates_with_the_pulled_images() {
+        val cmd = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "compose.yml", "update", runtime = "podman")
+        assertTrue(cmd, cmd.contains("up -d --force-recreate --remove-orphans"))
         assertValidShell(cmd)
     }
 

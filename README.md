@@ -120,6 +120,7 @@ Monitoring uses each host's own tools. Services are listed and managed through s
 ### Docker, Podman & stacks
 Open **Containers** to manage containers, compose stacks, images, and volumes (Docker and Podman are detected automatically). The host picker lists online hosts; the host you are on stays selected if it goes offline, and so does any host holding unsaved Compose Builder changes, marked offline.
 - **Containers & stacks** — summary health; expand for ports, streaming **logs**, per-container **stats** (CPU/memory/network/block I/O), one-tap **exec-into-shell**, start/stop/restart/pause, and full stack lifecycle actions.
+- **Podman stacks** — stacks run by podman-compose get the same actions as Docker Compose stacks. **Update** recreates every service so newly pulled images take effect, and **Scale** needs podman-compose 1.4 or later.
 - **Compose Builder** — a visual editor for `docker-compose.yml`; deploy new stacks or surgically edit existing ones, with `compose config` validation before every fail-safe deploy. Each host keeps its own unsaved changes while you switch hosts, even while it is offline; Deploy waits until the host is back. Changes are kept until you close the app.
 
 ### Fleet Broadcast
