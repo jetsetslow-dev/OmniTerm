@@ -2,6 +2,7 @@ package com.jetsetslow.omniterm.data.ssh
 
 import com.jetsetslow.omniterm.data.SftpFile
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
+import com.jetsetslow.omniterm.data.shares.formatFsDate
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.SftpProgressMonitor
 import kotlinx.coroutines.CancellationException
@@ -139,12 +140,15 @@ class JschSftp(
             .filter { it.filename != "." && it.filename != ".." }
             .map { e ->
                 val attrs = e.attrs
+                val modSeconds = attrs.mTime.toLong()
                 SftpFile(
                     name = e.filename,
                     isDirectory = attrs.isDir,
                     size = attrs.size,
-                    modDate = attrs.mtimeString?.trim().orEmpty(),
-                    modTimeSeconds = attrs.mTime.toLong(),
+                    // As every other file browser shows it. JSch's mtimeString is Date.toString(),
+                    // which Android 15 formats in the root locale: "Mon M11 02 14:50:41 GMT+05:30".
+                    modDate = formatFsDate(modSeconds * 1000L),
+                    modTimeSeconds = modSeconds,
                 )
             }
     }
