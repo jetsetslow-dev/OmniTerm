@@ -2252,7 +2252,11 @@ private fun PaneTerminalContent(
         // focused pane mounts it — in split view the unfocused pane is display + gesture only, so
         // there's a single keyboard target and no ambiguity about which remote receives typing.
         if (isFocused && !viewModel.terminalReadOnly) {
-        var inputField by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
+        val inputFieldState = remember(sessionId) { mutableStateOf(TextFieldValue("")) }
+        var inputField by inputFieldState
+        // Every edit is diffed against what the field's own buffer held, not against inputField: keys
+        // that land before the field takes inputField back would otherwise be sent twice.
+        val fieldBuffer = rememberTerminalInputBuffer(sessionId, inputFieldState)
         val smartSwipe = viewModel.smartSwipeInput
 
         // Swipe-typing mode keeps the keyboard's text in the field and mirrors edits to the remote by
@@ -2279,7 +2283,7 @@ private fun PaneTerminalContent(
                 // delta* over the previous field, not the field's absolute length — otherwise a long
                 // command typed by swipe (or a momentary multi-word composing region the IME hands us
                 // mid-gesture) was being misread as a paste and popped the confirm dialog.
-                val prevText = inputField.text
+                val prevText = fieldBuffer.onEdit(newText)
                 // A sticky Ctrl/Alt/Shift modifier (armed from the key bar) transforms the next
                 // typed character (control/meta byte, or uppercase). That can't be expressed as an
                 // editor-style line diff, so when one is armed we route the freshly-inserted text
@@ -2302,8 +2306,12 @@ private fun PaneTerminalContent(
                 }
                 val insertedDelta = insertedCodePointDelta(prevText, newText)
                 if (insertedDelta > 100) {
-                    // Large paste: defer to the paste dialog and clear the field.
-                    pendingLargePaste = PendingTerminalPaste(newText, viewModel.captureTerminalPasteTarget(currentSession))
+                    // Large paste: defer to the paste dialog and clear the field. The text before it
+                    // has already been sent.
+                    pendingLargePaste = PendingTerminalPaste(
+                        newText.removePrefix(prevText),
+                        viewModel.captureTerminalPasteTarget(currentSession),
+                    )
                     inputField = TextFieldValue("")
                     return@BasicTextField
                 }
@@ -2312,7 +2320,7 @@ private fun PaneTerminalContent(
                 if (newline >= 0) {
                     val before = newText.substring(0, newline)
                     if (smartSwipe) {
-                        diffToRemote(inputField.text, before, viewModel)
+                        diffToRemote(prevText, before, viewModel)
                         viewModel.sendKey(TermKey.ENTER)
                         val newlineLength = if (newText[newline] == '\r' &&
                             newline + 1 < newText.length && newText[newline + 1] == '\n'
@@ -2325,8 +2333,9 @@ private fun PaneTerminalContent(
                         // A software keyboard's Enter is different: it arrives as one newline, but
                         // an interactive PTY expects the terminal Enter key (CR). Sending the raw LF
                         // only moved the cursor and left the command pending until another Enter.
-                        if (isSingleTerminalEnter(newText)) viewModel.sendKey(TermKey.ENTER)
-                        else viewModel.pasteText(newText)
+                        val typed = newText.removePrefix(prevText)
+                        if (isSingleTerminalEnter(typed)) viewModel.sendKey(TermKey.ENTER)
+                        else viewModel.pasteText(typed)
                     }
                     inputField = TextFieldValue("")
                     return@BasicTextField
@@ -2334,22 +2343,17 @@ private fun PaneTerminalContent(
 
                 if (smartSwipe) {
                     // Editor-style: send the delta between the old field and the new field.
-                    diffToRemote(inputField.text, newText, viewModel)
+                    diffToRemote(prevText, newText, viewModel)
                     inputField = TextFieldValue(
                         text = newText,
                         selection = androidx.compose.ui.text.TextRange(newText.length),
                     )
                 } else {
                     // Stream mode: field stays empty, each commit goes straight through (max fidelity).
-                    if (newText.isNotEmpty()) {
-                        if (newText.length > 1) {
-                            // Stream-mode IME commits are typing, not necessarily clipboard pastes;
-                            // never invent a trailing space or wrap them in bracketed-paste markers.
-                            viewModel.typeText(newText)
-                        } else {
-                            viewModel.typeText(newText)
-                        }
-                    }
+                    // Stream-mode IME commits are typing, not necessarily clipboard pastes; never
+                    // invent a trailing space or wrap them in bracketed-paste markers.
+                    if (newText.startsWith(prevText)) viewModel.typeText(newText.substring(prevText.length))
+                    else diffToRemote(prevText, newText, viewModel)
                     inputField = TextFieldValue("")
                 }
             },
