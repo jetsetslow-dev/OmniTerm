@@ -154,11 +154,16 @@ fun GaugeBar(value: Float, modifier: Modifier = Modifier, color: Color = OmniCol
     }
 }
 
+/**
+ * A host's status dot, read out as "Server online" or "Server offline". Anything else passes its own
+ * [contentDescription], or "" when the row already prints the state, so the dot stays silent.
+ */
 @Composable
 fun StatusDot(online: Boolean, modifier: Modifier = Modifier, color: Color = OmniColors.green, size: Dp = 8.dp, contentDescription: String? = null) {
     val c = if (online) color else OmniColors.red
     val desc = contentDescription ?: if (online) "Server online" else "Server offline"
-    Box(modifier.size(size).clip(CircleShape).background(c).semantics { this.contentDescription = desc })
+    val described = if (desc.isEmpty()) Modifier else Modifier.semantics { this.contentDescription = desc }
+    Box(modifier.size(size).clip(CircleShape).background(c).then(described))
 }
 
 /** Circular health score gauge with the value in the centre (display font). */

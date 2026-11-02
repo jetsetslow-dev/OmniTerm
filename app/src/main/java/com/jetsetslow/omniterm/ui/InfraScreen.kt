@@ -713,7 +713,7 @@ private fun StackServiceRow(
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(online = service.running > 0 && service.unhealthy == 0, color = OmniColors.green, size = 7.dp)
+            StatusDot(online = service.running > 0 && service.unhealthy == 0, color = OmniColors.green, size = 7.dp, contentDescription = "")
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(service.name, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -958,7 +958,7 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                         if (vol.size.isNotBlank()) {
                             Text(vol.size, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
                         }
-                        StatusDot(online = vol.inUse, color = OmniColors.green, size = 8.dp)
+                        StatusDot(online = vol.inUse, color = OmniColors.green, size = 8.dp, contentDescription = "")
                         Spacer(Modifier.width(4.dp))
                         Text(if (vol.inUse) stringResource(R.string.in_use) else stringResource(R.string.unused), fontSize = 10.sp, color = if (vol.inUse) OmniColors.green else OmniColors.red, fontWeight = FontWeight.Bold)
                     }

@@ -1180,7 +1180,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                         ) {
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    StatusDot(online = svc.status == "running", color = OmniColors.green, size = 8.dp)
+                                    StatusDot(online = svc.status == "running", color = OmniColors.green, size = 8.dp, contentDescription = svc.status)
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(svc.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
                                 }
