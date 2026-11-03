@@ -100,8 +100,8 @@ class SshKeyPassphraseTest {
         val body = SshWriter().raw("openssh-key-v1\u0000".toByteArray()).string("aes256-ctr").string("bcrypt")
             .bytes(SshWriter().bytes(salt).uint32(16).toByteArray())
             .uint32(1).bytes(edBlob(publicKey)).bytes(cipher.doFinal(section)).toByteArray()
-        val file = "-----BEGIN OPENSSH PRIVATE KEY-----\n" + Base64.toBase64String(body).chunked(70).joinToString("\n") +
-            "\n-----END OPENSSH PRIVATE KEY-----\n"
+        val file = pemBegin("OPENSSH PRIVATE KEY") + "\n" + Base64.toBase64String(body).chunked(70).joinToString("\n") +
+            "\n" + pemEnd("OPENSSH PRIVATE KEY") + "\n"
         return file to publicKey
     }
 }

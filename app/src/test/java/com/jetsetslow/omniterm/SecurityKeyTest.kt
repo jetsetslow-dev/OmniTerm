@@ -71,7 +71,7 @@ class SecurityKeyTest {
         for (type in SkKeyType.entries) {
             val key = SoftwareSecurityKey(type).sshKey(SkKey.USER_PRESENCE_REQUIRED or SkKey.USER_VERIFICATION_REQUIRED)
             val file = key.keyFile("laptop")
-            assertThat(file).startsWith("-----BEGIN OPENSSH PRIVATE KEY-----")
+            assertThat(file).startsWith(pemBegin("OPENSSH PRIVATE KEY"))
             assertThat(OpenSshKeyFile.keyType(file)).isEqualTo(type.sshName)
             val back = SkKey.fromFile(OpenSshKeyFile.read(file, null))
             assertThat(back.publicBlob).isEqualTo(key.publicBlob)

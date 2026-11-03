@@ -37,3 +37,10 @@
 743acae170d55b1cc69df9dbb32ec16528b0fd3d:flutter_app/test/ssh_keygen_test.dart:private-key:58
 78845145d1db39561b587882bc498bfeb4b1c107:flutter_app/test/support/ed25519_fixture.dart:private-key:31
 78845145d1db39561b587882bc498bfeb4b1c107:flutter_app/test/support/ed25519_fixture.dart:private-key:131
+
+# ── Kotlin PEM banners with no key material, committed 2026-11-02. ──
+# OpenSshKeyFile's doc comment and banner constants, and SshKeyPassphraseTest's fixture writer, which
+# wraps a key generated at test time. Both now build the banner from its label (OpenSshKeyFile's
+# LABEL, the tests' pemBegin/pemEnd in PemBanners.kt), so they cannot match again.
+300faf40c4fa9b99cd1fe3577290d0e75f3af57e:app/src/main/java/com/jetsetslow/omniterm/data/ssh/OpenSshKeyFile.kt:private-key:12
+300faf40c4fa9b99cd1fe3577290d0e75f3af57e:app/src/test/java/com/jetsetslow/omniterm/SshKeyPassphraseTest.kt:private-key:103

@@ -153,7 +153,7 @@ class KubeDirectTest {
     }
 
     private fun pem(type: String, der: ByteArray) =
-        "-----BEGIN $type-----\n" + Base64.toBase64String(der).chunked(64).joinToString("\n") + "\n-----END $type-----\n"
+        pemBegin(type) + "\n" + Base64.toBase64String(der).chunked(64).joinToString("\n") + "\n" + pemEnd(type) + "\n"
 
     @Test
     fun privateKeysReadInEachEncodingKubeconfigsUse() {

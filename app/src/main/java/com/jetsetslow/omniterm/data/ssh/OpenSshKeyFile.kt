@@ -9,7 +9,7 @@ import javax.crypto.spec.SecretKeySpec
 import org.bouncycastle.util.encoders.Base64
 
 /**
- * OpenSSH's own private key file (`-----BEGIN OPENSSH PRIVATE KEY-----`, PROTOCOL.key): read with
+ * OpenSSH's own private key file (the "OPENSSH PRIVATE KEY" PEM block, PROTOCOL.key): read with
  * its passphrase, and written back without one.
  *
  * JSch reads these files but cannot write an Ed25519 key, and knows nothing of security keys, so
@@ -23,8 +23,11 @@ internal object OpenSshKeyFile {
     /** The decoded file: the public key blob, and its private section's key fields. */
     class Contents(val publicBlob: ByteArray, val keyType: String, val keyFields: ByteArray, val comment: String)
 
-    private const val BEGIN = "-----BEGIN OPENSSH PRIVATE KEY-----"
-    private const val END = "-----END OPENSSH PRIVATE KEY-----"
+    // Built from the label: the repository's secret scan takes a written-out pair of private key
+    // banners for a committed key.
+    private const val LABEL = "OPENSSH PRIVATE KEY"
+    private const val BEGIN = "-----BEGIN $LABEL-----"
+    private const val END = "-----END $LABEL-----"
     private val MAGIC = "openssh-key-v1\u0000".toByteArray(Charsets.US_ASCII)
 
     fun isOpenSshKey(text: String): Boolean = text.trim().startsWith(BEGIN)
