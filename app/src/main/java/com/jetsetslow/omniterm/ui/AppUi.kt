@@ -85,16 +85,24 @@ fun Context.getActivity(): AppCompatActivity? = when (this) {
     else -> null
 }
 
-// User-defined accent colour for a server (falls back to a per-name colour for "Default").
-fun getServerColor(server: ServerEntity): Color =
-    OmniColors.serverAccent(server.serverColor, server.id)
+/** A host's saved identity, or a stable ID-based automatic choice, in the current theme's tone. */
+@Composable
+fun getServerColor(server: ServerEntity): Color = getServerColor(server, MaterialTheme.colorScheme.surface)
+
+fun getServerColor(server: ServerEntity, background: Color): Color =
+    OmniColors.serverAccent(server.serverColor, server.id, background)
 
 /**
  * The colour assigned to host [serverId] among [servers], for a card that holds only the host's id
  * (a broadcast result, a terminal session). Colouring by name ignored the colour the user picked.
  */
+@Composable
 fun hostAccent(servers: List<ServerEntity>, serverId: Int): Color =
-    servers.firstOrNull { it.id == serverId }?.let(::getServerColor) ?: OmniColors.hostColor(serverId)
+    hostAccent(servers, serverId, MaterialTheme.colorScheme.surface)
+
+fun hostAccent(servers: List<ServerEntity>, serverId: Int, background: Color): Color =
+    servers.firstOrNull { it.id == serverId }?.let { getServerColor(it, background) }
+        ?: OmniColors.hostColor(serverId, background)
 
 /**
  * Hides the soft keyboard and clears focus. Every action that starts output calls it, so the
@@ -3119,27 +3127,7 @@ fun AddServerSheet(
                             }
                         }
 
-                        Text(stringResource(R.string.accent_color), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                            OmniColors.namedColors.forEach { (cname, c) ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(28.dp)
-                                        .clip(androidx.compose.foundation.shape.CircleShape)
-                                        .background(c)
-                                        .border(
-                                            width = if (serverColor == cname) 3.dp else 0.dp,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            shape = androidx.compose.foundation.shape.CircleShape,
-                                        )
-                                        .clickable { serverColor = cname }
-                                        .semantics {
-                                            contentDescription = cname
-                                            selected = serverColor == cname
-                                        }
-                                )
-                            }
-                        }
+                        HostColorPicker(selectedColor = serverColor, onColorSelected = { serverColor = it })
                     }
                 } else if (activeTab == 1) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

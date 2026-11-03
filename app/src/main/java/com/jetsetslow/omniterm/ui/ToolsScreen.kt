@@ -752,7 +752,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     items(rules) { r ->
                         val srv = serversList.find { it.id == r.serverId }
                         // A rule for one host carries that host's colour; one for all hosts has none.
-                        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = srv?.let(::getServerColor) ?: OmniColors.cyan) {
+                        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = srv?.let { getServerColor(it) } ?: OmniColors.cyan) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,

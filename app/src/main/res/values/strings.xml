@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">OmniTerm</string>
+    <string name="host_color_automatic">Automatic</string>
+    <string name="host_color_identity_hint">Colors identify hosts. Status icons show connection health.</string>
     <string name="crash_start_title">OmniTerm could not start</string>
     <string name="crash_clear_retry">Clear and try again</string>
     <string name="crash_report_github">Report on GitHub</string>
