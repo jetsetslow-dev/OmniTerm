@@ -3,6 +3,7 @@ package com.jetsetslow.omniterm.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.term.TerminalEmulator
 import com.jetsetslow.omniterm.data.term.TerminalSnapshot
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
@@ -99,6 +100,9 @@ internal fun CoroutineScope.launchTerminalResizeConsumer(
     }
 }
 
+/** What a terminal session runs over, as its header names it. */
+enum class TerminalTransport(val label: String) { Ssh("SSH"), Telnet("Telnet"), Serial("USB serial"), Kubernetes("Kubernetes") }
+
 /**
  * Represents an active, background-capable SSH terminal session in the app.
  * Each session has its own emulator, IO channels, and coroutine jobs.
@@ -147,6 +151,10 @@ class ShellSession(
     var shiftArmed by mutableStateOf(false)
     /** Incremented by terminal chrome to ask this pane to open its session options. */
     var terminalOptionsRequestGeneration by mutableStateOf(0L)
+    /** The find bar's text while it is open on this terminal; null while it is closed. */
+    var findQuery by mutableStateOf<String?>(null)
+    /** What [findQuery] found here, and which match is current. */
+    val find = TerminalFindState()
     /**
      * True when output has arrived since the last tmux history re-sync, meaning local scrollback
      * may be missing rows the user never had on screen (tmux collapses fast output into a repaint
@@ -236,6 +244,18 @@ class ShellSession(
      * since I last looked at it?" rather than [startedAtMs]'s "how old is this session?".
      */
     var backgroundedAtMs by mutableStateOf<Long?>(null)
+
+    /** What this session runs over. Only SSH sessions have credentials, files, tmux and reconnection. */
+    var transport: TerminalTransport = TerminalTransport.Ssh
+
+    /**
+     * The connection as the header shows it when it is not a saved host: a Quick connect, Telnet
+     * or USB serial session. Null for a saved host, which the header finds by [serverId].
+     */
+    var unsavedHost: ServerEntity? = null
+
+    /** Why a Telnet or serial session ended, shown in place of an exit status. */
+    var endedBecause by mutableStateOf<String?>(null)
 
     // ── Auto-reconnect / persistent-session state ──
     // Credentials + last known PTY size are kept so a dropped session can be reopened without the UI.

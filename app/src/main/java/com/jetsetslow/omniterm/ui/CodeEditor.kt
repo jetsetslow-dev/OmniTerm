@@ -15,21 +15,23 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.automirrored.filled.WrapText
@@ -43,12 +45,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextRange
@@ -364,7 +368,7 @@ internal fun largeEditorWindowEnd(text: String, start: Int): Int =
 /**
  * Full-screen editor chrome around [CodeEditor]: a top bar (close + title/subtitle + dirty dot +
  * optional trailing action), an optional error strip, and a Discard / Save bottom bar — pinned above
- * the IME via the Scaffold's safeDrawing insets. Shared by the SFTP remote-file editor and the
+ * the IME by its own safeDrawing insets. Shared by the SFTP remote-file editor and the
  * Compose Builder Raw YAML editor so both have an identical look, feel, and operations.
  *
  * Rendered as a full-screen [Surface] overlay (NOT a Compose Dialog, whose IME insets are unreliable
@@ -417,7 +421,13 @@ fun FullScreenCodeEditor(
                 }
             },
             bottomBar = {
-                Column {
+                // Scaffold applies its insets to the content only; a custom bottom bar takes its own,
+                // or it stays behind the keyboard and Save cannot be reached while typing.
+                Column(
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)),
+                ) {
                     androidx.compose.material3.HorizontalDivider()
                     if (error != null && !saving) {
                         Text(
@@ -435,8 +445,6 @@ fun FullScreenCodeEditor(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(MaterialTheme.colorScheme.surfaceContainer)
-                            // The Scaffold consumes safeDrawing insets for the bottomBar, so no manual
-                            // nav/ime padding here — that would double-pad and push buttons off-screen.
                             .horizontalScrollWithIndicators(rememberScrollState())
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.End,
@@ -554,23 +562,9 @@ private fun FindReplaceBar(
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        FindFieldRow(query, onQuery, matchCount, currentIndex, onPrev = onPrev, onNext = onNext, onClose = onClose)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            EditorInput(query, onQuery, "Find", Modifier.weight(1f))
-            Spacer(Modifier.width(6.dp))
-            val countLabel = if (query.isEmpty()) "" else if (matchCount == 0) "0/0" else "${currentIndex + 1}/$matchCount"
-            Text(countLabel, fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            IconButton(onClick = onPrev, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowUpward, contentDescription = stringResource(R.string.previous_match), modifier = Modifier.width(18.dp))
-            }
-            IconButton(onClick = onNext, enabled = matchCount > 0) {
-                Icon(Icons.Filled.ArrowDownward, contentDescription = stringResource(R.string.next_match), modifier = Modifier.width(18.dp))
-            }
-            IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close_find))
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            EditorInput(replacement, onReplacement, "Replace with", Modifier.weight(1f))
+            FindBarInput(replacement, onReplacement, "Replace with", Modifier.weight(1f))
             Spacer(Modifier.width(6.dp))
             // Shown in a read-only editor too, but disabled there: these do nothing when the text
             // cannot change, and an enabled button that does nothing reads as broken.
@@ -582,27 +576,6 @@ private fun FindReplaceBar(
             FilterChip(selected = useRegex, onClick = { onRegex(!useRegex) }, label = { Text(".*", fontSize = 11.sp) })
             if (error != null) Text(error, color = OmniColors.red, fontSize = 11.sp)
         }
-    }
-}
-
-@Composable
-private fun EditorInput(value: String, onChange: (String) -> Unit, hint: String, modifier: Modifier) {
-    Box(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-    ) {
-        if (value.isEmpty()) {
-            Text(hint, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            singleLine = true,
-            textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(OmniColors.amber),
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
@@ -685,7 +658,15 @@ private fun EditorBody(
         }
     }
 
-    Row(modifier = modifier.fillMaxSize().verticalScrollWithIndicators(verticalScroll)) {
+    // The text sits in a vertical scroll, so it is only as tall as its lines: an empty or short file
+    // left the rest of the editor untappable. It is at least as tall as the editor instead.
+    var viewportHeight by remember { mutableIntStateOf(0) }
+    Row(
+        modifier = modifier
+            .fillMaxSize()
+            .onSizeChanged { viewportHeight = it.height }
+            .verticalScrollWithIndicators(verticalScroll),
+    ) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
         // When NOT wrapping, every logical line is exactly one visual line, so a plain stacked Column
         // of numbers lines up with the text. When wrapping, a logical line can span several visual
@@ -748,6 +729,7 @@ private fun EditorBody(
             cursorBrush = SolidColor(OmniColors.amber),
             modifier = Modifier
                 .fillMaxSize()
+                .heightIn(min = with(density) { viewportHeight.toDp() })
                 .testTag("code-editor-input")
                 // Wrap mode: soft-wrap and no horizontal scroll. Otherwise: scroll horizontally so
                 // long lines extend off-screen instead of wrapping.

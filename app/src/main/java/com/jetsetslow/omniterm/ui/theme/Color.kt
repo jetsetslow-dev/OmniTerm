@@ -41,27 +41,42 @@ object OmniColors {
     val textSecondary = Color(0xFF56708A)
     val textMuted = Color(0xFF2C3E52)
 
-    private val hostColors = listOf(cyan, amber, orange, green, red, purple)
+    // Host colours. None is a status colour (green ok, amber warning, red failed, cyan running,
+    // grey offline), so a host's colour never reads as its state.
+    val blue = Color(0xFF448AFF)
+    val indigo = Color(0xFF536DFE)
+    val violet = Color(0xFF7C4DFF)
+    val magenta = Color(0xFFE040FB)
+    val pink = Color(0xFFFF80AB)
 
-    /** Deterministic per-host accent colour, mirroring `hostColor()` in the prototype. */
-    fun hostColor(name: String): Color {
-        if (name.isEmpty()) return cyan
-        val idx = name.sumOf { it.code } % hostColors.size
-        return hostColors[idx]
-    }
-
-    /** The user-selectable accent names, used by the Add/Edit-host colour picker. */
+    /** The colours a host can be given, by the name saved in `ServerEntity.serverColor`. */
     val namedColors: List<Pair<String, Color>> = listOf(
-        "Cyan" to cyan, "Green" to green, "Amber" to amber,
-        "Orange" to orange, "Red" to red, "Purple" to purple,
+        "Blue" to blue, "Indigo" to indigo, "Violet" to violet,
+        "Purple" to purple, "Magenta" to magenta, "Pink" to pink,
     )
 
     /**
-     * Resolve a server's stored [ServerEntity.serverColor] name to a [Color]. "Default" (or any
-     * unknown value) falls back to the deterministic per-name colour so existing rows still look
-     * sensible, while explicit user choices win.
+     * Colours saved before hosts stopped using status colours, and the colour each became: hosts
+     * that differed still differ. Read here rather than rewritten, so older rows and backups keep
+     * working.
      */
-    fun serverAccent(colorName: String, fallbackName: String): Color =
-        namedColors.firstOrNull { it.first.equals(colorName, ignoreCase = true) }?.second
-            ?: hostColor(fallbackName)
+    private val legacyColorNames = mapOf(
+        "cyan" to "Blue", "green" to "Indigo", "amber" to "Violet", "orange" to "Magenta", "red" to "Pink",
+    )
+
+    /** [saved] as one of [namedColors]' names, or "Default" when it names none of them. */
+    fun hostColorName(saved: String): String =
+        legacyColorNames[saved.lowercase()]
+            ?: namedColors.firstOrNull { it.first.equals(saved, ignoreCase = true) }?.first
+            ?: "Default"
+
+    /** The colour a host on "Default" gets: picked by its id, so it stays put through a rename. */
+    fun hostColor(serverId: Int): Color = namedColors[Math.floorMod(serverId, namedColors.size)].second
+
+    /**
+     * A server's colour from its saved [colorName]. "Default" (or any unknown value) takes the
+     * colour its id picks, while explicit user choices win.
+     */
+    fun serverAccent(colorName: String, serverId: Int): Color =
+        namedColors.firstOrNull { it.first == hostColorName(colorName) }?.second ?: hostColor(serverId)
 }

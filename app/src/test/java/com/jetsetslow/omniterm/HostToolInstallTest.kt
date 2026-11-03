@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 
 /**
@@ -44,7 +45,11 @@ class HostToolInstallTest {
                 put("STATE", dir.absolutePath)
             }
             val proc = process.start()
-            proc.outputStream.use { out -> stdin?.let { out.write(it.toByteArray()) } }
+            // A script may finish without reading its input; writing to it then fails, and only
+            // the output and exit code say how it went.
+            try {
+                proc.outputStream.use { out -> stdin?.let { out.write(it.toByteArray()) } }
+            } catch (_: IOException) {}
             val output = proc.inputStream.bufferedReader().readText()
             val code = proc.waitFor()
             return Run(output, code, log.readLines().filter { it.isNotBlank() })
@@ -133,6 +138,13 @@ class HostToolInstallTest {
         )
         assertEquals(run.output, 0, run.exitCode)
         assertFalse(run.log.toString(), run.log.any { it.startsWith("sudo") })
+    }
+
+    @Test
+    fun aScriptMayFinishWithoutReadingItsInput() {
+        // More than a pipe holds, so writing it outlasts a script that never reads it.
+        val run = run("exit 3", emptyMap(), stdin = "x".repeat(1 shl 20))
+        assertEquals(3, run.exitCode)
     }
 
     @Test

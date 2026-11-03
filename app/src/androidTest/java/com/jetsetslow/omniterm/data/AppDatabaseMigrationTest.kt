@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 23
+        const val CURRENT_VERSION = 24
     }
 
     @get:Rule
@@ -221,6 +221,68 @@ class AppDatabaseMigrationTest {
             db.query("SELECT COUNT(*) FROM persistent_sessions WHERE tmuxName = 'main'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals(2, cursor.getInt(0))
+            }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /**
+     * Existing alert rules keep every value and get an empty target, which only TLS and URL checks
+     * read; existing SSH keys keep theirs and get no certificate.
+     */
+    @Test
+    fun migrationToTwentyFourGivesExistingRulesAnEmptyTargetAndAddsTelnetHostsAndKubeClusters() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-23-rule-target"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 23).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey) " +
+                    "VALUES (4, 7, 'Disk Usage', '/srv', 85.0, 'WARNING', '10m', 1, 'backups', NULL)"
+            )
+            db.execSQL(
+                "INSERT INTO ssh_keys (id, alias, keyType, privateKey, publicKey, fingerprint) " +
+                    "VALUES (2, 'laptop', 'ED25519', 'enc:v1:k', 'ssh-ed25519 AAAA laptop', 'SHA256:x')"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT serverId, metricName, mountPoint, thresholdValue, triggerWindow, notes, target FROM alert_rules WHERE id = 4").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(7, cursor.getInt(0))
+                assertEquals("Disk Usage", cursor.getString(1))
+                assertEquals("/srv", cursor.getString(2))
+                assertEquals(85.0, cursor.getDouble(3), 0.0)
+                assertEquals("10m", cursor.getString(4))
+                assertEquals("backups", cursor.getString(5))
+                assertEquals("", cursor.getString(6))
+            }
+            db.query("SELECT alias, privateKey, certificate FROM ssh_keys WHERE id = 2").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("laptop", cursor.getString(0))
+                assertEquals("enc:v1:k", cursor.getString(1))
+                assertEquals("", cursor.getString(2))
+            }
+            db.execSQL("INSERT INTO telnet_hosts (name, host, port) VALUES ('core switch', '10.0.0.2', 23)")
+            db.query("SELECT name, host, port FROM telnet_hosts").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("core switch", cursor.getString(0))
+                assertEquals(23, cursor.getInt(2))
+            }
+            db.execSQL(
+                "INSERT INTO kube_clusters (name, server, caPem, clientCertPem, clientKeyPem, token, namespace) " +
+                    "VALUES ('lab', 'https://10.0.0.5:6443', '', '', '', 'enc:v1:x', 'shop')"
+            )
+            db.query("SELECT name, server, namespace FROM kube_clusters").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("lab", cursor.getString(0))
+                assertEquals("https://10.0.0.5:6443", cursor.getString(1))
+                assertEquals("shop", cursor.getString(2))
             }
         }
         context.deleteDatabase(databaseName)

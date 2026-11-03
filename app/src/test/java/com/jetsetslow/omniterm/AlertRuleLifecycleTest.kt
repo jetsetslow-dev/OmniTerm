@@ -31,6 +31,7 @@ class AlertRuleLifecycleTest {
             base.copy(severity = "WARNING"),
             base.copy(triggerWindow = "10m"),
             base.copy(enabled = false),
+            base.copy(target = "example.com:8443"),
         )
         changes.forEach { assertTrue(alertRuleEvaluationChanged(base, it)) }
     }

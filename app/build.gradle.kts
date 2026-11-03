@@ -150,12 +150,20 @@ val linuxArm64Host =
     System.getProperty("os.arch").lowercase() in setOf("aarch64", "arm64")
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+  // CI has no test-report artifact on a failed build. Keep the missing class and root cause in
+  // its log, rather than reducing every affected test to ClassNotFoundException and a line number.
+  testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
   // Forward the fixture-regeneration opt-in into the test JVM. A bare `-Domniterm...` on the Gradle
   // command line only reaches the daemon, so without this the flag is silently ignored and the
   // fixture appears to regenerate while the committed file never changes.
   systemProperty(
     "omniterm.regenerateFixture",
     providers.systemProperty("omniterm.regenerateFixture").getOrElse("false"),
+  )
+  // Same for SshSignInLiveTest, which signs in to the running test fleet only when asked.
+  systemProperty(
+    "omniterm.liveSsh",
+    providers.systemProperty("omniterm.liveSsh").getOrElse("false"),
   )
   // ToolsPathTextRobolectricTest checks the README's "Tools → …" paths, so editing only the README
   // must rerun the tests rather than leave them up to date.
@@ -185,9 +193,9 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 }
 
 dependencies {
-    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-appwidget:1.2.0")
     // Material3 for Glance
-    implementation("androidx.glance:glance-material3:1.1.1")
+    implementation("androidx.glance:glance-material3:1.2.0")
     // Profile Installer for Baseline Profiles
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
   constraints {
@@ -228,6 +236,10 @@ dependencies {
   }
   // FTP client for the Shares browser. WebDAV rides on the existing OkHttp dependency.
   implementation(libs.commons.net)
+  // FIDO2 (CTAP2) over USB and NFC, for SSH keys kept on a security key (sk-ssh-ed25519,
+  // sk-ecdsa). Yubico's SDK, which talks to any maker's FIDO2 key, not only YubiKeys.
+  implementation(libs.yubikit.android)
+  implementation(libs.yubikit.fido)
   implementation(libs.androidx.compose.material3)
   implementation(libs.androidx.compose.material)
   implementation(libs.androidx.compose.ui)

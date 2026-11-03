@@ -83,8 +83,17 @@ object RemoteCommands {
     const val OT_HELPER =
         "ot(){ n=\$1; shift; if command -v timeout >/dev/null 2>&1; then timeout \"\$n\" \"\$@\"; else \"\$@\"; fi; }; "
 
+    /** What the container lists say on a host with neither Docker nor Podman installed. */
+    const val NO_CONTAINER_RUNTIME = "Neither Docker nor Podman is installed on this host."
+
+    // Starts each container list. Without it a host with neither runtime fell through to the last
+    // resort below and ran `"" ps` (CR came out empty), so the user read "sh: : Permission denied".
+    private const val REQUIRE_RUNTIME =
+        "command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1 || " +
+            "{ echo '$NO_CONTAINER_RUNTIME' >&2; exit 127; }; "
+
     const val DOCKER_PS =
-        OT_HELPER +
+        OT_HELPER + REQUIRE_RUNTIME +
         "found=0; " +
         "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker ps -a --no-trunc --format 'docker\\t$PS_FIELDS_DOCKER'; fi; " +
         "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; fi; " +
@@ -109,7 +118,7 @@ object RemoteCommands {
         "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); [ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi"
 
     const val DOCKER_IMAGES =
-        OT_HELPER +
+        OT_HELPER + REQUIRE_RUNTIME +
         "found=0; " +
         "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker images --no-trunc --format 'docker\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
         "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman images --no-trunc --format 'podman\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
@@ -125,33 +134,115 @@ object RemoteCommands {
     //      stops the blank line that sits *between* the heading and the header from ending us early.
     //      Podman prints sizes as a single token (e.g. "1.234GB", "0B"), so $1=name, $2=links,
     //      $3=size maps cleanly. Volume names with spaces are out of scope (extremely rare).
+    //      It fails when it read no row, so a runtime whose text differs still reaches step 3.
     //   3. `volume ls` template — always available; no size/links, but the list is still correct.
     const val DOCKER_VOLUMES =
-        OT_HELPER +
+        OT_HELPER + REQUIRE_RUNTIME +
         "ot_vols() { rt=\"\$1\"; \"\$rt\" system df -v --format '{{range .Volumes}}{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t{{.Size}}\\t{{.Links}}\\n{{end}}' 2>/dev/null " +
         "|| \"\$rt\" system df -v 2>/dev/null | awk '" +
             "/^Local Volumes/ { f=1; seen=0; next } " +                       // enter the section
-            "f && \\$1==\"VOLUME\" && \\$2==\"NAME\" { seen=1; next } " +      // arm on column header
+            "f && \$1==\"VOLUME\" && \$2==\"NAME\" { seen=1; next } " +        // arm on column header
             "f && seen && /^[[:space:]]*$/ { f=0; next } " +                  // blank line ends it
             "f && seen && /^[A-Za-z].*:/ { f=0 } " +                          // next \"Header:\" ends it
-            "f && seen && NF>=3 { print \\$1 \"\\tlocal\\t\\t\" \\$3 \"\\t\" \\$2 }' " +
+            "f && seen && NF>=3 { print \$1 \"\\tlocal\\t\\t\" \$3 \"\\t\" \$2; n++ } " +
+            "END { exit n ? 0 : 1 }' " +                                      // none read: try `volume ls`
         "|| \"\$rt\" volume ls --format '{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t\\t'; }; " +
         "found=0; if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot_vols docker | sed 's/^/docker\\t/'; fi; " +
         "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot_vols podman | sed 's/^/podman\\t/'; fi; " +
         "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then ot_vols $CR | sed 's/^/podman\\t/'; else ot_vols $CR | sed 's/^/docker\\t/'; fi; fi"
 
     const val DOCKER_NETWORKS =
-        OT_HELPER +
+        OT_HELPER + REQUIRE_RUNTIME +
         "found=0; " +
         "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker network ls --format 'docker\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
         "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman network ls --format 'podman\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
         "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR network ls --format 'podman\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}'; else $CR network ls --format 'docker\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}'; fi; fi"
 
     // ── Remote OS detection ──
-    // Cheap one-shot probe run once per host (result cached in AppViewModel). POSIX hosts answer
-    // with `uname -s` (Linux/FreeBSD/Darwin); PowerShell/cmd hosts have no `uname`, so the
-    // `|| echo Windows` fallback fires.
-    const val OS_PROBE = "uname -s 2>/dev/null || echo Windows"
+    // Cheap one-shot probe run once per host (result cached in AppViewModel), before anything
+    // else, so it goes to the login shell as written and every login shell has to read it alike.
+    // sh, csh, fish and cmd all accept `||`; Windows PowerShell rejects it, and [normaliseOs] reads
+    // that parse error. No `2>/dev/null`: tcsh takes the `2` as an argument to uname, so the old
+    // probe answered "Windows" for a FreeBSD user who kept csh. The second line names the login
+    // shell ([RemoteParsers.parseLoginShell]); cmd just echoes it all on the first.
+    const val OS_PROBE = "uname -s || echo Windows; echo \$SHELL"
+
+    /**
+     * Directories package managers install into that a shell started for one command leaves off
+     * PATH. Such a shell reads no login profile, so on macOS its PATH is /usr/bin:/bin:/usr/sbin:/sbin
+     * and Homebrew's tmux, Docker Desktop's docker and Podman's own installer all read as missing.
+     * Appended, so the host's own tools still come first.
+     */
+    private const val EXTRA_PATH =
+        "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/home/linuxbrew/.linuxbrew/bin:" +
+            "/opt/podman/bin:/snap/bin:\$HOME/.docker/bin:\$HOME/.rd/bin"
+
+    /** Bytes that reach the login shell as themselves in [inPosixShell]; every other byte is escaped. */
+    private const val SHELL_NEUTRAL = " _./:=,@+-"
+
+    /**
+     * [command] run by `sh`, whatever the user's login shell is.
+     *
+     * sshd hands each command to the login shell, and every command here is POSIX sh. tcsh rejects
+     * `2>/dev/null` and shell functions; fish rejects `VAR=value` and `$(…)`; zsh keeps `$ids`
+     * as one word and stops at a glob that matches nothing. So on a FreeBSD host whose user kept
+     * csh nothing worked at all, on fish no service, cron, tmux or container list loaded, and on a
+     * Mac (zsh) container restart counts never arrived.
+     *
+     * The script travels as printf escapes inside single quotes, so the login shell sees letters,
+     * digits, [SHELL_NEUTRAL] and backslash-digit runs only: no quote, newline, `!` or doubled
+     * backslash that csh or fish would read specially. Exported variables (PATH from ~/.zshenv,
+     * DOCKER_HOST from ~/.bashrc) carry over because the login shell still starts first.
+     */
+    fun inPosixShell(command: String): String = "exec " + posixScript(command)
+
+    private fun posixScript(command: String): String {
+        val script = "PATH=\"\$PATH:$EXTRA_PATH\"; export PATH; $command"
+        val escaped = StringBuilder(script.length * 2)
+        for (byte in script.toByteArray(Charsets.UTF_8)) {
+            val c = byte.toInt() and 0xff
+            if (c < 0x80 && (c.toChar().isLetterOrDigit() || c.toChar() in SHELL_NEUTRAL)) {
+                escaped.append(c.toChar())
+            } else {
+                escaped.append('\\').append(c.toString(8).padStart(3, '0'))
+            }
+        }
+        return "sh -c 'eval \"\$(printf \"$escaped\")\"'"
+    }
+
+    private val POSIX_LOGIN_SHELLS =
+        setOf("sh", "bash", "rbash", "dash", "ash", "busybox", "ksh", "ksh93", "mksh", "lksh", "oksh", "pdksh", "yash", "posh", "zsh")
+
+    /**
+     * A line the app types into the interactive terminal, as [loginShell] can run it. sh-like
+     * shells take [line] as written. csh, tcsh and fish cannot parse it, so it goes to sh. The
+     * login shell stays underneath: when the line fails (no tmux) the user still has a prompt, as
+     * on sh, and when it succeeds the shell then exits as the line's own `exec` would have made it.
+     */
+    fun forInteractiveShell(line: String, loginShell: String?): String {
+        val name = loginShell?.trim()?.substringAfterLast('/').orEmpty()
+        if (name.isEmpty() || name in POSIX_LOGIN_SHELLS) return line
+        return posixScript(line.trimEnd('\n', '\r')) + " && exit\n"
+    }
+
+    /** Longest command cmd.exe runs (8191 characters, less a margin); a test holds every script to it. */
+    const val WINDOWS_COMMAND_MAX = 8000
+
+    /**
+     * Runs a PowerShell [script] the same under every shell Windows' OpenSSH can be set to.
+     *
+     * Written as `powershell -Command "…"`, cmd passes the script through untouched, but a
+     * PowerShell login shell (OpenSSH's DefaultShell setting) first expands `$_` and `$p` inside
+     * the double quotes, so every Windows list came back as errors. -EncodedCommand carries the
+     * script as base64, which no shell alters. Progress records are off: over a pipe PowerShell
+     * writes them out as CLIXML. Never pack a long script into a self-unpacking one instead:
+     * Defender stops compressed, encoded PowerShell as a malware stager.
+     */
+    fun powershell(script: String): String =
+        "powershell -NoProfile -NonInteractive -EncodedCommand " +
+            kotlin.io.encoding.Base64.Default.encode(
+                "\$ProgressPreference='SilentlyContinue'; $script".toByteArray(Charsets.UTF_16LE),
+            )
 
     /** Marks the end of `crontab -l` output so its exit status can be read alongside it. */
     const val CRON_EXIT_MARKER = "---OMNITERM-CRON-EXIT---"
@@ -184,9 +275,7 @@ object RemoteCommands {
      * silicon and Intel, MacPorts, and Homebrew on Linux, and leaves PATH alone wherever tmux is
      * already found.
      */
-    const val TMUX_PATH =
-        "command -v tmux >/dev/null 2>&1 || " +
-            "PATH=\"\$PATH:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/home/linuxbrew/.linuxbrew/bin\"; "
+    const val TMUX_PATH = "command -v tmux >/dev/null 2>&1 || PATH=\"\$PATH:$EXTRA_PATH\"; "
 
     /** Prints "yes" if tmux is on PATH, else "no". */
     const val TMUX_CHECK = TMUX_PATH + "command -v tmux >/dev/null 2>&1 && echo yes || echo no"
@@ -383,12 +472,13 @@ object RemoteCommands {
 
     /**
      * What the run's tmux session executes: [command] in the user's shell, as a plain broadcast runs
-     * it, shown in the pane and written to the log. The exit status is published only once the log
-     * has every byte, and the session closes when the command ends, so nothing lingers.
+     * it, shown in the pane and written to the log; in sh when it is the app's own ([userShell]
+     * false). The exit status is published only once the log has every byte, and the session closes
+     * when the command ends, so nothing lingers.
      */
-    fun broadcastTmuxRunner(runId: String, command: String): String =
+    fun broadcastTmuxRunner(runId: String, command: String, userShell: Boolean = true): String =
         broadcastFiles(runId) + "\n" +
-            "{ \"\${SHELL:-/bin/sh}\" -c ${shellQuote(command)}; echo \$? > \"\$F.code\"; } 2>&1 | tee -a \"\$F.log\"\n" +
+            "{ ${if (userShell) "\"\${SHELL:-/bin/sh}\"" else "sh"} -c ${shellQuote(command)}; echo \$? > \"\$F.code\"; } 2>&1 | tee -a \"\$F.log\"\n" +
             "mv -f \"\$F.code\" \"\$F.exit\"\n" +
             "tmux kill-session -t ${broadcastTmuxSession(runId)} 2>/dev/null\n"
 
@@ -480,7 +570,9 @@ object RemoteCommands {
             s.startsWith("Darwin", true) -> "Darwin"
             // cmd.exe answers `uname` with "not recognized"; Windows PowerShell 5.1 as the SSH shell
             // rejects the probe's `||` before running anything, so its first line is only "At line:1".
-            s.contains("Windows", true) ||
+            // With Git's or MSYS2's tools on PATH, uname answers MINGW64_NT-10.0-26100 and the like,
+            // but the shell is still cmd or PowerShell.
+            s.contains("Windows", true) || s.contains("_NT-", true) ||
                 WINDOWS_SHELL_ERRORS.any { raw.contains(it, ignoreCase = true) } -> "Windows"
             // Empty (missing @OS section) or unknown Unix-like → Linux, the safest superset.
             else -> "Linux"
@@ -555,8 +647,8 @@ object RemoteCommands {
     // Task Manager's GPU column shows it. The counter classes are not translated, unlike
     // Get-Counter's paths, so this works on any display language.
     // See [RemoteParsers.parseProcessUsage].
-    val PROCESSES_WINDOWS =
-        "powershell -NoProfile -Command \"\$p = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | " +
+    val PROCESSES_WINDOWS = powershell(
+        "\$p = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | " +
             "Where-Object { \$_.IDProcess -ne 0 } | Sort-Object PercentProcessorTime -Descending | " +
             "Select-Object -First 80; \$p | ForEach-Object { \$_.IDProcess.ToString() + ' NA ' + " +
             "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }; " +
@@ -564,7 +656,8 @@ object RemoteCommands {
             "\$_.IOReadBytesPersec + ' ' + \$_.IOWriteBytesPersec }; " +
             "try { \$g = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop; " +
             "'$PROCESS_GPU_MARKER'; \$g | Group-Object { (\$_.Name -split '_')[1] } | ForEach-Object { " +
-            "\$_.Name + ' ' + (\$_.Group | Measure-Object UtilizationPercentage -Maximum).Maximum } } catch { }\""
+            "\$_.Name + ' ' + (\$_.Group | Measure-Object UtilizationPercentage -Maximum).Maximum } } catch { }",
+    )
 
     // Detect the init system instead of assuming systemd: OpenRC hosts (Alpine, Gentoo) get
     // rc-status output (marked so the parser switches format); other inits return a marker the
@@ -600,7 +693,11 @@ object RemoteCommands {
         "on=\" \$(service -e 2>/dev/null | sed 's|.*/||' | tr '\\n' ' ') \"; " +
         // Upper-case entries (FILESYSTEMS, LOGIN, …) are rcorder checkpoints, not services.
         "for svc in \$(service -l 2>/dev/null | grep -v '^[A-Z_]*\$'); do " +
-        "if ot 5 service \"\$svc\" onestatus >/dev/null 2>&1; then s=running; else s=stopped; fi; " +
+        // Without root, a pidfile only root may read (cron's, syslogd's) makes a running service
+        // answer "Permission denied … is not running"; its process says otherwise.
+        "if o=\$(ot 5 service \"\$svc\" onestatus 2>&1); then s=running; " +
+        "elif [ \"\${o#*Permission denied}\" != \"\$o\" ] && pgrep -x \"\$svc\" >/dev/null 2>&1; then s=running; " +
+        "else s=stopped; fi; " +
         "case \"\$on\" in *\" \$svc \"*) e=enabled;; *) e=disabled;; esac; " +
         "printf '%s\\t%s\\t%s\\t\\n' \"\$svc\" \"\$s\" \"\$e\"; done; " +
         "else echo '---NOSYSTEMD---'; fi"
@@ -622,9 +719,10 @@ object RemoteCommands {
         "case \"\$off\" in *\" \$label \"*) e=disabled;; *) e=enabled;; esac; " +
         "printf '%s\\t%s\\t%s\\t\\n' \"\$label\" \"\$s\" \"\$e\"; done"
 
-    const val SERVICES_WINDOWS =
-        "powershell -NoProfile -Command \"'$SERVICE_TABLE_MARKER'; Get-Service | ForEach-Object { " +
-            "\$_.Name + [char]9 + \$_.Status + [char]9 + \$_.StartType + [char]9 + \$_.DisplayName }\""
+    val SERVICES_WINDOWS = powershell(
+        "'$SERVICE_TABLE_MARKER'; Get-Service | ForEach-Object { " +
+            "\$_.Name + [char]9 + \$_.Status + [char]9 + \$_.StartType + [char]9 + \$_.DisplayName }",
+    )
 
     /** Per-OS service list; [RemoteParsers.parseServices] reads every variant. */
     fun servicesFor(os: String): String = when (normaliseOs(os)) {
@@ -664,10 +762,11 @@ object RemoteCommands {
                 "if [ -z \"\$L\" ]; then echo '---NOLOGS---'; else printf '%s\\n' \"\$L\"; fi"
     }
 
-    private fun journalWindows(lines: Int) =
-        "powershell -NoProfile -Command \"Get-WinEvent -LogName System -MaxEvents $lines | " +
+    private fun journalWindows(lines: Int) = powershell(
+        "Get-WinEvent -LogName System -MaxEvents $lines | " +
             "ForEach-Object { \$_.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ssK') + ' ' + " +
-            "\$_.ProviderName + ': ' + \$_.Message }\""
+            "\$_.ProviderName + ': ' + \$_.Message }",
+    )
 
     /**
      * Wrap a command so it runs under sudo. When [sudoPassword] is non-blank we use `sudo -S`,
@@ -764,8 +863,7 @@ object RemoteCommands {
     }
 
     private fun windowsServiceAction(name: String, action: String): String {
-        // Inside cmd's double quotes only `"` and `%` are still special, and no service name needs them.
-        if (name.any { it == '"' || it == '%' }) return "echo This service name cannot be passed to PowerShell safely."
+        // A single-quoted PowerShell string, whose only special character is the quote itself.
         val n = "'" + name.replace("'", "''") + "'"
         val ps = when (action) {
             "start" -> "Start-Service -Name $n"
@@ -775,7 +873,7 @@ object RemoteCommands {
             "disable" -> "Set-Service -Name $n -StartupType Disabled"
             else -> "Get-Service -Name $n"
         }
-        return "powershell -NoProfile -Command \"$ps\""
+        return powershell(ps)
     }
 
     /**
@@ -826,7 +924,7 @@ object RemoteCommands {
             QuickCheck.Processes ->
                 "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | Format-Table Id,ProcessName,CPU,WS -AutoSize"
         }
-        "powershell -NoProfile -Command \"$ps\""
+        powershell(ps)
     } else {
         when (check) {
             QuickCheck.Uptime -> "uptime"
@@ -901,12 +999,19 @@ object RemoteCommands {
             "'{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}' ${shellQuote(id)} 2>&1"
 
     /**
-     * The command to run inside the terminal to exec an interactive shell in a container. Tries
-     * bash, falls back to sh — the common pattern for minimal images. Runs as the container's
-     * default user; the terminal PTY drives it interactively.
+     * The shell to start inside a container: bash where the image has it, sh where it does not.
+     * `exec bash || exec sh` never reached sh, because a shell exits when exec cannot find its
+     * program, so no shell opened in a container without bash (Alpine images among them).
+     */
+    const val CONTAINER_SHELL_SCRIPT = "command -v bash >/dev/null 2>&1 && exec bash || exec sh"
+    const val CONTAINER_SHELL = "sh -c '$CONTAINER_SHELL_SCRIPT'"
+
+    /**
+     * The command to run inside the terminal to exec an interactive shell in a container. Runs as
+     * the container's default user; the terminal PTY drives it interactively.
      */
     fun dockerExecShell(id: String, runtime: String = ""): String =
-        "${runtimeCommand(runtime)} exec -it ${shellQuote(id)} sh -c 'exec bash 2>/dev/null || exec sh'"
+        "${runtimeCommand(runtime)} exec -it ${shellQuote(id)} $CONTAINER_SHELL"
 
     // ── Archive create / extract over the SFTP host's shell ──
 
@@ -974,51 +1079,124 @@ object RemoteCommands {
         return "cd ${shellQuote(dir)} && mkdir -p $destQuoted && $extract 2>&1"
     }
 
+    /** True on the host when the resolved compose provider is podman-compose. */
+    private const val IS_PODMAN_COMPOSE = "[ \"\$OT_COMPOSE\" = podman-compose ]"
+
+    /**
+     * `up -d` whose exit status means what it means with Docker Compose.
+     *
+     * podman-compose creates every container of the stack on each `up`. On a stack that already
+     * exists each one fails with "the container name … is already in use", is started anyway, and
+     * the run exits 125, so Up, Update, Scale and redeploying a running Podman stack all read as
+     * failed. Those lines are dropped and alone do not fail the run when the container belongs to
+     * [project]; any other error still does. Other providers run `up` unchanged.
+     */
+    private fun composeUp(flags: String, project: String, extra: String = ""): String {
+        val up = "\$OT_COMPOSE $flags up -d$extra"
+        val owner = "\$(podman inspect -f '{{index .Config.Labels \"io.podman.compose.project\"}}' \"\$n\" 2>/dev/null)"
+        return "if $IS_PODMAN_COMPOSE; then { $up 2>&1; echo \"__OT_RC=\$?\"; } | ( rc=1; used=0; other=0; " +
+            "while IFS= read -r line; do case \$line in " +
+            "__OT_RC=*) rc=\${line#__OT_RC=} ;; " +
+            "*'is already in use'*) n=\${line#*container name \\\"}; n=\${n%%\\\"*}; " +
+            "if [ \"$owner\" = ${shellQuote(project)} ]; then used=1; else other=1; printf '%s\\n' \"\$line\"; fi ;; " +
+            "*) case \$line in Error*) other=1 ;; esac; printf '%s\\n' \"\$line\" ;; esac; done; " +
+            "[ \"\$rc\" = 0 ] || { [ \"\$used\" = 1 ] && [ \"\$other\" = 0 ]; } || exit \"\$rc\" ); " +
+            "else $up; fi"
+    }
+
+    /**
+     * Removes the podman-compose containers of [project] (narrowed by [filter]) for which [keep]
+     * fails; [keep] sees each container's name as `$n` and the label in [label] as `$v`.
+     */
+    private fun removePodmanComposeContainers(project: String, filter: String, label: String, keep: String): String =
+        "podman ps -a --filter label=io.podman.compose.project=${shellQuote(project)}$filter " +
+            "--format '{{.Names}} {{index .Labels \"$label\"}}' | ( failed=0; while read -r n v; do " +
+            "$keep && continue; if podman rm -f \"\$n\" >/dev/null; then echo \"Removed \$n\"; else failed=1; fi; " +
+            "done; exit \$failed )"
+
+    /**
+     * Removes the podman-compose containers of [project] whose service the config ([c] is the
+     * compose command with its -f flags) no longer defines. podman-compose's `up` accepts
+     * --remove-orphans but ignores it.
+     */
+    private fun removePodmanComposeOrphans(c: String, project: String): String =
+        "services=\$($c config --services) && " + removePodmanComposeContainers(
+            project, "", "com.docker.compose.service", "printf '%s\\n' \"\$services\" | grep -qxF -- \"\$v\"",
+        )
+
     fun dockerComposeAction(project: String, workingDir: String, configFiles: String, action: String, service: String? = null, replicas: Int? = null, removeOrphans: Boolean = false, runtime: String = ""): String {
         val flags = composeFlags(project, configFiles)
         val orphansFlag = if (removeOrphans) " --remove-orphans" else ""
         val resolver = composeResolve(runtime)
+        val c = "\$OT_COMPOSE $flags"
 
         // "update" is multi-step and must stay guarded by the `cd`, so it builds its own tail rather
         // than plugging a single verb into the shared `$OT_COMPOSE $flags <verb>` template below.
         // Steps: pull registry images (skipping buildable services; non-fatal so a login hiccup can't
         // block the build), then `build --pull` to (re)build Dockerfile images + refresh their bases,
         // then `up -d` to recreate, then `ps`. build/up/ps are `&&`-chained so a real failure exits
-        // non-zero; the whole tail runs only after `cd` succeeds.
+        // non-zero; the whole tail runs only after `cd` succeeds. podman-compose skips buildable
+        // services on its own and has no --ignore-buildable, and its `up` recreates a container only
+        // when the compose file changed, never for a newer image, so it recreates them all.
         if (action == "update") {
-            val c = "\$OT_COMPOSE $flags"
             val tail = "printf '[1/4] Pulling images\\n'; " +
-                "if ! $c pull --ignore-buildable; then " +
+                "if $IS_PODMAN_COMPOSE; then $c pull || printf 'Warning: image pull failed; continuing with build/local images. Review the errors above.\\n'; " +
+                "elif ! $c pull --ignore-buildable; then " +
                 "printf 'Warning: selective pull failed; retrying a full pull.\\n'; " +
                 "$c pull || printf 'Warning: image pull failed; continuing with build/local images. Review the errors above.\\n'; fi; " +
                 "printf '[2/4] Building images\\n' && BUILDKIT_PROGRESS=plain $c build --pull && " +
-                "printf '[3/4] Recreating services\\n' && $c up -d$orphansFlag && " +
+                "printf '[3/4] Recreating services\\n' && " +
+                "if $IS_PODMAN_COMPOSE; then ${composeUp(flags, project, " --force-recreate --remove-orphans")}; " +
+                "else $c up -d$orphansFlag; fi && " +
                 "printf '[4/4] Checking services\\n' && $c ps"
             return "$resolver && cd ${shellQuote(workingDir)} && { $tail; } 2>&1"
         }
 
-        val verb = when (action) {
-            // Build (and refresh base images) without pulling registry images or recreating.
-            "build" -> "build --pull"
-            "pull" -> "pull"
-            "down" -> "down$orphansFlag"
-            "up" -> "up -d$orphansFlag"
-            "forceRecreate" -> "up -d --force-recreate$orphansFlag"
-            "restart" -> "restart"
-            "logs" -> "logs --tail 200"
-            "followLogs" -> "logs -f --tail 100"
-            "config" -> "config"
-            "ps" -> "ps"
-            "serviceLogs" -> "logs --tail 200 ${shellQuote(service.orEmpty())}"
-            "serviceRestart" -> "restart ${shellQuote(service.orEmpty())}"
-            "serviceStop" -> "stop ${shellQuote(service.orEmpty())}"
-            "serviceRemove" -> "rm -sf ${shellQuote(service.orEmpty())}"
-            "scale" -> "up -d --scale ${shellQuote(service.orEmpty())}=${replicas?.coerceAtLeast(0) ?: 1}"
-            "removeOrphans" -> "up -d --remove-orphans"
-            else -> "ps"
+        val svc = shellQuote(service.orEmpty())
+        val count = replicas?.coerceAtLeast(0) ?: 1
+        // podman-compose knows only what the compose file declares: `up --scale` (1.4 and later)
+        // never removes a replica, `up` ignores --remove-orphans, `down` leaves extra replicas
+        // behind and then cannot remove the stack's pod or network, and there is no `rm`. Those
+        // actions work on the project's labelled containers directly instead.
+        val serviceFilter = " --filter label=com.docker.compose.service=$svc"
+        val podmanBody: String? = when (action) {
+            "down" -> "if $c down --help 2>/dev/null | grep -q -- --remove-orphans; then $c down --remove-orphans; " +
+                "else $c down$orphansFlag; fi"
+            "forceRecreate" -> composeUp(flags, project, " --force-recreate --remove-orphans")
+            "serviceRemove" -> removePodmanComposeContainers(project, serviceFilter, "com.docker.compose.service", "false")
+            "scale" -> composeUp(flags, project, " --scale $svc=$count $svc") + " && " +
+                removePodmanComposeContainers(
+                    project, serviceFilter, "com.docker.compose.container-number",
+                    "! [ \"\${v:-0}\" -gt $count ] 2>/dev/null",
+                ) + " && made=\$((\$(podman ps -aq --filter label=io.podman.compose.project=${shellQuote(project)}$serviceFilter | wc -l))) && " +
+                "{ [ \"\$made\" -eq $count ] || { printf 'podman-compose made %s of %s containers for %s. " +
+                "Scaling a service needs podman-compose 1.4 or later.\\n' \"\$made\" $count $svc >&2; false; }; }"
+            "removeOrphans" -> removePodmanComposeOrphans(c, project) + " && " + composeUp(flags, project)
+            else -> null
         }
+        val body = when (action) {
+            // Build (and refresh base images) without pulling registry images or recreating.
+            "build" -> "$c build --pull"
+            "pull" -> "$c pull"
+            "down" -> "$c down$orphansFlag"
+            "up" -> composeUp(flags, project, orphansFlag)
+            "forceRecreate" -> "$c up -d --force-recreate$orphansFlag"
+            "restart" -> "$c restart"
+            "logs" -> "$c logs --tail 200"
+            "followLogs" -> "$c logs -f --tail 100"
+            "config" -> "$c config"
+            "ps" -> "$c ps"
+            "serviceLogs" -> "$c logs --tail 200 $svc"
+            "serviceRestart" -> "$c restart $svc"
+            "serviceStop" -> "$c stop $svc"
+            "serviceRemove" -> "$c rm -sf $svc"
+            "scale" -> "$c up -d --scale $svc=$count"
+            "removeOrphans" -> "$c up -d --remove-orphans"
+            else -> "$c ps"
+        }
+        val run = if (podmanBody == null) body else "if $IS_PODMAN_COMPOSE; then $podmanBody; else $body; fi"
         // Resolve the compose entrypoint (docker/podman, builtin or standalone) before running.
-        return "$resolver && cd ${shellQuote(workingDir)} && \$OT_COMPOSE $flags $verb 2>&1"
+        return "$resolver && cd ${shellQuote(workingDir)} && { $run; } 2>&1"
     }
 
     /**
@@ -1033,7 +1211,9 @@ object RemoteCommands {
      *   5. If `up -d` fails, restore the backup over the live file so the on-disk config matches the
      *      still-running (old) stack, and exit non-zero so the UI reports failure.
      *
-     * [yamlBase64] is the new file contents, base64-encoded so arbitrary YAML survives the shell.
+     * The new file's contents go to the command's stdin, byte for byte. Written into the command,
+     * a large stack outgrew the longest argument a host accepts, and needed a `base64` the host
+     * might not have.
      */
     /**
      * [composeFilePath] is the ABSOLUTE path to the compose file to edit (e.g.
@@ -1046,10 +1226,10 @@ object RemoteCommands {
     fun composeDeploy(
         composeFilePath: String,
         project: String,
-        yamlBase64: String,
         workingDir: String = "",
         configFiles: String = "",
         runtime: String = "",
+        removeOrphans: Boolean = false,
     ): String {
         // Expand a leading ~ at runtime on the remote host; shell won't expand it inside single quotes.
         fun expandPath(p: String) = if (p.startsWith("~/")) "\$HOME/${shellQuote(p.removePrefix("~/"))}" else shellQuote(p)
@@ -1075,10 +1255,6 @@ object RemoteCommands {
             val finalFlags = if (matched) flags else "-f $replacement $flags"
             return "$finalFlags -p ${shellQuote(project)}"
         }
-        fun decodeBase64To(target: String): String =
-            "{ printf '%s' ${shellQuote(yamlBase64)} | base64 -d > $target 2>/dev/null || " +
-                "printf '%s' ${shellQuote(yamlBase64)} | base64 --decode > $target 2>/dev/null || " +
-                "printf '%s' ${shellQuote(yamlBase64)} | base64 -D > $target; }"
         val file = expandPath(composeFilePath)
         val bak = expandPath("$composeFilePath.omniterm.bak")
         // Directory of the compose file, so `compose` runs with the right relative-path context
@@ -1089,7 +1265,8 @@ object RemoteCommands {
         val liveFlags = flagsWithReplacement(file)
         val resolver = composeResolve(runtime)
         return buildString {
-            append(resolver)
+            // Nothing before the staging step may read stdin: it holds the new file.
+            append("{ $resolver; } </dev/null")
             append(" && umask 077")
             append(" && mkdir -p $dir")
             append(" && tmp=\$(mktemp ${dir}/.omniterm-compose.XXXXXX)")
@@ -1097,7 +1274,7 @@ object RemoteCommands {
             append(" && trap 'rm -f \"\$tmp\" \"\$err\"' EXIT")
             append(" && { existed=0; [ -f $file ] && existed=1; true; }")
             // 2. stage the new contents next to the real file
-            append(" && ${decodeBase64To("\"\$tmp\"")}")
+            append(" && cat > \"\$tmp\"")
             // 3. validate the staged file with -f (abs path); abort untouched on parse error.
             //    On failure: emit the compose error and bail. On success: still emit any warnings
             //    (missing env vars, duplicate networks, etc.) so they're visible in the deploy banner.
@@ -1108,9 +1285,16 @@ object RemoteCommands {
             append(" && { if [ -f $file ]; then cp $file $bak; fi; }")
             append(" && mv \"\$tmp\" $file")
             // 5. bring it up via the exact file path; on failure restore the backup and report non-zero
-            append(" && { if ! \$OT_COMPOSE $liveFlags up -d 2>&1; then ")
+            //    With [removeOrphans] the containers of services the new file dropped go too.
+            append(" && { if ! { ${composeUp(liveFlags, project, if (removeOrphans) " --remove-orphans" else "")}; } 2>&1; then ")
             append("if [ \"\$existed\" = 1 ] && [ -f $bak ]; then echo 'DEPLOY FAILED — restoring previous compose file' >&2; mv $bak $file; ")
             append("else echo 'DEPLOY FAILED — removing new compose file' >&2; rm -f $file; fi; exit 1; fi; }")
+            // The stack already runs the new file by now, so a container that will not go is
+            // reported without failing the deploy.
+            if (removeOrphans) {
+                append(" && { if $IS_PODMAN_COMPOSE; then { ${removePodmanComposeOrphans("\$OT_COMPOSE $liveFlags", project)}; } 2>&1 ")
+                append("|| echo 'Some containers of removed services could not be removed.' >&2; fi; }")
+            }
             append(" && echo 'OMNITERM_DEPLOY_OK'")
         }
     }
@@ -1268,17 +1452,16 @@ object RemoteCommands {
     }
 
     /** Windows (PowerShell) best-effort metrics: CPU load %, memory, logical disks, uptime, procs. */
-    val METRICS_WINDOWS =
-        "powershell -NoProfile -Command \"" +
-            "Write-Output '@OS'; Write-Output 'Windows'; " +
+    val METRICS_WINDOWS = powershell(
+        "Write-Output '@OS'; Write-Output 'Windows'; " +
             "Write-Output '@WINCPU'; (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; " +
             "Write-Output '@WINMEM'; \$o=Get-CimInstance Win32_OperatingSystem; " +
             "Write-Output (([int64]\$o.TotalVisibleMemorySize*1024).ToString()+' '+([int64]\$o.FreePhysicalMemory*1024).ToString()); " +
             "Write-Output '@WINDISK'; Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { " +
             "\$_.DeviceID+' '+\$_.Size+' '+\$_.FreeSpace }; " +
             "Write-Output '@WINUP'; [int64]((Get-Date)-(Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalSeconds; " +
-            "Write-Output '@WINPROC'; (Get-Process).Count" +
-            "\""
+            "Write-Output '@WINPROC'; (Get-Process).Count",
+    )
 
     /**
      * Output that means a privileged command was refused rather than run.
@@ -1460,6 +1643,10 @@ object RemoteParsers {
         }
         return size?.let { FolderSize(it, complete) }
     }
+
+    /** The login shell [RemoteCommands.OS_PROBE] named on a Unix host, e.g. /usr/local/bin/fish; else blank. */
+    fun parseLoginShell(osProbe: String): String =
+        osProbe.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.drop(1).firstOrNull { it.startsWith("/") }.orEmpty()
 
     /** Output of [RemoteCommands.DOCKER_RUNTIMES]: one runtime name per line, anything else ignored. */
     fun parseRuntimeList(output: String): Set<String> =
@@ -1712,16 +1899,22 @@ object RemoteParsers {
             }
             .toList()
 
+    /**
+     * A container listing's rows, each as its runtime and its fields. Every listing command starts
+     * its rows with "docker" or "podman"; any other line is the host talking (an error, a banner, a
+     * tool's complaint) and no row at all. Read as rows, such lines put an awk error into Volumes as
+     * a volume with no name, and a row cut short threw instead of being skipped.
+     */
+    private fun runtimeRows(output: String, fields: Int): Sequence<Pair<String, List<String>>> =
+        output.lineSequence().mapNotNull { line ->
+            val raw = line.trimEnd().split('\t')
+            val runtime = raw.first()
+            if ((runtime == "docker" || runtime == "podman") && raw.size > fields) runtime to raw.drop(1) else null
+        }
+
     fun parseDockerPs(output: String): List<SimContainer> =
-        output.lineSequence()
-            .map { it.trimEnd() }
-            .filter { it.isNotBlank() && !it.startsWith("SSH Error") }
-            .mapNotNull { line ->
-                val raw = line.split('\t')
-                if (raw.size < 4) return@mapNotNull null
-                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
-                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
-                val t = if (hasRuntimePrefix) raw.drop(1) else raw
+        runtimeRows(output, fields = 4)
+            .map { (runtime, t) ->
                 val statusRaw = t[3].trim()
                 val healthRaw = Regex("""\((healthy|unhealthy|starting)\)""", RegexOption.IGNORE_CASE)
                     .find(statusRaw)
@@ -1744,7 +1937,7 @@ object RemoteParsers {
                     health = healthRaw,
                     ports = t.getOrElse(4) { "" }.ifBlank { "—" },
                     group = t.getOrElse(5) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty().ifEmpty { "standalone" },
-                    host = "",
+                    serverId = 0,
                     composeService = t.getOrElse(6) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty(),
                     composeWorkingDir = t.getOrElse(7) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty(),
                     composeConfigFiles = t.getOrElse(8) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty(),
@@ -1772,15 +1965,8 @@ object RemoteParsers {
             .toMap()
 
     fun parseDockerImages(output: String): List<SimDockerImage> =
-        output.lineSequence()
-            .map { it.trimEnd() }
-            .filter { it.isNotBlank() && !it.startsWith("SSH Error") }
-            .mapNotNull { line ->
-                val raw = line.split('\t')
-                if (raw.size < 5) return@mapNotNull null
-                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
-                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
-                val t = if (hasRuntimePrefix) raw.drop(1) else raw
+        runtimeRows(output, fields = 5)
+            .map { (runtime, t) ->
                 SimDockerImage(
                     id = t[0].removePrefix("sha256:").take(12),
                     repository = t[1],
@@ -1793,15 +1979,9 @@ object RemoteParsers {
             .toList()
 
     fun parseDockerVolumes(output: String): List<SimDockerVolume> =
-        output.lineSequence()
-            .map { it.trimEnd() }
-            .filter { it.isNotBlank() && !it.startsWith("SSH Error") }
-            .mapNotNull { line ->
-                val raw = line.split('\t')
-                if (raw.size < 2) return@mapNotNull null
-                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
-                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
-                val t = if (hasRuntimePrefix) raw.drop(1) else raw
+        runtimeRows(output, fields = 2)
+            .filter { (_, t) -> t[0].isNotBlank() }
+            .map { (runtime, t) ->
                 val linksStr = t.getOrElse(4) { "0" }
                 val links = linksStr.toIntOrNull() ?: 0
 
@@ -1817,17 +1997,8 @@ object RemoteParsers {
             .toList()
 
     fun parseDockerNetworks(output: String): List<SimDockerNetwork> =
-        output.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("NETWORK") }
-            .mapNotNull { line ->
-                val raw = line.split('\t')
-                if (raw.size < 3) return@mapNotNull null
-                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
-                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
-                val t = if (hasRuntimePrefix) raw.drop(1) else raw
-                SimDockerNetwork(id = t[0].take(12), name = t[1], driver = t[2], runtime = runtime)
-            }
+        runtimeRows(output, fields = 3)
+            .map { (runtime, t) -> SimDockerNetwork(id = t[0].take(12), name = t[1], driver = t[2], runtime = runtime) }
             .toList()
 
     /** Dispatch host-metrics parsing by the detected remote OS (from the @OS section). */

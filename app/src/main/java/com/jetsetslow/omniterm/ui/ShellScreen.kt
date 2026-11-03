@@ -4,7 +4,6 @@ import androidx.annotation.StringRes
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +26,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
@@ -36,8 +36,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.SettingsEthernet
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -52,6 +55,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -94,11 +98,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -110,9 +116,11 @@ import com.jetsetslow.omniterm.data.term.TermRow
 import com.jetsetslow.omniterm.data.term.TerminalEmulator
 import com.jetsetslow.omniterm.data.term.TerminalSnapshot
 import com.jetsetslow.omniterm.ui.theme.OmniColors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.ceil
 import androidx.compose.ui.res.stringResource
@@ -122,7 +130,9 @@ import com.jetsetslow.omniterm.R
 private fun SessionPicker(viewModel: AppViewModel) {
     val chrome = shellChromePalette()
     val sessions = viewModel.activeSessions
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
     val restorableSessions = viewModel.resumableSavedSessions
+    val ageNowMs = rememberSessionAgeClock(active = true)
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text(stringResource(R.string.active_sessions), color = chrome.text, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
@@ -141,7 +151,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             viewModel.attachSession(s.id)
                         },
                         leftAccent = when {
-                            s.isConnected -> OmniColors.hostColor(s.serverName)
+                            s.isConnected -> hostAccent(servers, s.serverId)
                             s.reconnecting -> OmniColors.amber
                             else -> Color.Gray
                         }
@@ -157,6 +167,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                         fontFamily = OmniFonts.mono,
                                     )
                                 }
+                                SessionAgeLine(s.startedAtMs, s.backgroundedAtMs, ageNowMs, fontSize = 12.sp, color = chrome.mutedText)
                                 val ended = s.endedExitStatus
                                 Text(
                                     when {
@@ -180,7 +191,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                 }
                             }
                             IconButton(onClick = { viewModel.requestDisconnectSession(s.id) }) {
-                                Icon(Icons.Filled.Close, null, tint = OmniColors.red)
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close), tint = OmniColors.red)
                             }
                         }
                     }
@@ -199,7 +210,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             modifier = Modifier.fillMaxWidth().clickable {
                                 viewModel.resumePersistentSession(s.serverId, s.tmuxName)
                             },
-                            leftAccent = OmniColors.amber
+                            leftAccent = hostAccent(servers, s.serverId)
                         ) {
                             Row(
                                 Modifier.padding(12.dp),
@@ -214,6 +225,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                         color = chrome.mutedText,
                                         fontFamily = OmniFonts.mono,
                                     )
+                                    SessionAgeLine(s.createdAt, s.backgroundedAt, ageNowMs, fontSize = 12.sp, color = chrome.mutedText)
                                     Text(stringResource(R.string.tap_to_reattach_tmux_session), fontSize = 12.sp, color = OmniColors.amber)
                                 }
                                 IconButton(onClick = { viewModel.resumePersistentSession(s.serverId, s.tmuxName) }) {
@@ -354,8 +366,7 @@ fun ShellScreen(viewModel: AppViewModel) {
     val scheme = MaterialTheme.colorScheme
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    val compactIme = WindowInsets.isImeVisible &&
-        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val compactIme = typingInLandscape()
     val currentSession = viewModel.currentSession
     // The header identifies exactly the focused terminal. Do not fall back to the other split pane
     // when the focused pane is empty; that made the top host name actively misleading.
@@ -371,7 +382,9 @@ fun ShellScreen(viewModel: AppViewModel) {
     // which warns first. A host with an active/connecting session stays visible even if its
     // probe drops to offline (reconnect UX), and existing sessions keep the screen alive so the
     // session picker stays reachable when every host is offline at once.
-    val srv = headerSession?.let { s -> servers.find { it.id == s.serverId } }
+    // A Quick connect, Telnet or serial session is no saved host; it stands for itself, and keeps
+    // the session picker reachable when no saved host is online (or none exists).
+    val srv = headerSession?.let { s -> servers.find { it.id == s.serverId } ?: s.unsavedHost }
         ?: onlineServers.find { it.id == viewModel.selectedServerId }
         ?: onlineServers.firstOrNull()
         ?: viewModel.selectedServer.takeIf {
@@ -380,11 +393,14 @@ fun ShellScreen(viewModel: AppViewModel) {
                 viewModel.isTerminalConnecting ||
                 viewModel.terminalConnectError != null
         }
+        ?: viewModel.activeSessions.firstNotNullOfOrNull { it.unsavedHost }
     // Quick connect is hosted here rather than inside a branch below, so it stays mounted whether
     // the screen is showing a host, the session picker, or the no-hosts empty state. The
     // entitlement is re-checked at render time, not just at the entry points, so an unlock that
     // lapses while the sheet is open takes the sheet away with it.
     if (viewModel.quickConnectSheetOpen && viewModel.isQuickConnectAvailable) QuickConnectSheet(viewModel)
+    if (viewModel.telnetSheetOpen && viewModel.isQuickConnectAvailable) TelnetConnectDialog(viewModel)
+    if (viewModel.serialSheetOpen && viewModel.isQuickConnectAvailable) SerialConnectDialog(viewModel)
 
     if (srv == null) {
         Box(Modifier.fillMaxSize().background(chrome.background), contentAlignment = Alignment.Center) {
@@ -409,6 +425,10 @@ fun ShellScreen(viewModel: AppViewModel) {
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.quick_connect_don_t_save))
                     }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { viewModel.telnetSheetOpen = true }) { Text(stringResource(R.string.telnet_menu)) }
+                        TextButton(onClick = { viewModel.openSerialSheet() }) { Text(stringResource(R.string.usb_serial_menu)) }
+                    }
                 }
             }
         }
@@ -417,7 +437,7 @@ fun ShellScreen(viewModel: AppViewModel) {
     // Keep the VM selection on the host shown here so Connect / NEW / split-pane actions target
     // exactly what's displayed (the displayed host can differ when the selected one went offline).
     LaunchedEffect(srv.id, headerSession?.id) {
-        if (headerSession == null && !viewModel.isTerminalConnecting && viewModel.selectedServerId != srv.id) {
+        if (headerSession == null && !viewModel.isTerminalConnecting && srv.id > 0 && viewModel.selectedServerId != srv.id) {
             viewModel.selectedServerId = srv.id
         }
     }
@@ -475,7 +495,8 @@ fun ShellScreen(viewModel: AppViewModel) {
                     viewModel = viewModel,
                     // Offline hosts are hidden from the picker — force-connect lives on the Hosts tab.
                     onlineOnly = true,
-                    overrideServer = headerSession?.let { s -> servers.find { it.id == s.serverId } } ?: srv,
+                    overrideServer = headerSession?.let { s -> servers.find { it.id == s.serverId } ?: s.unsavedHost } ?: srv,
+                    subtitle = headerSession?.let { unsavedSessionSubtitle(it) },
                     onServerChange = {
                         val newServerId = viewModel.selectedServerId
                         if (headerSession != null && headerSession.serverId != newServerId) {
@@ -754,6 +775,62 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
 }
 
 
+/**
+ * A host's sign-in questions beyond the saved password: a one-time code, a new password. Hosted by
+ * MainAppScreen with the host key dialog, since Test connection and Files ask them too.
+ */
+@Composable
+fun InteractiveAuthDialog(viewModel: AppViewModel) {
+    val pending = viewModel.pendingInteractiveAuth ?: return
+    val prompts = pending.request.prompts
+    val answers = remember(pending) { prompts.map { mutableStateOf("") } }
+    val firstField = remember(pending) { FocusRequester() }
+    val submit = { viewModel.answerInteractiveAuth(answers.map { it.value }) }
+    LaunchedEffect(pending) { runCatching { firstField.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = { viewModel.answerInteractiveAuth(null) },
+        title = { Text(stringResource(R.string.sign_in_to, pending.hostName)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                pending.request.name.takeIf { it.isNotBlank() }?.let { Text(it, fontWeight = FontWeight.Bold) }
+                pending.request.instruction.takeIf { it.isNotBlank() }?.let {
+                    Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                prompts.forEachIndexed { i, prompt ->
+                    val last = i == prompts.lastIndex
+                    OutlinedTextField(
+                        value = answers[i].value,
+                        onValueChange = { answers[i].value = it },
+                        label = { Text(prompt.text.trim().removeSuffix(":")) },
+                        singleLine = true,
+                        visualTransformation = if (prompt.echo) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = if (prompt.echo) KeyboardType.Text else KeyboardType.Password,
+                            imeAction = if (last) ImeAction.Done else ImeAction.Next,
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("interactiveAuth.answer.$i")
+                            .let { if (i == 0) it.focusRequester(firstField) else it },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = submit, modifier = Modifier.testTag("interactiveAuth.signIn")) {
+                Text(stringResource(R.string.sign_in))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.answerInteractiveAuth(null) }, modifier = Modifier.testTag("interactiveAuth.cancel")) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
+}
+
+
 @Composable
 private fun TerminalHeaderAction(
     label: String,
@@ -892,7 +969,7 @@ private fun TerminalOpenPicker(
                             Column {
                                 Text(session.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(
-                                    if (session.persistent) displayTmuxSessionName(session.tmuxName) else "Live SSH session",
+                                    if (session.persistent) displayTmuxSessionName(session.tmuxName) else stringResource(R.string.live_transport_session, session.transport.label),
                                     fontSize = 10.sp,
                                     color = scheme.onSurfaceVariant,
                                 )
@@ -955,8 +1032,43 @@ private fun TerminalOpenPicker(
                         expanded = false
                     },
                 )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.telnet_menu), fontFamily = OmniFonts.mono) },
+                    leadingIcon = { Icon(Icons.Filled.SettingsEthernet, contentDescription = null) },
+                    enabled = !viewModel.isTerminalConnecting,
+                    onClick = {
+                        viewModel.telnetSheetOpen = true
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("terminal.open.telnet"),
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.usb_serial_menu), fontFamily = OmniFonts.mono) },
+                    leadingIcon = { Icon(Icons.Filled.Usb, contentDescription = null) },
+                    enabled = !viewModel.isTerminalConnecting,
+                    onClick = {
+                        viewModel.openSerialSheet()
+                        expanded = false
+                    },
+                    modifier = Modifier.testTag("terminal.open.serial"),
+                )
             }
         }
+    }
+}
+
+/**
+ * The header's second line for a session that is no saved host: what it runs over and where.
+ * Null for a saved host, whose header shows its user, address and latency.
+ */
+@Composable
+private fun unsavedSessionSubtitle(session: ShellSession): String? {
+    val shown = session.unsavedHost ?: return null
+    return when (session.transport) {
+        TerminalTransport.Ssh -> "${HostDisplay.userAtHost(shown)} · ${stringResource(R.string.not_saved)}"
+        TerminalTransport.Telnet, TerminalTransport.Kubernetes -> "${session.transport.label} · ${HostDisplay.sensitive("${shown.host}:${shown.port}")}"
+        // A serial session's "host" is its line settings.
+        TerminalTransport.Serial -> "${session.transport.label} · ${shown.host}"
     }
 }
 
@@ -2070,6 +2182,10 @@ private fun PaneTerminalContent(
                 }
             }
 
+            val visibleFindMatches = remember(currentSession.find.matches, snapshot.firstRow, snapshot.rows.size) {
+                val last = snapshot.firstRow + snapshot.rows.size
+                currentSession.find.matches.filter { it.endRow >= snapshot.firstRow && it.row < last }
+            }
             TerminalCanvas(
                 snapshot = snapshot,
                 palette = palette,
@@ -2077,6 +2193,8 @@ private fun PaneTerminalContent(
                 cellWidthPx = cellWidth,
                 cellHeightPx = cellHeight,
                 fontSizePx = fontSizePx,
+                findMatches = visibleFindMatches,
+                currentFindMatch = currentSession.find.currentMatch,
                 modifier = Modifier
                     .fillMaxSize()
                     .semantics {
@@ -2171,6 +2289,61 @@ private fun PaneTerminalContent(
                 }
             }
 
+            // Find in terminal. The search runs again as output arrives while the bar is open, at
+            // most twice a second, so the matches follow the text without a search every frame.
+            val findQuery = currentSession.findQuery
+            val find = currentSession.find
+            val findScope = rememberCoroutineScope()
+            val findBarRows = with(density) { ceil(56.dp.toPx() / cellHeight).toInt() }
+            fun revealFindMatch(match: TerminalMatch?) {
+                match ?: return
+                findScope.launch {
+                    terminalScrollState.stopScroll()
+                    val first = viewport.reveal(match.row, currentSession.terminalScreen.totalRows, visibleRowCount, findBarRows)
+                    viewModel.updateTerminalViewportFor(currentSession, first, visibleRowCount, viewport.followTail)
+                }
+            }
+            LaunchedEffect(findQuery) {
+                if (findQuery == null) {
+                    find.clear()
+                    return@LaunchedEffect
+                }
+                delay(150)
+                var searched = currentSession.terminalScreen
+                find.showResults(
+                    withContext(Dispatchers.Default) { viewModel.terminalMatchesFor(currentSession, findQuery) },
+                    bottomRow = viewport.firstVisibleRow + visibleRowCount - 1,
+                )
+                revealFindMatch(find.currentMatch)
+                while (true) {
+                    delay(500)
+                    val now = currentSession.terminalScreen
+                    if (now === searched) continue
+                    val trimmed = (now.trimmedRows - searched.trimmedRows).toInt()
+                    searched = now
+                    find.refresh(withContext(Dispatchers.Default) { viewModel.terminalMatchesFor(currentSession, findQuery) }, trimmed)
+                }
+            }
+            if (findQuery != null) {
+                fun closeFind() {
+                    currentSession.findQuery = null
+                    if (isFocused && !viewModel.terminalReadOnly) {
+                        focusRequester.requestFocus()
+                        keyboard?.show()
+                    }
+                }
+                BackHandler { closeFind() }
+                TerminalFindBar(
+                    query = findQuery,
+                    onQuery = { currentSession.findQuery = it },
+                    find = find,
+                    onOlder = { revealFindMatch(find.older()) },
+                    onNewer = { revealFindMatch(find.newer()) },
+                    onClose = { closeFind() },
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(4.dp),
+                )
+            }
+
             val endedExitStatus = currentSession.endedExitStatus
             if (currentSession.reconnecting || currentSession.disconnectError != null || endedExitStatus != null) {
                 val reconnecting = currentSession.reconnecting
@@ -2181,7 +2354,8 @@ private fun PaneTerminalContent(
                         "Connection lost. Reconnecting…"
                     }
                 } else if (endedExitStatus != null) {
-                    stringResource(R.string.session_ended_exit, endedExitStatus)
+                    currentSession.endedBecause?.let { "$it. Scrollback kept." }
+                        ?: stringResource(R.string.session_ended_exit, endedExitStatus)
                 } else {
                     currentSession.disconnectError ?: "Server disconnected."
                 }
@@ -2224,6 +2398,8 @@ private fun PaneTerminalContent(
                         color = statusContent,
                         fontSize = 12.sp,
                         fontFamily = OmniFonts.mono,
+                        // A message longer than the row wraps rather than pushing Retry off screen.
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (endedExitStatus != null) {
                         // The shell exited on the server, so there is nothing to retry; the
@@ -2247,7 +2423,11 @@ private fun PaneTerminalContent(
         // focused pane mounts it — in split view the unfocused pane is display + gesture only, so
         // there's a single keyboard target and no ambiguity about which remote receives typing.
         if (isFocused && !viewModel.terminalReadOnly) {
-        var inputField by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
+        val inputFieldState = remember(sessionId) { mutableStateOf(TextFieldValue("")) }
+        var inputField by inputFieldState
+        // Every edit is diffed against what the field's own buffer held, not against inputField: keys
+        // that land before the field takes inputField back would otherwise be sent twice.
+        val fieldBuffer = rememberTerminalInputBuffer(sessionId, inputFieldState)
         val smartSwipe = viewModel.smartSwipeInput
 
         // Swipe-typing mode keeps the keyboard's text in the field and mirrors edits to the remote by
@@ -2274,7 +2454,7 @@ private fun PaneTerminalContent(
                 // delta* over the previous field, not the field's absolute length — otherwise a long
                 // command typed by swipe (or a momentary multi-word composing region the IME hands us
                 // mid-gesture) was being misread as a paste and popped the confirm dialog.
-                val prevText = inputField.text
+                val prevText = fieldBuffer.onEdit(newText)
                 // A sticky Ctrl/Alt/Shift modifier (armed from the key bar) transforms the next
                 // typed character (control/meta byte, or uppercase). That can't be expressed as an
                 // editor-style line diff, so when one is armed we route the freshly-inserted text
@@ -2297,8 +2477,12 @@ private fun PaneTerminalContent(
                 }
                 val insertedDelta = insertedCodePointDelta(prevText, newText)
                 if (insertedDelta > 100) {
-                    // Large paste: defer to the paste dialog and clear the field.
-                    pendingLargePaste = PendingTerminalPaste(newText, viewModel.captureTerminalPasteTarget(currentSession))
+                    // Large paste: defer to the paste dialog and clear the field. The text before it
+                    // has already been sent.
+                    pendingLargePaste = PendingTerminalPaste(
+                        newText.removePrefix(prevText),
+                        viewModel.captureTerminalPasteTarget(currentSession),
+                    )
                     inputField = TextFieldValue("")
                     return@BasicTextField
                 }
@@ -2307,7 +2491,7 @@ private fun PaneTerminalContent(
                 if (newline >= 0) {
                     val before = newText.substring(0, newline)
                     if (smartSwipe) {
-                        diffToRemote(inputField.text, before, viewModel)
+                        diffToRemote(prevText, before, viewModel)
                         viewModel.sendKey(TermKey.ENTER)
                         val newlineLength = if (newText[newline] == '\r' &&
                             newline + 1 < newText.length && newText[newline + 1] == '\n'
@@ -2320,8 +2504,9 @@ private fun PaneTerminalContent(
                         // A software keyboard's Enter is different: it arrives as one newline, but
                         // an interactive PTY expects the terminal Enter key (CR). Sending the raw LF
                         // only moved the cursor and left the command pending until another Enter.
-                        if (isSingleTerminalEnter(newText)) viewModel.sendKey(TermKey.ENTER)
-                        else viewModel.pasteText(newText)
+                        val typed = newText.removePrefix(prevText)
+                        if (isSingleTerminalEnter(typed)) viewModel.sendKey(TermKey.ENTER)
+                        else viewModel.pasteText(typed)
                     }
                     inputField = TextFieldValue("")
                     return@BasicTextField
@@ -2329,22 +2514,17 @@ private fun PaneTerminalContent(
 
                 if (smartSwipe) {
                     // Editor-style: send the delta between the old field and the new field.
-                    diffToRemote(inputField.text, newText, viewModel)
+                    diffToRemote(prevText, newText, viewModel)
                     inputField = TextFieldValue(
                         text = newText,
                         selection = androidx.compose.ui.text.TextRange(newText.length),
                     )
                 } else {
                     // Stream mode: field stays empty, each commit goes straight through (max fidelity).
-                    if (newText.isNotEmpty()) {
-                        if (newText.length > 1) {
-                            // Stream-mode IME commits are typing, not necessarily clipboard pastes;
-                            // never invent a trailing space or wrap them in bracketed-paste markers.
-                            viewModel.typeText(newText)
-                        } else {
-                            viewModel.typeText(newText)
-                        }
-                    }
+                    // Stream-mode IME commits are typing, not necessarily clipboard pastes; never
+                    // invent a trailing space or wrap them in bracketed-paste markers.
+                    if (newText.startsWith(prevText)) viewModel.typeText(newText.substring(prevText.length))
+                    else diffToRemote(prevText, newText, viewModel)
                     inputField = TextFieldValue("")
                 }
             },
@@ -2594,6 +2774,20 @@ private fun PaneTerminalContent(
                             }
                         }
                         @Composable
+                        fun FindAction() {
+                            OutlinedButton(
+                                onClick = {
+                                    showCopyOptions = false
+                                    currentSession.findQuery = currentSession.findQuery ?: ""
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.find_in_terminal))
+                            }
+                        }
+                        @Composable
                         fun CopyHeading(withDescription: Boolean) {
                             Text(stringResource(R.string.copy_terminal_text), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             if (withDescription) {
@@ -2617,6 +2811,7 @@ private fun PaneTerminalContent(
                                         SessionOptions()
                                     }
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        FindAction()
                                         CopyHeading(withDescription = false)
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { RangeActions() }
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ClosingActions() }
@@ -2626,6 +2821,7 @@ private fun PaneTerminalContent(
                                 PasteAction()
                                 SessionOptions()
                                 HorizontalDivider()
+                                FindAction()
                                 CopyHeading(withDescription = true)
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { RangeActions() }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ClosingActions() }
@@ -2854,6 +3050,35 @@ private fun TerminalToggleRow(
     }
 }
 
+/** The terminal's find bar, laid over its top rows. The keyboard's search key steps to the next older match. */
+@Composable
+private fun TerminalFindBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    find: TerminalFindState,
+    onOlder: () -> Unit,
+    onNewer: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Surface(modifier, shape = RoundedCornerShape(8.dp), tonalElevation = 6.dp, shadowElevation = 4.dp) {
+        FindFieldRow(
+            query = query,
+            onQuery = onQuery,
+            matchCount = find.matches.size,
+            currentIndex = find.current,
+            onPrev = onOlder,
+            onNext = onNewer,
+            onClose = onClose,
+            modifier = Modifier.padding(start = 8.dp),
+            fieldModifier = Modifier.focusRequester(focus).testTag("terminalFind.query"),
+            onSearch = onOlder,
+        )
+    }
+}
+
 @Composable
 private fun TerminalCanvas(
     snapshot: TerminalSnapshot,
@@ -2863,6 +3088,8 @@ private fun TerminalCanvas(
     cellHeightPx: Float,
     fontSizePx: Float,
     modifier: Modifier = Modifier,
+    findMatches: List<TerminalMatch> = emptyList(),
+    currentFindMatch: TerminalMatch? = null,
 ) {
     val backgroundArgb = palette.background.toArgb()
     val foregroundArgb = palette.foreground.toArgb()
@@ -2891,6 +3118,13 @@ private fun TerminalCanvas(
             val cursorPaint = Paint().apply {
                 style = Paint.Style.FILL
                 color = cursorArgb
+            }
+            // Laid over the text, light enough to read through; the current match also gets a border.
+            val findPaint = Paint().apply { style = Paint.Style.FILL; color = OmniColors.amber.copy(alpha = 0.4f).toArgb() }
+            val findBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 2.dp.toPx()
+                color = OmniColors.amber.toArgb()
             }
             val fm = regularPaint.fontMetrics
             val baselineOffset = (cellHeightPx - fm.ascent - fm.descent) / 2f
@@ -2951,6 +3185,14 @@ private fun TerminalCanvas(
                         native.drawText(glyphs[i], cellCenterX, baselineY, paint)
                         col += glyphWidth
                     }
+                }
+                for (match in findMatches) {
+                    val cols = match.colsOn(absoluteRow, snapshot.cols) ?: continue
+                    if (cols.isEmpty()) continue
+                    val left = cols.first * cellWidthPx
+                    val right = (cols.last + 1).coerceAtMost(snapshot.cols) * cellWidthPx
+                    native.drawRect(left, yTop, right, yTop + cellHeightPx, findPaint)
+                    if (match == currentFindMatch) native.drawRect(left, yTop, right, yTop + cellHeightPx, findBorderPaint)
                 }
                 if (cursorOn && snapshot.cursorVisible && absoluteRow == snapshot.cursorRow) {
                     val cursorX = snapshot.cursorCol * cellWidthPx
@@ -3333,9 +3575,18 @@ private fun SessionMenuHeader(@StringRes label: Int) {
     )
 }
 
-/** "Started 5m ago · backgrounded 2m ago" under a session in a picker; the second part once it is backgrounded. */
+/**
+ * "Started 5m ago · backgrounded 2m ago" under a session in the Open menu and the session list; the
+ * second part once it is backgrounded.
+ */
 @Composable
-private fun SessionAgeLine(startedAtMs: Long, backgroundedAtMs: Long?, ageNowMs: Long) {
+private fun SessionAgeLine(
+    startedAtMs: Long,
+    backgroundedAtMs: Long?,
+    ageNowMs: Long,
+    fontSize: TextUnit = 10.sp,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     val started = ageText(R.string.started_ago, R.string.started_just_now, startedAtMs, ageNowMs)
     Text(
         if (backgroundedAtMs == null) {
@@ -3343,8 +3594,8 @@ private fun SessionAgeLine(startedAtMs: Long, backgroundedAtMs: Long?, ageNowMs:
         } else {
             "$started · ${ageText(R.string.backgrounded_ago, R.string.backgrounded_just_now, backgroundedAtMs, ageNowMs)}"
         },
-        fontSize = 10.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = fontSize,
+        color = color,
     )
 }
 

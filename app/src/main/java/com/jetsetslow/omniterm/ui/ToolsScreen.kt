@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -50,18 +51,23 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalLocale
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
+import com.jetsetslow.omniterm.data.ssh.SkKeyType
+import com.jetsetslow.omniterm.data.ssh.SshCertificate
 import java.io.InputStream
 import java.text.DateFormat
 import java.util.Date
+import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
 /**
- * Display unit for an alert metric: thresholds are percentages except latency and temperature.
+ * Display unit for an alert metric: thresholds are percentages except latency, temperature, and
+ * the TLS and URL checks.
  */
 private fun alertMetricUnit(metricName: String, system: MeasurementSystem): String = when (metricName) {
-    "Latency" -> "ms"
+    "Latency", EndpointChecks.URL_CHECK -> "ms"
     "Temperature" -> temperatureUnit(system)
+    EndpointChecks.TLS_EXPIRY -> "days"
     else -> "%"
 }
 
@@ -82,6 +88,12 @@ internal fun alertThresholdError(
     if (!value.isFinite()) return "Enter a number"
     return when (metricName) {
         "Latency" -> if (value <= 0f) "Must be greater than 0 ms" else null
+        EndpointChecks.TLS_EXPIRY -> if (value < 1f) "Must be 1 day or more" else null
+        EndpointChecks.URL_CHECK -> when {
+            value <= 0f -> "Must be greater than 0 ms"
+            value >= EndpointChecks.URL_TIMEOUT_MS -> "Must be under ${EndpointChecks.URL_TIMEOUT_MS} ms, when a check gives up"
+            else -> null
+        }
         "Temperature" -> {
             // Compare in Celsius so the bound holds in either unit system.
             val celsius = displayTemperatureToCelsius(value, system)
@@ -95,14 +107,44 @@ internal fun alertThresholdError(
     }
 }
 
+/**
+ * Validates what a TLS or URL check connects to, against the hosts the rule is for. Null when it
+ * is usable, otherwise the reason. Other metrics take no target.
+ *
+ * A typed address is one endpoint, so it belongs to one host: on "All hosts" or several hosts it
+ * would be checked, and alert, once per host.
+ */
+internal fun alertTargetError(metricName: String, target: String, hostIds: Collection<Int>): String? {
+    if (!EndpointChecks.isEndpointMetric(metricName)) return null
+    val trimmed = target.trim()
+    if (metricName == EndpointChecks.URL_CHECK) {
+        if (trimmed.isEmpty()) return "Enter the address to check"
+        if (EndpointChecks.checkUrl(trimmed) == null) return "Enter a web address, like https://example.com/health"
+    } else if (trimmed.isNotEmpty() && EndpointChecks.tlsEndpoint(trimmed, hostAddress = "") == null) {
+        return "Enter a host, host:port or URL"
+    }
+    if (trimmed.isNotEmpty() && (hostIds.size != 1 || 0 in hostIds)) return "Pick the one host this address belongs to"
+    return null
+}
+
+/**
+ * An alert value as the user reads it. A TLS or URL reading says what was seen ("12 days left",
+ * "HTTP 503"); its threshold ([threshold] true) is a plain amount.
+ */
 private fun alertMetricDisplay(
     metricName: String,
     canonicalValue: Float,
     system: MeasurementSystem,
-): String = if (metricName == "Temperature") {
-    formatTemperature(canonicalValue, system, decimals = 1)
-} else {
-    "$canonicalValue${alertMetricUnit(metricName, system)}"
+    threshold: Boolean = false,
+): String = when {
+    metricName == "Temperature" -> formatTemperature(canonicalValue, system, decimals = 1)
+    EndpointChecks.isEndpointMetric(metricName) ->
+        if (threshold) {
+            "${canonicalValue.roundToInt()} ${alertMetricUnit(metricName, system)}"
+        } else {
+            EndpointChecks.describe(metricName, canonicalValue)
+        }
+    else -> "$canonicalValue${alertMetricUnit(metricName, system)}"
 }
 
 private val APP_LOCK_TIMEOUT_PRESETS = listOf(
@@ -422,7 +464,7 @@ fun AlertPopupIncidentCard(
                 )
             }
             Text(
-                stringResource(R.string.current_threshold, server?.name ?: "Server", alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem)),
+                stringResource(R.string.current_threshold, server?.name ?: "Server", alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem, threshold = true)),
                 fontSize = OmniTextSize.Meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -612,7 +654,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        stringResource(R.string.threshold_current, alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)),
+                                        stringResource(R.string.threshold_current, alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem, threshold = true), alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)),
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -709,7 +751,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     }
                     items(rules) { r ->
                         val srv = serversList.find { it.id == r.serverId }
-                        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
+                        // A rule for one host carries that host's colour; one for all hosts has none.
+                        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = srv?.let(::getServerColor) ?: OmniColors.cyan) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -718,25 +761,33 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(r.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: "host"
+                                    val shownThreshold = alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem, threshold = true)
                                     Text(
-                                        stringResource(R.string.threshold_for, targetName, alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem), r.triggerWindow),
+                                        when (r.metricName) {
+                                            EndpointChecks.TLS_EXPIRY -> stringResource(R.string.tls_rule_summary, targetName, shownThreshold)
+                                            EndpointChecks.URL_CHECK -> stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
+                                            else -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
+                                        },
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    if (EndpointChecks.isEndpointMetric(r.metricName)) {
+                                        EndpointCheckLines(r, serversList, viewModel.endpointCheckResults)
+                                    }
                                     if (r.notes.isNotBlank()) {
                                         Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                                     }
                                 }
                                 Row {
                                     IconButton(onClick = { editRule = r }) {
-                                        Icon(Icons.Filled.Edit, null, tint = OmniColors.cyan)
+                                        Icon(Icons.Filled.Edit, "Edit rule", tint = OmniColors.cyan)
                                     }
                                     IconButton(onClick = {
                                         confirm.ask(confirm.str(R.string.delete_rule), confirm.str(R.string.delete_the_alert_rule_for, r.metricName, srv?.name ?: "this host"), confirmLabel = confirm.str(R.string.delete)) {
                                             viewModel.deleteAlertRule(r)
                                         }
                                     }) {
-                                        Icon(Icons.Filled.Delete, null, tint = Color.Red)
+                                        Icon(Icons.Filled.Delete, "Delete rule", tint = Color.Red)
                                     }
                                 }
                             }
@@ -776,7 +827,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         Text(item.status.uppercase(), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        stringResource(R.string.current_threshold_2, alertMetricDisplay(item.metricName, item.currentValue, measurementSystem), alertMetricDisplay(item.metricName, item.thresholdValue, measurementSystem)) +
+                                        stringResource(R.string.current_threshold_2, alertMetricDisplay(item.metricName, item.currentValue, measurementSystem), alertMetricDisplay(item.metricName, item.thresholdValue, measurementSystem, threshold = true)) +
                                             item.severity,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -816,9 +867,11 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var severitySelect by remember(existing) { mutableStateOf(existing?.severity ?: "CRITICAL") }
         var windowSelect by remember(existing) { mutableStateOf(existing?.triggerWindow ?: "5m") }
         var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
+        var targetInput by remember(existing) { mutableStateOf(existing?.target ?: "") }
         // A rule whose threshold silently fell back to a default is a rule that never fires when the
         // user expects it to, so refuse to save instead of guessing.
         val thresholdError = alertThresholdError(threshInput, metricSelect, measurementSystem)
+        val targetError = alertTargetError(metricSelect, targetInput, selectedSrvIds)
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
@@ -844,7 +897,10 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         },
                     )
                     Text(stringResource(R.string.select_metric_key))
-                    val metricsOptions = listOf("CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature")
+                    val metricsOptions = listOf(
+                        "CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature",
+                        EndpointChecks.TLS_EXPIRY, EndpointChecks.URL_CHECK,
+                    )
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         metricsOptions.forEach { opt ->
@@ -857,7 +913,16 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             "Latency" -> "250"
                                             "Temperature" ->
                                                 celsiusToDisplay(80f, measurementSystem).toString()
+                                            EndpointChecks.TLS_EXPIRY -> "14"
+                                            EndpointChecks.URL_CHECK -> "2000"
                                             else -> "90"
+                                        }
+                                        // A certificate's expiry needs no sustained window; the
+                                        // others start from the usual five minutes.
+                                        windowSelect = when {
+                                            opt == EndpointChecks.TLS_EXPIRY -> "0m"
+                                            windowSelect == "0m" -> "5m"
+                                            else -> windowSelect
                                         }
                                     }
                                 },
@@ -875,6 +940,26 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             color = OmniColors.amber,
                         )
                     }
+                    if (EndpointChecks.isEndpointMetric(metricSelect)) {
+                        val tls = metricSelect == EndpointChecks.TLS_EXPIRY
+                        OutlinedTextField(
+                            value = targetInput,
+                            onValueChange = { targetInput = it },
+                            label = { Text(stringResource(if (tls) R.string.tls_target_label else R.string.url_target_label)) },
+                            placeholder = { Text(if (tls) "example.com:443" else "https://example.com/health") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("alertRule.target"),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            isError = targetError != null,
+                            supportingText = (targetError ?: if (tls && targetInput.isBlank()) stringResource(R.string.tls_target_blank_hint) else null)
+                                ?.let { { Text(it) } },
+                        )
+                        Text(
+                            stringResource(R.string.endpoint_checked_from_phone),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     OutlinedTextField(
                         value = threshInput,
                         onValueChange = { threshInput = it },
@@ -884,11 +969,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         isError = thresholdError != null,
                         supportingText = thresholdError?.let { { Text(it) } },
                     )
-                    Text(stringResource(R.string.trigger_window_label))
-                    @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("2m", "5m", "10m", "15m").forEach { opt ->
-                            FilterChip(selected = windowSelect == opt, onClick = { windowSelect = opt }, label = { Text(opt) })
+                    if (metricSelect != EndpointChecks.TLS_EXPIRY) {
+                        Text(stringResource(R.string.trigger_window_label))
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("2m", "5m", "10m", "15m").forEach { opt ->
+                                FilterChip(selected = windowSelect == opt, onClick = { windowSelect = opt }, label = { Text(opt) })
+                            }
                         }
                     }
                     OutlinedTextField(
@@ -903,7 +990,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null,
+                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null,
                     onClick = {
                         val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
@@ -911,14 +998,15 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         } else {
                             enteredThreshold
                         }
+                        val target = if (EndpointChecks.isEndpointMetric(metricSelect)) targetInput.trim() else ""
                         if (existing == null) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim())
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target)
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim()))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -935,6 +1023,42 @@ fun AlertsToolView(viewModel: AppViewModel) {
 }
 
 
+
+/**
+ * What a TLS or URL rule last saw on each of its hosts, a few hosts at most. A rule for all hosts
+ * names each host; a rule for one host just says what it checked.
+ */
+@Composable
+private fun EndpointCheckLines(
+    rule: AlertRuleEntity,
+    servers: List<ServerEntity>,
+    results: Map<Pair<Int, Int>, EndpointChecks.Result>,
+) {
+    val hosts = servers.filter { rule.serverId == 0 || it.id == rule.serverId }
+    val seen = hosts.mapNotNull { host -> results[rule.id to host.id]?.let { host to it } }
+    Column(Modifier.testTag("alertRule.check.${rule.id}")) {
+        if (seen.isEmpty()) {
+            Text(
+                listOfNotNull(rule.target.ifBlank { null }, stringResource(R.string.endpoint_not_checked_yet)).joinToString(" · "),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        seen.take(3).forEach { (host, result) ->
+            val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
+            Text(
+                (if (rule.serverId == 0) "${host.name}: " else "") + "${result.target} · ${result.summary}",
+                fontSize = 11.sp,
+                color = if (breached) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (seen.size > 3) {
+            Text("+${seen.size - 3}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 // 7.2 CUSTOM SCRIPTS PORTAL PANEL
 @OptIn(ExperimentalFoundationApi::class)
@@ -1578,6 +1702,7 @@ private fun TargetHostFields(viewModel: AppViewModel) {
 @Composable
 private fun PingTab(viewModel: AppViewModel) {
     var pingTries by remember { mutableStateOf("4") }
+    val dismissKeyboard = rememberDismissKeyboard()
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TargetHostFields(viewModel)
@@ -1595,11 +1720,15 @@ private fun PingTab(viewModel: AppViewModel) {
         )
         Button(
             onClick = {
-                if (viewModel.pingRunning) viewModel.stopPing()
-                else viewModel.startPing(
-                    viewModel.portScannerTarget,
-                    pingTries.trim().toIntOrNull() ?: return@Button,
-                )
+                if (viewModel.pingRunning) {
+                    viewModel.stopPing()
+                } else {
+                    dismissKeyboard()
+                    viewModel.startPing(
+                        viewModel.portScannerTarget,
+                        pingTries.trim().toIntOrNull() ?: return@Button,
+                    )
+                }
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.pingRunning ||
@@ -1632,12 +1761,17 @@ private fun PingTab(viewModel: AppViewModel) {
 // ── Traceroute (device-side) ──
 @Composable
 private fun TracerouteTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TargetHostFields(viewModel)
         Button(
             onClick = {
-                if (viewModel.tracerouteRunning) viewModel.stopTraceroute()
-                else viewModel.startTraceroute(viewModel.portScannerTarget)
+                if (viewModel.tracerouteRunning) {
+                    viewModel.stopTraceroute()
+                } else {
+                    dismissKeyboard()
+                    viewModel.startTraceroute(viewModel.portScannerTarget)
+                }
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.tracerouteRunning || viewModel.portScannerTarget.isNotBlank(),
@@ -1669,6 +1803,7 @@ private fun TracerouteTab(viewModel: AppViewModel) {
 // ── Port Scan (uses the shared target host) ──
 @Composable
 private fun PortScanTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         LanHostPicker(viewModel)
 
@@ -1689,7 +1824,10 @@ private fun PortScanTab(viewModel: AppViewModel) {
         )
 
         Button(
-            onClick = { viewModel.runPortScanner() },
+            onClick = {
+                dismissKeyboard()
+                viewModel.runPortScanner()
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.portScannerTarget.isNotBlank() && !viewModel.isPortScannerScanning
         ) {
@@ -1973,26 +2111,6 @@ private fun WolLanScanner(viewModel: AppViewModel, onPick: (AppViewModel.Scanned
 
 // 7.5 CREDENTIAL KEYCHAINS PANEL
 
-/** Opens the system file picker for an SSH key file and hands over its text; an unreadable file says so. */
-@Composable
-private fun rememberKeyFilePicker(onRead: (String) -> Unit): () -> Unit {
-    val context = LocalContext.current
-    val resources = LocalResources.current
-    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openInputStream(uri)?.use { onRead(it.reader().readText()) }
-            } catch (e: Exception) {
-                android.util.Log.w("ToolsScreen", "Failed to read key file", e)
-                android.widget.Toast.makeText(context, resources.getString(R.string.could_not_read_file, e.message), android.widget.Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-    return { launcher.launch(arrayOf("*/*")) }
-}
-
 @Composable
 fun AuthKeysToolView(viewModel: AppViewModel) {
     val confirm = rememberConfirm()
@@ -2008,6 +2126,8 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
     var authFeedbackOk by remember { mutableStateOf(true) }
     var showAuthOption by remember { mutableStateOf(false) }
     var generatedKeyResult by remember { mutableStateOf<Triple<String, String, String>?>(null) } // alias, priv, pub
+    // The generated key is on a security key: its "private key" is a key file holding no secret.
+    var generatedOnSecurityKey by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val clipboardScope = rememberCoroutineScope()
 
@@ -2071,7 +2191,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                         viewModel.deleteProfile(profile)
                                     }
                                 }) {
-                                    Icon(Icons.Filled.Delete, null, tint = Color.Red)
+                                    Icon(Icons.Filled.Delete, "Delete profile", tint = Color.Red)
                                 }
                             }
                         }
@@ -2089,6 +2209,14 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(key.alias, fontWeight = FontWeight.Bold)
                                 Text(stringResource(R.string.crypto_fingerprint, key.keyType, key.fingerprint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                certificateSummary(key.certificate)?.let { (summary, problem) ->
+                                    Text(
+                                        summary,
+                                        fontSize = 11.sp,
+                                        color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag("authKeys.certificate.${key.id}"),
+                                    )
+                                }
                             }
                             Row {
                                 IconButton(onClick = { editKey = key }) {
@@ -2099,7 +2227,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                         viewModel.deleteKey(key)
                                     }
                                 }) {
-                                    Icon(Icons.Filled.Delete, null, tint = Color.Red)
+                                    Icon(Icons.Filled.Delete, "Delete key", tint = Color.Red)
                                 }
                             }
                         }
@@ -2207,15 +2335,48 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
     if (showCreateKey) {
         var alias by remember { mutableStateOf("") }
-        val keyType = "RSA"
+        // null: RSA on this phone; otherwise a key made on a security key.
+        var securityKeyType by remember { mutableStateOf<SkKeyType?>(null) }
+        var requirePin by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showCreateKey = false },
             title = { Text(stringResource(R.string.generate_cryptographic_keypair)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
+                ) {
                     OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.key_alias_name)) }, modifier = Modifier.fillMaxWidth())
-                    Text(stringResource(R.string.omniterm_will_generate_a_real_rsa), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.key_kind), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    listOf(
+                        null to R.string.key_kind_rsa,
+                        SkKeyType.Ed25519 to R.string.key_kind_ed25519_sk,
+                        SkKeyType.EcdsaP256 to R.string.key_kind_ecdsa_sk,
+                    ).forEach { (kind, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { securityKeyType = kind }
+                                .testTag("authKeys.kind.${kind?.name ?: "Rsa"}"),
+                        ) {
+                            RadioButton(selected = securityKeyType == kind, onClick = { securityKeyType = kind })
+                            Text(stringResource(label), fontSize = 13.sp)
+                        }
+                    }
+                    if (securityKeyType == null) {
+                        Text(stringResource(R.string.omniterm_will_generate_a_real_rsa), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text(stringResource(R.string.security_key_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable { requirePin = !requirePin },
+                        ) {
+                            Checkbox(checked = requirePin, onCheckedChange = { requirePin = it }, modifier = Modifier.testTag("authKeys.requirePin"))
+                            Text(stringResource(R.string.security_key_require_pin), fontSize = 13.sp)
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2224,13 +2385,20 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 Button(
                     enabled = alias.isNotBlank() && !viewModel.sshKeygenRunning,
                     onClick = {
-                        viewModel.generateSshKey(alias, keyType) { ok, msg, priv, pub ->
+                        val onSecurityKey = securityKeyType
+                        val done = { ok: Boolean, msg: String, priv: String?, pub: String? ->
                             authFeedbackOk = ok
                             authFeedback = msg
                             if (ok && priv != null && pub != null) {
+                                generatedOnSecurityKey = onSecurityKey != null
                                 generatedKeyResult = Triple(alias, priv, pub)
                             }
                             showCreateKey = false
+                        }
+                        if (onSecurityKey == null) {
+                            viewModel.generateSshKey(alias, "RSA", done)
+                        } else {
+                            viewModel.generateSecurityKey(alias, onSecurityKey, requirePin, done)
                         }
                     }
                 ) {
@@ -2260,11 +2428,14 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var importAlias by remember { mutableStateOf("") }
         var importedPrivateKey by remember { mutableStateOf("") }
         var importedPublicKey by remember { mutableStateOf("") }
+        var importPassphrase by remember { mutableStateOf("") }
+        var importedCertificate by remember { mutableStateOf("") }
         // Shown inside the dialog: the screen's feedback line sits behind it, so a failed import
         // otherwise looked like a Save button that did nothing.
         var importError by remember { mutableStateOf<String?>(null) }
-        val pickPrivateKey = rememberKeyFilePicker { importedPrivateKey = it }
-        val pickPublicKey = rememberKeyFilePicker { importedPublicKey = it }
+        val pickPrivateKey = rememberTextFilePicker { importedPrivateKey = it }
+        val pickPublicKey = rememberTextFilePicker { importedPublicKey = it }
+        val pickCertificate = rememberTextFilePicker { importedCertificate = it }
 
         AlertDialog(
             onDismissRequest = { showImportKeyDialog = false },
@@ -2281,39 +2452,29 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     )
                     OutlinedTextField(value = importAlias, onValueChange = { importAlias = it }, label = { Text(stringResource(R.string.key_custom_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
-                    Text(stringResource(R.string.private_key_required), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.private_key_required),
                         value = importedPrivateKey,
                         onValueChange = { importedPrivateKey = it },
-                        label = { Text(stringResource(R.string.begin_private_key)) },
-                        modifier = Modifier.fillMaxWidth().height(130.dp),
+                        label = stringResource(R.string.begin_private_key),
+                        height = 130.dp,
                         maxLines = 6,
+                        pickLabel = stringResource(R.string.load_private_key_from_file),
+                        pick = pickPrivateKey,
                     )
-                    OutlinedButton(
-                        onClick = pickPrivateKey,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.load_private_key_from_file))
-                    }
 
-                    Text(stringResource(R.string.public_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.public_key_optional),
                         value = importedPublicKey,
                         onValueChange = { importedPublicKey = it },
-                        label = { Text(stringResource(R.string.ssh_rsa_aaaa_leave_blank_to)) },
-                        modifier = Modifier.fillMaxWidth().height(90.dp),
+                        label = stringResource(R.string.ssh_rsa_aaaa_leave_blank_to),
+                        height = 90.dp,
                         maxLines = 3,
+                        pickLabel = stringResource(R.string.load_public_key_pub_from_file),
+                        pick = pickPublicKey,
                     )
-                    OutlinedButton(
-                        onClick = pickPublicKey,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.load_public_key_pub_from_file))
-                    }
+                    KeyPassphraseField(importPassphrase, { importPassphrase = it }, "authKeys.import.passphrase")
+                    CertificateField(importedCertificate, { importedCertificate = it }, pickCertificate, "authKeys.import.certificate")
                     importError?.let { message ->
                         Text(
                             message,
@@ -2328,7 +2489,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     enabled = importAlias.isNotBlank() && importedPrivateKey.isNotBlank(),
                     onClick = {
                         importError = null
-                        viewModel.addSshKey(importAlias, "", importedPrivateKey, importedPublicKey) { ok, msg ->
+                        viewModel.addSshKey(importAlias, "", importedPrivateKey, importedPublicKey, importPassphrase, importedCertificate) { ok, msg ->
                             authFeedbackOk = ok
                             authFeedback = msg
                             if (ok) showImportKeyDialog = false else importError = msg
@@ -2401,7 +2562,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var alias by remember(key.id) { mutableStateOf(key.alias) }
         var newPrivate by remember(key.id) { mutableStateOf("") }
         var newPublic by remember(key.id) { mutableStateOf("") }
-        val pickPrivateKey = rememberKeyFilePicker { newPrivate = it }
+        var passphrase by remember(key.id) { mutableStateOf("") }
+        var certificate by remember(key.id) { mutableStateOf(key.certificate) }
+        var editError by remember(key.id) { mutableStateOf<String?>(null) }
+        val pickPrivateKey = rememberTextFilePicker { newPrivate = it }
+        val pickCertificate = rememberTextFilePicker { certificate = it }
         AlertDialog(
             onDismissRequest = { editKey = null },
             title = { Text(stringResource(R.string.edit_ssh_key)) },
@@ -2416,40 +2581,43 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text(stringResource(R.string.replacement_private_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.replacement_private_key_optional),
                         value = newPrivate,
                         onValueChange = { newPrivate = it },
-                        label = { Text(stringResource(R.string.begin_private_key)) },
-                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        label = stringResource(R.string.begin_private_key),
+                        height = 120.dp,
                         maxLines = 6,
+                        pickLabel = stringResource(R.string.load_private_key_from_file),
+                        pick = pickPrivateKey,
                     )
-                    OutlinedButton(
-                        onClick = pickPrivateKey,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.load_private_key_from_file))
-                    }
-                    Text(stringResource(R.string.replacement_public_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    OutlinedTextField(
+                    KeyTextField(
+                        title = stringResource(R.string.replacement_public_key_optional),
                         value = newPublic,
                         onValueChange = { newPublic = it },
-                        label = { Text(stringResource(R.string.ssh_leave_blank_to_auto_derive)) },
-                        modifier = Modifier.fillMaxWidth().height(80.dp),
+                        label = stringResource(R.string.ssh_leave_blank_to_auto_derive),
+                        height = 80.dp,
                         maxLines = 3,
                     )
+                    if (newPrivate.isNotBlank()) {
+                        KeyPassphraseField(passphrase, { passphrase = it }, "authKeys.edit.passphrase")
+                    }
+                    CertificateField(certificate, { certificate = it }, pickCertificate, "authKeys.edit.certificate")
+                    editError?.let { message ->
+                        Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("authKeys.edit.error"))
+                    }
                 }
             },
             confirmButton = {
                 Button(
                     enabled = alias.isNotBlank(),
                     onClick = {
-                        viewModel.updateSshKey(key, alias, newPrivate, newPublic) { ok, msg ->
+                        editError = null
+                        val editedCertificate = certificate.takeIf { it.trim() != key.certificate.trim() || newPrivate.isNotBlank() }
+                        viewModel.updateSshKey(key, alias, newPrivate, newPublic, passphrase, editedCertificate) { ok, msg ->
                             authFeedbackOk = ok
                             authFeedback = msg
-                            if (ok) editKey = null
+                            if (ok) editKey = null else editError = msg
                         }
                     }
                 ) { Text(stringResource(R.string.save_changes)) }
@@ -2465,10 +2633,17 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
             title = { Text(stringResource(R.string.generated_key, alias)) },
             text = {
                 Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.warning_private_key_is_shown_only), color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text(stringResource(R.string.private_key), fontWeight = FontWeight.Bold)
+                    if (generatedOnSecurityKey) {
+                        Text(stringResource(R.string.security_key_file), fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.security_key_file_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text(stringResource(R.string.warning_private_key_is_shown_only), color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.private_key), fontWeight = FontWeight.Bold)
+                    }
                     OutlinedTextField(value = priv, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(150.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
-                    Button(onClick = { copySensitiveClipboard(context, clipboardScope, "OmniTerm private key", priv) }) { Text(stringResource(R.string.copy_private_key)) }
+                    Button(onClick = { copySensitiveClipboard(context, clipboardScope, "OmniTerm private key", priv) }) {
+                        Text(stringResource(if (generatedOnSecurityKey) R.string.copy_key_file else R.string.copy_private_key))
+                    }
 
                     Text(stringResource(R.string.public_key), fontWeight = FontWeight.Bold)
                     OutlinedTextField(value = pub, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(100.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
@@ -2500,6 +2675,82 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 Button(onClick = { generatedKeyResult = null }) { Text(stringResource(R.string.done)) }
             }
         )
+    }
+}
+
+/** A key's passphrase, asked for when importing it: OmniTerm stores the key opened, encrypted on the phone. */
+@Composable
+private fun KeyPassphraseField(value: String, onValueChange: (String) -> Unit, tag: String) {
+    Text(stringResource(R.string.key_passphrase_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    OmniPasswordField(
+        value = value,
+        onValueChange = onValueChange,
+        label = stringResource(R.string.key_passphrase_optional),
+        modifier = Modifier.fillMaxWidth().testTag(tag),
+    )
+    Text(stringResource(R.string.key_passphrase_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** A key's OpenSSH certificate: pasted, or loaded from its -cert.pub file. */
+@Composable
+private fun CertificateField(value: String, onValueChange: (String) -> Unit, pick: () -> Unit, tag: String) {
+    KeyTextField(
+        title = stringResource(R.string.ssh_certificate_optional),
+        value = value,
+        onValueChange = onValueChange,
+        label = stringResource(R.string.ssh_certificate_hint),
+        height = 90.dp,
+        maxLines = 3,
+        modifier = Modifier.testTag(tag),
+        pickLabel = stringResource(R.string.load_certificate_from_file),
+        pick = pick,
+    )
+    Text(stringResource(R.string.ssh_certificate_explainer), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** Key text (a private or public key, a certificate) under its [title], pasted or loaded from a file with [pick]. */
+@Composable
+private fun KeyTextField(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    height: Dp,
+    maxLines: Int,
+    modifier: Modifier = Modifier,
+    pickLabel: String? = null,
+    pick: () -> Unit = {},
+) {
+    Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = modifier.fillMaxWidth().height(height),
+        maxLines = maxLines,
+    )
+    if (pickLabel != null) {
+        OutlinedButton(onClick = pick, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Folder, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(pickLabel)
+        }
+    }
+}
+
+/** What a key's [certificate] says about who and until when, and whether that is a problem now; null without one. */
+@Composable
+private fun certificateSummary(certificate: String): Pair<String, Boolean>? {
+    if (certificate.isBlank()) return null
+    val parsed = remember(certificate) { runCatching { SshCertificate.parse(certificate) }.getOrNull() } ?: return null
+    val now = System.currentTimeMillis() / 1000
+    val date = { seconds: Long -> DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(seconds * 1000)) }
+    val who = parsed.principals.joinToString(", ").ifEmpty { stringResource(R.string.ssh_certificate_any_user) }
+    return when {
+        parsed.isExpired(now) -> stringResource(R.string.ssh_certificate_expired, date(parsed.validBefore)) to true
+        parsed.isNotYetValid(now) -> stringResource(R.string.ssh_certificate_not_yet, date(parsed.validAfter)) to true
+        parsed.validBefore == Long.MAX_VALUE -> stringResource(R.string.ssh_certificate_summary_forever, who) to false
+        else -> stringResource(R.string.ssh_certificate_summary, who, date(parsed.validBefore)) to false
     }
 }
 
@@ -3903,20 +4154,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
 
 
 
-private fun readBackupTextLimited(input: InputStream, maxChars: Int = BACKUP_MAX_INPUT_CHARS): String {
-    input.reader(Charsets.UTF_8).use { reader ->
-        val out = StringBuilder()
-        val buffer = CharArray(8192)
-        while (true) {
-            val read = reader.read(buffer)
-            if (read < 0) return out.toString()
-            if (out.length + read > maxChars) {
-                throw IllegalArgumentException("Backup file is too large to import safely.")
-            }
-            out.append(buffer, 0, read)
-        }
-    }
-}
+private fun readBackupTextLimited(input: InputStream, maxChars: Int = BACKUP_MAX_INPUT_CHARS): String =
+    readTextLimited(input, maxChars, "Backup file is too large to import safely.")
 
 /** PIN/biometric confirmation before applying staged settings (shown only when app lock is on). */
 @Composable
@@ -4434,6 +4673,7 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
 private fun DnsLookupTab(viewModel: AppViewModel) {
     var dropdownExpanded by remember { mutableStateOf(false) }
     val dnsTypes = listOf("A", "AAAA", "MX", "CNAME", "TXT", "NS")
+    val dismissKeyboard = rememberDismissKeyboard()
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
@@ -4472,7 +4712,10 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
         }
 
         Button(
-            onClick = { viewModel.runDnsLookup() },
+            onClick = {
+                dismissKeyboard()
+                viewModel.runDnsLookup()
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.dnsLookupTarget.isNotBlank() && !viewModel.isDnsLookupRunning
         ) {
@@ -4517,6 +4760,7 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
 
 @Composable
 private fun WhoisTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
             value = viewModel.whoisTarget,
@@ -4528,7 +4772,10 @@ private fun WhoisTab(viewModel: AppViewModel) {
         )
 
         Button(
-            onClick = { viewModel.runWhois() },
+            onClick = {
+                dismissKeyboard()
+                viewModel.runWhois()
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.whoisTarget.isNotBlank() && !viewModel.isWhoisRunning
         ) {
@@ -4576,6 +4823,7 @@ private fun WhoisTab(viewModel: AppViewModel) {
 
 @Composable
 private fun SpeedTestTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.measures_this_device_s_download_throughput),
             fontSize = 12.sp,
@@ -4646,7 +4894,14 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
         }
 
         Button(
-            onClick = { if (viewModel.isSpeedTestRunning) viewModel.cancelSpeedTest() else viewModel.runSpeedTest() },
+            onClick = {
+                if (viewModel.isSpeedTestRunning) {
+                    viewModel.cancelSpeedTest()
+                } else {
+                    dismissKeyboard()
+                    viewModel.runSpeedTest()
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = viewModel.speedTestUrl.isNotBlank(),
             colors = if (viewModel.isSpeedTestRunning) ButtonDefaults.buttonColors(containerColor = OmniColors.amber) else ButtonDefaults.buttonColors(),
@@ -4806,7 +5061,7 @@ private fun TunnelEditorDialog(
                     OutlinedTextField(
                         value = when (kind) { "remote" -> "Remote (-R)"; "dynamic" -> "Dynamic SOCKS (-D)"; else -> "Local (-L)" },
                         onValueChange = {}, readOnly = true, label = { Text(stringResource(R.string.type)) },
-                        trailingIcon = { IconButton(onClick = { kindMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
+                        trailingIcon = { IconButton(onClick = { kindMenu = true }) { Icon(Icons.Filled.ArrowDropDown, "Pick ${stringResource(R.string.type)}") } },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OverflowDropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
@@ -4821,7 +5076,7 @@ private fun TunnelEditorDialog(
                     OutlinedTextField(
                         value = servers.find { it.id == serverId }?.name ?: "Select host",
                         onValueChange = {}, readOnly = true, label = { Text(stringResource(R.string.ssh_host)) },
-                        trailingIcon = { IconButton(onClick = { serverMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
+                        trailingIcon = { IconButton(onClick = { serverMenu = true }) { Icon(Icons.Filled.ArrowDropDown, "Pick ${stringResource(R.string.ssh_host)}") } },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OverflowDropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {

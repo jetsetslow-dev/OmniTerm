@@ -3,6 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- USB serial consoles and plugged-in security keys work on phones that can host USB devices;
+         the app installs on any. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <!-- FIDO2 security keys held to the phone. YubiKit declares these too; stated here so the
+         permission is visible where the others are. -->
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <!-- Android 17 (target 37) gates direct TCP/UDP access to nearby devices. OmniTerm needs broad
          local-network access for SSH/SFTP, LAN discovery, tunnels, shares, and Wake-on-LAN. -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
@@ -110,6 +117,11 @@
             android:exported="true"
             android:permission="android.permission.BIND_REMOTEVIEWS" />
 
+        <!-- Android's answer to a request to use a USB serial adapter. -->
+        <receiver
+            android:name=".data.serial.UsbPermissionReceiver"
+            android:exported="false" />
+
         <!-- Widget Receiver -->
         <receiver
             android:name=".ui.widget.OmniTermWidgetReceiver"
@@ -121,6 +133,10 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/omniterm_widget_info" />
         </receiver>
+
+        <!-- yubikit-android declares two prompt activities OmniTerm never starts. -->
+        <activity android:name="com.yubico.yubikit.android.ui.OtpActivity" tools:node="remove" />
+        <activity android:name="com.yubico.yubikit.android.ui.YubiKeyPromptActivity" tools:node="remove" />
     </application>
 
 </manifest>

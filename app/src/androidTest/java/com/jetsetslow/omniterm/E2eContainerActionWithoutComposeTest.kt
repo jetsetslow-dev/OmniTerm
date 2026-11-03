@@ -22,7 +22,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
-import java.util.Base64
 
 /** Opt-in, disposable repository Docker/Podman fixtures only; no personal-host fallback. */
 class E2eContainerActionWithoutComposeTest {
@@ -50,8 +49,7 @@ class E2eContainerActionWithoutComposeTest {
         """.trimIndent() + "\n"
         var ids = emptyList<String>()
         try {
-            val output = model.executeSshCommand(host, RemoteCommands.composeDeploy(path, project,
-                Base64.getEncoder().encodeToString(yaml.toByteArray()), runtime = runtime))
+            val output = model.executeSshCommand(host, RemoteCommands.composeDeploy(path, project, runtime = runtime), stdin = yaml)
             assertTrue("Fixture deploy failed: $output", output.contains("OMNITERM_DEPLOY_OK"))
             model.executeSshCommand(host, RemoteCommands.dockerComposeAction(project, dir, path, "scale", service = "worker", replicas = 2, runtime = runtime))
             refresh(model)

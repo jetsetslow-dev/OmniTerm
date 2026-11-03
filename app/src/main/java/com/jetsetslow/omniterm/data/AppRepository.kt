@@ -146,6 +146,17 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun deleteScript(script: QuickScriptEntity) = db.quickScriptDao().deleteScript(script)
 
     // WOL Target functions
+    val telnetHostsFlow: Flow<List<TelnetHostEntity>> = db.telnetHostDao().getAllTelnetHostsFlow()
+    suspend fun getAllTelnetHosts(): List<TelnetHostEntity> = db.telnetHostDao().getAllTelnetHosts()
+    suspend fun insertTelnetHost(host: TelnetHostEntity): Long = db.telnetHostDao().insertTelnetHost(host)
+    suspend fun deleteTelnetHost(host: TelnetHostEntity) = db.telnetHostDao().deleteTelnetHost(host)
+
+    val kubeClustersFlow: Flow<List<KubeClusterEntity>> =
+        db.kubeClusterDao().getAllKubeClustersFlow().map { list -> list.map(::decryptKubeCluster) }
+    suspend fun getAllKubeClusters(): List<KubeClusterEntity> = db.kubeClusterDao().getAllKubeClusters().map(::decryptKubeCluster)
+    suspend fun insertKubeCluster(cluster: KubeClusterEntity): Long = db.kubeClusterDao().insertKubeCluster(encryptKubeCluster(cluster))
+    suspend fun deleteKubeCluster(id: Int) = db.kubeClusterDao().deleteKubeCluster(id)
+
     val wolTargetsFlow: Flow<List<WolTargetEntity>> = db.wolTargetDao().getAllWolTargetsFlow()
     suspend fun getAllWolTargets(): List<WolTargetEntity> = db.wolTargetDao().getAllWolTargets()
     suspend fun insertWolTarget(target: WolTargetEntity) = db.wolTargetDao().insertWolTarget(target)
@@ -217,6 +228,12 @@ class AppRepository(private val db: AppDatabase) {
 
     private fun encryptProfile(profile: CredentialProfileEntity): CredentialProfileEntity =
         profile.copy(password = SecretStore.encrypt(profile.password))
+
+    private fun decryptKubeCluster(cluster: KubeClusterEntity): KubeClusterEntity =
+        cluster.copy(clientKeyPem = SecretStore.decrypt(cluster.clientKeyPem) ?: "", token = SecretStore.decrypt(cluster.token) ?: "")
+
+    private fun encryptKubeCluster(cluster: KubeClusterEntity): KubeClusterEntity =
+        cluster.copy(clientKeyPem = SecretStore.encrypt(cluster.clientKeyPem) ?: "", token = SecretStore.encrypt(cluster.token) ?: "")
 
     private fun decryptNetworkShare(share: NetworkShareEntity): NetworkShareEntity =
         share.copy(password = SecretStore.decrypt(share.password) ?: "")

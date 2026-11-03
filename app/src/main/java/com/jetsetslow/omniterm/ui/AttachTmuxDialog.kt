@@ -106,7 +106,7 @@ private fun TmuxSessionRow(viewModel: AppViewModel, srv: ServerEntity, session: 
     }
     OmniCard(
         modifier = Modifier.fillMaxWidth().testTag("tmux.attach.session.${session.name}"),
-        leftAccent = if (attachable) OmniColors.cyan else null,
+        leftAccent = if (attachable) getServerColor(srv) else null,
         onClick = if (attachable) {
             {
                 viewModel.attachHostTmuxSession(session)

@@ -64,19 +64,25 @@ class HostOsCommandsTest {
             mapOf(
                 "service" to """
                     case "${'$'}1" in
-                      -e) printf '/etc/rc.d/sshd\n/usr/local/etc/rc.d/nginx\n';;
-                      -l) printf 'DAEMON\nLOGIN\nnginx\nntpd\nsshd\n';;
+                      -e) printf '/etc/rc.d/sshd\n/usr/local/etc/rc.d/nginx\n/etc/rc.d/cron\n';;
+                      -l) printf 'DAEMON\nLOGIN\ncron\nnginx\nntpd\nsshd\nsyslogd\n';;
                       sshd|ntpd) [ "${'$'}2" = onestatus ] && exit 0; exit 1;;
+                      cron|syslogd) echo "eval: cannot open /var/run/${'$'}1.pid: Permission denied"; echo "${'$'}1 is not running."; exit 1;;
                       *) exit 1;;
                     esac
                 """.trimIndent(),
+                // As FreeBSD's own: cron runs, while syslogd's pidfile outlived it.
+                "pgrep" to """[ "${'$'}1 ${'$'}2" = "-x cron" ]""",
             ),
         )
         val list = services(out)
-        assertEquals(setOf("nginx", "ntpd", "sshd"), list.keys)
+        assertEquals(setOf("cron", "nginx", "ntpd", "sshd", "syslogd"), list.keys)
         assertService(list["sshd"], "running", enabled = true)
         assertService(list["nginx"], "dead", enabled = true)
         assertService(list["ntpd"], "running", enabled = false)
+        // Without root a pidfile only root reads says "not running"; the process decides instead.
+        assertService(list["cron"], "running", enabled = true)
+        assertService(list["syslogd"], "dead", enabled = false)
     }
 
     @Test
@@ -151,11 +157,12 @@ class HostOsCommandsTest {
         assertTrue(RemoteCommands.serviceActionUsesSudo("FreeBSD"))
 
         assertEquals(
-            "powershell -NoProfile -Command \"Restart-Service -Name 'Spooler' -Force\"",
-            RemoteCommands.serviceAction("Spooler", "restart", "pw", "Windows"),
+            "Restart-Service -Name 'Spooler' -Force",
+            powershellScript(RemoteCommands.serviceAction("Spooler", "restart", "pw", "Windows")),
         )
-        assertTrue(RemoteCommands.serviceAction("it's", "stop", os = "Windows").contains("-Name 'it''s'"))
-        assertFalse(RemoteCommands.serviceAction("50%", "stop", os = "Windows").contains("powershell"))
+        assertTrue(powershellScript(RemoteCommands.serviceAction("it's", "stop", os = "Windows")).contains("-Name 'it''s'"))
+        // Encoded, no shell reads the name, so names cmd once could not carry work too.
+        assertEquals("Stop-Service -Name '50% \"x\"' -Force", powershellScript(RemoteCommands.serviceAction("50% \"x\"", "stop", os = "Windows")))
         assertFalse(RemoteCommands.serviceActionUsesSudo("Windows"))
 
         val linux = RemoteCommands.serviceAction("nginx", "restart", "", "Linux")
@@ -186,7 +193,7 @@ class HostOsCommandsTest {
     @Test
     fun fleetChecksAskWindowsInPowerShell() {
         RemoteCommands.QuickCheck.entries.forEach { check ->
-            assertTrue(check.name, RemoteCommands.quickCheck(check, "Windows").startsWith("powershell -NoProfile -Command \""))
+            assertTrue(check.name, powershellScript(RemoteCommands.quickCheck(check, "Windows")).contains("Get-"))
         }
         assertEquals("uptime", RemoteCommands.quickCheck(RemoteCommands.QuickCheck.Uptime, "FreeBSD"))
         assertEquals("df -h", RemoteCommands.quickCheck(RemoteCommands.QuickCheck.Disk, "Linux"))
@@ -201,12 +208,43 @@ class HostOsCommandsTest {
     @Test
     fun aPowerShellLoginShellIsRecognisedAsWindows() {
         val parseError = """
-            At line:1 char:22
-            + uname -s 2>/dev/null || echo Windows
-            +                      ~~
+            SSH Error: command failed (1): At line:1 char:10
+            + uname -s || echo Windows; echo ${'$'}SHELL
+            +          ~~
             The token '||' is not a valid statement separator in this version.
                 + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+                + FullyQualifiedErrorId : InvalidEndOfLine
         """.trimIndent()
         assertEquals("Windows", RemoteCommands.normaliseOs(parseError))
+        assertEquals("", RemoteParsers.parseLoginShell(parseError))
+    }
+
+    /** What [RemoteCommands.OS_PROBE] printed on each lab host, login shell by login shell. */
+    @Test
+    fun theOsProbeReadsTheSameUnderEveryLoginShell() {
+        val answers = mapOf(
+            "FreeBSD\n/bin/sh\n" to ("FreeBSD" to "/bin/sh"),
+            "FreeBSD\n/bin/tcsh\n" to ("FreeBSD" to "/bin/tcsh"),
+            "FreeBSD\n/usr/local/bin/fish\n" to ("FreeBSD" to "/usr/local/bin/fish"),
+            "Darwin\n/bin/zsh\n" to ("Darwin" to "/bin/zsh"),
+            "Linux\n/bin/bash\n" to ("Linux" to "/bin/bash"),
+            // cmd has no `;`, so it echoes the rest of the line.
+            "'uname' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n" +
+                "Windows; echo ${'$'}SHELL\r\n" to ("Windows" to ""),
+            // Git for Windows' uname on cmd's PATH.
+            "MINGW64_NT-10.0-26100\r\n${'$'}SHELL\r\n" to ("Windows" to ""),
+        )
+        answers.forEach { (output, expected) ->
+            assertEquals(output, expected.first, RemoteCommands.normaliseOs(output))
+            assertEquals(output, expected.second, RemoteParsers.parseLoginShell(output))
+        }
+    }
+
+    /** The script inside a [RemoteCommands.powershell] command. */
+    private fun powershellScript(command: String): String {
+        val prefix = "powershell -NoProfile -NonInteractive -EncodedCommand "
+        assertTrue(command, command.startsWith(prefix))
+        return String(java.util.Base64.getDecoder().decode(command.removePrefix(prefix)), Charsets.UTF_16LE)
+            .removePrefix("${'$'}ProgressPreference='SilentlyContinue'; ")
     }
 }

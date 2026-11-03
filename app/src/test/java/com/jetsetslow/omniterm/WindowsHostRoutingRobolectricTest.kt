@@ -89,7 +89,7 @@ class WindowsHostRoutingRobolectricTest {
                 unix.forEach { word -> assertFalse("sent \"$word\" to a Windows host: $command", command.contains(word)) }
             }
         } finally {
-            store.clear()
+            clearViewModelsAndAwaitTerminalJobs(store, main)
             Dispatchers.resetMain()
             main.close()
         }

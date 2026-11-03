@@ -44,6 +44,17 @@ interface SshTransport {
      */
     suspend fun testConnection(creds: SshCredentials): String?
 
+    /** [testConnection], asking [interactiveAuth] the host's sign-in questions; see [InteractiveAuth]. */
+    suspend fun testConnection(creds: SshCredentials, interactiveAuth: InteractiveAuth?): String? = testConnection(creds)
+
+    /**
+     * Signs in to [creds]'s host for one-shot commands, asking [interactiveAuth] any question the host
+     * has beyond the saved password (a one-time code), so the commands and terminals that follow
+     * reuse that sign-in instead of asking again. Null on success, else what went wrong. A host
+     * with no such question needs none of this; its commands sign in on their own.
+     */
+    suspend fun signIn(creds: SshCredentials, interactiveAuth: InteractiveAuth): String? = null
+
     /**
      * Open a persistent interactive shell backed by a PTY. The returned [TerminalSession]
      * streams raw bytes from the remote and accepts raw keystrokes — this is what makes
@@ -51,6 +62,18 @@ interface SshTransport {
      * [onPhaseChange] is called with human-readable progress strings during connection setup.
      */
     suspend fun openShell(creds: SshCredentials, cols: Int, rows: Int, onPhaseChange: ((String) -> Unit)? = null): TerminalSession
+
+    /**
+     * [openShell], asking [interactiveAuth] the host's sign-in questions beyond the saved password,
+     * for terminals the user opened; see [InteractiveAuth].
+     */
+    suspend fun openShell(
+        creds: SshCredentials,
+        cols: Int,
+        rows: Int,
+        interactiveAuth: InteractiveAuth?,
+        onPhaseChange: ((String) -> Unit)? = null,
+    ): TerminalSession = openShell(creds, cols, rows, onPhaseChange)
 
     /** Release any pooled/cached connections held by the transport. Idempotent; default no-op. */
     fun shutdown() {}
@@ -116,6 +139,10 @@ data class SshCredentials(
     val proxyPassword: String = "",
     /** OpenSSH/PEM private key contents for the jump host, when proxyType == "ssh". */
     val proxyKeyPem: String? = null,
+    /** The OpenSSH certificate (`-cert.pub` line) that goes with [privateKeyPem], if any. */
+    val certificate: String? = null,
+    /** The OpenSSH certificate that goes with [proxyKeyPem], if any. */
+    val proxyCertificate: String? = null,
     /** SSH protocol keepalive interval. Zero disables protocol keepalives. */
     val keepAliveSeconds: Int = 30,
     /** Negotiate delayed zlib compression for bandwidth-constrained links. */
@@ -127,6 +154,14 @@ data class SshCredentials(
      * for the session's lifetime).
      */
     val agentForwarding: Boolean = false,
+    /**
+     * Run each exec command in `sh` rather than the login shell
+     * ([com.jetsetslow.omniterm.data.RemoteCommands.inPosixShell]).
+     * Set for hosts known to be Unix, whose app commands are all POSIX sh while the user's login
+     * shell may be csh, fish or zsh. Off for Windows hosts, for hosts not yet probed, and for
+     * commands the user typed, which belong to the user's own shell.
+     */
+    val posixShell: Boolean = false,
 )
 
 /** Connection failed before/while establishing the shell or exec channel. */

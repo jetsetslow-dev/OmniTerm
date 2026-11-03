@@ -2,8 +2,11 @@ package com.jetsetslow.omniterm.data.ssh
 
 import com.jetsetslow.omniterm.data.SftpFile
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
+import com.jetsetslow.omniterm.data.shares.formatFsDate
 import com.jcraft.jsch.ChannelSftp
+import com.jcraft.jsch.SftpException
 import com.jcraft.jsch.SftpProgressMonitor
+import com.jcraft.jsch.Session
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,6 +15,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayInputStream
 import java.io.Closeable
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -28,7 +32,11 @@ import java.io.OutputStream
  * Each operation gets its own short-lived channel so a long transfer never blocks a folder listing
  * on the same connection. Jump-host sessions are not pooled (see [buildJumpedJschSession]).
  */
-class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
+class JschSftp(
+    private val creds: SshCredentials,
+    // Answers the host's sign-in questions (a one-time code) when a browse needs a new connection.
+    private val interactiveAuth: InteractiveAuth? = null,
+) : RemoteFsClient {
 
     private val activeChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<ChannelSftp>()
     private val activeStreams = java.util.concurrent.ConcurrentHashMap.newKeySet<Closeable>()
@@ -50,8 +58,9 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
      * (potential) session handshake and the channel work run on [Dispatchers.IO] — never the caller's
      * (UI) thread — since [SshSessionPool.acquire] may dial+authenticate a brand-new connection.
      *
-     * A stale pooled session usually fails at channel open — before [block] has done anything —
-     * and that phase is always evict-and-retried once. Failures *inside* [block] retry only when
+     * A stale pooled session usually fails at channel open — before [block] has done anything — and
+     * a reused one that fails there is always evicted and retried once, even while JSch still calls
+     * it connected. Failures *inside* [block] retry only when
      * [retryBlockOnStaleSession] allows it: streaming transfers must pass false, because their
      * caller-owned streams are already partially written/consumed, and re-running the block would
      * silently duplicate downloaded bytes or upload only the leftover tail.
@@ -59,17 +68,24 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
     private suspend fun <T> withPooledChannel(retryBlockOnStaleSession: Boolean, block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
-            val lease = pool.acquire(creds)
+            val lease = pool.acquire(creds, interactiveAuth)
             val session = lease.session
             val channel: ChannelSftp = try {
-                (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
+                // A warm connection opens a channel in one round trip. One whose network went away
+                // without a word (a NAT that forgot it, a change of Wi-Fi) still says it is
+                // connected, and its channels never open, so it gets less time than a new one.
+                val openTimeout = if (lease.reused) WARM_CHANNEL_OPEN_TIMEOUT_MS else CONNECT_TIMEOUT_MS
+                openChannel(session, openTimeout)
             } catch (e: CancellationException) {
                 lease.close()
                 throw e
             } catch (e: Exception) {
-                if (!session.isConnected) {
+                // A reused connection that cannot open a channel is replaced, whatever it says. A new
+                // one that cannot is the server's answer (no SFTP there), and replacing it could ask
+                // the user for another one-time code.
+                if (lease.reused || !session.isConnected) {
                     pool.evict(creds, session)
-                    if (attempt++ < 1) {
+                    if (lease.reused && attempt++ < 1) {
                         lease.close()
                         continue
                     }
@@ -104,6 +120,17 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
         throw IllegalStateException("withPooledChannel loop exited unexpectedly")
     }
 
+    private fun openChannel(session: Session, timeoutMs: Int): ChannelSftp {
+        val channel = session.openChannel("sftp") as ChannelSftp
+        try {
+            channel.connect(timeoutMs)
+            return channel
+        } catch (failure: Throwable) {
+            runCatching { channel.disconnect() }
+            throw failure
+        }
+    }
+
     /** Jump hosts can't be pooled: build a dedicated tunnelled session per call and tear it down. */
     private suspend fun <T> withJumpedChannel(block: (ChannelSftp) -> T): T {
         var jumped: JumpedSession? = null
@@ -115,9 +142,9 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
             }
         }
         try {
-            val session = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS).also { jumped = it }.target
+            val session = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS, interactiveAuth).also { jumped = it }.target
             session.connect(CONNECT_TIMEOUT_MS)
-            channel = (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
+            channel = openChannel(session, CONNECT_TIMEOUT_MS)
             activeChannels += channel
             return block(channel)
         } finally {
@@ -135,12 +162,15 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
             .filter { it.filename != "." && it.filename != ".." }
             .map { e ->
                 val attrs = e.attrs
+                val modSeconds = attrs.mTime.toLong()
                 SftpFile(
                     name = e.filename,
                     isDirectory = attrs.isDir,
                     size = attrs.size,
-                    modDate = attrs.mtimeString?.trim().orEmpty(),
-                    modTimeSeconds = attrs.mTime.toLong(),
+                    // As every other file browser shows it. JSch's mtimeString is Date.toString(),
+                    // which Android 15 formats in the root locale: "Mon M11 02 14:50:41 GMT+05:30".
+                    modDate = formatFsDate(modSeconds * 1000L),
+                    modTimeSeconds = modSeconds,
                 )
             }
     }
@@ -149,6 +179,8 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
     override suspend fun home(): String = withChannel(retryBlockOnStaleSession = true) { ch -> ch.pwd() ?: "/" }
 
     override suspend fun mkdir(path: String) { withChannel { ch -> ch.mkdir(path) } }
+
+    suspend fun createFile(path: String): Unit = withChannel { ch -> createEmptyFile(ch, path) }
 
     override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) { withChannel { ch -> ch.rename(oldPath, newPath) } }
 
@@ -273,6 +305,9 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
 
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15_000
+
+        /** How long a pooled connection gets to open a channel before it counts as gone. */
+        private const val WARM_CHANNEL_OPEN_TIMEOUT_MS = 5_000
         private const val METADATA_OPERATION_TIMEOUT_MS = 2 * 60_000L
         private const val TRANSFER_TIMEOUT_MS = 6 * 60 * 60_000L
         private const val PROGRESS_REPORT_BYTES = 64 * 1024L
@@ -291,4 +326,20 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
         /** Drop one host's cached SFTP transport after its host or credentials are removed. */
         fun forgetCredentials(creds: SshCredentials) = pool.evict(creds)
     }
+}
+
+/**
+ * Create the empty file [path] over [ch]. Anything already there is refused, never truncated: SFTP
+ * offers no exclusive create here, so a file that appears after the check is opened to append nothing.
+ */
+internal fun createEmptyFile(ch: ChannelSftp, path: String) {
+    val exists = try {
+        ch.lstat(path)
+        true
+    } catch (e: SftpException) {
+        if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) throw e
+        false
+    }
+    if (exists) throw IOException("\"${path.substringAfterLast('/')}\" already exists here.")
+    ByteArrayInputStream(ByteArray(0)).use { ch.put(it, path, ChannelSftp.APPEND) }
 }

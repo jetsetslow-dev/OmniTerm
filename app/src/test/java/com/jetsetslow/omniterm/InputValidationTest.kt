@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.ui.MeasurementSystem
+import com.jetsetslow.omniterm.ui.alertTargetError
 import com.jetsetslow.omniterm.ui.alertThresholdError
 import com.jetsetslow.omniterm.ui.countError
 import com.jetsetslow.omniterm.ui.macAddressError
@@ -87,6 +88,30 @@ class InputValidationTest {
     fun `alert threshold requires positive latency`() {
         assertNull(alertThresholdError("250", "Latency", MeasurementSystem.Metric))
         assertNotNull(alertThresholdError("0", "Latency", MeasurementSystem.Metric))
+    }
+
+    @Test
+    fun `tls and url thresholds are days and milliseconds under the check timeout`() {
+        assertNull(alertThresholdError("14", "TLS Expiry", MeasurementSystem.Metric))
+        assertNotNull(alertThresholdError("0", "TLS Expiry", MeasurementSystem.Metric))
+        assertNull(alertThresholdError("2000", "URL Check", MeasurementSystem.Metric))
+        assertNotNull(alertThresholdError("0", "URL Check", MeasurementSystem.Metric))
+        assertNotNull(alertThresholdError("15000", "URL Check", MeasurementSystem.Metric))
+    }
+
+    @Test
+    fun `a url check needs an address and a typed address needs exactly one host`() {
+        assertNotNull(alertTargetError("URL Check", "", listOf(3)))
+        assertNotNull(alertTargetError("URL Check", "ftp://example.com", listOf(3)))
+        assertNull(alertTargetError("URL Check", "example.com/health", listOf(3)))
+        assertNotNull(alertTargetError("URL Check", "https://example.com", listOf(0)))
+        assertNotNull(alertTargetError("URL Check", "https://example.com", listOf(3, 4)))
+        // A blank TLS target checks each host's own address, so any hosts will do.
+        assertNull(alertTargetError("TLS Expiry", "", listOf(0)))
+        assertNull(alertTargetError("TLS Expiry", "example.com:8443", listOf(3)))
+        assertNotNull(alertTargetError("TLS Expiry", "example.com:8443", listOf(0)))
+        assertNotNull(alertTargetError("TLS Expiry", "example.com:99999", listOf(3)))
+        assertNull(alertTargetError("CPU Usage", "ignored", listOf(0)))
     }
 
     @Test

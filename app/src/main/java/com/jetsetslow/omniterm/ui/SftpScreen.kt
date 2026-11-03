@@ -3,6 +3,7 @@ package com.jetsetslow.omniterm.ui
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import androidx.activity.compose.BackHandler
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -38,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -85,14 +88,16 @@ private fun CompactSftpIconToggleButton(
 
 @Composable
 fun SftpScreen(viewModel: AppViewModel) {
-    val srv = screenHost(viewModel) {
+    // Online hosts only, as the SFTP host bar lists: an offline selection is left for the first online host.
+    val srv = screenHost(viewModel, onlineOnly = true) {
         if (it != null) viewModel.ensureSftpLoadedForSelectedServer()
         // Only the SFTP subtab needs an online SSH host; Bookmarks/Shares/Transfers work without.
         else if (viewModel.activeSftpTab == 1) viewModel.activeSftpTab = 0
     }
 
+    val typing = typingInLandscape()
     Column(modifier = Modifier.fillMaxSize()) {
-        if (srv != null && viewModel.activeSftpTab == 1) {
+        if (srv != null && viewModel.activeSftpTab == 1 && !typing) {
             // The host picker belongs to the SFTP subtab only — Transfers and Bookmarks span every
             // endpoint and Shares has its own list, so a host bar there is misleading clutter.
             // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host.
@@ -102,7 +107,7 @@ fun SftpScreen(viewModel: AppViewModel) {
         }
         // Subtab order puts the Bookmarks jump list first, then the two browsing surfaces
         // (SFTP host, then network Shares), and the Transfers activity log last.
-        PrimaryTabRow(selectedTabIndex = viewModel.activeSftpTab) {
+        if (!typing) PrimaryTabRow(selectedTabIndex = viewModel.activeSftpTab) {
             Tab(selected = viewModel.activeSftpTab == 0, onClick = { viewModel.activeSftpTab = 0 }) { Text(stringResource(R.string.bookmarks), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(selected = viewModel.activeSftpTab == 1, enabled = srv != null, onClick = { viewModel.activeSftpTab = 1 }) { Text(stringResource(R.string.sftp), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(selected = viewModel.activeSftpTab == 2, onClick = { viewModel.activeSftpTab = 2 }) { Text(stringResource(R.string.shares), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
@@ -144,6 +149,7 @@ private fun NoOnlineSshHostMessage() {
 
 @Composable
 private fun NetworkSharesTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     // A share is open in the file browser — the browser owns the tab until Back closes it.
     viewModel.browsingShare?.let { share ->
         ShareBrowserView(viewModel, share)
@@ -240,7 +246,10 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                         },
                         browsable = viewModel.isShareBrowsable(share),
                         onBrowse = { viewModel.openShareBrowser(share) },
-                        onTest = { viewModel.testNetworkShare(share) },
+                        onTest = {
+                            dismissKeyboard()
+                            viewModel.testNetworkShare(share)
+                        },
                         onEdit = {
                             editingShare = share
                             showDialog = true
@@ -541,6 +550,7 @@ private fun shareAvailabilityUi(status: String): ShareAvailabilityUi =
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity) {
+    val dismissKeyboard = rememberDismissKeyboard()
     val context = androidx.compose.ui.platform.LocalContext.current
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
@@ -586,7 +596,6 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
     }
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
-    var folderNameInput by remember { mutableStateOf("") }
     var renameTarget by remember { mutableStateOf<SftpFile?>(null) }
     var renameInput by remember { mutableStateOf("") }
     var menuForName by remember { mutableStateOf<String?>(null) }
@@ -773,7 +782,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                 onClick = { viewModel.shareSelectAll() },
             ) { Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all_2)) }
             IconButton(
-                onClick = { folderNameInput = ""; showCreateFolderDialog = true },
+                onClick = { showCreateFolderDialog = true },
                 enabled = !viewModel.shareOpRunning && !viewModel.shareLoading,
             ) { Icon(Icons.Filled.CreateNewFolder, contentDescription = stringResource(R.string.new_folder)) }
             IconButton(
@@ -811,7 +820,12 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                             }
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { if (viewModel.shareSearchRecursive) viewModel.runShareSearch() }),
+                        keyboardActions = KeyboardActions(onSearch = {
+                            if (viewModel.shareSearchRecursive) {
+                                dismissKeyboard()
+                                viewModel.runShareSearch()
+                            }
+                        }),
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(6.dp))
@@ -829,7 +843,10 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                         Spacer(Modifier.weight(1f))
                         if (viewModel.shareSearchRecursive) {
                             Button(
-                                onClick = { viewModel.runShareSearch() },
+                                onClick = {
+                                    dismissKeyboard()
+                                    viewModel.runShareSearch()
+                                },
                                 enabled = viewModel.shareSearchQuery.isNotBlank() && !viewModel.shareSearchRunning,
                             ) { Text(stringResource(R.string.search)) }
                         }
@@ -1177,29 +1194,10 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
     }
 
     if (showCreateFolderDialog) {
-        AlertDialog(
-            onDismissRequest = { showCreateFolderDialog = false },
-            title = { Text(stringResource(R.string.new_folder)) },
-            text = {
-                OutlinedTextField(
-                    value = folderNameInput,
-                    onValueChange = { folderNameInput = it },
-                    label = { Text(stringResource(R.string.folder_name)) },
-                    singleLine = true,
-                    colors = omniTextFieldColors(),
-                )
-            },
-            confirmButton = {
-                Button(
-                    enabled = folderNameInput.isNotBlank() && !folderNameInput.contains('/'),
-                    onClick = {
-                        viewModel.shareMkdir(folderNameInput)
-                        showCreateFolderDialog = false
-                    },
-                ) { Text(stringResource(R.string.create)) }
-            },
-            dismissButton = { TextButton(onClick = { showCreateFolderDialog = false }) { Text(stringResource(R.string.cancel)) } },
-        )
+        NewNameDialog(R.string.new_folder, R.string.folder_name, onDismiss = { showCreateFolderDialog = false }) {
+            viewModel.shareMkdir(it)
+            showCreateFolderDialog = false
+        }
     }
 
     renameTarget?.let { target ->
@@ -1432,7 +1430,7 @@ private fun NetworkShareDialog(
                         colors = omniTextFieldColors(),
                     )
                 }
-                OutlinedTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text(stringResource(R.string.share_path)) }, placeholder = { Text(stringResource(R.string.sharedfolder_or_exports_media)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                PathTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text(stringResource(R.string.share_path)) }, placeholder = { Text(stringResource(R.string.sharedfolder_or_exports_media)) }, modifier = Modifier.fillMaxWidth(), colors = omniTextFieldColors())
                 if (protocol == "WEBDAV") {
                     // Explicit rather than inferred from the port: Basic auth over plain HTTP on a
                     // nonstandard TLS port (Synology's 5006, say) would send the password unseen.
@@ -1594,6 +1592,7 @@ private fun shareProtocolColor(protocol: String): Color = when (protocol.upperca
 )
 @Composable
 fun SftpFilesTab(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     val srv = viewModel.selectedServer ?: return
     val filesList = viewModel.sftpVisibleEntries
     val currentPath = viewModel.sftpPath.ifBlank { "~" }
@@ -1607,7 +1606,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
     val largeBatchBytesThreshold = viewModel.sftpLargeBatchBytesThreshold
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
-    var folderNameInput by remember { mutableStateOf("") }
+    var showNewFileDialog by remember { mutableStateOf(false) }
     var showSudoConfirmDialog by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     val copyToClipboard = rememberClipboardCopy()
@@ -1813,18 +1812,17 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                   // otherwise overflow with 8 buttons on a phone.
                   Column(modifier = Modifier.weight(1f)) {
                     if (editingPath) {
-                        OutlinedTextField(
+                        PathTextField(
                             value = pathInput,
                             onValueChange = { pathInput = it },
-                            singleLine = true,
                             textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 14.sp),
                             leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = OmniColors.amber) },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                            keyboardActions = KeyboardActions(onGo = {
+                            imeAction = ImeAction.Go,
+                            onImeAction = {
                                 RemoteCommands.resolveTypedPath(viewModel.sftpPath, pathInput)
                                     ?.let { viewModel.loadSftp(it) }
                                 editingPath = false
-                            }),
+                            },
                             trailingIcon = {
                                 Row {
                                     IconButton(onClick = {
@@ -1838,6 +1836,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
+                            autofocus = true,
                         )
                     } else {
                         // Tappable path box: full width, mono, click to edit and type a destination.
@@ -1960,6 +1959,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         CompactSftpIconButton(onClick = { showCreateFolderDialog = true }) {
                             Icon(Icons.Filled.CreateNewFolder, contentDescription = stringResource(R.string.create_folder))
                         }
+                        CompactSftpIconButton(enabled = viewModel.sftpFileCreation == null, onClick = { showNewFileDialog = true }) {
+                            Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = stringResource(R.string.new_file))
+                        }
                         CompactSftpIconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Filled.Upload, contentDescription = stringResource(R.string.upload_files))
                         }
@@ -2057,7 +2059,10 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
-                            if (viewModel.sftpSearchRecursive) viewModel.runSftpSearch()
+                            if (viewModel.sftpSearchRecursive) {
+                                dismissKeyboard()
+                                viewModel.runSftpSearch()
+                            }
                         }),
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -2080,7 +2085,10 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         Spacer(modifier = Modifier.weight(1f))
                         if (viewModel.sftpSearchRecursive) {
                             Button(
-                                onClick = { viewModel.runSftpSearch() },
+                                onClick = {
+                                    dismissKeyboard()
+                                    viewModel.runSftpSearch()
+                                },
                                 enabled = viewModel.sftpSearchQuery.isNotBlank() && !viewModel.sftpSearchRunning,
                             ) { Text(stringResource(R.string.search)) }
                         }
@@ -2232,6 +2240,15 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 confirm = confirm,
                 onPaste = { viewModel.pasteIntoSftp() },
             )
+        }
+
+        viewModel.sftpFileCreation?.let {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(it, fontSize = 12.sp, fontFamily = OmniFonts.mono)
+            }
         }
 
         // Transient success/info banner (save confirmed, copied, moved, deleted…).
@@ -2686,36 +2703,17 @@ fun SftpFilesTab(viewModel: AppViewModel) {
             )
         }
 
-        // Directory Creator Dialogue Box
         if (showCreateFolderDialog) {
-            AlertDialog(
-                onDismissRequest = { showCreateFolderDialog = false },
-                title = { Text(stringResource(R.string.create_directory)) },
-                text = {
-                    OutlinedTextField(
-                        value = folderNameInput,
-                        onValueChange = { folderNameInput = it },
-                        label = { Text(stringResource(R.string.directory_name)) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (folderNameInput.isNotBlank()) {
-                                viewModel.sftpMkdir(folderNameInput)
-                                folderNameInput = ""
-                                showCreateFolderDialog = false
-                            }
-                        }
-                    ) {
-                        Text(stringResource(R.string.create))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showCreateFolderDialog = false }) { Text(stringResource(R.string.cancel)) }
-                }
-            )
+            NewNameDialog(R.string.new_folder, R.string.folder_name, onDismiss = { showCreateFolderDialog = false }) {
+                viewModel.sftpMkdir(it)
+                showCreateFolderDialog = false
+            }
+        }
+        if (showNewFileDialog) {
+            NewNameDialog(R.string.new_file, R.string.file_name, onDismiss = { showNewFileDialog = false }) {
+                viewModel.sftpNewFile(it)
+                showNewFileDialog = false
+            }
         }
 
         // Renamer Dialog Box
@@ -3100,8 +3098,9 @@ fun SftpFileEditor(
 ) {
     var buffer by remember(file.name) { mutableStateOf(file.content) }
     // Files open read-only so browsing a config can't corrupt it with a stray IME keystroke;
-    // the pencil toggle in the top bar enables editing (and with it, Save).
-    var editMode by remember(file.name) { mutableStateOf(false) }
+    // the pencil toggle in the top bar enables editing (and with it, Save). An empty file, such as
+    // one just made with New file, has nothing to corrupt and opens ready to type.
+    var editMode by remember(file.name) { mutableStateOf(file.content.isEmpty()) }
     val dirty = buffer != file.content
     val lineCount = remember(buffer) { buffer.count { it == '\n' } + 1 }
 
@@ -3223,7 +3222,11 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                     share != null -> !shareUnavailable(share)
                     else -> false
                 }
-                val endpointColor = if (bmk.shareId != null) shareProtocolColor(share?.protocol ?: "") else OmniColors.cyan
+                val endpointColor = when {
+                    bmk.shareId != null -> shareProtocolColor(share?.protocol ?: "")
+                    bmk.serverId != null -> hostAccent(servers, bmk.serverId)
+                    else -> OmniColors.cyan
+                }
                 OmniCard(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3348,12 +3351,12 @@ private fun BookmarkEditDialog(
                         }
                     }
                 }
-                OutlinedTextField(
+                PathTextField(
                     value = path,
                     onValueChange = { path = it },
                     label = { Text(stringResource(R.string.path)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("bookmark.path"),
+                    autofocus = true,
                 )
             }
         },
@@ -3479,4 +3482,31 @@ private fun conflictDetail(c: TransferConflict): String = when (c.verdict) {
     ConflictVerdict.UNKNOWN ->
         "Not verified — no checksum tool on this host; " +
             "${formatBytes(c.sourceSize)} vs ${formatBytes(c.destSize)} at destination"
+}
+
+/** Asks for the name of a new folder or file here; [onCreate] gets it, never blank and never with a "/". */
+@Composable
+private fun NewNameDialog(@StringRes title: Int, @StringRes label: Int, onDismiss: () -> Unit, onCreate: (String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    val valid = name.isNotBlank() && !name.contains('/')
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(title)) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(stringResource(label)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (valid) onCreate(name.trim()) }),
+                colors = omniTextFieldColors(),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            )
+        },
+        confirmButton = { Button(enabled = valid, onClick = { onCreate(name.trim()) }) { Text(stringResource(R.string.create)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
 }

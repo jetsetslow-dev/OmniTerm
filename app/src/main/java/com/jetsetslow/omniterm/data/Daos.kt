@@ -318,6 +318,36 @@ interface WolTargetDao {
 }
 
 @Dao
+interface KubeClusterDao {
+    @Query("SELECT * FROM kube_clusters ORDER BY name COLLATE NOCASE ASC")
+    fun getAllKubeClustersFlow(): Flow<List<KubeClusterEntity>>
+
+    @Query("SELECT * FROM kube_clusters ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAllKubeClusters(): List<KubeClusterEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertKubeCluster(cluster: KubeClusterEntity): Long
+
+    @Query("DELETE FROM kube_clusters WHERE id = :id")
+    suspend fun deleteKubeCluster(id: Int)
+}
+
+@Dao
+interface TelnetHostDao {
+    @Query("SELECT * FROM telnet_hosts ORDER BY name COLLATE NOCASE ASC")
+    fun getAllTelnetHostsFlow(): Flow<List<TelnetHostEntity>>
+
+    @Query("SELECT * FROM telnet_hosts ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAllTelnetHosts(): List<TelnetHostEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTelnetHost(host: TelnetHostEntity): Long
+
+    @Delete
+    suspend fun deleteTelnetHost(host: TelnetHostEntity)
+}
+
+@Dao
 interface NetworkShareDao {
     @Query("SELECT * FROM network_shares ORDER BY name ASC")
     fun getAllNetworkSharesFlow(): Flow<List<NetworkShareEntity>>

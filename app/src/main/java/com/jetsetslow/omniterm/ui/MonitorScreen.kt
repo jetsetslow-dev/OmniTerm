@@ -41,20 +41,12 @@ import com.jetsetslow.omniterm.R
 
 @Composable
 fun MonitorScreen(viewModel: AppViewModel) {
-    val serversList by viewModel.servers.collectAsStateWithLifecycle()
-    val onlineServers = serversList.filter { viewModel.isPickableHost(it) }
     // The explicit selection wins only while it is still online. The selector bar directly below is
     // built with onlineOnly = true, so matching on id alone left the body rendering a host the bar
     // no longer listed: the header and the content disagreed about which machine was on screen, the
     // tabs kept issuing SSH commands at a host that was down, and there was no way to switch away
     // except via the Hosts tab.
-    val explicitlySelected = onlineServers.find { it.id == viewModel.selectedServerId }
-    val srv = explicitlySelected ?: onlineServers.firstOrNull()
-    LaunchedEffect(srv?.id) {
-        if (srv != null && explicitlySelected == null && viewModel.selectedServerId != srv.id) {
-            viewModel.selectedServerId = srv.id
-        }
-    }
+    val srv = screenHost(viewModel, onlineOnly = true)
     if (srv == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(stringResource(R.string.no_online_hosts_available_to_monitor), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -65,8 +57,9 @@ fun MonitorScreen(viewModel: AppViewModel) {
     var showScoreDialog by remember { mutableStateOf(false) }
     var showRebootDialog by remember { mutableStateOf(false) }
 
+    val typing = typingInLandscape()
     Column(modifier = Modifier.fillMaxSize()) {
-        ServerSelectorBar(
+        if (!typing) ServerSelectorBar(
             viewModel = viewModel,
             onlineOnly = true,
             leadingContent = {
@@ -101,7 +94,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
         }
 
         // Subtabs selection navigation bar
-        PrimaryScrollableTabRow(
+        if (!typing) PrimaryScrollableTabRow(
             selectedTabIndex = viewModel.activeMonitorTab,
             edgePadding = 12.dp,
             modifier = Modifier.fillMaxWidth()
@@ -167,7 +160,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
             },
             confirmLabel = confirm.str(R.string.run),
             destructive = danger.isNotEmpty(),
-        ) { viewModel.runStreamingAction(title, command) }
+        ) { viewModel.runStreamingAction(title, command, inLoginShell = true) }
     }
     val visibleScripts = scripts
         .filter { quickScriptMatchesHost(it, metrics) }
@@ -1180,7 +1173,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                         ) {
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    StatusDot(online = svc.status == "running", color = OmniColors.green, size = 8.dp)
+                                    StatusDot(online = svc.status == "running", color = OmniColors.green, size = 8.dp, contentDescription = svc.status)
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(svc.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
                                 }

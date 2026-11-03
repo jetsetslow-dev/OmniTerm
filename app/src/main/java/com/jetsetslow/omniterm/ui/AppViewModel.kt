@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -22,8 +23,29 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
 import com.jetsetslow.omniterm.data.*
+import com.jetsetslow.omniterm.data.serial.SerialParity
+import com.jetsetslow.omniterm.data.serial.SerialSettings
+import com.jetsetslow.omniterm.data.serial.SerialStopBits
+import com.jetsetslow.omniterm.data.serial.UsbPermissionReceiver
+import com.jetsetslow.omniterm.data.serial.UsbSerialAdapter
+import com.jetsetslow.omniterm.data.serial.UsbSerialSession
+import com.jetsetslow.omniterm.data.telnet.TelnetSession
+import com.jetsetslow.omniterm.data.term.ByteStreamTerminalSession
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
+import com.jetsetslow.omniterm.data.ssh.INTERACTIVE_AUTH_CANCELLED
+import com.jetsetslow.omniterm.data.ssh.InteractiveAuth
+import com.jetsetslow.omniterm.data.ssh.InteractiveAuthRequest
+import com.jetsetslow.omniterm.data.ssh.NEEDS_INTERACTIVE_AUTH
+import com.jetsetslow.omniterm.data.ssh.NEEDS_SECURITY_KEY
+import com.jetsetslow.omniterm.data.ssh.SecurityKeyAssertion
+import com.jetsetslow.omniterm.data.ssh.SecurityKeySignRequest
+import com.jetsetslow.omniterm.data.ssh.SkKeyType
+import com.jetsetslow.omniterm.data.ssh.SshKeyMaterial
+import com.jetsetslow.omniterm.data.ssh.SshWire
+import com.jetsetslow.omniterm.data.fido.SecurityKeyCtap
+import com.yubico.yubikit.core.application.CommandState
+import com.yubico.yubikit.fido.ctap.Ctap2Session
 import com.jetsetslow.omniterm.data.ssh.JschSftp
 import com.jetsetslow.omniterm.data.ssh.JschSshTransport
 import com.jetsetslow.omniterm.data.ssh.SSH_CONNECTION_LOST
@@ -38,6 +60,7 @@ import com.jetsetslow.omniterm.data.term.TerminalSnapshot
 import com.jetsetslow.omniterm.data.term.TmuxControlCommands
 import com.jetsetslow.omniterm.data.term.TmuxControlEvent
 import com.jetsetslow.omniterm.data.term.TmuxControlParser
+import com.jetsetslow.omniterm.ui.theme.OmniColors
 import androidx.compose.runtime.mutableStateMapOf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
@@ -57,6 +80,27 @@ import java.util.UUID
 
 /** Notification channel for fired monitoring alerts (distinct from the session-service channel). */
 private const val ALERT_CHANNEL_ID = "monitoring_alerts"
+
+/** Where the serial settings used last are kept, as [formatSerialSettings] writes them. */
+private const val SERIAL_SETTINGS_KEY = "serial_settings"
+
+/** Serial settings as stored: "115200,8,None,One". */
+internal fun formatSerialSettings(settings: SerialSettings): String =
+    listOf(settings.baudRate, settings.dataBits, settings.parity.name, settings.stopBits.name).joinToString(",")
+
+/** Stored serial settings, or null when [stored] is not what [formatSerialSettings] writes. */
+internal fun parseSerialSettings(stored: String): SerialSettings? {
+    val parts = stored.split(",")
+    if (parts.size != 4) return null
+    val baud = parts[0].toIntOrNull()?.takeIf { it > 0 } ?: return null
+    val dataBits = parts[1].toIntOrNull()?.takeIf { it in 5..8 } ?: return null
+    val parity = SerialParity.entries.find { it.name == parts[2] } ?: return null
+    val stopBits = SerialStopBits.entries.find { it.name == parts[3] } ?: return null
+    return SerialSettings(baud, dataBits, parity, stopBits)
+}
+
+/** TLS and URL checks that may run at once; each can wait up to its timeout. */
+private const val ENDPOINT_CHECK_PARALLELISM = 4
 
 /** Notification channel for the low-battery saver engaging. */
 private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
@@ -137,7 +181,8 @@ internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRu
         previous.thresholdValue != next.thresholdValue ||
         previous.severity != next.severity ||
         previous.triggerWindow != next.triggerWindow ||
-        previous.enabled != next.enabled
+        previous.enabled != next.enabled ||
+        previous.target != next.target
 
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
 internal const val ANDROID_PING_BINARY = "/system/bin/ping"
@@ -357,6 +402,14 @@ data class SystemSpecsState(
 private const val RECONNECT_MAX_DELAY_MS = 30_000L
 private const val RECONNECT_MAX_ATTEMPTS = 12
 
+/** Why a dropped terminal stopped reconnecting: its host wants an answer only the user can give. */
+internal const val TERMINAL_NEEDS_INTERACTIVE_AUTH =
+    "Connection lost. This host asks a sign-in question, such as a verification code: tap Retry to answer it."
+
+/** Why a dropped terminal stopped reconnecting: its key is on a security key nobody was there to touch. */
+internal const val TERMINAL_NEEDS_SECURITY_KEY =
+    "Connection lost. This host signs in with a security key: tap Retry, then touch the key."
+
 /**
  * How many dead-but-retryable sessions to keep around. Enough that a couple of simultaneous drops
  * (say both panes of a split) stay recoverable, few enough that they cannot accumulate unboundedly.
@@ -470,6 +523,33 @@ sealed interface ExternalLaunchRequest {
     data object OpenBackup : ExternalLaunchRequest
 }
 
+/** [request], a host's sign-in questions, waiting in [AppViewModel.pendingInteractiveAuth] for the user's answers. */
+class PendingInteractiveAuth(val hostName: String, val request: InteractiveAuthRequest) {
+    internal val reply = CompletableDeferred<List<String>?>()
+}
+
+/** What a security key is wanted for: signing in to a saved host, or making a new SSH key. */
+sealed interface SecurityKeyJob {
+    data class SignIn(val hostName: String, val destination: String) : SecurityKeyJob
+
+    /** A program on [hostName] asks through agent forwarding, signing in somewhere else [signingInAs] that user. */
+    data class Forwarded(val hostName: String, val signingInAs: String?) : SecurityKeyJob
+    data class Create(val alias: String, val type: SkKeyType) : SecurityKeyJob
+}
+
+/**
+ * [job] waiting in [AppViewModel.pendingSecurityKey] for the user's security key; [SecurityKeyDialog]
+ * finds the key over USB or NFC and runs [work] on it.
+ */
+class PendingSecurityKey(
+    val job: SecurityKeyJob,
+    /** Ask for the PIN before the first try: the key always wants it. */
+    val pinUpFront: Boolean,
+    internal val work: (Ctap2Session, CharArray?, CommandState) -> Any,
+) {
+    internal val reply = CompletableDeferred<Any?>()
+}
+
 sealed interface SshConnectionPhase {
     val label: String
 
@@ -499,7 +579,9 @@ sealed interface SshConnectionFailure {
         override val userMessage = "Network unreachable — the host can't be reached from this network."
     }
     data object Dropped : SshConnectionFailure {
-        override val userMessage = "Connection dropped during handshake — the server may not be ready yet. Try again in a moment."
+        // OpenSSH 9.8+ also drops new connections for a while after repeated failed sign-ins.
+        override val userMessage = "Connection dropped during handshake — the server may not be ready yet, or it is briefly " +
+            "turning this device away after failed sign-ins. Try again in a moment."
     }
     data object HostKeyVerification : SshConnectionFailure {
         override val userMessage = "Host key verification failed."
@@ -524,7 +606,7 @@ internal fun classifySshConnectionFailure(raw: String): SshConnectionFailure {
         has("UnknownHost", "Name or service not known", "nodename nor servname", "No address associated") ->
             SshConnectionFailure.HostNotFound
         has("Network is unreachable", "No route to host") -> SshConnectionFailure.NetworkUnreachable
-        has("Connection reset", "Broken pipe", "connection closed by") -> SshConnectionFailure.Dropped
+        has("Connection reset", "Broken pipe", "connection closed by", "connection is closed by") -> SshConnectionFailure.Dropped
         has("reject HostKey", "HostKey has been changed") -> SshConnectionFailure.HostKeyVerification
         msg.isBlank() -> SshConnectionFailure.Unknown("Connection failed — the host didn't respond as expected.")
         else -> SshConnectionFailure.Unknown(msg)
@@ -944,6 +1026,28 @@ private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
     QuickScriptEntity(0, "NET", "Listening ports", "ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || netstat -an 2>/dev/null | grep LISTEN || powershell -NoProfile -Command \"Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess\"", "cyan", false, "Fleet", 6, availableForQuick = false, availableForFleet = true, presetKey = "fleet.ports"),
     QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true, presetKey = "fleet.kernel"),
 )
+
+/**
+ * What each built-in Fleet preset runs on a Windows host, by preset key: the PowerShell its text
+ * hands to `powershell -Command "…"`. That text suits cmd only; a PowerShell login shell rejects its
+ * `||` and expands `$_` first. See [AppViewModel.builtInPresetCommand].
+ */
+internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
+    "fleet.cpu" to "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime; Get-CimInstance Win32_OperatingSystem | " +
+        "ForEach-Object { 'TotalMB=' + [int](\$_.TotalVisibleMemorySize/1024) + ' FreeMB=' + [int](\$_.FreePhysicalMemory/1024) }",
+    "fleet.disk" to "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,Size,FreeSpace",
+    "fleet.processes" to "Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet",
+    "fleet.services" to "Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status",
+    "fleet.syslog" to "Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message",
+    "fleet.containers" to "\$f='table {{.Names}}\t{{.Status}}'; if (Get-Command docker -ErrorAction SilentlyContinue) { docker ps --format \$f } " +
+        "elseif (Get-Command podman -ErrorAction SilentlyContinue) { podman ps --format \$f } else { '${RemoteCommands.NO_CONTAINER_RUNTIME}' }",
+    "fleet.ports" to "Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess",
+    "fleet.kernel" to "[Environment]::OSVersion.VersionString",
+)
+
+/** The built-in Fleet presets, for tests that keep [fleetPresetWindowsScripts] in step with them. */
+internal val builtInFleetPresetCommands: Map<String, String> get() =
+    builtInFleetPresets.associate { it.presetKey.orEmpty() to it.command }
 
 class AppViewModel @JvmOverloads constructor(
     application: Application,
@@ -1630,6 +1734,7 @@ class AppViewModel @JvmOverloads constructor(
     /** The host [sftpBookmarks] belongs to. */
     private var sftpBookmarksServerId: Int? = null
     var sftpLoading by mutableStateOf(false); private set
+    var sftpFileCreation by mutableStateOf<String?>(null); private set
     var sftpError by mutableStateOf<String?>(null); private set
     /** Transient success/info banner for SFTP actions (save confirmed, copied, moved…). Auto-clears. */
     var sftpStatus by mutableStateOf<String?>(null)
@@ -2060,6 +2165,77 @@ class AppViewModel @JvmOverloads constructor(
     // The status can be stale, so we warn-and-confirm rather than hard-block; null = no prompt.
     var offlineConnectPromptServer by mutableStateOf<com.jetsetslow.omniterm.data.ServerEntity?>(null)
     var pendingHostKeyApproval by mutableStateOf<com.jetsetslow.omniterm.data.ssh.HostKeyApprovalRequest?>(null)
+
+    /** A host's sign-in questions (a one-time code) waiting for the user; [InteractiveAuthDialog] shows them. */
+    var pendingInteractiveAuth by mutableStateOf<PendingInteractiveAuth?>(null)
+        private set
+    // One host's questions at a time: a second connection's wait for the first dialog to close.
+    private val interactiveAuthTurn = Mutex()
+
+    /** A security key job waiting for the user's key; [SecurityKeyDialog] shows it. */
+    var pendingSecurityKey by mutableStateOf<PendingSecurityKey?>(null)
+        private set
+
+    /**
+     * Asks the user [hostName]'s sign-in questions beyond the saved password, and for a touch of
+     * their security key, for a connection the user started: a terminal, Test connection, Files.
+     * Background work passes none.
+     */
+    private fun interactiveAuthFor(hostName: String) = object : InteractiveAuth {
+        override suspend fun answer(request: InteractiveAuthRequest): List<String>? = interactiveAuthTurn.withLock {
+            val pending = PendingInteractiveAuth(hostName, request)
+            withContext(Dispatchers.Main) { pendingInteractiveAuth = pending }
+            try {
+                pending.reply.await()
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    if (pendingInteractiveAuth === pending) pendingInteractiveAuth = null
+                }
+            }
+        }
+
+        override suspend fun signWithSecurityKey(request: SecurityKeySignRequest): SecurityKeyAssertion? =
+            useSecurityKey(
+                if (request.forwarded) {
+                    SecurityKeyJob.Forwarded(hostName, request.forwardedUser)
+                } else {
+                    SecurityKeyJob.SignIn(hostName, request.destination)
+                },
+                request.key.requiresPin,
+            ) { session, pin, state ->
+                SecurityKeyCtap.sign(session, request, pin, state)
+            }
+    }
+
+    /** Has the user's security key do [work] for [job]; null when they cancelled. One job at a time. */
+    private suspend fun <T : Any> useSecurityKey(
+        job: SecurityKeyJob,
+        pinUpFront: Boolean,
+        work: (Ctap2Session, CharArray?, CommandState) -> T,
+    ): T? = interactiveAuthTurn.withLock {
+        val pending = PendingSecurityKey(job, pinUpFront, work)
+        withContext(Dispatchers.Main) { pendingSecurityKey = pending }
+        try {
+            @Suppress("UNCHECKED_CAST")
+            pending.reply.await() as T?
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main) {
+                if (pendingSecurityKey === pending) pendingSecurityKey = null
+            }
+        }
+    }
+
+    /** What the security key did for [pending], or null when the user cancelled. */
+    fun finishSecurityKey(pending: PendingSecurityKey, result: Any?) {
+        pending.reply.complete(result)
+        if (pendingSecurityKey === pending) pendingSecurityKey = null
+    }
+
+    /** The dialog's answers, in its questions' order, or null when the user cancelled. */
+    fun answerInteractiveAuth(answers: List<String>?) {
+        pendingInteractiveAuth?.reply?.complete(answers)
+        pendingInteractiveAuth = null
+    }
     // Approvals beyond the one on screen wait here (first fleet probe can surface several at
     // once); approveHostKey() pops the next so every blocked JSch thread eventually gets an answer.
     private val hostKeyApprovalQueue = ArrayDeque<com.jetsetslow.omniterm.data.ssh.HostKeyApprovalRequest>()
@@ -2419,6 +2595,8 @@ class AppViewModel @JvmOverloads constructor(
         SshHostKeyTrust.clearApprovalHandler(hostKeyApprovalOwner)
         pendingHostKeyApproval?.deferred?.complete(false)
         pendingHostKeyApproval = null
+        pendingInteractiveAuth?.reply?.complete(null)
+        pendingSecurityKey?.reply?.complete(null)
         while (hostKeyApprovalQueue.isNotEmpty()) {
             hostKeyApprovalQueue.removeFirst().deferred.complete(false)
         }
@@ -2628,6 +2806,8 @@ class AppViewModel @JvmOverloads constructor(
     // Per-host caches touched by the concurrent telemetry probes (distinct keys per host, but
     // concurrent resizes still demand thread-safe maps).
     private val osByServer = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    /** Each probed Unix host's login shell, e.g. /usr/local/bin/fish; see [typedLine]. */
+    private val loginShellByServer = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
     /**
      * The host's OS family ([RemoteCommands.normaliseOs]), asked once and then cached. Every
@@ -2638,9 +2818,30 @@ class AppViewModel @JvmOverloads constructor(
         osByServer[srv.id] ?: run {
             val probe = preloadedProbe ?: executeSshCommand(srv, RemoteCommands.OS_PROBE)
             val detected = RemoteCommands.normaliseOs(probe)
-            if (!probe.startsWith("SSH Error")) osByServer[srv.id] = detected
+            if (ranOnHost(probe)) {
+                loginShellByServer[srv.id] = RemoteParsers.parseLoginShell(probe)
+                osByServer[srv.id] = detected
+            }
             detected
         }
+
+    /**
+     * True when the host ran the command, whatever it answered; false when SSH itself failed.
+     * Windows PowerShell rejects the OS probe's `||` and exits 1, which is an answer, not a
+     * connection that failed: read as one, such a host was probed again on every poll, and over a
+     * proxy it was reported as failing to authenticate.
+     */
+    private fun ranOnHost(result: String): Boolean =
+        !result.startsWith("SSH Error") || result.startsWith("SSH Error: command failed")
+
+    /**
+     * [line], to be typed into [srv]'s interactive shell, as that shell can run it
+     * ([RemoteCommands.forInteractiveShell]): csh, tcsh and fish cannot parse the app's sh.
+     */
+    private suspend fun typedLine(srv: ServerEntity, line: String): String {
+        hostOs(srv)
+        return RemoteCommands.forInteractiveShell(line, loginShellByServer[srv.id])
+    }
     // Previous-poll raw counters per host, used to derive per-core CPU%, network, and disk-I/O rates.
     private val prevStatByServer = java.util.concurrent.ConcurrentHashMap<Int, Map<String, Pair<Long, Long>>>()
     private val prevNetByServer = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Map<String, Pair<Long, Long>>>>()
@@ -2783,6 +2984,8 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
 
+                startEndpointChecks()
+
                 val cutoff = System.currentTimeMillis() - (metricsRetentionDays * 24L * 60 * 60 * 1000)
                 repository.pruneMetrics(cutoff)
 
@@ -2832,7 +3035,7 @@ class AppViewModel @JvmOverloads constructor(
                             executeSshCommand(srv, RemoteCommands.OS_PROBE)
                         }.getOrElse { "SSH Error: ${it.message.orEmpty()}" }
                         val sshRtt = (System.currentTimeMillis() - startedAt).toInt().coerceAtLeast(0)
-                        if (osProbe.startsWith("SSH Error")) {
+                        if (!ranOnHost(osProbe)) {
                             val failure = classifySshConnectionFailure(osProbe)
                             val hasLiveSession = sshRevision(srv.id) != revisionAtStart
                             if (hasLiveSession) {
@@ -3179,9 +3382,15 @@ class AppViewModel @JvmOverloads constructor(
         cpuTempC: Float? = null,
     ) = alertStateMutex.withLock {
         if (!alertsEnabled) return@withLock
-        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0)).filter { it.enabled }
+        // TLS and URL checks are not host metrics: they run on their own pace (runEndpointChecks),
+        // and here they would read as "not breaching" and close their incidents every poll.
+        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
+            .filter { it.enabled && !EndpointChecks.isEndpointMetric(it.metricName) }
         val activeAlerts = repository.getActiveAlerts()
         val now = System.currentTimeMillis()
+        // A sampling gap longer than a few poll intervals means we observed nothing —
+        // the window must restart rather than count the unobserved time as breached.
+        val staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L)
         for (r in rules) {
             // Disk rules check the rule's own mount point when we have per-mount data; the
             // aggregate figure is only a fallback for the root mount.
@@ -3196,57 +3405,150 @@ class AppViewModel @JvmOverloads constructor(
                 "Temperature" -> cpuTempC
                 else -> null
             }
-            val breachKey = r.id to srv.id
             val overThreshold = currentValue != null && currentValue > r.thresholdValue
-            // A sampling gap longer than a few poll intervals means we observed nothing —
-            // the window must restart rather than count the unobserved time as breached.
-            val staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L)
-            val triggered = alertBreachTracker.onSample(
-                breachKey, overThreshold, now,
-                windowMs = triggerWindowMs(r.triggerWindow),
-                staleGapMs = staleGapMs,
+            applyAlertSample(r, srv, currentValue, overThreshold, activeAlerts, now, staleGapMs)
+        }
+    }
+
+    /**
+     * Feeds one reading of [r] on [srv] to its breach window, then opens or resolves the incident.
+     * Callers hold [alertStateMutex].
+     */
+    private suspend fun applyAlertSample(
+        r: AlertRuleEntity,
+        srv: ServerEntity,
+        currentValue: Float?,
+        overThreshold: Boolean,
+        activeAlerts: List<ActiveAlertEntity>,
+        now: Long,
+        staleGapMs: Long,
+        notificationTarget: String = srv.host,
+    ) {
+        val breachKey = r.id to srv.id
+        val triggered = alertBreachTracker.onSample(
+            breachKey, overThreshold, now,
+            windowMs = triggerWindowMs(r.triggerWindow),
+            staleGapMs = staleGapMs,
+        )
+
+        val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
+        val currentAlert = existing?.let { alert ->
+            if (currentValue != null && alert.currentValue != currentValue) {
+                // Refresh the reading without replacing the incident row. Re-inserting it
+                // would silently clear acknowledgement and mute state.
+                repository.updateAlertCurrentValue(alert.id, currentValue)
+                alert.copy(currentValue = currentValue)
+            } else {
+                alert
+            }
+        }
+
+        if (triggered) {
+            // Check the incident for this rule on this concrete host. Global rules share the
+            // same rule id across hosts, so serverId must be part of the match.
+            val currentlyActive = currentAlert != null
+            val isMuted = currentAlert?.mutedUntil?.let { it > now } ?: false
+
+            if (!currentlyActive && !isMuted) {
+                val alert = ActiveAlertEntity(
+                    ruleId = r.id,
+                    serverId = srv.id,
+                    metricName = r.metricName,
+                    currentValue = currentValue ?: 0f,
+                    thresholdValue = r.thresholdValue,
+                    severity = r.severity,
+                    triggeredTime = now
+                )
+                repository.insertAlert(alert)
+                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget)
+            }
+        } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
+            // Recovered — but only after enough consecutive clean samples (hysteresis),
+            // so one jittery dip doesn't flap an incident closed and re-open.
+            if (currentAlert != null) {
+                recordAlertHistory(currentAlert, "resolved", srv.name)
+                repository.deleteAlert(currentAlert.id)
+                clearAlertNotification(r.id, srv.id)
+            }
+        }
+    }
+
+    /** When each (rule, host) TLS or URL check is next due. */
+    private val endpointChecksDueAt = java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Long>()
+
+    /** What each (rule, host) TLS or URL check last saw, for the rule list. */
+    val endpointCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
+
+    private var endpointCheckJob: Job? = null
+
+    /**
+     * Runs every TLS and URL check that is due, from this phone. Called each telemetry cycle, so
+     * the checks pause with polling (battery saver) and never overlap a previous round.
+     */
+    private fun startEndpointChecks() {
+        if (endpointCheckJob?.isActive == true) return
+        endpointCheckJob = viewModelScope.launch(Dispatchers.IO) { runEndpointChecks() }
+    }
+
+    private suspend fun runEndpointChecks() {
+        if (!alertsEnabled) return
+        val rules = repository.getAllRules().filter { it.enabled && EndpointChecks.isEndpointMetric(it.metricName) }
+        if (rules.isEmpty()) return
+        val servers = repository.getAllServers()
+        val limit = Semaphore(ENDPOINT_CHECK_PARALLELISM)
+        coroutineScope {
+            for (rule in rules) {
+                for (srv in servers.filter { rule.serverId == 0 || it.id == rule.serverId }) {
+                    val key = rule.id to srv.id
+                    if (System.currentTimeMillis() < (endpointChecksDueAt[key] ?: 0L)) continue
+                    launch {
+                        limit.withPermit {
+                            val result = EndpointChecks.run(rule, srv.host)
+                            val now = System.currentTimeMillis()
+                            val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
+                            endpointChecksDueAt[key] = now + endpointCheckIntervalMs(rule, result, breached)
+                            withContext(Dispatchers.Main) { endpointCheckResults[key] = result }
+                            evaluateEndpointRule(rule, srv, result)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * URL checks run every poll, but at most once a minute. A certificate changes rarely, so TLS
+     * checks run every six hours: hourly while one is close to expiry (so a renewal is seen soon),
+     * and every quarter hour after one could not connect.
+     */
+    private fun endpointCheckIntervalMs(rule: AlertRuleEntity, result: EndpointChecks.Result, breached: Boolean): Long = when {
+        rule.metricName == EndpointChecks.URL_CHECK -> telemetryIntervalMs.coerceAtLeast(60_000L)
+        result.value == null -> 15 * 60_000L
+        breached -> 60 * 60_000L
+        else -> 6 * 60 * 60_000L
+    }
+
+    private suspend fun evaluateEndpointRule(rule: AlertRuleEntity, srv: ServerEntity, result: EndpointChecks.Result) =
+        alertStateMutex.withLock {
+            // Nothing observed (no TLS there, an unusable target): leave any incident as it is.
+            val value = result.value ?: return@withLock
+            if (!alertsEnabled) return@withLock
+            // The rule may have been edited or deleted while the check ran.
+            val current = repository.getAllRules().find { it.id == rule.id }
+            if (current != rule) return@withLock
+            applyAlertSample(
+                rule, srv, value, EndpointChecks.breached(rule, value), repository.getActiveAlerts(),
+                now = System.currentTimeMillis(),
+                staleGapMs = endpointCheckIntervalMs(rule, result, breached = true) * 3,
+                notificationTarget = result.target,
             )
+        }
 
-            val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
-            val currentAlert = existing?.let { alert ->
-                if (currentValue != null && alert.currentValue != currentValue) {
-                    // Refresh the reading without replacing the incident row. Re-inserting it
-                    // would silently clear acknowledgement and mute state.
-                    repository.updateAlertCurrentValue(alert.id, currentValue)
-                    alert.copy(currentValue = currentValue)
-                } else {
-                    alert
-                }
-            }
-
-            if (triggered) {
-                // Check the incident for this rule on this concrete host. Global rules share the
-                // same rule id across hosts, so serverId must be part of the match.
-                val currentlyActive = currentAlert != null
-                val isMuted = currentAlert?.mutedUntil?.let { it > now } ?: false
-
-                if (!currentlyActive && !isMuted) {
-                    val alert = ActiveAlertEntity(
-                        ruleId = r.id,
-                        serverId = srv.id,
-                        metricName = r.metricName,
-                        currentValue = currentValue ?: 0f,
-                        thresholdValue = r.thresholdValue,
-                        severity = r.severity,
-                        triggeredTime = now
-                    )
-                    repository.insertAlert(alert)
-                    postAlertNotification(srv, r, currentValue ?: 0f)
-                }
-            } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
-                // Recovered — but only after enough consecutive clean samples (hysteresis),
-                // so one jittery dip doesn't flap an incident closed and re-open.
-                if (currentAlert != null) {
-                    recordAlertHistory(currentAlert, "resolved", srv.name)
-                    repository.deleteAlert(currentAlert.id)
-                    clearAlertNotification(r.id, srv.id)
-                }
-            }
+    /** Forget a rule's check pace and results, so an edited or new rule is checked at once. */
+    private fun resetEndpointChecks(ruleId: Int) {
+        endpointChecksDueAt.keys.removeIf { it.first == ruleId }
+        viewModelScope.launch(Dispatchers.Main) {
+            endpointCheckResults.keys.filter { it.first == ruleId }.forEach(endpointCheckResults::remove)
         }
     }
 
@@ -3270,7 +3572,7 @@ class AppViewModel @JvmOverloads constructor(
     private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
-    private fun postAlertNotification(srv: ServerEntity, rule: AlertRuleEntity, value: Float) {
+    private fun postAlertNotification(srv: ServerEntity, rule: AlertRuleEntity, value: Float, target: String = srv.host) {
         val app = getApplication<Application>()
         val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
         val openAppIntent = Intent(app, MainActivity::class.java)
@@ -3295,9 +3597,14 @@ class AppViewModel @JvmOverloads constructor(
             } else {
                 rule.thresholdValue
             }
+        val text = if (EndpointChecks.isEndpointMetric(rule.metricName)) {
+            EndpointChecks.alertText(rule, target, value)
+        } else {
+            "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
+        }
         val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
             .setContentTitle("${rule.severity}: ${srv.name}")
-            .setContentText("${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)")
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)
@@ -3479,8 +3786,8 @@ class AppViewModel @JvmOverloads constructor(
     /** Number of inner subtabs for a screen that supports horizontal subtab paging (0 = none). */
     private fun subtabCount(screen: Screen): Int = when (screen) {
         Screen.Monitor -> if (servers.value.any { it.status == "online" }) MonitorTab.entries.size else 0
-        Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) 5 else 0
-        Screen.Fleet -> 2
+        Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) INFRA_TAB_COUNT else 0
+        Screen.Fleet -> FLEET_TAB_COUNT
         Screen.SFTP -> 4
         Screen.Network -> 9
         Screen.Alerts -> 3
@@ -3968,6 +4275,89 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Saves the chosen hosts of an ssh_config file. A host signs in with the saved key named like
+     * its IdentityFile (`~/.ssh/id_ed25519` → `id_ed25519`) when there is one, and otherwise with a
+     * password added by editing it; its notes say which. [defaultUser] stands in where the file
+     * sets no User. A host already saved (same address, port and user) is left alone, a name in use
+     * gets a number, and the free build stops at its host limit. [onResult] gets a summary.
+     */
+    fun importSshConfigHosts(hosts: List<SshConfigHost>, defaultUser: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val keyAliases = repository.getAllKeys().map { it.alias }
+            fun keyFor(identityFile: String?): String? {
+                val file = identityFile?.substringAfterLast('/')?.removeSuffix(".pub") ?: return null
+                return keyAliases.firstOrNull { it.equals(file, ignoreCase = true) }
+            }
+            val added = mutableListOf<Int>()
+            val notAdded = mutableListOf<String>()
+            for (host in hosts) {
+                if (repository.getAllServers().size >= hostLimit) {
+                    notAdded += "${host.alias}: ${hostLimitMessage()}"
+                    continue
+                }
+                val user = host.user.ifBlank { defaultUser.trim() }
+                if (user.isEmpty()) {
+                    notAdded += "${host.alias}: the file sets no user."
+                    continue
+                }
+                val keyAlias = keyFor(host.identityFile)
+                val notes = buildList {
+                    add("Imported from ssh_config.")
+                    addAll(host.notes)
+                    when {
+                        keyAlias != null -> Unit
+                        host.identityFile != null -> add("Its key ${host.identityFile} is not saved in OmniTerm: import it under Tools → Auth & keys, then pick it here.")
+                        else -> add("Add its password or pick its key here before connecting.")
+                    }
+                }.joinToString(" ")
+                val jump = host.jump
+                val draft = ServerEntity(
+                    name = host.alias,
+                    host = host.hostName,
+                    port = host.port,
+                    username = user,
+                    authType = if (keyAlias != null) "key" else "password",
+                    authKeyAlias = keyAlias,
+                    notes = notes,
+                    keepAlive = host.keepAliveSeconds ?: 30,
+                    sshCompression = host.compression,
+                    agentForwarding = host.forwardAgent,
+                    proxyType = if (jump != null) "ssh" else "none",
+                    proxyHost = jump?.host.orEmpty(),
+                    proxyPort = jump?.port ?: 0,
+                    proxyUser = jump?.user?.ifBlank { user }.orEmpty(),
+                    proxyKeyAlias = jump?.let { keyFor(it.identityFile) ?: keyAlias },
+                )
+                val existing = repository.findMatchingServer(draft)
+                if (existing != null) {
+                    notAdded += "${host.alias}: already saved as \"${existing.name}\"."
+                    continue
+                }
+                var name = host.alias
+                var n = 2
+                while (repository.getServerByName(name) != null) name = "${host.alias} (${n++})"
+                try {
+                    added += repository.saveUniqueServer(draft.copy(name = name)).toInt()
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    notAdded += "${host.alias}: ${error.message ?: "could not be saved."}"
+                }
+            }
+            refreshHomeWidgets()
+            onResult(
+                buildString {
+                    append(if (added.size == 1) "Imported 1 host." else "Imported ${added.size} hosts.")
+                    if (notAdded.isNotEmpty()) append(" Not imported: ").append(notAdded.joinToString(" "))
+                },
+            )
+            withContext(Dispatchers.IO) {
+                added.forEach { id -> repository.getServerById(id)?.let { probeServer(it) } }
+            }
+            refreshHomeWidgets()
+        }
+    }
+
     /** Shown once after a host edit that running tunnels did not pick up; see [updateServer]. */
     var hostEditNotice by mutableStateOf<String?>(null)
         private set
@@ -4174,6 +4564,7 @@ class AppViewModel @JvmOverloads constructor(
         prevNetByServer.remove(serverId)
         prevDiskByServer.remove(serverId)
         osByServer.remove(serverId)
+        loginShellByServer.remove(serverId)
         systemSpecsJobs.remove(serverId)?.cancel()
         systemSpecs.remove(serverId)
         probedServerIds.remove(serverId)
@@ -4281,51 +4672,20 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Validate a pasted private key. Returns null if it parses (any type/format — RSA, OpenSSH,
-     * ed25519, ECDSA, DSA, encrypted or not), or a human-readable reason it doesn't. Never leaks
-     * JSch's raw "[B@…" byte-array dump.
+     * Import a key. Only [privateStr] is required: the public key is derived when [publicStr] is
+     * blank, [type] is detected when blank, and a key protected by a passphrase needs [passphrase].
+     * [certificate] is its optional OpenSSH certificate. Every key type OpenSSH writes is accepted,
+     * keys on security keys included.
      */
-    private fun privateKeyParseError(privateStr: String): String? {
-        val t = privateStr.trim()
-        if (t.startsWith("ssh-rsa ") || t.startsWith("ssh-ed25519 ") ||
-            t.startsWith("ecdsa-sha2-") || t.startsWith("ssh-dss ")
-        ) {
-            return "That's a public key. Paste the matching PRIVATE key (the file without the .pub extension)."
-        }
-        if (!t.contains("PRIVATE KEY")) {
-            return "That doesn't look like a private key. Include the \"-----BEGIN ... PRIVATE KEY-----\" " +
-                "and \"-----END ... PRIVATE KEY-----\" lines."
-        }
-        return try {
-            // load() parses the key structure for every supported format and does NOT require the
-            // passphrase (encrypted keys still load), so this accepts all key types.
-            val kp = KeyPair.load(JSch(), (t + "\n").toByteArray(Charsets.UTF_8), null)
-            kp.dispose()
-            null
-        } catch (e: Exception) {
-            e.message?.takeUnless { it.contains("[B@") }?.let { "Invalid private key: $it" }
-                ?: "Invalid private key — re-copy the full key text, including the BEGIN/END lines."
-        }
-    }
-
-    /** Best-effort key-type label for display (the inner type of an OpenSSH container isn't in its header). */
-    private fun detectKeyType(privateStr: String, publicStr: String): String = when {
-        publicStr.startsWith("ssh-ed25519") -> "ED25519"
-        publicStr.startsWith("ecdsa-") -> "ECDSA"
-        publicStr.startsWith("ssh-rsa") -> "RSA"
-        publicStr.startsWith("ssh-dss") -> "DSA"
-        privateStr.contains("BEGIN RSA PRIVATE KEY") -> "RSA"
-        privateStr.contains("BEGIN EC PRIVATE KEY") -> "ECDSA"
-        privateStr.contains("BEGIN DSA PRIVATE KEY") -> "DSA"
-        privateStr.contains("BEGIN OPENSSH PRIVATE KEY") -> "OpenSSH"
-        else -> "SSH Key"
-    }
-
-    /**
-     * Import a key. Only [privateStr] is required; [publicStr] is optional (derived when blank) and
-     * [type] is auto-detected when blank. Any supported key format is accepted.
-     */
-    fun addSshKey(alias: String, type: String, privateStr: String, publicStr: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+    fun addSshKey(
+        alias: String,
+        type: String,
+        privateStr: String,
+        publicStr: String,
+        passphrase: String = "",
+        certificate: String = "",
+        onResult: (Boolean, String) -> Unit = { _, _ -> },
+    ) {
         viewModelScope.launch {
             if (repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit) {
                 onResult(false, credentialProfileLimitMessage())
@@ -4334,33 +4694,27 @@ class AppViewModel @JvmOverloads constructor(
             val result = withContext(Dispatchers.IO) {
                 try {
                     if (alias.isBlank()) return@withContext Pair(false, "Key alias is required.")
-                    val priv = privateStr.trim()
-                    if (priv.isBlank()) return@withContext Pair(false, "Private key content is required.")
+                    if (privateStr.isBlank()) return@withContext Pair(false, "Private key content is required.")
                     if (repository.getAllKeys().any { it.alias == alias }) {
                         return@withContext Pair(false, "Key alias already exists.")
                     }
-                    // Reject unparseable keys up front with a clear reason (instead of a cryptic
+                    // Reject unusable keys up front with a clear reason (instead of a cryptic
                     // failure later at connect time).
-                    privateKeyParseError(priv)?.let { return@withContext Pair(false, it) }
-
-                    val pub = publicStr.trim()
-                    val publicKey = pub.takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                        ?: publicKeyFromPrivate(priv)
-                        ?: ""
-                    val fingerprint = publicKey.takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                        ?.let { sshPublicKeyFingerprint(it) }
-                        ?: keyMaterialFingerprint(priv)
-                    val resolvedType = type.ifBlank { detectKeyType(priv, publicKey) }
+                    val key = SshKeyMaterial.prepare(privateStr, publicStr, passphrase, certificate)
+                    val resolvedType = type.ifBlank { key.keyType }
                     repository.insertKey(
                         SshKeyEntity(
                             alias = alias,
                             keyType = resolvedType,
-                            privateKey = priv,
-                            publicKey = publicKey,
-                            fingerprint = fingerprint,
+                            privateKey = key.privateKey,
+                            publicKey = key.publicKey,
+                            fingerprint = key.fingerprint,
+                            certificate = key.certificate,
                         )
                     )
                     Pair(true, "Imported $resolvedType key '$alias'.")
+                } catch (e: IllegalArgumentException) {
+                    Pair(false, e.message ?: "Key import failed.")
                 } catch (e: Exception) {
                     val m = e.message?.takeUnless { it.contains("[B@") } ?: "unknown error"
                     Pair(false, "Key import failed: $m")
@@ -4370,17 +4724,61 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun publicKeyFromPrivate(privateKey: String): String? = try {
-        val keyPair = KeyPair.load(JSch(), (privateKey.trim() + "\n").toByteArray(Charsets.UTF_8), null)
-        val out = ByteArrayOutputStream()
-        try {
-            keyPair.writePublicKey(out, "")
-            out.toString(Charsets.UTF_8.name()).trim().takeIf { it.startsWith("ssh-") }
-        } finally {
-            keyPair.dispose()
+    /**
+     * Make an SSH key on the user's security key, as `ssh-keygen -t ed25519-sk` does. Reports the
+     * key file (no secret in it, but useless without the security key) and the public key line.
+     */
+    fun generateSecurityKey(
+        alias: String,
+        type: SkKeyType,
+        requirePin: Boolean,
+        onResult: (Boolean, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    ) {
+        if (sshKeygenRunning) return
+        sshKeygenRunning = true
+        viewModelScope.launch {
+            try {
+                val problem = withContext(Dispatchers.IO) {
+                    when {
+                        alias.isBlank() -> "Key alias is required."
+                        repository.getAllKeys().any { it.alias == alias } -> "Key alias already exists."
+                        repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit ->
+                            credentialProfileLimitMessage()
+                        else -> null
+                    }
+                }
+                if (problem != null) {
+                    onResult(false, problem, null, null)
+                    return@launch
+                }
+                val key = useSecurityKey(SecurityKeyJob.Create(alias, type), pinUpFront = false) { session, pin, state ->
+                    SecurityKeyCtap.create(session, type, requirePin, pin, state)
+                }
+                if (key == null) {
+                    onResult(false, "No key was made.", null, null)
+                    return@launch
+                }
+                val keyFile = key.keyFile(alias)
+                val publicKey = SshWire.publicLine(key.publicBlob, alias)
+                withContext(Dispatchers.IO) {
+                    repository.insertKey(
+                        SshKeyEntity(
+                            alias = alias,
+                            keyType = type.label,
+                            privateKey = keyFile,
+                            publicKey = publicKey,
+                            fingerprint = SshWire.fingerprint(key.publicBlob),
+                        )
+                    )
+                }
+                onResult(true, "Made ${type.label} key '$alias' on your security key.", keyFile, publicKey)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                onResult(false, "Key generation failed: ${e.message ?: "unknown error"}", null, null)
+            } finally {
+                sshKeygenRunning = false
+            }
         }
-    } catch (_: Exception) {
-        null
     }
 
     private fun sshPublicKeyFingerprint(publicKey: String): String {
@@ -4430,6 +4828,9 @@ class AppViewModel @JvmOverloads constructor(
         newAlias: String,
         newPrivate: String,
         newPublic: String,
+        passphrase: String = "",
+        /** The key's certificate as edited; blank removes it, null keeps it. */
+        certificate: String? = null,
         onResult: (Boolean, String) -> Unit = { _, _ -> },
     ) {
         viewModelScope.launch {
@@ -4443,20 +4844,18 @@ class AppViewModel @JvmOverloads constructor(
                     val priv = newPrivate.trim()
                     val updated = if (priv.isNotBlank()) {
                         // Re-validate and re-derive everything from the new material.
-                        privateKeyParseError(priv)?.let { return@withContext Pair(false, it) }
-                        val pub = newPublic.trim().takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                            ?: publicKeyFromPrivate(priv)
-                            ?: ""
-                        val fingerprint = pub.takeIf { it.startsWith("ssh-") || it.startsWith("ecdsa-") }
-                            ?.let { sshPublicKeyFingerprint(it) }
-                            ?: keyMaterialFingerprint(priv)
+                        val key = SshKeyMaterial.prepare(priv, newPublic, passphrase, certificate ?: "")
                         original.copy(
                             alias = alias,
-                            keyType = detectKeyType(priv, pub),
-                            privateKey = priv,
-                            publicKey = pub,
-                            fingerprint = fingerprint,
+                            keyType = key.keyType,
+                            privateKey = key.privateKey,
+                            publicKey = key.publicKey,
+                            fingerprint = key.fingerprint,
+                            certificate = key.certificate,
                         )
+                    } else if (certificate != null) {
+                        val keyBlob = SshKeyMaterial.publicBlob(original.privateKey, original.publicKey)
+                        original.copy(alias = alias, certificate = SshKeyMaterial.checkedCertificate(certificate, keyBlob))
                     } else {
                         original.copy(alias = alias)
                     }
@@ -4522,7 +4921,16 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun addAlertRule(serverId: Int, metricName: String, mountPoint: String, threshold: Float, severity: String, triggerWindow: String, notes: String = "") {
+    fun addAlertRule(
+        serverId: Int,
+        metricName: String,
+        mountPoint: String,
+        threshold: Float,
+        severity: String,
+        triggerWindow: String,
+        notes: String = "",
+        target: String = "",
+    ) {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
                 serverId = serverId,
@@ -4532,11 +4940,17 @@ class AppViewModel @JvmOverloads constructor(
                 severity = severity,
                 triggerWindow = triggerWindow,
                 notes = notes,
+                target = target,
             )
             repository.insertRule(rule)
-            // Start the sustained window from the current observed value when available. Without
-            // this, a newly created five-minute rule waits for the next poll before its clock starts.
-            evaluateCachedAlertTargets(serverId)
+            if (EndpointChecks.isEndpointMetric(metricName)) {
+                // Check it now rather than at the next poll, so the rule list shows a result.
+                startEndpointChecks()
+            } else {
+                // Start the sustained window from the current observed value when available. Without
+                // this, a newly created five-minute rule waits for the next poll before its clock starts.
+                evaluateCachedAlertTargets(serverId)
+            }
         }
     }
 
@@ -5173,28 +5587,38 @@ class AppViewModel @JvmOverloads constructor(
         val allKeys = repository.getAllKeys()
         var user = srv.username
         var pass: String? = srv.authPassword
-        var pem: String? = null
+        var key: SshKeyEntity? = null
         when (srv.authType) {
-            "key" -> pem = allKeys.find { it.alias == srv.authKeyAlias }?.privateKey
+            "key" -> key = allKeys.find { it.alias == srv.authKeyAlias }
             "profile" -> repository.getAllProfiles().find { it.id == srv.authProfileId }?.let { p ->
                 user = p.username
                 if (p.authType == "password") pass = p.password
-                else pem = allKeys.find { it.alias == p.keyAlias }?.privateKey
+                else key = allKeys.find { it.alias == p.keyAlias }
             }
         }
+        val proxyKey = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
         return SshCredentials(
-            srv.host, srv.port, user, pass, pem,
+            srv.host, srv.port, user, pass, key?.privateKey,
             proxyType = srv.proxyType,
             proxyHost = srv.proxyHost,
             proxyPort = srv.proxyPort,
             proxyUser = srv.proxyUser,
             proxyPassword = srv.proxyPassword,
-            proxyKeyPem = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a }?.privateKey },
+            proxyKeyPem = proxyKey?.privateKey,
+            certificate = key?.certificate,
+            proxyCertificate = proxyKey?.certificate,
             keepAliveSeconds = srv.keepAlive,
             compression = srv.sshCompression,
             agentForwarding = srv.agentForwarding,
+            // Known Unix hosts only: the OS probe itself, and anything sent before it answers, go
+            // to the login shell as written.
+            posixShell = osByServer[srv.id]?.let(RemoteCommands::hasUnixShell) == true,
         )
     }
+
+    /** [srv]'s credentials for a command the user wrote, which runs in the user's own login shell. */
+    private suspend fun loginShellCredentials(srv: ServerEntity): SshCredentials =
+        buildCredentials(srv).copy(posixShell = false)
 
     // ── Port-forward tunnels ──
     /** Ids of tunnels currently up. A Compose snapshot list so the UI recomposes on start/stop. */
@@ -5304,6 +5728,8 @@ class AppViewModel @JvmOverloads constructor(
         password: String?, keyAlias: String?, profileId: Int?,
         proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0,
         proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null,
+        // What a sign-in question is titled with; the address until the host is named.
+        displayName: String = "",
         onResult: (String?) -> Unit,
     ) {
         if (host.isBlank()) { onResult("Host is required."); return }
@@ -5315,24 +5741,27 @@ class AppViewModel @JvmOverloads constructor(
             // can be false on filtered/multi-address networks and is invalid for proxy/jump hosts.
             var user = username
             var pass: String? = password
-            var pem: String? = null
+            val allKeys = repository.getAllKeys()
+            var key: SshKeyEntity? = null
             when (authType) {
-                "key" -> pem = repository.getAllKeys().find { it.alias == keyAlias }?.privateKey
+                "key" -> key = allKeys.find { it.alias == keyAlias }
                 "profile" -> repository.getAllProfiles().find { it.id == profileId }?.let { p ->
                     user = p.username
                     if (p.authType == "password") pass = p.password
-                    else pem = repository.getAllKeys().find { it.alias == p.keyAlias }?.privateKey
+                    else key = allKeys.find { it.alias == p.keyAlias }
                 }
             }
+            val proxyKey = proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
             val err = sshTransport.testConnection(
                 SshCredentials(
-                    host, port, user, pass, pem,
+                    host, port, user, pass, key?.privateKey,
                     proxyType = proxyType, proxyHost = proxyHost, proxyPort = proxyPort,
                     proxyUser = proxyUser, proxyPassword = proxyPassword,
-                    proxyKeyPem = proxyKeyAlias?.let { a ->
-                        repository.getAllKeys().find { it.alias == a }?.privateKey
-                    },
-                )
+                    proxyKeyPem = proxyKey?.privateKey,
+                    certificate = key?.certificate,
+                    proxyCertificate = proxyKey?.certificate,
+                ),
+                interactiveAuthFor(displayName.ifBlank { host }),
             )
             isTestingConnection = false
             onResult(err?.let { cleanSshError(it) })
@@ -5342,13 +5771,19 @@ class AppViewModel @JvmOverloads constructor(
     fun dismissTerminalConnectError() {
         terminalConnectError = null
         terminalTmuxRetry = null
+        terminalStreamRetry = null
         terminalConnectionFailure = null
         _terminalConnectionState.value = TerminalConnectionState.Idle
     }
 
     fun retryTerminalConnectError() {
+        val streamRetry = terminalStreamRetry
         val retry = terminalTmuxRetry
-        if (retry != null) resumePersistentSession(retry.serverId, retry.tmuxName)
+        if (streamRetry != null) {
+            terminalStreamRetry = null
+            terminalConnectError = null
+            streamRetry()
+        } else if (retry != null) resumePersistentSession(retry.serverId, retry.tmuxName)
         else if (currentSessionId != null) attachSession(currentSessionId!!)
         else connectTerminal()
     }
@@ -5546,6 +5981,182 @@ class AppViewModel @JvmOverloads constructor(
         connectTerminal(adHoc, forceDisablePersistence = true)
     }
 
+    // ── Telnet and USB serial ──
+
+    val telnetHosts = repository.telnetHostsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** True while the Terminal's Telnet sheet is open. */
+    var telnetSheetOpen by mutableStateOf(false)
+
+    /** True while the Terminal's USB serial sheet is open. */
+    var serialSheetOpen by mutableStateOf(false)
+
+    /** The serial settings last used, offered again next time. */
+    var lastSerialSettings by mutableStateOf(SerialSettings())
+        private set
+
+    /** Retries the last Telnet or serial connection that failed, in place of an SSH retry. */
+    private var terminalStreamRetry: (() -> Unit)? = null
+
+    fun deleteTelnetHost(host: TelnetHostEntity) {
+        viewModelScope.launch { repository.deleteTelnetHost(host) }
+    }
+
+    /**
+     * Opens a Telnet terminal on [host]:[port], first saving it as [name] when [save] and it is
+     * not saved already. Like Quick connect, it needs Unlock on the free Play build, whose
+     * connections all go through the limited host list.
+     */
+    fun connectTelnet(name: String, host: String, port: Int, save: Boolean, onValidationError: (String) -> Unit) {
+        if (!isQuickConnectAvailable) {
+            telnetSheetOpen = false
+            onValidationError(quickConnectLockedMessage())
+            return
+        }
+        val address = host.trim()
+        if (address.isEmpty() || address.any { it.isWhitespace() }) {
+            onValidationError("Enter a host name or IP address.")
+            return
+        }
+        if (port !in 1..65535) {
+            onValidationError("Port must be 1-65535.")
+            return
+        }
+        if (isTerminalConnecting) {
+            onValidationError("A connection is already in progress.")
+            return
+        }
+        val label = name.trim().ifEmpty { if (port == TelnetSession.DEFAULT_PORT) address else "$address:$port" }
+        if (save && telnetHosts.value.none { it.host.equals(address, ignoreCase = true) && it.port == port }) {
+            viewModelScope.launch { repository.insertTelnetHost(TelnetHostEntity(name = label, host = address, port = port)) }
+        }
+        telnetSheetOpen = false
+        val shown = ServerEntity(id = nextAdHocServerId--, name = label, host = address, port = port, username = "", status = "online")
+        connectStreamTerminal(
+            shown, TerminalTransport.Telnet,
+            failurePrefix = "Could not connect to $address:$port",
+            retry = { connectTelnet(label, address, port, save = false, onValidationError) },
+        ) { cols, rows -> TelnetSession.open(address, port, cols, rows) }
+    }
+
+    private val usbManager: UsbManager?
+        get() = getApplication<Application>().getSystemService(UsbManager::class.java)
+
+    /** The USB serial adapters plugged in now; none when the phone cannot host USB devices. */
+    fun usbSerialAdapters(): List<UsbSerialAdapter> = usbManager?.let(UsbSerialAdapter::attached).orEmpty()
+
+    /** Opens the USB serial sheet with the settings used last time. */
+    fun openSerialSheet() {
+        viewModelScope.launch {
+            repository.getSetting(SERIAL_SETTINGS_KEY)?.let(::parseSerialSettings)?.let { lastSerialSettings = it }
+            serialSheetOpen = true
+        }
+    }
+
+    /**
+     * Opens a terminal on [adapter] with [settings], asking Android for permission to use it
+     * first when needed. Needs Unlock on the free Play build, like Telnet and Quick connect.
+     */
+    fun connectSerial(adapter: UsbSerialAdapter, settings: SerialSettings, onValidationError: (String) -> Unit) {
+        if (!isQuickConnectAvailable) {
+            serialSheetOpen = false
+            onValidationError(quickConnectLockedMessage())
+            return
+        }
+        if (isTerminalConnecting) {
+            onValidationError("A connection is already in progress.")
+            return
+        }
+        val manager = usbManager ?: return onValidationError("This phone cannot use USB devices.")
+        lastSerialSettings = settings
+        viewModelScope.launch { repository.insertSetting(SERIAL_SETTINGS_KEY, formatSerialSettings(settings)) }
+        if (!manager.hasPermission(adapter.device)) {
+            UsbPermissionReceiver.request(getApplication(), manager, adapter.device) { granted ->
+                if (granted) {
+                    connectSerial(adapter, settings, onValidationError)
+                } else {
+                    onValidationError("OmniTerm needs permission to use ${adapter.label}.")
+                }
+            }
+            return
+        }
+        serialSheetOpen = false
+        val shown = ServerEntity(id = nextAdHocServerId--, name = adapter.label, host = settings.summary, port = 0, username = "", status = "online")
+        connectStreamTerminal(
+            shown, TerminalTransport.Serial,
+            failurePrefix = "Could not open ${adapter.label}",
+            retry = { connectSerial(adapter, settings, onValidationError) },
+        ) { _, _ -> UsbSerialSession.open(manager, adapter, settings) }
+    }
+
+    /**
+     * Opens a Telnet or serial terminal: the parts of [connectTerminal] that are not SSH. There is
+     * no sign-in, tmux or reconnection; [shown] labels the session in the header, and [retry] is
+     * what Retry does when it fails.
+     */
+    private fun connectStreamTerminal(
+        shown: ServerEntity,
+        transport: TerminalTransport,
+        failurePrefix: String,
+        retry: () -> Unit,
+        open: suspend (cols: Int, rows: Int) -> TerminalSession,
+    ) {
+        if (isTerminalConnecting) return
+        terminalTmuxRetry = null
+        terminalStreamRetry = null
+        if (activeSshTab == 1) exitMultiSsh()
+        navigateTo(Screen.Shell)
+        isTerminalConnecting = true
+        terminalConnectError = null
+        terminalConnectionFailure = null
+        terminalConnectionPhase = "Connecting…"
+        _terminalConnectionState.value = TerminalConnectionState.Connecting(SshConnectionPhase.Connecting)
+        val attemptGeneration = ++terminalConnectGeneration
+
+        terminalConnectJob = viewModelScope.launch {
+            var openedSession: TerminalSession? = null
+            var setupComplete = false
+            try {
+                val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
+                val session = open(termCols, termRows)
+                openedSession = session
+                currentCoroutineContext().ensureActive()
+                check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
+                val shellSession = ShellSession(shown.id, shown.name, session, emulator)
+                shellSession.transport = transport
+                shellSession.unsavedHost = shown
+                shellSession.termCols = termCols
+                shellSession.termRows = termRows
+                shellSession.lastCols = termCols
+                shellSession.lastRows = termRows
+                activeSessions.add(shellSession)
+                openedSession = null // owned by the registered session now
+                showConnectedShell(shellSession, attemptGeneration, targetMultiSshPane = null)
+                wireSessionIo(shellSession)
+                setupComplete = true
+                TerminalSessionManager.updateKeepaliveCount()
+                startKeepAliveService()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (attemptGeneration == terminalConnectGeneration) {
+                    val failure = SshConnectionFailure.Unknown("$failurePrefix: ${e.message ?: e.javaClass.simpleName}")
+                    terminalStreamRetry = retry
+                    terminalConnectionFailure = failure
+                    terminalConnectError = failure.userMessage
+                    _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
+                }
+            } finally {
+                if (!setupComplete) openedSession?.close()
+                if (attemptGeneration == terminalConnectGeneration) {
+                    isTerminalConnecting = false
+                    terminalConnectJob = null
+                    terminalConnectionPhase = "Connecting…"
+                }
+            }
+        }
+    }
+
     /** Split-terminal shortcut entry point; same DB-first resolution as single connects. */
     fun openMultiSshByServerIds(id1: Int, id2: Int) {
         viewModelScope.launch {
@@ -5581,6 +6192,7 @@ class AppViewModel @JvmOverloads constructor(
         if (isTerminalConnecting) return
         allowHostKeyPromptAgain(srv)
         terminalTmuxRetry = null
+        terminalStreamRetry = null
         // Publish/refresh the launcher shortcut for this host; connecting is the usage signal
         // that keeps frequently used hosts ranked in the launcher's dynamic shortcut list.
         // Skipped for ad-hoc hosts (negative id, see quickConnect): they have no database row, so
@@ -5608,6 +6220,9 @@ class AppViewModel @JvmOverloads constructor(
             var setupComplete = false
             try {
                 val creds = buildCredentials(srv)
+                // A host that asks a one-time code is asked once, here: the checks below and the shell
+                // then reuse this sign-in. For any other host this is the connection they would open.
+                sshTransport.signIn(creds, interactiveAuthFor(srv.name))?.let { throw IllegalStateException(it) }
                 var usePersistence = srv.persistentSession && !forceDisablePersistence
 
                 // Persistent sessions need tmux on the host. On the first connect where it's missing,
@@ -5616,9 +6231,12 @@ class AppViewModel @JvmOverloads constructor(
                 // every connect; the "Install tmux" action re-runs connect afterwards.
                 if (usePersistence && srv.id !in tmuxVerifiedServerIds) {
                     terminalConnectionPhase = "Checking tmux…"
+                    // On probe failure, don't block the connect. exec reports one as "SSH Error: …"
+                    // rather than throwing, which once read as "tmux missing" and offered to install it.
                     val present = runCatching {
-                        sshTransport.exec(creds, RemoteCommands.TMUX_CHECK).trim().endsWith("yes")
-                    }.getOrDefault(true) // on probe failure, don't block the connect
+                        val reply = sshTransport.exec(creds, RemoteCommands.TMUX_CHECK).trim()
+                        reply.startsWith("SSH Error") || reply.endsWith("yes")
+                    }.getOrDefault(true)
                     if (present) {
                         tmuxVerifiedServerIds.add(srv.id)
                     } else if (!RemoteCommands.hasUnixShell(hostOs(srv))) {
@@ -5633,7 +6251,7 @@ class AppViewModel @JvmOverloads constructor(
                 }
 
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = openTerminalChannel(creds, attemptGeneration)
+                val session = openTerminalChannel(creds, srv.name, attemptGeneration)
                 openedSession = session
                 val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = usePersistence
@@ -5653,11 +6271,11 @@ class AppViewModel @JvmOverloads constructor(
                     if (shellSession.controlMode) {
                         // Control mode: no attach repaint exists, so seeding (history + screen)
                         // happens in initControlModeSession AFTER I/O is wired.
-                        session.write(RemoteCommands.tmuxControlCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
+                        session.write(typedLine(srv, RemoteCommands.tmuxControlCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit)).toByteArray())
                     } else {
                         // This name is newly allocated, so there is no history to capture before
                         // creation. An optional side channel must not delay an already-open shell.
-                        session.write(RemoteCommands.tmuxCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
+                        session.write(typedLine(srv, RemoteCommands.tmuxCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit)).toByteArray())
                     }
                     check(!session.closed.value) { "SSH channel closed while attaching tmux" }
                 }
@@ -6121,8 +6739,8 @@ class AppViewModel @JvmOverloads constructor(
      * [attemptGeneration] is still the current attempt. The caller owns the channel until a
      * registered shell takes it over.
      */
-    private suspend fun openTerminalChannel(creds: SshCredentials, attemptGeneration: Long): TerminalSession =
-        sshTransport.openShell(creds, termCols, termRows) { phase ->
+    private suspend fun openTerminalChannel(creds: SshCredentials, hostName: String, attemptGeneration: Long): TerminalSession =
+        sshTransport.openShell(creds, termCols, termRows, interactiveAuthFor(hostName)) { phase ->
             viewModelScope.launch(Dispatchers.Main) {
                 if (attemptGeneration == terminalConnectGeneration) {
                     val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
@@ -6204,6 +6822,7 @@ class AppViewModel @JvmOverloads constructor(
             var setupComplete = false
             try {
                 val creds = buildCredentials(srv)
+                sshTransport.signIn(creds, interactiveAuthFor(srv.name))?.let { throw IllegalStateException(it) }
                 val presenceReply = sshTransport.exec(creds, RemoteCommands.tmuxHasSessionCommand(tmuxName)).trim()
                 if (presenceReply.startsWith("SSH Error")) throw IllegalStateException(presenceReply)
                 when (parseRemoteTmuxSessionPresence(presenceReply)) {
@@ -6234,7 +6853,7 @@ class AppViewModel @JvmOverloads constructor(
                     true -> Unit
                 }
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = openTerminalChannel(creds, attemptGeneration)
+                val session = openTerminalChannel(creds, srv.name, attemptGeneration)
                 openedSession = session
                 val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = true
@@ -6247,14 +6866,14 @@ class AppViewModel @JvmOverloads constructor(
                 emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
                 if (shellSession.controlMode) {
                     session.write(
-                        RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted).toByteArray(),
+                        typedLine(srv, RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted)).toByteArray(),
                     )
                 } else {
                     // A regular tmux client paints its own screen on attach. Do not block an
                     // already-open SSH channel on optional side-channel screen/cursor captures:
                     // each could wait for the command timeout while the UI said Opening channel.
                     // History hydration below preserves the live screen and runs independently.
-                    session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted).toByteArray())
+                    session.write(typedLine(srv, RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit, shellSession.adopted)).toByteArray())
                 }
                 check(!session.closed.value) { "SSH channel closed while attaching tmux" }
 
@@ -6397,7 +7016,9 @@ class AppViewModel @JvmOverloads constructor(
                         for (event in controlParser.feed(bytes)) when (event) {
                             is TmuxControlEvent.Output ->
                                 if (event.paneId == shellSession.activePaneId) {
-                                    synchronized(emulator) { emulator.feed(event.data) }
+                                    // tmux answers its panes' queries itself; a reply here would
+                                    // reach tmux as a control command.
+                                    synchronized(emulator) { emulator.feed(event.data); emulator.takeReplies() }
                                     fed = true
                                 }
                             is TmuxControlEvent.Reply -> {
@@ -6443,7 +7064,8 @@ class AppViewModel @JvmOverloads constructor(
                         // capture-pane re-sync is only needed after a reconnect (set there).
                         if (!fed) return@collect
                     } else {
-                        synchronized(emulator) { emulator.feed(bytes) }
+                        synchronized(emulator) { emulator.feed(bytes); emulator.takeReplies() }
+                            ?.let { inputQueue.enqueueBatch(listOf(it), TERMINAL_INPUT_QUEUE_MAX_BYTES) }
                         if (shellSession.persistent) shellSession.scrollbackDirty = true
                     }
                     val now = System.currentTimeMillis()
@@ -6529,6 +7151,8 @@ class AppViewModel @JvmOverloads constructor(
                     if (isUserClose) {
                         cleanupSession(shellSession)
                     } else {
+                        // A Telnet or serial session says why it ended instead of an exit status.
+                        (session as? ByteStreamTerminalSession)?.endedBecause?.let { shellSession.endedBecause = it }
                         TerminalSessionManager.endSessionKeepingScrollback(shellSession, session.exitStatus.value ?: 0)
                     }
                 } else {
@@ -6786,7 +7410,8 @@ class AppViewModel @JvmOverloads constructor(
         repository.getServerById(shellSession.serverId)?.let { runCatching { buildCredentials(it) }.getOrNull() }
             ?: shellSession.creds
 
-    private fun reconnectSession(shellSession: ShellSession) {
+    /** [askUser]: the user asked for this reconnect, so the host's sign-in questions may be put to them. */
+    private fun reconnectSession(shellSession: ShellSession, askUser: Boolean = false) {
         if (shellSession.tmuxSessionMissing) return
         if (shellSession.reconnectJob?.isActive == true) return
         if (shellSession.creds == null) return
@@ -6796,15 +7421,39 @@ class AppViewModel @JvmOverloads constructor(
         TerminalSessionManager.startKeepAliveService()
         shellSession.reconnectJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
             var delayMs = RECONNECT_BASE_DELAY_MS
+            // Why the attempts stopped early, when trying again cannot work without the user.
+            var stoppedBecause: String? = null
             for (attempt in 1..RECONNECT_MAX_ATTEMPTS) {
                 if (shellSession.userClosed) return@launch
                 delay(delayMs)
                 delayMs = (delayMs * 2).coerceAtMost(RECONNECT_MAX_DELAY_MS)
                 val creds = reconnectCredentials(shellSession) ?: return@launch
                 val newSession = try {
-                    sshTransport.openShell(creds, shellSession.lastCols, shellSession.lastRows)
+                    sshTransport.openShell(
+                        creds,
+                        shellSession.lastCols,
+                        shellSession.lastRows,
+                        if (askUser) interactiveAuthFor(shellSession.serverName) else null,
+                    )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
+                    // Only the user can answer this host's sign-in question (or they declined to).
+                    // Each further attempt would be one more failed sign-in in the host's log, and a
+                    // dozen of them trip fail2ban, so stop and let Retry ask.
+                    when (e.message) {
+                        NEEDS_INTERACTIVE_AUTH -> {
+                            stoppedBecause = TERMINAL_NEEDS_INTERACTIVE_AUTH
+                            break
+                        }
+                        NEEDS_SECURITY_KEY -> {
+                            stoppedBecause = TERMINAL_NEEDS_SECURITY_KEY
+                            break
+                        }
+                        INTERACTIVE_AUTH_CANCELLED -> {
+                            stoppedBecause = INTERACTIVE_AUTH_CANCELLED
+                            break
+                        }
+                    }
                     null
                 } ?: continue
                 var adopted = false
@@ -6842,7 +7491,8 @@ class AppViewModel @JvmOverloads constructor(
                         } else {
                             RemoteCommands.tmuxAttachCommand(shellSession.tmuxName, terminalScrollbackLimit, shellSession.adopted)
                         }
-                        newSession.write(attach.toByteArray())
+                        val typed = repository.getServerById(shellSession.serverId)?.let { typedLine(it, attach) } ?: attach
+                        newSession.write(typed.toByteArray())
                         check(!newSession.closed.value) { "SSH channel closed while reattaching tmux" }
                     }
                     currentCoroutineContext().ensureActive()
@@ -6914,10 +7564,10 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 return@launch
             }
-            // Exhausted attempts.
+            // Exhausted attempts, or stopped early.
             withContext(Dispatchers.Main) {
                 shellSession.reconnecting = false
-                shellSession.disconnectError = "Connection lost — reconnect failed."
+                shellSession.disconnectError = stoppedBecause ?: "Connection lost — reconnect failed."
                 rememberRestorablePersistentSession(shellSession)
                 if (shellSession.persistent) {
                     cleanupSession(shellSession)
@@ -6969,7 +7619,7 @@ class AppViewModel @JvmOverloads constructor(
     fun retrySession(sessionId: String) {
         val s = activeSessions.find { it.id == sessionId } ?: return
         if (s.isConnected || s.reconnecting || s.endedExitStatus != null) return
-        reconnectSession(s)
+        reconnectSession(s, askUser = true)
     }
 
     // ── tmux (persistent session) install gating ──
@@ -7111,6 +7761,12 @@ class AppViewModel @JvmOverloads constructor(
         // Re-join soft-wrapped rows so a long line that only broke at the right edge copies as one
         // logical line instead of picking up a newline per visual row.
         return joinRowsRespectingWraps(termRows)
+    }
+
+    /** Every occurrence of [query] in [session]'s scrollback and screen, as they are drawn. */
+    fun terminalMatchesFor(session: ShellSession, query: String): List<TerminalMatch> {
+        val rows = synchronized(session.emulator) { session.emulator.snapshot().rows }
+        return findInTerminal(rows, query)
     }
 
     fun clearTerminalScrollback() = clearTerminalScrollbackFor(currentSession)
@@ -7750,13 +8406,14 @@ class AppViewModel @JvmOverloads constructor(
                     val out = outAsync.await()
                     if (srv.id != selectedServerId) return@coroutineScope
                     if (out.startsWith("SSH Error")) {
-                        showDockerError(out)
+                        // Said plainly, without the transport's "command failed (127)" around it.
+                        showDockerError(if (RemoteCommands.NO_CONTAINER_RUNTIME in out) RemoteCommands.NO_CONTAINER_RUNTIME else out)
                     } else {
                         val restarts = runCatching { RemoteParsers.parseDockerRestartCounts(restartsAsync.await()) }.getOrDefault(emptyMap())
                         if (srv.id != selectedServerId) return@coroutineScope
 
                         val parsedContainers = RemoteParsers.parseDockerPs(out).map {
-                            it.copy(host = srv.name, restartCount = restarts["${it.runtime}:${it.id}"] ?: restarts[it.id] ?: it.restartCount)
+                            it.copy(serverId = srv.id, restartCount = restarts["${it.runtime}:${it.id}"] ?: restarts[it.id] ?: it.restartCount)
                         }
                         dockerContainers = parsedContainers
                         syncStackRegistry(srv, parsedContainers)
@@ -7873,15 +8530,350 @@ class AppViewModel @JvmOverloads constructor(
 
     /**
      * Open an interactive shell inside a container: connects a fresh terminal to the container's host
-     * and runs `docker/podman exec -it … bash||sh`. Needs the host it runs on — [SimContainer.host]
-     * carries the server name, matched back to the ServerEntity.
+     * and runs `docker/podman exec -it … bash||sh`. Needs the host it runs on, found by
+     * [SimContainer.serverId]: matching by name opened the wrong host when two shared a name.
      */
     fun dockerExecIntoContainer(container: SimContainer) {
-        val srv = selectedServer?.takeIf { it.name == container.host }
-            ?: servers.value.firstOrNull { it.name == container.host }
+        val srv = servers.value.firstOrNull { it.id == container.serverId }
             ?: selectedServer
             ?: return
         openTerminalWithCommand(srv, RemoteCommands.dockerExecShell(container.id, container.runtime))
+    }
+
+    // ── KUBERNETES (a host's kubectl over SSH, or a saved cluster reached from the phone) ──
+
+    /**
+     * Where a Kubernetes tab is: the context picked (null: kubectl's current one), the namespace
+     * (blank: every namespace) and the list shown.
+     */
+    data class KubeScope(val context: String? = null, val namespace: String = "", val view: KubeView = KubeView.Pods)
+
+    // Eager, so a cluster saved a moment ago is there when its tab first loads.
+    val kubeClusters = repository.kubeClustersFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** The saved cluster each host's Kubernetes tab shows instead of the host's own kubectl. */
+    val kubeSources = mutableStateMapOf<Int, Int>()
+
+    // Kept per host, or per saved cluster, like the Images and Volumes selections: switching hosts
+    // and back finds the cluster where it was left, and nothing loaded for one is shown or acted on
+    // for another. Keyed by [kubeKey].
+    val kubeScopes = mutableStateMapOf<String, KubeScope>()
+    val kubeSnapshots = mutableStateMapOf<String, KubeSnapshot>()
+    val kubeLoading = mutableStateMapOf<String, Boolean>()
+    /** Why a cluster could not be reached at all: no kubectl, or a config it cannot read. */
+    val kubeErrors = mutableStateMapOf<String, String>()
+    private val kubeJobs = mutableMapOf<String, Job>()
+    private val kubeApis = mutableMapOf<Int, Pair<KubeClusterEntity, KubeApi>>()
+
+    /** Where [serverId]'s Kubernetes tab keeps its state: under the saved cluster it shows, or the host. */
+    fun kubeKey(serverId: Int): String = kubeSources[serverId]?.let { "cluster:$it" } ?: "host:$serverId"
+
+    fun kubeScope(serverId: Int): KubeScope = kubeScopes[kubeKey(serverId)] ?: KubeScope()
+
+    /** The saved cluster [serverId]'s tab shows, or null when it shows the host's kubectl. */
+    fun kubeCluster(serverId: Int): KubeClusterEntity? =
+        kubeSources[serverId]?.let { id -> kubeClusters.value.firstOrNull { it.id == id } }
+
+    private fun kubeApi(cluster: KubeClusterEntity): KubeApi {
+        kubeApis[cluster.id]?.takeIf { it.first == cluster }?.let { return it.second }
+        return KubeApi(cluster).also { kubeApis[cluster.id] = cluster to it }
+    }
+
+    /** Loads the cluster [srv]'s tab shows: its contexts, namespaces and every list at once. */
+    fun loadKubernetes(srv: ServerEntity? = selectedServer) {
+        srv ?: return
+        val cluster = kubeCluster(srv.id)
+        // A saved cluster since removed leaves the tab on the host's own kubectl.
+        if (cluster == null && kubeSources.remove(srv.id) != null) return loadKubernetes(srv)
+        val key = kubeKey(srv.id)
+        kubeJobs[key]?.cancel()
+        kubeJobs[key] = viewModelScope.launch {
+            kubeLoading[key] = true
+            try {
+                val snapshot = if (cluster != null) loadKubeDirect(key, cluster) else loadKubeViaHost(key, srv)
+                if (snapshot != null) {
+                    kubeErrors.remove(key)
+                    kubeSnapshots[key] = snapshot
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                kubeErrors[key] = kubeFailure(e)
+                kubeSnapshots.remove(key)
+            } finally {
+                if (kubeJobs[key] == coroutineContext[Job]) {
+                    kubeJobs.remove(key)
+                    kubeLoading.remove(key)
+                }
+            }
+        }
+    }
+
+    /** Null when the cluster cannot be reached at all; [kubeErrors] then says why. */
+    private suspend fun loadKubeViaHost(key: String, srv: ServerEntity): KubeSnapshot? {
+        if (!requireUnixShell(srv, "Kubernetes") { kubeErrors[key] = it; kubeSnapshots.remove(key) }) return null
+        val setupOut = executeSshCommand(srv, Kube.SETUP)
+        val setup = Kube.parseSetup(setupOut)
+        if (setupOut.startsWith("SSH Error") || setup == null) {
+            kubeErrors[key] = Kube.errorText(setupOut).ifBlank { "kubectl printed nothing about its configuration." }
+            kubeSnapshots.remove(key)
+            return null
+        }
+        var scope = kubeScopes[key] ?: KubeScope()
+        // A context since removed from the config falls back to the current one.
+        if (scope.context != null && scope.context !in setup.contexts) {
+            scope = scope.copy(context = null, namespace = "")
+            kubeScopes[key] = scope
+        }
+        val context = scope.context
+        return coroutineScope {
+            val namespacesAsync = async { executeSshCommand(srv, Kube.namespaces(context)) }
+            val listsAsync = KubeView.entries.associateWith { view ->
+                async { executeSshCommand(srv, Kube.list(view, context, scope.namespace)) }
+            }
+            val outputs = listsAsync.mapValues { it.value.await() }
+            val namespacesOut = namespacesAsync.await()
+            val errors = outputs.filterValues { it.startsWith("SSH Error") }.mapValues { Kube.errorText(it.value) }
+            fun output(view: KubeView) = outputs.getValue(view).takeUnless { view in errors }.orEmpty()
+            KubeSnapshot(
+                setup = setup,
+                context = context,
+                namespaces = if (namespacesOut.startsWith("SSH Error")) {
+                    fallbackNamespaces(setup.defaultNamespace, scope.namespace)
+                } else {
+                    Kube.parseNamespaces(namespacesOut)
+                },
+                pods = Kube.parsePods(output(KubeView.Pods)),
+                deployments = Kube.parseDeployments(output(KubeView.Deployments)),
+                services = Kube.parseServices(output(KubeView.Services)),
+                nodes = Kube.parseNodes(output(KubeView.Nodes)),
+                errors = errors,
+            )
+        }
+    }
+
+    private suspend fun loadKubeDirect(key: String, cluster: KubeClusterEntity): KubeSnapshot = coroutineScope {
+        val api = kubeApi(cluster)
+        val namespace = (kubeScopes[key] ?: KubeScope()).namespace
+        suspend fun <T> attempt(block: suspend () -> T): Result<T> = try {
+            Result.success(block())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+        val namespacesAsync = async { attempt { api.namespaces() } }
+        val podsAsync = async { attempt { api.pods(namespace) } }
+        val deploymentsAsync = async { attempt { api.deployments(namespace) } }
+        val servicesAsync = async { attempt { api.services(namespace) } }
+        val nodesAsync = async { attempt { api.nodes() } }
+        val results = mapOf(
+            KubeView.Pods to podsAsync.await(),
+            KubeView.Deployments to deploymentsAsync.await(),
+            KubeView.Services to servicesAsync.await(),
+            KubeView.Nodes to nodesAsync.await(),
+        )
+        val defaultNamespace = cluster.namespace.ifBlank { null }
+        KubeSnapshot(
+            setup = KubeSetup(kubectl = "", kubeconfig = null, contexts = emptyList(), currentContext = null, defaultNamespace = defaultNamespace),
+            context = null,
+            namespaces = namespacesAsync.await().getOrElse { fallbackNamespaces(defaultNamespace, namespace) },
+            pods = podsAsync.await().getOrDefault(emptyList()),
+            deployments = deploymentsAsync.await().getOrDefault(emptyList()),
+            services = servicesAsync.await().getOrDefault(emptyList()),
+            nodes = nodesAsync.await().getOrDefault(emptyList()),
+            errors = results.mapNotNull { (view, result) -> result.exceptionOrNull()?.let { view to kubeFailure(it) } }.toMap(),
+        )
+    }
+
+    /** Someone allowed into one namespace only may not list them; offer theirs. */
+    private fun fallbackNamespaces(defaultNamespace: String?, picked: String) =
+        listOfNotNull(defaultNamespace ?: "default", picked.takeIf { it.isNotBlank() }).distinct()
+
+    private fun kubeFailure(e: Throwable): String {
+        val message = e.message ?: e.javaClass.simpleName
+        return if (e is javax.net.ssl.SSLHandshakeException && "path" in message) {
+            "The cluster's certificate is not signed by the CA in its kubeconfig. ($message)"
+        } else {
+            message
+        }
+    }
+
+    /** Shows the host's own kubectl ([clusterId] null) or a saved cluster on [serverId]'s tab. */
+    fun setKubeSource(serverId: Int, clusterId: Int?) {
+        if (clusterId == null) kubeSources.remove(serverId) else kubeSources[serverId] = clusterId
+        loadKubernetes(servers.value.firstOrNull { it.id == serverId })
+    }
+
+    fun setKubeContext(serverId: Int, context: String?) {
+        kubeScopes[kubeKey(serverId)] = kubeScope(serverId).copy(context = context, namespace = "")
+        loadKubernetes(servers.value.firstOrNull { it.id == serverId })
+    }
+
+    fun setKubeNamespace(serverId: Int, namespace: String) {
+        kubeScopes[kubeKey(serverId)] = kubeScope(serverId).copy(namespace = namespace)
+        loadKubernetes(servers.value.firstOrNull { it.id == serverId })
+    }
+
+    fun setKubeView(serverId: Int, view: KubeView) {
+        kubeScopes[kubeKey(serverId)] = kubeScope(serverId).copy(view = view)
+    }
+
+    /**
+     * Saves the picked contexts of an imported kubeconfig, replacing any saved one with the same
+     * name and address, and shows the first on [serverId]'s tab.
+     */
+    fun saveKubeClusters(serverId: Int, contexts: List<KubeContextConfig>) {
+        if (contexts.isEmpty()) return
+        viewModelScope.launch {
+            val existing = repository.getAllKubeClusters()
+            val ids = contexts.map { c ->
+                val replaces = existing.firstOrNull { it.name == c.name && it.server == c.server }
+                repository.insertKubeCluster(
+                    KubeClusterEntity(
+                        id = replaces?.id ?: 0,
+                        name = c.name,
+                        server = c.server,
+                        caPem = c.caPem.orEmpty(),
+                        clientCertPem = c.clientCertPem.orEmpty(),
+                        clientKeyPem = c.clientKeyPem.orEmpty(),
+                        token = c.token.orEmpty(),
+                        namespace = c.namespace.orEmpty(),
+                    ),
+                ).toInt()
+            }
+            val first = ids.first()
+            withTimeoutOrNull(5_000) { kubeClusters.first { list -> list.any { it.id == first } } }
+            ids.forEach { id ->
+                kubeApis.remove(id)
+                kubeSnapshots.remove("cluster:$id")
+                kubeErrors.remove("cluster:$id")
+            }
+            setKubeSource(serverId, first)
+        }
+    }
+
+    /** Forgets a saved cluster; tabs showing it go back to their host's kubectl. */
+    fun deleteKubeCluster(clusterId: Int) {
+        val shownOn = kubeSources.filterValues { it == clusterId }.keys
+        shownOn.forEach { kubeSources.remove(it) }
+        val key = "cluster:$clusterId"
+        kubeJobs.remove(key)?.cancel()
+        kubeSnapshots.remove(key)
+        kubeErrors.remove(key)
+        kubeLoading.remove(key)
+        kubeScopes.remove(key)
+        kubeApis.remove(clusterId)
+        viewModelScope.launch { repository.deleteKubeCluster(clusterId) }
+        shownOn.forEach { id -> loadKubernetes(servers.value.firstOrNull { it.id == id }) }
+    }
+
+    /**
+     * Runs an action on the cluster [serverId]'s tab shows, with its output in the action panel:
+     * [viaHost]'s command on the host, or [direct] against a saved cluster. [reload] refreshes the
+     * lists once it is done.
+     */
+    private fun kubeAction(
+        serverId: Int,
+        title: String,
+        reload: Boolean,
+        viaHost: (KubeSnapshot) -> String,
+        direct: suspend KubeApi.(append: suspend (String) -> Unit) -> Unit,
+    ) {
+        val srv = servers.value.firstOrNull { it.id == serverId } ?: return
+        val snapshot = kubeSnapshots[kubeKey(serverId)] ?: return
+        val onComplete: (() -> Unit)? = if (reload) ({ loadKubernetes(srv) }) else null
+        val cluster = kubeCluster(serverId)
+        if (cluster == null) {
+            runStreamingAction(title, viaHost(snapshot), server = srv, onComplete = onComplete)
+        } else {
+            streamToActionPanel(title, onComplete) { append ->
+                kubeApi(cluster).direct(append)
+                ""
+            }
+        }
+    }
+
+    fun kubePodLogs(serverId: Int, pod: KubePod, follow: Boolean = false, previous: Boolean = false) {
+        val what = when {
+            follow -> "follow logs"
+            previous -> "previous logs"
+            else -> "logs"
+        }
+        kubeAction(serverId, "$what · ${pod.name}", reload = false, { Kube.podLogs(it.context, pod, follow, previous) }) { append ->
+            logs(pod, follow, previous, append)
+        }
+    }
+
+    fun kubeDeploymentLogs(serverId: Int, deployment: KubeDeployment) =
+        kubeAction(serverId, "logs · ${deployment.name}", reload = false, { Kube.deploymentLogs(it.context, deployment) }) { append ->
+            deploymentLogs(deployment, append)
+        }
+
+    fun kubeDescribe(serverId: Int, kind: String, namespace: String?, name: String) =
+        kubeAction(serverId, "describe · $name", reload = false, { Kube.describe(it.context, kind, namespace, name) }) { append ->
+            append(describe(kind, namespace, name))
+        }
+
+    fun kubeDeletePod(serverId: Int, pod: KubePod) =
+        kubeAction(serverId, "delete · ${pod.name}", reload = true, { Kube.deletePod(it.context, pod) }) { append ->
+            append(deletePod(pod))
+        }
+
+    fun kubeScale(serverId: Int, deployment: KubeDeployment, replicas: Int) =
+        kubeAction(serverId, "scale · ${deployment.name}", reload = true, { Kube.scale(it.context, deployment, replicas) }) { append ->
+            append(scale(deployment, replicas))
+        }
+
+    fun kubeRestart(serverId: Int, deployment: KubeDeployment) =
+        kubeAction(serverId, "restart · ${deployment.name}", reload = true, { Kube.restart(it.context, deployment) }) { append ->
+            append(restart(deployment))
+        }
+
+    fun kubeCordon(serverId: Int, node: KubeNode, cordon: Boolean) =
+        kubeAction(serverId, "${if (cordon) "cordon" else "uncordon"} · ${node.name}", reload = true, { Kube.cordon(it.context, node, cordon) }) { append ->
+            append(cordon(node, cordon))
+        }
+
+    fun kubeEvents(serverId: Int) {
+        val namespace = kubeScope(serverId).namespace
+        kubeAction(serverId, "events · ${namespace.ifBlank { "all namespaces" }}", reload = false, { Kube.events(it.context, namespace) }) { append ->
+            append(events(namespace))
+        }
+    }
+
+    /**
+     * Opens a terminal with a shell inside [pod] ([container], or its default one): through
+     * kubectl on the host, or straight to a saved cluster.
+     */
+    fun kubeExec(serverId: Int, pod: KubePod, container: String? = null) {
+        val srv = servers.value.firstOrNull { it.id == serverId } ?: return
+        val snapshot = kubeSnapshots[kubeKey(serverId)] ?: return
+        val cluster = kubeCluster(serverId)
+        if (cluster == null) {
+            openTerminalWithCommand(srv, Kube.execShell(snapshot.setup, snapshot.context, pod, container))
+            return
+        }
+        val shown = ServerEntity(
+            id = nextAdHocServerId--,
+            name = "${pod.name} · ${cluster.name}",
+            host = runCatching { java.net.URI(cluster.server).host }.getOrNull() ?: cluster.server,
+            port = runCatching { java.net.URI(cluster.server).port }.getOrNull()?.takeIf { it > 0 } ?: 443,
+            username = "",
+            status = "online",
+        )
+        connectStreamTerminal(
+            shown, TerminalTransport.Kubernetes,
+            failurePrefix = "Could not open a shell in ${pod.name}",
+            retry = { kubeExec(serverId, pod, container) },
+        // Inside the attempt, so a saved key that no longer reads fails it with a message.
+        ) { cols, rows -> kubeApi(cluster).exec(pod, container, cols, rows) }
+    }
+
+    /** Opens a terminal on [serverId]'s host that copies k3s's config for this user; sudo asks there. */
+    fun kubeCopyK3sConfig(serverId: Int) {
+        val srv = servers.value.firstOrNull { it.id == serverId } ?: return
+        openTerminalWithCommand(srv, Kube.K3S_COPY_CONFIG)
     }
 
     // ── Shared streaming-action panel ──
@@ -7891,8 +8883,32 @@ class AppViewModel @JvmOverloads constructor(
      * (the same panel Docker stack actions use). [onComplete] runs once the stream ends, e.g. to
      * refresh the relevant list.
      */
-    fun runStreamingAction(title: String, command: String, stdin: String? = null, server: ServerEntity? = selectedServer, onComplete: (() -> Unit)? = null) {
+    fun runStreamingAction(
+        title: String,
+        command: String,
+        stdin: String? = null,
+        server: ServerEntity? = selectedServer,
+        inLoginShell: Boolean = false,
+        onComplete: (() -> Unit)? = null,
+    ) {
         val srv = server ?: return showActionMessage(title, "No host is selected. Select a host and retry.")
+        streamToActionPanel(title, onComplete) { append ->
+            val creds = if (inLoginShell) loginShellCredentials(srv) else buildCredentials(srv)
+            sshTransport.execStream(creds, command, stdin) { chunk -> append(chunk) }
+        }
+    }
+
+    /**
+     * Shows what [produce] passes to its argument in the shared action panel as it arrives, and
+     * runs [onComplete] once it returns. [produce] returns the whole result: shown when nothing
+     * streamed, and appended when it is an "SSH Error:" the stream did not already show. A throw
+     * is shown as the command having failed.
+     */
+    private fun streamToActionPanel(
+        title: String,
+        onComplete: (() -> Unit)?,
+        produce: suspend (append: suspend (String) -> Unit) -> String,
+    ) {
         // Supersede any previous action so its late chunks can't bleed into this one.
         actionStreamJob?.cancel()
         val epoch = ++actionStreamEpoch
@@ -7901,8 +8917,8 @@ class AppViewModel @JvmOverloads constructor(
         actionStreamRunning = true
         actionStreamJob = viewModelScope.launch {
             try {
-                val result = sshTransport.execStream(buildCredentials(srv), command, stdin) { chunk ->
-                    // onChunk runs on the IO dispatcher; apply the snapshot-state write on Main.
+                val result = produce { chunk ->
+                    // Chunks arrive on the IO dispatcher; apply the snapshot-state write on Main.
                     if (epoch == actionStreamEpoch) withContext(Dispatchers.Main) {
                         if (epoch == actionStreamEpoch) {
                             val appended = actionStreamOutput + chunk
@@ -8084,6 +9100,7 @@ class AppViewModel @JvmOverloads constructor(
         configFiles: String = "",
         runtime: String = "",
         expectedServerId: Int? = activeComposeServerId,
+        removeOrphans: Boolean = false,
         onResult: (Boolean, String) -> Unit,
     ) {
         if (expectedServerId == null || expectedServerId != selectedServerId ||
@@ -8104,9 +9121,8 @@ class AppViewModel @JvmOverloads constructor(
             )
             var operationSucceeded = false
             try {
-                val b64 = android.util.Base64.encodeToString(yaml.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-                val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles, runtime)
-                val out = executeSshCommand(srv, cmd)
+                val cmd = RemoteCommands.composeDeploy(composeFilePath, project, workingDir, configFiles, runtime, removeOrphans)
+                val out = executeSshCommand(srv, cmd, stdin = yaml)
             // Success only when the runtime printed our end-of-pipeline sentinel AND the transport
             // didn't report an SSH/command failure. Any compose validation or `up` error trips this.
                 val ok = !out.startsWith("SSH Error") && out.contains("OMNITERM_DEPLOY_OK")
@@ -8501,9 +9517,8 @@ class AppViewModel @JvmOverloads constructor(
             cronLoading = true
             try {
                 val normalized = text.trimEnd() + "\n"
-                val encoded = android.util.Base64.encodeToString(normalized.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-                val decode = "{ printf '%s' '$encoded' | base64 -d 2>/dev/null || printf '%s' '$encoded' | base64 --decode 2>/dev/null || printf '%s' '$encoded' | base64 -D; }"
-                val out = executeSshCommand(srv, "$decode | crontab - 2>&1").trim()
+                // On stdin, so a long crontab never outgrows the command line.
+                val out = executeSshCommand(srv, "crontab - 2>&1", stdin = normalized).trim()
                 val ok = out.isBlank()
                 if (srv.id == selectedServerId) {
                     if (ok) cronText = normalized.trimEnd()
@@ -9211,9 +10226,9 @@ class AppViewModel @JvmOverloads constructor(
         if (share.protocol.uppercase(Locale.ROOT) == "SFTP" && !share.anonymous && share.authProfileId != null) {
             val profile = repository.getAllProfiles().firstOrNull { it.id == share.authProfileId }
             if (profile != null && profile.authType == "key") {
-                val pem = repository.getAllKeys().find { it.alias == profile.keyAlias }?.privateKey
+                val key = repository.getAllKeys().find { it.alias == profile.keyAlias }
                     ?: throw java.io.IOException("Key \"${profile.keyAlias}\" for profile \"${profile.profileName}\" no longer exists.")
-                return JschSftp(SshCredentials(share.address, share.port, profile.username, privateKeyPem = pem))
+                return JschSftp(SshCredentials(share.address, share.port, profile.username, privateKeyPem = key.privateKey, certificate = key.certificate))
             }
         }
         val (user, pass) = shareCredentials(share)
@@ -10340,10 +11355,10 @@ class AppViewModel @JvmOverloads constructor(
 
     // ── SFTP (real ChannelSftp) ──
     private suspend fun sftpClientOrNull(): JschSftp? =
-        selectedServer?.let { JschSftp(buildCredentials(it)) }
+        selectedServer?.let { JschSftp(buildCredentials(it), interactiveAuthFor(it.name)) }
 
     private suspend fun sftpClientFor(server: ServerEntity): JschSftp =
-        JschSftp(buildCredentials(server))
+        JschSftp(buildCredentials(server), interactiveAuthFor(server.name))
 
     // ── Dual-pane: a second, independent SFTP browser (pane B) ──
     // Kept separate from the primary SFTP state so the two panes never clobber each other. Pane B is
@@ -10392,7 +11407,7 @@ class AppViewModel @JvmOverloads constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (paneBServerId == srv.id) paneBError = e.message ?: "Could not list folder"
+                if (paneBServerId == srv.id) paneBError = e.message?.let(::cleanSshError) ?: "Could not list folder"
             } finally {
                 paneBLoading = false
             }
@@ -10510,7 +11525,7 @@ class AppViewModel @JvmOverloads constructor(
                 // an error — swallow it so "StandaloneCoroutine was cancelled" never reaches the UI.
                 throw e
             } catch (e: Exception) {
-                if (selectedServerId == targetServerId) sftpError = e.message ?: "SFTP error"
+                if (selectedServerId == targetServerId) sftpError = e.message?.let(::cleanSshError) ?: "SFTP error"
             } finally {
                 // Only the job that's still current should clear the spinner; a cancelled one bows out.
                 if (sftpJob == coroutineContext[Job]) sftpLoading = false
@@ -10865,6 +11880,44 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** Create the empty file [name] in this folder and open it in the editor; an existing file is never touched. */
+    fun sftpNewFile(name: String) {
+        if (sftpFileCreation != null) return
+        val srv = selectedServer ?: run {
+            sftpError = "Select a host before creating a file."
+            return
+        }
+        if (sftpEntries.any { it.name == name }) {
+            sftpError = "\"$name\" already exists here."
+            return
+        }
+        val directory = sftpPath
+        val sudo = sftpSudo
+        val path = joinPath(directory, name)
+        sftpError = null
+        sftpStatus = null
+        sftpFileCreation = "Creating \"$name\" on ${srv.name}…"
+        viewModelScope.launch {
+            try {
+                // A subshell: a failed redirect on `:` would end the shell before the message.
+                val err = if (sudo)
+                    runSftpSudo(srv, "(set -C; : > ${shellQuote(path)}) 2>/dev/null || echo ${shellQuote("Cannot create \"$name\" here.")}")
+                else { sftpClientFor(srv).createFile(path); null }
+                if (err != null) { sftpError = err; return@launch }
+                sftpStatus = "Created \"$name\" on ${srv.name}${if (sudo) " (sudo)" else ""}"
+                if (!isSftpLocation(srv.id, directory, sudo)) return@launch
+                loadSftp(directory, clearError = false).join()
+                if (!isSftpLocation(srv.id, directory, sudo) || sftpError != null) return@launch
+                openSftpFileForEdit(sftpEntries.firstOrNull { it.name == name } ?: SftpFile(name, isDirectory = false, size = 0, modDate = ""))?.join()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { sftpError = "Could not create \"$name\" on ${srv.name}: ${e.message ?: "Create failed"}" }
+            finally { sftpFileCreation = null }
+        }
+    }
+
+    private fun isSftpLocation(serverId: Int, directory: String, sudo: Boolean): Boolean =
+        selectedServer?.id == serverId && sftpPath == directory && sftpSudo == sudo
+
     /**
      * The file name [sftpArchiveSelection] would write for this selection, so the UI can warn before
      * silently replacing an existing archive. Null when the name is timestamped (multi-item
@@ -11019,13 +12072,16 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** Open a file for editing: read its text and stash it on [edittingSftpFile]. */
-    fun openSftpFileForEdit(file: SftpFile) {
-        val srv = selectedServer
-        viewModelScope.launch {
+    fun openSftpFileForEdit(file: SftpFile): Job? {
+        val srv = selectedServer ?: return null
+        val directory = sftpPath
+        val sudo = sftpSudo
+        return viewModelScope.launch {
+            if (!isSftpLocation(srv.id, directory, sudo)) return@launch
             sftpError = null
             try {
-                val path = joinPath(sftpPath, file.name)
-                val text = if (sftpSudo && srv != null) {
+                val path = joinPath(directory, file.name)
+                val text = if (sudo) {
                     // SFTP can't elevate; read protected files with `sudo cat` over an exec channel.
                     val out = executeSshCommand(srv, RemoteCommands.sudoReadCommand(path, srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword))
                     sftpReadError(out)?.let { sftpError = it; return@launch }
@@ -11037,8 +12093,9 @@ class AppViewModel @JvmOverloads constructor(
                         return@launch
                     }
                 } else {
-                    sftpClientOrNull()?.readText(path) ?: return@launch
+                    sftpClientFor(srv).readText(path)
                 }
+                if (!isSftpLocation(srv.id, directory, sudo)) return@launch
                 edittingSftpFilePath = file.name
                 edittingSftpFile = file.copy(content = text)
             } catch (e: CancellationException) { throw e }
@@ -11919,9 +12976,22 @@ class AppViewModel @JvmOverloads constructor(
         broadcastHostJobs.values.toList().forEach { it.cancel() }
     }
 
+    /**
+     * [cmd] as [srv] runs it when it is a built-in Fleet preset the user has not edited: the app's
+     * own command, so in sh on a Unix host and as encoded PowerShell on Windows, whatever the login
+     * shell. Null for anything else, which the user wrote for their own shell.
+     */
+    private suspend fun builtInPresetCommand(srv: ServerEntity, cmd: String): String? {
+        val preset = builtInFleetPresets.firstOrNull { it.command == cmd } ?: return null
+        return if (RemoteCommands.hasUnixShell(hostOs(srv))) cmd
+        else fleetPresetWindowsScripts[preset.presetKey]?.let(RemoteCommands::powershell)
+    }
+
     private suspend fun broadcastHostPlain(srv: ServerEntity, cmd: String) {
         val result = try {
-            sshTransport.execStream(buildCredentials(srv), cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            val preset = builtInPresetCommand(srv, cmd)
+            val creds = if (preset != null) buildCredentials(srv) else loginShellCredentials(srv)
+            sshTransport.execStream(creds, preset ?: cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             "SSH Error: ${e.message ?: "unknown error"}"
@@ -11940,7 +13010,7 @@ class AppViewModel @JvmOverloads constructor(
             sshTransport.exec(
                 buildCredentials(srv),
                 RemoteCommands.broadcastTmuxStart(runId),
-                stdin = RemoteCommands.broadcastTmuxRunner(runId, cmd),
+                stdin = RemoteCommands.broadcastTmuxRunner(runId, cmd, userShell = builtInPresetCommand(srv, cmd) == null),
             )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -12118,8 +13188,13 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun appendBroadcastChunk(serverId: Int, chunk: String) {
-        viewModelScope.launch(Dispatchers.Main.immediate) {
+    /**
+     * Adds [chunk] to [serverId]'s card before the transport reads on, as the action stream does.
+     * Launched and left to run, a chunk could land after the run had finished: the card showed
+     * failed with its last output missing, and its note was worded from that partial output.
+     */
+    private suspend fun appendBroadcastChunk(serverId: Int, chunk: String) {
+        withContext(Dispatchers.Main.immediate) {
             val index = broadcastResults.indexOfFirst { it.serverId == serverId }
             if (index >= 0) {
                 val current = broadcastResults[index]
@@ -12973,7 +14048,9 @@ class AppViewModel @JvmOverloads constructor(
                 val evaluationChanged = previous?.let { alertRuleEvaluationChanged(it, rule) } == true
                 if (evaluationChanged) closeAlertsForRule(rule.id)
                 repository.insertRule(rule)
+                if (evaluationChanged) resetEndpointChecks(rule.id)
             }
+            if (EndpointChecks.isEndpointMetric(rule.metricName)) startEndpointChecks()
         }
     }
 
@@ -12982,6 +14059,7 @@ class AppViewModel @JvmOverloads constructor(
             alertStateMutex.withLock {
                 closeAlertsForRule(rule.id)
                 repository.deleteRule(rule)
+                resetEndpointChecks(rule.id)
             }
         }
     }
@@ -13035,6 +14113,8 @@ class AppViewModel @JvmOverloads constructor(
         activeAlerts: List<ActiveAlertEntity>,
         settings: List<AppSettingEntity>,
         selection: BackupSelection = BackupSelection(),
+        telnetHosts: List<TelnetHostEntity> = emptyList(),
+        kubeClusters: List<KubeClusterEntity> = emptyList(),
     ): String {
         val closedSelection = selection.withReferentialClosure()
         val serverArr = org.json.JSONArray()
@@ -13070,6 +14150,7 @@ class AppViewModel @JvmOverloads constructor(
                 put("privateKey", k.privateKey)
                 put("publicKey", k.publicKey)
                 put("fingerprint", k.fingerprint)
+                if (k.certificate.isNotBlank()) put("certificate", k.certificate)
             })
         }
         val profileArr = org.json.JSONArray()
@@ -13128,6 +14209,7 @@ class AppViewModel @JvmOverloads constructor(
                 put("severity", r.severity); put("triggerWindow", r.triggerWindow); put("enabled", r.enabled)
                 put("notes", r.notes)
                 r.presetKey?.let { put("presetKey", it) }
+                if (r.target.isNotEmpty()) put("target", r.target)
             })
         }
         val historyArr = org.json.JSONArray()
@@ -13155,6 +14237,21 @@ class AppViewModel @JvmOverloads constructor(
                 put("ipAddress", w.ipAddress)
                 put("port", w.port); put("notes", w.notes)
                 put("lastWokenTime", w.lastWokenTime)
+            })
+        }
+        // Saved Telnet connections travel with the hosts.
+        val telnetArr = org.json.JSONArray()
+        for (t in if (closedSelection.servers) telnetHosts else emptyList()) {
+            telnetArr.put(org.json.JSONObject().apply {
+                put("name", t.name); put("host", t.host); put("port", t.port)
+            })
+        }
+        // Saved Kubernetes clusters too; their keys and tokens make the backup one to encrypt.
+        val kubeArr = org.json.JSONArray()
+        for (c in if (closedSelection.servers) kubeClusters else emptyList()) {
+            kubeArr.put(org.json.JSONObject().apply {
+                put("name", c.name); put("server", c.server); put("caPem", c.caPem); put("clientCertPem", c.clientCertPem)
+                put("clientKeyPem", c.clientKeyPem); put("token", c.token); put("namespace", c.namespace)
             })
         }
         val networkShareArr = org.json.JSONArray()
@@ -13253,6 +14350,8 @@ class AppViewModel @JvmOverloads constructor(
             .put("activeAlerts", activeAlertArr)
             .put("alertHistory", historyArr)
             .put("wolTargets", wolArr)
+            .put("telnetHosts", telnetArr)
+            .put("kubeClusters", kubeArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
             .put("settings", settingsObj)
@@ -13363,7 +14462,7 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs",
+            "crashLogs", "telnetHosts", "kubeClusters",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -13530,7 +14629,9 @@ class AppViewModel @JvmOverloads constructor(
                     try {
                         val json = buildBackupJson(
                             srvs, keys, profiles, scripts, rules, alertHistories, wolTargets,
-                            networkShares, portForwards, activeAlerts, settings, closedSelection
+                            networkShares, portForwards, activeAlerts, settings, closedSelection,
+                            telnetHosts = repository.getAllTelnetHosts(),
+                            kubeClusters = repository.getAllKubeClusters(),
                         )
                         val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
                         context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
@@ -13698,9 +14799,16 @@ class AppViewModel @JvmOverloads constructor(
                                     privateKey = o.optString("privateKey"),
                                     publicKey = o.optString("publicKey"),
                                     fingerprint = o.optString("fingerprint").ifBlank {
-                                        o.optString("publicKey").takeIf { it.startsWith("ssh-") }?.let { sshPublicKeyFingerprint(it) }
+                                        SshWire.publicBlob(o.optString("publicKey"))?.let(SshWire::fingerprint)
                                             ?: keyMaterialFingerprint(o.optString("privateKey"))
                                     },
+                                    // Only a certificate that still parses and fits the key comes back.
+                                    certificate = runCatching {
+                                        SshKeyMaterial.checkedCertificate(
+                                            o.optString("certificate"),
+                                            SshKeyMaterial.publicBlob(o.optString("privateKey"), o.optString("publicKey")),
+                                        )
+                                    }.getOrDefault(""),
                                 )
                             )
                             existingKeys.add(alias)
@@ -13791,7 +14899,7 @@ class AppViewModel @JvmOverloads constructor(
                                 ServerEntity(
                                     name = nm, host = o.getString("host"), port = o.optInt("port", 22),
                                     username = o.optString("username"), groupName = o.optString("groupName", "Default"),
-                                    serverColor = o.optString("serverColor", "Default"), authType = o.optString("authType", "password"),
+                                    serverColor = OmniColors.hostColorName(o.optString("serverColor", "Default")), authType = o.optString("authType", "password"),
                                     authKeyAlias = jsonNullableString(o, "authKeyAlias"),
                                     authPassword = jsonNullableString(o, "authPassword"),
                                     sudoPassword = o.optString("sudoPassword", ""),
@@ -13860,9 +14968,12 @@ class AppViewModel @JvmOverloads constructor(
                             importedScripts++
                         }
 
-                        // Alert rules (re-point serverId; dedup by server+metric+threshold+window).
+                        // Alert rules (re-point serverId; dedup by server+metric+threshold+window+target).
+                        fun sameRule(rule: AlertRuleEntity, serverId: Int, metric: String, threshold: Float, window: String, target: String) =
+                            rule.serverId == serverId && rule.metricName == metric && rule.thresholdValue == threshold &&
+                                rule.triggerWindow == window && rule.target == target
                         val existingRuleKeys = repository.getAllRules()
-                            .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}" }.toMutableSet()
+                            .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}|${it.target}" }.toMutableSet()
                         val ruleArr = root.optJSONArray("alertRules") ?: org.json.JSONArray()
                         val ruleIdMap = mutableMapOf<Int, Int>()
                         var importedRules = 0
@@ -13874,12 +14985,12 @@ class AppViewModel @JvmOverloads constructor(
                             val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
                             val window = o.optString("triggerWindow", "5m")
                             val metric = o.optString("metricName")
-                            val key = "$mappedServerId|$metric|$threshold|$window"
+                            val target = o.optString("target", "")
+                            val key = "$mappedServerId|$metric|$threshold|$window|$target"
                             if (key in existingRuleKeys) {
                                 if (oldRuleId != 0) {
-                                    repository.getAllRules().find {
-                                        it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
-                                    }?.let { ruleIdMap[oldRuleId] = it.id }
+                                    repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }
+                                        ?.let { ruleIdMap[oldRuleId] = it.id }
                                 }
                                 continue
                             }
@@ -13891,11 +15002,10 @@ class AppViewModel @JvmOverloads constructor(
                                     enabled = o.optBoolean("enabled", true),
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
+                                    target = target,
                                 )
                             )
-                            repository.getAllRules().find {
-                                it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
-                            }?.let { restoredRule ->
+                            repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }?.let { restoredRule ->
                                 if (oldRuleId != 0) ruleIdMap[oldRuleId] = restoredRule.id
                             }
                             existingRuleKeys.add(key)
@@ -14000,6 +15110,44 @@ class AppViewModel @JvmOverloads constructor(
                             )
                             existingWol.add(mac.lowercase())
                             importedWol++
+                        }
+
+                        // Saved Telnet connections, with the hosts (dedup by address and port).
+                        val existingTelnet = repository.getAllTelnetHosts().mapTo(mutableSetOf()) { "${it.host.lowercase(Locale.ROOT)}:${it.port}" }
+                        val telnetArr = root.optJSONArray("telnetHosts") ?: org.json.JSONArray()
+                        var importedTelnet = 0
+                        for (i in 0 until if (closedSelection.servers) telnetArr.length() else 0) {
+                            val o = telnetArr.getJSONObject(i)
+                            val address = o.optString("host").trim()
+                            val port = o.optInt("port", TelnetSession.DEFAULT_PORT)
+                            if (address.isEmpty() || port !in 1..65535) continue
+                            if (!existingTelnet.add("${address.lowercase(Locale.ROOT)}:$port")) continue
+                            repository.insertTelnetHost(TelnetHostEntity(name = o.optString("name").ifBlank { address }, host = address, port = port))
+                            importedTelnet++
+                        }
+
+                        // Saved Kubernetes clusters, with the hosts (dedup by name and address).
+                        val existingKube = repository.getAllKubeClusters().mapTo(mutableSetOf()) { "${it.name}|${it.server}" }
+                        val kubeArr = root.optJSONArray("kubeClusters") ?: org.json.JSONArray()
+                        var importedKube = 0
+                        for (i in 0 until if (closedSelection.servers) kubeArr.length() else 0) {
+                            val o = kubeArr.getJSONObject(i)
+                            val name = o.optString("name").trim()
+                            val server = o.optString("server").trim()
+                            if (name.isEmpty() || !server.startsWith("https://")) continue
+                            if (!existingKube.add("$name|$server")) continue
+                            repository.insertKubeCluster(
+                                KubeClusterEntity(
+                                    name = name,
+                                    server = server,
+                                    caPem = o.optString("caPem"),
+                                    clientCertPem = o.optString("clientCertPem"),
+                                    clientKeyPem = o.optString("clientKeyPem"),
+                                    token = o.optString("token"),
+                                    namespace = o.optString("namespace"),
+                                ),
+                            )
+                            importedKube++
                         }
 
                         // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
@@ -14166,6 +15314,8 @@ class AppViewModel @JvmOverloads constructor(
                             true,
                             "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
+                                (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
+                                (if (importedKube > 0) "$importedKube Kubernetes cluster(s), " else "") +
                                 "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix +
                                 skippedExistingServers.joinToString(separator = "\n", prefix = if (skippedExistingServers.isEmpty()) "" else "\n"),
                         )

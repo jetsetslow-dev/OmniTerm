@@ -64,7 +64,7 @@ data class ServerEntity(
     val port: Int = 22,
     val username: String,
     val groupName: String? = "Default",
-    val serverColor: String = "Default", // Can be "Default", "Blue", "Red", "Green", "Purple", "Orange"
+    val serverColor: String = "Default", // "Default" or a name in OmniColors.namedColors; older rows' names are read through OmniColors.hostColorName
     val authType: String = "password", // "password", "key", "profile"
     val authKeyAlias: String? = null,
     val authPassword: String? = null,
@@ -126,10 +126,13 @@ data class MetricHistoryEntity(
 data class SshKeyEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val alias: String,
-    val keyType: String, // "RSA", "Ed25519", "ECDSA"
+    val keyType: String, // "RSA", "ED25519", "ECDSA", "ED25519-SK", "ECDSA-SK"
+    // A key on a security key keeps its key file here: the handle the security key finds it by.
     val privateKey: String,
     val publicKey: String,
-    val fingerprint: String
+    val fingerprint: String,
+    // The key's OpenSSH certificate (the -cert.pub line), "" without one.
+    val certificate: String = "",
 )
 
 @Entity(tableName = "credential_profiles")
@@ -148,7 +151,8 @@ data class AlertRuleEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val serverId: Int,
     // "CPU Usage", "Memory Usage", "Disk Usage", "Network In", "Network Out", "Latency",
-    // "Temperature" (only evaluates on hosts that expose a thermal sensor)
+    // "Temperature" (only evaluates on hosts that expose a thermal sensor), and the checks the
+    // phone runs itself, "TLS Expiry" and "URL Check" (see EndpointChecks)
     val metricName: String,
     val mountPoint: String = "/",
     val thresholdValue: Float,
@@ -160,7 +164,10 @@ data class AlertRuleEntity(
     // Stable identity of the built-in preset this rule was seeded from (e.g. "alert.cpu"), or null
     // for user-created rules. Survives threshold/severity edits, so the default-rules toggle can
     // delete exactly what it seeded instead of matching on mutable content.
-    val presetKey: String? = null
+    val presetKey: String? = null,
+    // What a TLS or URL check connects to: a URL, or host[:port] for TLS. Blank on a TLS rule
+    // means each host's own address on port 443. Unused by the other metrics.
+    val target: String = "",
 )
 
 @Entity(
@@ -222,6 +229,31 @@ data class QuickScriptEntity(
 
 /** When metrics were last recorded for a host; a query result, not a table. */
 data class ServerLastSample(val serverId: Int, val lastAt: Long)
+
+/** A saved Telnet connection: network gear and other hosts reached by Telnet rather than SSH. */
+@Entity(tableName = "telnet_hosts")
+data class TelnetHostEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val host: String,
+    val port: Int = 23,
+)
+
+/**
+ * A Kubernetes cluster reached from the phone itself, saved from one context of an imported
+ * kubeconfig. [clientKeyPem] and [token] are encrypted at the repository boundary.
+ */
+@Entity(tableName = "kube_clusters")
+data class KubeClusterEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val server: String,
+    val caPem: String = "",
+    val clientCertPem: String = "",
+    val clientKeyPem: String = "",
+    val token: String = "",
+    val namespace: String = "",
+)
 
 @Entity(tableName = "wol_targets")
 data class WolTargetEntity(

@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.RemoteCommands
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -51,16 +52,47 @@ class ComposeCommandTest {
 
     @Test
     fun deploy_command_is_valid_shell() {
-        val b64 = java.util.Base64.getEncoder().encodeToString("version: \"3.8\"\n".toByteArray())
         // Path with a space to prove quoting holds.
-        val cmd = RemoteCommands.composeDeploy("/srv/my stack/docker-compose.yml", "my_stack", b64)
+        val cmd = RemoteCommands.composeDeploy("/srv/my stack/docker-compose.yml", "my_stack")
         assertValidShell(cmd)
+    }
+
+    /**
+     * The new file arrives on stdin, byte for byte, and nothing before the staging step reads it:
+     * the fake `docker` swallows its stdin on every call, as a tool that reads it would.
+     */
+    @Test
+    fun deploy_writes_exactly_what_arrives_on_stdin() {
+        val sh = File("/bin/sh")
+        org.junit.Assume.assumeTrue(sh.canExecute())
+        val dir = java.nio.file.Files.createTempDirectory("omniterm-deploy").toFile()
+        try {
+            val bin = File(dir, "bin").apply { mkdirs() }
+            File(bin, "docker").apply {
+                writeText("#!/bin/sh\ncat >/dev/null\necho \"docker \$*\" >> \"${dir.absolutePath}/calls\"\nexit 0\n")
+                setExecutable(true)
+            }
+            val path = "${dir.absolutePath}/stack dir/compose.yml"
+            val yaml = "services:\n  web:\n    image: \"nginx:1.27\" # it's ünïcode \$HOME `x` \\ %s\n"
+            val proc = ProcessBuilder(sh.absolutePath, "-c", RemoteCommands.composeDeploy(path, "probe", runtime = "docker"))
+                .redirectErrorStream(true)
+            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
+            val started = proc.start()
+            started.outputStream.use { it.write(yaml.toByteArray()) }
+            val output = started.inputStream.bufferedReader().readText()
+            started.waitFor()
+            assertTrue(output, output.contains("OMNITERM_DEPLOY_OK"))
+            org.junit.Assert.assertEquals(yaml, File(path).readText())
+            assertTrue(File(dir, "calls").readText().contains("up -d"))
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
     fun deploy_resolves_runtime_and_validates_before_swap() {
         val path = "/srv/example/docker-compose.yml"
-        val cmd = RemoteCommands.composeDeploy(path, "example_stack", "eA==")
+        val cmd = RemoteCommands.composeDeploy(path, "example_stack")
         assertTrue("resolves usable docker|podman", cmd.contains("docker ps") && cmd.contains("podman ps"))
         assertTrue("falls back to standalone compose", cmd.contains("docker-compose") && cmd.contains("podman-compose"))
         assertTrue("prefers podman-compose when Podman is the usable runtime", cmd.indexOf("grep -qi podman") < cmd.indexOf("docker-compose"))
@@ -70,7 +102,8 @@ class ComposeCommandTest {
         assertTrue("emits success sentinel", cmd.contains("OMNITERM_DEPLOY_OK"))
         // Operates on the EXACT absolute file via -f, never a guessed relative name.
         assertTrue("uses mktemp staging", cmd.contains("mktemp"))
-        assertTrue("uses portable base64 decode", cmd.contains("base64 -d") && cmd.contains("base64 --decode") && cmd.contains("base64 -D"))
+        assertTrue("stages the file from stdin", cmd.contains("cat > \"\$tmp\"") && !cmd.contains("base64"))
+        assertTrue("resolving the runtime reads no stdin", cmd.startsWith("{ ") && cmd.contains("; } </dev/null"))
         assertTrue("uses -f with the absolute compose path", cmd.contains("-f '$path'"))
         assertTrue("up runs against the same -f path", cmd.contains("-f '$path' -p 'example_stack' up -d"))
         assertTrue("removes failed new stack file", cmd.contains("removing new compose file"))
@@ -87,12 +120,179 @@ class ComposeCommandTest {
         val cmd = RemoteCommands.composeDeploy(
             composeFilePath = "/srv/app/compose.override.yml",
             project = "app",
-            yamlBase64 = "eA==",
             workingDir = "/srv/app",
             configFiles = "compose.yml,compose.override.yml",
         )
         assertTrue("base file kept in validation", cmd.contains("-f '/srv/app/compose.yml' -f \"\$tmp\" -p 'app' config > /dev/null"))
         assertTrue("base file kept in deploy", cmd.contains("-f '/srv/app/compose.yml' -f '/srv/app/compose.override.yml' -p 'app' up -d"))
+        assertValidShell(cmd)
+    }
+
+    /**
+     * A podman-compose host: `up` creates every container of the stack each time, reports those
+     * that already exist as "already in use", starts them anyway and exits 125, as 1.4 does. With
+     * [scales] false it ignores `--scale`, as every release before 1.4 does. Containers live in a
+     * file as `name service number project`; a fake `podman` reads and removes them.
+     */
+    private class PodmanComposeHost(private val scales: Boolean = true) : AutoCloseable {
+        val dir: File = java.nio.file.Files.createTempDirectory("omniterm-podman-compose").toFile()
+        private val bin = File(dir, "bin").apply { mkdirs() }
+        val state = File(dir, "containers").apply { writeText("") }
+
+        init {
+            val d = dir.absolutePath
+            script(
+                "podman-compose",
+                """
+                echo "podman-compose ${'$'}*" >> "$d/calls"
+                case " ${'$'}* " in
+                *" down --help "*) echo "  --remove-orphans  Remove containers for services not defined"; exit 0 ;;
+                *" config --services "*) echo w; exit 0 ;;
+                *" up "*)
+                  n=1; ${if (scales) "for a; do case ${'$'}a in w=*) n=${'$'}{a#w=} ;; esac; done" else ":"}
+                  rc=0; i=1
+                  while [ "${'$'}i" -le "${'$'}n" ]; do
+                    if grep -q "^p_w_${'$'}i " "$d/containers"; then
+                      echo "Error: creating container storage: the container name \"p_w_${'$'}i\" is already in use by abc${'$'}i. You have to remove that container to be able to reuse that name: that name is already in use" >&2
+                      rc=125
+                    else echo "p_w_${'$'}i w ${'$'}i p" >> "$d/containers"; fi
+                    echo "p_w_${'$'}i"; i=${'$'}((i + 1))
+                  done
+                  exit ${'$'}rc ;;
+                esac
+                """,
+            )
+            script(
+                "podman",
+                """
+                echo "podman ${'$'}*" >> "$d/calls"
+                case "${'$'}1" in
+                inspect) for n; do :; done; awk -v n="${'$'}n" '${'$'}1 == n { print ${'$'}4 }' "$d/containers" ;;
+                rm) shift; [ "${'$'}1" = -f ] && shift
+                  for n; do grep -v "^${'$'}n " "$d/containers" > "$d/next"; mv "$d/next" "$d/containers"; echo "${'$'}n"; done ;;
+                ps) shift; proj=; svc=; quiet=0; fmt=
+                  while [ ${'$'}# -gt 0 ]; do
+                    case ${'$'}1 in
+                    -aq) quiet=1 ;;
+                    --filter) shift; case ${'$'}1 in
+                      label=io.podman.compose.project=*) proj=${'$'}{1#label=io.podman.compose.project=} ;;
+                      label=com.docker.compose.service=*) svc=${'$'}{1#label=com.docker.compose.service=} ;; esac ;;
+                    --format) shift; fmt=${'$'}1 ;;
+                    esac; shift
+                  done
+                  awk -v p="${'$'}proj" -v s="${'$'}svc" -v q="${'$'}quiet" -v f="${'$'}fmt" '${'$'}4 == p && (s == "" || ${'$'}2 == s) {
+                    if (q == 1) print ${'$'}1; else if (f ~ /container-number/) print ${'$'}1, ${'$'}3; else print ${'$'}1, ${'$'}2 }' "$d/containers" ;;
+                esac
+                """,
+            )
+        }
+
+        private fun script(name: String, body: String) =
+            File(bin, name).apply { writeText("#!/bin/sh\n" + body.trimIndent() + "\n"); setExecutable(true) }
+
+        fun names(): List<String> = state.readLines().filter { it.isNotBlank() }.map { it.substringBefore(' ') }.sorted()
+
+        fun calls(): String = File(dir, "calls").takeIf { it.exists() }?.readText().orEmpty()
+
+        /** Runs [action] for project `p`, service `w`, as the host's sh would; output and exit code. */
+        fun run(action: String, replicas: Int? = null): Pair<String, Int> {
+            val command = RemoteCommands.dockerComposeAction("p", dir.absolutePath, "compose.yml", action, "w", replicas, runtime = "podman")
+            val proc = ProcessBuilder("/bin/sh", "-c", command).redirectErrorStream(true)
+            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
+            val started = proc.start()
+            return started.inputStream.bufferedReader().readText() to started.waitFor()
+        }
+
+        /** Deploys [yaml] as project `p` through the builder's deploy script; output and exit code. */
+        fun deploy(yaml: String, removeOrphans: Boolean): Pair<String, Int> {
+            val command = RemoteCommands.composeDeploy("${dir.absolutePath}/compose.yml", "p", runtime = "podman", removeOrphans = removeOrphans)
+            val proc = ProcessBuilder("/bin/sh", "-c", command).redirectErrorStream(true)
+            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
+            val started = proc.start()
+            started.outputStream.use { it.write(yaml.toByteArray()) }
+            return started.inputStream.bufferedReader().readText() to started.waitFor()
+        }
+
+        override fun close() { dir.deleteRecursively() }
+    }
+
+    /**
+     * A deploy that drops a service removes its container. Compose otherwise leaves it running as
+     * an orphan, and podman-compose ignores --remove-orphans, so the app removes those itself.
+     */
+    @Test
+    fun deploy_that_drops_a_service_removes_its_container() {
+        val docker = RemoteCommands.composeDeploy("/srv/app/compose.yml", "app", removeOrphans = true)
+        assertTrue(docker, docker.contains("-p 'app' up -d --remove-orphans"))
+        assertValidShell(docker)
+        assertTrue(!RemoteCommands.composeDeploy("/srv/app/compose.yml", "app").contains("--remove-orphans"))
+
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost().use { host ->
+            host.state.writeText("p_old_1 old 1 p\nq_old_1 old 1 q\n")
+            val (output, code) = host.deploy("services:\n  w:\n    image: alpine\n", removeOrphans = true)
+            assertEquals(output, 0, code)
+            assertTrue(output, output.contains("Removed p_old_1") && output.contains("OMNITERM_DEPLOY_OK"))
+            assertEquals(listOf("p_w_1", "q_old_1"), host.names())
+        }
+    }
+
+    @Test
+    fun podman_compose_up_on_a_running_stack_succeeds() {
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost().use { host ->
+            assertEquals(0, host.run("up").second)
+            val (output, code) = host.run("up")
+            assertEquals(output, 0, code)
+            assertTrue(output, output.contains("p_w_1") && !output.contains("already in use"))
+
+            host.state.writeText("p_w_1 w 1 someone-else\n")
+            val (foreign, foreignCode) = host.run("up")
+            assertEquals("a container another project owns is a real conflict", 125, foreignCode)
+            assertTrue(foreign, foreign.contains("already in use"))
+        }
+    }
+
+    @Test
+    fun podman_compose_scales_both_ways_and_removes_only_its_own_containers() {
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost().use { host ->
+            host.state.writeText("p_old_1 old 1 p\nq_w_2 w 2 q\n")
+            assertEquals(0, host.run("up").second)
+            val (up, upCode) = host.run("scale", 3)
+            assertEquals(up, 0, upCode)
+            assertEquals(listOf("p_old_1", "p_w_1", "p_w_2", "p_w_3", "q_w_2"), host.names())
+
+            val (down, downCode) = host.run("scale", 1)
+            assertEquals(down, 0, downCode)
+            assertTrue(down, down.contains("Removed p_w_3") && down.contains("Removed p_w_2"))
+            assertEquals(listOf("p_old_1", "p_w_1", "q_w_2"), host.names())
+
+            assertEquals(0, host.run("removeOrphans").second)
+            assertEquals(listOf("p_w_1", "q_w_2"), host.names())
+
+            assertEquals(0, host.run("serviceRemove").second)
+            assertEquals(listOf("q_w_2"), host.names())
+
+            host.run("down")
+            assertTrue(host.calls(), host.calls().contains("down --remove-orphans"))
+        }
+    }
+
+    @Test
+    fun podman_compose_that_cannot_scale_says_so() {
+        org.junit.Assume.assumeTrue(File("/bin/sh").canExecute())
+        PodmanComposeHost(scales = false).use { host ->
+            val (output, code) = host.run("scale", 2)
+            assertTrue(output, code != 0)
+            assertTrue(output, output.contains("podman-compose made 1 of 2 containers for w. Scaling a service needs podman-compose 1.4 or later."))
+        }
+    }
+
+    @Test
+    fun podman_compose_update_recreates_with_the_pulled_images() {
+        val cmd = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "compose.yml", "update", runtime = "podman")
+        assertTrue(cmd, cmd.contains("up -d --force-recreate --remove-orphans"))
         assertValidShell(cmd)
     }
 
@@ -242,14 +442,16 @@ class ComposeCommandTest {
         """.trimIndent()
 
         // The exact awk program embedded in DOCKER_VOLUMES (the part between `awk '` and `'`).
+        // As the shell hands it over: inside single quotes nothing changes, so no unescaping here.
+        // Rewriting `\$` to `$` once hid that awk was really given `\$1`, which no awk parses.
         val program = RemoteCommands.DOCKER_VOLUMES
             .substringAfter("awk '").substringBefore("' ||")
-            .replace("\\\$", "\$").replace("\\t", "\t").replace("\\\"", "\"")
 
         val p = ProcessBuilder(awk, program).redirectErrorStream(false).start()
         p.outputStream.bufferedWriter().use { it.write(sample) }
-        val tsv = p.inputStream.bufferedReader().readText()
-        p.waitFor()
+        val tsv = p.inputStream.bufferedReader().readText().lineSequence().filter { it.isNotEmpty() }
+            .joinToString("\n") { "podman\t$it" }
+        assertTrue("awk accepted the program", p.waitFor() == 0)
 
         val vols = com.jetsetslow.omniterm.data.RemoteParsers.parseDockerVolumes(tsv)
         assertTrue("parsed 3 volumes (got ${vols.size}): $tsv", vols.size == 3)

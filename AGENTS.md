@@ -26,7 +26,12 @@ These rules apply to every contributor and automation tool working in this repos
 - Keep `scripts/local-pr-check.sh` aligned with `.github/workflows/android-pr-check.yml` whenever
   build, test, lint, migration, SBOM, signing-input, or dependency-verification behavior changes.
 - Run `git diff --check` and `git diff --cached --check` before committing.
-- `--full` also catches what GitHub would only report after the push: dependencies with a known
+- The gate and PR Check run every unit-test class the change adds or edits five more times
+  (`scripts/repeat-changed-tests.sh`): a test that depends on timing passed PR Check once and then
+  failed main's release build. Fix such a test's race; never retry it until it passes.
+- `--full` also catches what GitHub would only report after the push: updates Dependabot would
+  open a PR for (`scripts/check-dependency-updates.py`; take them in the change, or hold one in
+  `.github/dependabot.yml` with its reason and the condition that lifts it), dependencies with a known
   vulnerability (`scripts/check-dependency-advisories.py`, Dependabot's database and graphs) and
   CodeQL alerts (`scripts/local-codeql.sh`, the workflow's CLI version and `security-extended`
   queries; it prints how to install the CLI). Bump the CLI pin in that script with the
@@ -48,6 +53,16 @@ state that a screen reads.
   surface on first navigation, so a screen that merely composes the changed file is impacted.
 - Use `scripts/test-hosts.sh up` for the disposable SSH fleet and `E2eLabHostProvisioner` to seed
   the `E2E Foreground Demo` host. Never validate against a personal or production host.
+- The fleet also covers each way the app signs in: password, key (`keyauth`), passphrase-protected
+  key (`keyauth-passphrase`) and certificate only (`certauth`, which trusts a test CA the script
+  generates next to the keys). `SshSignInLiveTest` signs in through the app's own session builder
+  against `certauth` with certificates, a protected key and software security keys; run it with
+  `-Domniterm.liveSsh=true` while the fleet is up. Real FIDO2 keys and USB serial adapters cannot be
+  faked here: say they are untested rather than imply otherwise.
+- Systems Docker cannot provide come from `scripts/os-lab/os-lab.sh`: opt-in QEMU VMs for FreeBSD
+  (sh, tcsh, zsh and fish logins, a two-step account), Windows Server (PowerShell or cmd) and a k3s
+  node with a real API server. Their disks, keys and passwords stay outside the repository. See
+  `scripts/os-lab/README.md`.
 - `E2eAppSurfaceStressTest` is the required sweep: it walks every route, subtab, theme, and rotation.
   Run it with `-e omniterm_e2e_surfaces yes`. Add `-e omniterm_e2e_sftp_home <path>` when the fixture
   home is not `/home/<user>` (the Docker fleet uses `/config`).

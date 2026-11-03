@@ -97,6 +97,9 @@ class TerminalEmulator(
 
     private val utf8Decoder = Utf8StreamDecoder()
 
+    // Answers to the remote's terminal queries, waiting for [takeReplies].
+    private val replies = StringBuilder()
+
     // ─────────────────────────────────────────────────────────────────────────
     // Public API
     // ─────────────────────────────────────────────────────────────────────────
@@ -116,6 +119,7 @@ class TerminalEmulator(
         state = State.GROUND
         csiParams.setLength(0)
         utf8Decoder.reset()
+        replies.setLength(0)
     }
 
     fun setCaptureAlternateScreenScrollback(enabled: Boolean) {
@@ -126,6 +130,17 @@ class TerminalEmulator(
     fun feed(bytes: ByteArray) {
         val text = utf8Decoder.decode(bytes)
         processDecodedText(text)
+    }
+
+    /**
+     * What the terminal answers to queries in the bytes fed so far, for the caller to write back to
+     * the remote; null when nothing is waiting. fish waits 10 seconds for an answer to its device
+     * attributes query before it reads any input, and Windows' console host asks for the cursor
+     * position, so a terminal that stays silent leaves both hanging.
+     */
+    fun takeReplies(): ByteArray? {
+        if (replies.isEmpty()) return null
+        return replies.toString().toByteArray().also { replies.setLength(0) }
     }
 
     /** Flush an incomplete trailing UTF-8 sequence when a transport reaches EOF. */
@@ -548,6 +563,13 @@ class TerminalEmulator(
             }
             'h' -> setMode(priv, params, true)
             'l' -> setMode(priv, params, false)
+            // Primary device attributes: a VT100 with advanced video, as xterm and tmux answer.
+            'c' -> if (raw.isEmpty() || raw == "0") reply("\u001B[?1;2c")
+            // Device status: "OK", and the cursor position (1-based).
+            'n' -> when (raw) {
+                "5" -> reply("\u001B[0n")
+                "6" -> reply("\u001B[${curRow + 1};${curCol + 1}R")
+            }
             // ANSI SCOSC/SCORC are the bare CSI s/u forms. Modern interactive clients such as
             // Claude and Codex also use Kitty's keyboard protocol, whose push/pop/query controls
             // end in `u` but carry `<`, `>`, `?`, or `=` parameters. Treating those as SCORC jumps
@@ -560,6 +582,11 @@ class TerminalEmulator(
             }
             else -> {} // unsupported — ignore
         }
+    }
+
+    /** A remote that floods queries and never reads the answers cannot grow this without bound. */
+    private fun reply(answer: String) {
+        if (replies.length + answer.length <= MAX_CONTROL_SEQUENCE_CHARS) replies.append(answer)
     }
 
     private fun setMode(priv: Boolean, params: List<Int?>, enable: Boolean) {

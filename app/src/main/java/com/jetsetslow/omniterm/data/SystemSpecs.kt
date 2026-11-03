@@ -245,10 +245,9 @@ object SystemSpecsCommands {
         append("echo '@IFCONFIG'; ifconfig -a 2>/dev/null; true")
     }
 
-    // One record per object: `##ITEM` and then `Property=value` lines. Single quotes only, so
-    // the double-quoted -Command survives cmd.exe, OpenSSH's default shell on Windows.
-    private val WINDOWS =
-        "powershell -NoProfile -Command \"\$ErrorActionPreference='SilentlyContinue'; " +
+    // One record per object: `##ITEM` and then `Property=value` lines.
+    private val WINDOWS = RemoteCommands.powershell(
+        "\$ErrorActionPreference='SilentlyContinue'; " +
             "function E(\$n,\$o,\$p){ Write-Output ('@'+\$n); foreach(\$x in @(\$o)){ if(\$x -eq \$null){continue}; " +
             "Write-Output '##ITEM'; foreach(\$k in \$p){ \$v=\$x.\$k; if(\$v -ne \$null -and [string]\$v -ne ''){ " +
             "Write-Output (\$k+'='+(@(\$v) -join ', ')) } } } }; " +
@@ -276,7 +275,8 @@ object SystemSpecsCommands {
             "E 'NIC' (Get-CimInstance Win32_NetworkAdapter -Filter 'PhysicalAdapter=True') 'Index','Name','NetConnectionID'," +
             "'MACAddress','Speed','NetConnectionStatus','Manufacturer'; " +
             "E 'NICCONF' (Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True') 'Index','IPAddress'," +
-            "'DefaultIPGateway','DNSServerSearchOrder','DHCPEnabled'\""
+            "'DefaultIPGateway','DNSServerSearchOrder','DHCPEnabled'",
+    )
 }
 
 /** Turns [SystemSpecsCommands] output into [SystemSpecs]. */

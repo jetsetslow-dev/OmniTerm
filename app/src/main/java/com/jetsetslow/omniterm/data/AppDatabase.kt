@@ -22,14 +22,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AppSettingEntity::class,
         PersistentSessionEntity::class,
         PortForwardEntity::class,
-        StackRegistryEntity::class
+        StackRegistryEntity::class,
+        TelnetHostEntity::class,
+        KubeClusterEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 23,
+    version = 24,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -47,6 +49,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun persistentSessionDao(): PersistentSessionDao
     abstract fun portForwardDao(): PortForwardDao
     abstract fun stackRegistryDao(): StackRegistryDao
+    abstract fun telnetHostDao(): TelnetHostDao
+    abstract fun kubeClusterDao(): KubeClusterDao
 
     companion object {
         @Volatile
@@ -283,6 +287,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // TLS expiry and URL check rules name what they connect to, and Telnet connections can be saved.
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE alert_rules ADD COLUMN target TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE ssh_keys ADD COLUMN certificate TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `telnet_hosts` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `kube_clusters` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `server` TEXT NOT NULL, `caPem` TEXT NOT NULL, `clientCertPem` TEXT NOT NULL, " +
+                        "`clientKeyPem` TEXT NOT NULL, `token` TEXT NOT NULL, `namespace` TEXT NOT NULL)"
+                )
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -353,6 +374,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_20_21,
             MIGRATION_21_22,
             MIGRATION_22_23,
+            MIGRATION_23_24,
         )
 
         fun getDatabase(context: Context): AppDatabase {

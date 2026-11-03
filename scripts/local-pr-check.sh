@@ -4,6 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# GitHub's runners use the C.UTF-8 locale. A desktop locale such as en_US.UTF-8 sorts and compares
+# text differently, which once let a check pass here and fail in CI, so the gate runs in CI's.
+export LC_ALL=C.UTF-8
+
 MODE="${1:---full}"
 case "$MODE" in
   --quick|--full) ;;
@@ -55,6 +59,8 @@ fi
 
 echo "Preflight host: $OS_NAME/$ARCH_NAME"
 git diff --check
+./scripts/test-secret-scan.sh
+./scripts/secret-scan.sh
 # A third-party action outside the repository's Actions allowlist makes GitHub refuse to start the
 # workflow: no check run exists, every visible check stays green and a required check never reports.
 # Local-only by necessity — CI's token cannot read that setting — so it warns when it cannot ask.
@@ -62,6 +68,8 @@ python3 ./scripts/check-actions-allowlist.py
 # A copy-pasted block is extracted into shared code instead of kept twice. The baseline lists the
 # known copies, so only a new one fails; CI runs the same check.
 ./scripts/test-check-duplicates.sh
+./scripts/test-repeat-changed-tests.sh
+python3 -B ./scripts/test-check-dependency-updates.py
 python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json \
   app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
@@ -89,6 +97,10 @@ fi
   testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest \
   lintOpenSourceDebug lintPlayStoreDebug \
   "${GRADLE_ARGS[@]}"
+# As PR Check does: the test classes this branch adds or changes, committed or not, five more
+# times, so one that passes only some of the time fails here rather than on main.
+./scripts/repeat-changed-tests.sh --base "${OMNITERM_BASE_REF:-origin/main}" --worktree --runs 5 -- \
+  "${GRADLE_ARGS[@]}"
 
 if [[ "$MODE" == "--full" ]]; then
   if [[ "$LINUX_ARM64" == "true" ]]; then
@@ -103,6 +115,10 @@ if [[ "$MODE" == "--full" ]]; then
     --cyclonedx build/reports/cyclonedx/playStoreReleaseRuntimeClasspath.bom.json \
     --cyclonedx build/reports/cyclonedx/openSourceReleaseRuntimeClasspath.bom.json \
     --actions .github
+  # And what Dependabot's weekly run would open a pull request for: newer Gradle dependencies,
+  # plugins, wrapper and pinned Actions, under .github/dependabot.yml's holds. Taken here, they
+  # ship in this change instead of arriving as automated PRs.
+  python3 ./scripts/check-dependency-updates.py
 fi
 
 if command -v adb >/dev/null 2>&1 &&

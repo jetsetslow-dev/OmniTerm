@@ -13,7 +13,7 @@ data class SimContainer(
     val ports: String,
     var status: String,   // "running" | "exited"
     val group: String,    // docker-compose project, or "standalone"
-    val host: String,     // owning server name
+    val serverId: Int,    // owning server's id: names need not be unique
     val composeWorkingDir: String = "",
     val composeConfigFiles: String = "",
     val composeService: String = "",

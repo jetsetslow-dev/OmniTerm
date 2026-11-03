@@ -1,0 +1,26 @@
+#!/usr/bin/with-contenv bash
+# Make `certauth` trust the fleet's test certificate authority, and nothing else.
+#
+# certauth has no authorized keys, so a user certificate signed by keys/omniterm_test_ca is the only
+# way in; scripts/test-hosts.sh generates that CA and a certificate for the plain test key.
+#
+# Like ../ssh-init/10-allow-tcp-forwarding, this rewrites both sshd_config copies in place: the
+# image ignores sshd_config.d, and sshd runs with the copy in /config. The image's file ends with
+# no Match block, so appended settings apply to every user.
+#
+# PerSourcePenalties is turned off because SshSignInLiveTest fails sign-ins on purpose, and OpenSSH
+# 9.8+ would otherwise turn the host machine away for a while and fail the next test.
+set -euo pipefail
+
+CA=/config/omniterm_test_ca.pub
+if [ ! -s "$CA" ]; then
+  echo "[omniterm-fixture] WARNING: $CA is missing; certificate sign-in will fail" >&2
+  exit 0
+fi
+
+for config in /config/sshd/sshd_config /etc/ssh/sshd_config; do
+  [ -f "$config" ] || continue
+  sed -i -E '/^[[:space:]]*(TrustedUserCAKeys|PerSourcePenalties)[[:space:]]/d' "$config"
+  printf '\nTrustedUserCAKeys %s\nPerSourcePenalties no\n' "$CA" >>"$config"
+  echo "[omniterm-fixture] $config trusts $CA"
+done

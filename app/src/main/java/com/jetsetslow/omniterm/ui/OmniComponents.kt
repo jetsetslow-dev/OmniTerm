@@ -1,11 +1,13 @@
 package com.jetsetslow.omniterm.ui
 
 import android.content.ClipData
+import android.content.res.Configuration
 import androidx.annotation.StringRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +17,8 @@ import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Badge
@@ -42,6 +46,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,6 +55,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import com.jetsetslow.omniterm.ui.theme.OmniColors
@@ -154,11 +160,16 @@ fun GaugeBar(value: Float, modifier: Modifier = Modifier, color: Color = OmniCol
     }
 }
 
+/**
+ * A host's status dot, read out as "Server online" or "Server offline". Anything else passes its own
+ * [contentDescription], or "" when the row already prints the state, so the dot stays silent.
+ */
 @Composable
 fun StatusDot(online: Boolean, modifier: Modifier = Modifier, color: Color = OmniColors.green, size: Dp = 8.dp, contentDescription: String? = null) {
     val c = if (online) color else OmniColors.red
     val desc = contentDescription ?: if (online) "Server online" else "Server offline"
-    Box(modifier.size(size).clip(CircleShape).background(c).semantics { this.contentDescription = desc })
+    val described = if (desc.isEmpty()) Modifier else Modifier.semantics { this.contentDescription = desc }
+    Box(modifier.size(size).clip(CircleShape).background(c).then(described))
 }
 
 /** Circular health score gauge with the value in the centre (display font). */
@@ -481,6 +492,139 @@ fun OmniBottomNav(items: List<OmniNavItem>, isActive: (Any) -> Boolean, onNaviga
     }
 }
 
+// ─── Landscape navigation rail ───────────────────────────────────────────────
+
+/**
+ * True while the keyboard is open in landscape, where it leaves almost no height. The global bars,
+ * screen headers, host pickers and subtabs step aside until it closes, leaving the field being typed
+ * in and the actions beside it. The terminal started this; every screen follows the same rule. What
+ * steps aside must never hold a text field, or focusing it would close the keyboard it opened.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun typingInLandscape(): Boolean =
+    WindowInsets.isImeVisible && LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+/**
+ * A phone in landscape has tablet width but very little height: the app bar, the free-plan banner
+ * and the bottom navigation left some screens (Fleet's broadcast) almost no room at all. The same
+ * destinations and global actions move to this scrollable rail on the left; [showFreePlan] keeps
+ * the free-plan entitlement visible and actionable as its own FREE item.
+ */
+@Composable
+fun OmniLandscapeNav(
+    items: List<OmniNavItem>,
+    isActive: (Any) -> Boolean,
+    onNavigate: (Any) -> Unit,
+    activeColor: Color,
+    alertCount: Int,
+    keepScreenOn: Boolean,
+    showFreePlan: Boolean,
+    onHome: () -> Unit,
+    onAlerts: () -> Unit,
+    onToggleKeepScreenOn: () -> Unit,
+    onUnlock: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier
+            .width(82.dp)
+            .fillMaxHeight()
+            .background(MaterialTheme.colorScheme.surface)
+            .drawBehind { drawRect(OmniColors.border, topLeft = Offset(size.width - 1f, 0f), size = Size(1f, size.height)) }
+            .verticalScrollWithIndicators(rememberScrollState())
+            .padding(vertical = 4.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clickable(onClickLabel = stringResource(R.string.servers_home)) { onHome() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "OT",
+                color = activeColor,
+                fontFamily = OmniFonts.display,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp,
+            )
+        }
+        items.forEach { item ->
+            val active = isActive(item.key)
+            OmniRailItem(
+                label = item.label,
+                description = item.label,
+                icon = item.icon,
+                color = if (active) item.color else MaterialTheme.colorScheme.onSurfaceVariant,
+                marker = if (active) item.color else null,
+                onClick = { onNavigate(item.key) },
+            )
+        }
+        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = OmniColors.border)
+        OmniRailItem(
+            label = stringResource(R.string.awake),
+            description = if (keepScreenOn) stringResource(R.string.disable_keep_screen_on) else stringResource(R.string.enable_keep_screen_on),
+            icon = Icons.Filled.Lightbulb,
+            color = if (keepScreenOn) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+            onClick = onToggleKeepScreenOn,
+        )
+        OmniRailItem(
+            label = stringResource(R.string.alerts),
+            description = if (alertCount > 0) "Open alerts popup, $alertCount active" else stringResource(R.string.open_alerts_popup),
+            icon = Icons.Filled.Notifications,
+            color = if (alertCount > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+            badge = alertCount,
+            onClick = onAlerts,
+        )
+        if (showFreePlan) {
+            OmniRailItem(
+                label = stringResource(R.string.free_plan_rail_label),
+                description = stringResource(R.string.free_plan_unlock_unlimited_hosts),
+                icon = Icons.Filled.WorkspacePremium,
+                color = OmniColors.cyan,
+                onClick = onUnlock,
+            )
+        }
+    }
+}
+
+@Composable
+private fun OmniRailItem(
+    label: String,
+    description: String,
+    icon: ImageVector,
+    color: Color,
+    onClick: () -> Unit,
+    marker: Color? = null,
+    badge: Int = 0,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clickable { onClick() }
+            .drawBehind { if (marker != null) drawRect(marker, size = Size(3.dp.toPx(), size.height)) }
+            .semantics(mergeDescendants = true) { contentDescription = description },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        BadgedBox(badge = { if (badge > 0) Badge { Text(badge.coerceAtMost(99).toString()) } }) {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            label,
+            color = color,
+            fontFamily = OmniFonts.mono,
+            fontWeight = FontWeight.Bold,
+            fontSize = 8.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 // ─── Format Utilities ─────────────────────────────────────────────────────────
 
 fun formatBytes(bytes: Long): String {
@@ -701,7 +845,7 @@ fun HostPickerDialog(
                             name = s.name,
                             detail = HostDisplay.userAtHost(s) + if (selectable) "" else " · offline",
                             online = s.status == "online",
-                            dotColor = OmniColors.serverAccent(s.serverColor, s.name),
+                            dotColor = OmniColors.serverAccent(s.serverColor, s.id),
                             checked = s.id in selectedIds,
                             enabled = enabled,
                             singleSelect = singleSelect,

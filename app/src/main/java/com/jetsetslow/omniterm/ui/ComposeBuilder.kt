@@ -101,7 +101,31 @@ data class ComposeServiceDraft(
     // empty and never rewritten — rewriting one in place produced a list glued on top of the
     // surviving map entries, i.e. invalid YAML.
     val unmodeledArrayKeys: MutableSet<String> = mutableSetOf(),
+    // Body keys whose value is a block (a list, a map or a `|`/`>` text block) and the lines that
+    // block spans. Setting `command` on a service that wrote it as a list duplicated the key
+    // instead of replacing the list.
+    val blockSpan: MutableMap<String, IntRange> = mutableMapOf(),
+    // Every other service this one names outside the editable depends_on list: map-form depends_on
+    // entries, links, volumes_from, `network_mode`/`ipc`/`pid: service:<name>` and a same-file
+    // extends. Read only: validation checks each name, and a rename rewrites them in place.
+    val serviceRefs: MutableList<ComposeServiceRef> = mutableListOf(),
+    // `environment:` as a map (`KEY: value`). Its rows read as KEY=value; each original row's line
+    // is kept so a save writes untouched rows back exactly as they were.
+    var environmentIsMap: Boolean = false,
+    val environmentRowLine: MutableMap<String, Int> = mutableMapOf(),
+    // `depends_on:` as a map (`db: {condition: service_healthy}`). Its rows are the service names;
+    // each original entry's lines, condition included, are kept so a save writes them back as they were.
+    var dependsOnIsMap: Boolean = false,
+    val dependsOnEntrySpan: MutableMap<String, IntRange> = mutableMapOf(),
+    // Read only, for validation: `network_mode:`, the replica count (`scale:` or `deploy.replicas`)
+    // and the profiles the service starts under.
+    var networkMode: String = "",
+    var replicas: Int = 1,
+    val profiles: MutableList<String> = mutableListOf(),
 )
+
+/** A service named by another one at [line], under the key [via] (`links`, `extends`, …). */
+data class ComposeServiceRef(val name: String, val line: Int, val via: String)
 
 data class TopLevelVolumeDraft(
     val id: String = UUID.randomUUID().toString(),
@@ -121,6 +145,8 @@ data class TopLevelNetworkDraft(
     var isCommentedOut: Boolean = false,
     var srcStart: Int = -1,
     var srcEnd: Int = -1,
+    // The entry's own `driver:` line (-1 when it has none), so changing the driver edits that line.
+    var driverLine: Int = -1,
 )
 
 data class ComposeStackDraft(
@@ -192,6 +218,76 @@ private fun String.unquoteYamlListItem(): String {
     return if (quoted) t.substring(1, t.length - 1) else t.stripYamlInlineComment().unquoteYaml()
 }
 
+// The scalar after a key's colon. A comment alone is no value at all: `volumes: # data` opens a
+// block, and reading "# data" as its value hid the list below it, so a later edit wrote a second
+// `volumes:` key. A quoted value keeps its text when a comment trails it.
+private fun yamlValueAfterKey(content: String): String {
+    val rest = content.substringAfter(":").trim()
+    if (rest.startsWith("#")) return ""
+    val quote = rest.firstOrNull()?.takeIf { it == '"' || it == '\'' }
+    if (quote != null) {
+        val close = rest.indexOf(quote, 1)
+        if (close > 0 && rest.substring(close + 1).trim().let { it.isEmpty() || it.startsWith("#") }) {
+            return rest.substring(1, close)
+        }
+    }
+    return rest.stripYamlInlineComment().unquoteYaml()
+}
+
+// A top-level `volumes: {}` / `networks: {}`. It is what the renderer leaves when every entry under
+// a section is commented out: a bare header with only comments below it is null, which Compose
+// rejects with "volumes must be a mapping".
+private fun isEmptyFlowMapping(content: String): Boolean =
+    content.substringAfter(":").trim().stripYamlInlineComment() == "{}"
+
+// The indent a line has once a leading comment marker is read as spaces, as the parser sees it.
+private fun seeThroughIndent(line: String): Int {
+    val lead = line.takeWhile { it == ' ' }
+    val rest = line.substring(lead.length)
+    if (!rest.startsWith("#")) return lead.length
+    val hashes = rest.takeWhile { it == '#' }.length
+    val afterHashes = rest.substring(hashes)
+    val space = if (afterHashes.startsWith(" ")) 1 else 0
+    return lead.length + hashes + space + indentOfLine(afterHashes.substring(space))
+}
+
+// A KEY=value row as a map-form environment entry. A row with no "=" passes the variable through
+// from the shell that runs Compose, which the map form writes as a key with no value.
+private fun yamlEnvironmentEntry(row: String): String {
+    val name = yamlPlainOrSingleQuoted(row.substringBefore("=").trim())
+    return if ("=" in row) "$name: ${yamlDoubleQuoted(row.substringAfter("="))}" else "$name:"
+}
+
+// [line] with the service [ref] names renamed to [newName]. The search starts past the key, so a
+// service called "service" in `network_mode: service:service` is the name, not the prefix.
+private fun renameServiceRef(line: String, ref: ComposeServiceRef, newName: String): String {
+    val keyColon = line.indexOf(':')
+    val from = when (ref.via) {
+        "depends_on" -> 0
+        "links", "volumes_from" -> line.indexOf('-') + 1
+        "network_mode", "ipc", "pid" -> line.indexOf("service:", keyColon + 1).takeIf { it >= 0 }?.plus("service:".length)
+        // `extends: web`, `service: web` inside a block extends, or `extends: { service: web }`.
+        else -> if (line.substring(keyColon + 1).trimStart().startsWith("{")) {
+            Regex("""service\s*:""").find(line, keyColon + 1)?.let { it.range.last + 1 }
+        } else keyColon + 1
+    } ?: return line
+    val match = Regex("(?<![A-Za-z0-9_.-])${Regex.escape(ref.name)}(?![A-Za-z0-9_.-])").find(line, from) ?: return line
+    return line.replaceRange(match.range, newName)
+}
+
+// The indent and any comment marker a line starts with.
+private fun linePrefix(line: String): String = line.substring(0, line.length - line.trimStart(' ', '#').length)
+
+// [line] with the key at its start renamed to [newKey], keeping its indent, comment marker, quotes,
+// anchor and trailing comment.
+private fun renameYamlKey(line: String, newKey: String): String {
+    val start = line.indexOfFirst { it != ' ' && it != '#' }
+    val colon = line.indexOf(':', start.coerceAtLeast(0))
+    if (start < 0 || colon < 0) return line
+    val quote = line[start].takeIf { it == '"' || it == '\'' }
+    return line.substring(0, start) + (if (quote != null) "$quote$newKey$quote" else newKey) + line.substring(colon)
+}
+
 // A YAML anchor ("&name") or alias ("*name") standing alone as a line's value.
 private val ANCHOR_ONLY = Regex("""^&\S+$""")
 private val ALIAS_ONLY = Regex("""^\*(\S+)$""")
@@ -210,7 +306,7 @@ private fun blockKeyOf(content: String): String? {
     val key = content.substringBefore(":").trim()
     if (key.isEmpty() || key.contains(" ")) return null
     val rest = content.substringAfter(":").trim().stripYamlInlineComment()
-    return if (rest.isEmpty() || ANCHOR_ONLY.matches(rest)) key else null
+    return if (rest.isEmpty() || rest.startsWith("#") || ANCHOR_ONLY.matches(rest)) key else null
 }
 
 /** The anchor name declared on a block key line, or "" when it declares none. */
@@ -246,6 +342,11 @@ private fun yamlPlainOrSingleQuoted(value: String): String {
 private fun yamlDoubleQuoted(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+// A list row as written to a file: ports always double-quoted (YAML 1.1 reads 22:22 as a number in
+// base 60), anything else plain unless it needs quoting to stay one string.
+private fun yamlListItem(value: String, quote: Boolean): String =
+    if (quote) yamlDoubleQuoted(value) else yamlPlainOrSingleQuoted(value)
+
 // Keys that can appear directly under a service definition (Compose spec). Used to tell a
 // commented-out service HEADER apart from a commented-out config block at a similar effective
 // indent (manual comment styles shift the see-through indent by 1-2 columns, so indent alone
@@ -273,6 +374,8 @@ private val TOP_ENTRY_CONFIG_KEYS = setOf(
     "ipam", "labels", "name",
 )
 
+private val FLOW_EXTENDS_SERVICE = Regex("(?:^|[,{]\\s*)service\\s*:\\s*([^,}]+)")
+private val FLOW_EXTENDS_FILE = Regex("(?:^|[,{]\\s*)file\\s*:")
 private val FLOW_EXTERNAL_TRUE = Regex("(?:^|[,{]\\s*)external\\s*:\\s*true(?:\\s*[,}]|$)")
 private val FLOW_DRIVER = Regex("(?:^|[,{]\\s*)driver\\s*:\\s*([^,}]+)")
 
@@ -308,7 +411,42 @@ private fun isValidPortMapping(value: String): Boolean {
     }
 }
 
-fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
+/**
+ * Old name → new name for each service renamed in [draft] since [baseline]. A name another service
+ * now holds is left out, since references to it still mean that service.
+ */
+internal fun composeServiceRenames(draft: ComposeStackDraft, baseline: ComposeStackDraft?): Map<String, String> {
+    if (baseline == null) return emptyMap()
+    val before = baseline.services.associateBy { it.id }
+    val names = draft.services.map { it.serviceName.trim() }.toSet()
+    return draft.services.mapNotNull { svc ->
+        val old = before[svc.id]?.serviceName?.trim() ?: return@mapNotNull null
+        val new = svc.serviceName.trim()
+        if (old != new && new.isNotEmpty() && old !in names) old to new else null
+    }.toMap()
+}
+
+// The services this one waits for: the editable rows, or every name the parser read when the file
+// uses a long form the rows cannot hold.
+private fun ComposeServiceDraft.dependencyNames(): List<String> =
+    if ("depends_on" in unmodeledArrayKeys) dependsOnRefs else dependsOn
+
+// What a reference under [via] is called in a message: "<service> <phrase> <name>".
+private fun serviceRefPhrase(via: String): String = when (via) {
+    "links" -> "links to"
+    "volumes_from" -> "takes volumes from"
+    "network_mode" -> "uses the network of"
+    "ipc" -> "shares the IPC namespace of"
+    "pid" -> "shares the process namespace of"
+    "extends" -> "extends"
+    else -> "depends on"
+}
+
+/**
+ * What would stop [draft] from deploying. [baseline] is the draft as parsed from the file, so a
+ * renamed service's references count as following it, the way the saved file writes them.
+ */
+fun validateComposeDraft(draft: ComposeStackDraft, baseline: ComposeStackDraft? = null): List<String> {
     val issues = mutableListOf<String>()
     // Compose file format v1 (services at the top level, no `services:` key) is the one version
     // neither Docker Compose V2 nor podman-compose can run, and the visual editor cannot show it.
@@ -318,6 +456,11 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
             "which current Docker/Podman Compose cannot run — convert it in Raw YAML."
     }
     val activeServices = draft.services.filterNot { it.isCommentedOut }
+    // Compose has nothing to run once every service is deleted or commented out, and the file it
+    // is left with (`services:` holding only comments) is one it refuses to read.
+    if (draft.hasServicesSection && activeServices.isEmpty()) {
+        issues += "No active services. Compose needs at least one — add a service or uncomment one."
+    }
     val names = activeServices.map { it.serviceName.trim() }
     val duplicates = names.filter { it.isNotBlank() }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
     for ((idx, svc) in draft.services.withIndex()) {
@@ -338,6 +481,20 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
         }
         if (listOf(svc.ports, svc.environment, svc.volumes, svc.networks, svc.dependsOn).any { list -> list.any { it.isBlank() } }) {
             issues += "$label has empty list rows. Remove or fill them before deploy."
+        }
+        // Compose refuses a networks or depends_on list that names something twice, and a map
+        // cannot hold one environment variable twice.
+        listOf("networks" to svc.networks, "depends_on" to svc.dependsOn).forEach { (key, list) ->
+            list.map { it.trim() }.filter { it.isNotBlank() }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+                .forEach { issues += "$label lists $it twice under $key." }
+        }
+        if (svc.environmentIsMap) {
+            svc.environment.filter { it.isNotBlank() }.map { it.substringBefore("=").trim() }
+                .groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+                .forEach { issues += "$label sets $it twice under environment." }
+        }
+        if (svc.networkMode.isNotBlank() && (svc.networks.any { it.isNotBlank() } || "networks" in svc.unmodeledArrayKeys)) {
+            issues += "$label sets both network_mode and networks. Compose allows only one of them."
         }
         // Rows typed into a list the file expresses as a map/long syntax are dropped on save
         // rather than written, because writing them would strand the original entries.
@@ -362,14 +519,63 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
     val commentedByAnchor = draft.services.filter { it.isCommentedOut && it.anchorName.isNotBlank() }
         .associateBy { it.anchorName }
     val commentedNames = draft.services.filter { it.isCommentedOut }.map { it.serviceName.trim() }.toSet()
+    // A save rewrites every reference to a renamed service, so references follow renames here too.
+    val renames = composeServiceRenames(draft, baseline)
+    fun followed(name: String) = name.trim().let { renames[it] ?: it }
+    // Another -f file of the stack may define the service, so only a single-file stack can tell
+    // that a name is missing rather than defined elsewhere.
+    val singleFile = !draft.composeConfigFiles.contains(",")
+    fun missing(name: String) = name.isNotBlank() && name !in liveNames && (singleFile || name in commentedNames)
+    fun reason(name: String) = if (name in commentedNames) "which is commented out" else "which this file does not define"
+    val byName = activeServices.associateBy { it.serviceName.trim() }
+    val declaredVolumes = draft.topVolumes.filterNot { it.isCommentedOut }.map { it.name.trim() }.toSet()
+    val declaredNetworks = draft.topNetworks.filterNot { it.isCommentedOut }.map { it.name.trim() }.toSet()
+    // A same-file extends hands the extending service everything the base has, its depends_on and
+    // container_name included.
+    fun ComposeServiceDraft.base(): ComposeServiceDraft? =
+        serviceRefs.firstOrNull { it.via == "extends" }?.let { byName[followed(it.name)] }
+    // Compose starts what a service links to, takes volumes from or shares a namespace with first,
+    // just as it does with depends_on.
+    fun ComposeServiceDraft.startsAfter(): List<String> =
+        (dependencyNames() + serviceRefs.filter { it.via != "depends_on" && it.via != "extends" }.map { it.name } +
+            base()?.takeIf { it !== this }?.dependencyNames().orEmpty()).map(::followed)
     for (svc in activeServices) {
         val label = svc.serviceName.ifBlank { "A service" }
         svc.aliasRefs.mapNotNull { commentedByAnchor[it] }.forEach {
             issues += "$label merges &${it.anchorName} from ${it.serviceName}, which is commented out."
         }
-        svc.dependsOnRefs.map { it.trim() }.filter { it.isNotBlank() && it in commentedNames && it !in liveNames }
-            .forEach { issues += "$label depends on $it, which is commented out." }
+        svc.dependencyNames().map(::followed).filter(::missing).distinct()
+            .forEach { issues += "$label depends on $it, ${reason(it)}." }
+        svc.serviceRefs.filter { it.via != "depends_on" }.map { it.via to followed(it.name) }.distinct()
+            .filter { missing(it.second) }
+            .forEach { (via, name) -> issues += "$label ${serviceRefPhrase(via)} $name, ${reason(name)}." }
+        // A service with no profiles starts by default; one it waits for that has profiles does not,
+        // and Compose then reports it as undefined.
+        if (svc.profiles.isEmpty()) {
+            svc.startsAfter().distinct().mapNotNull { byName[it] }.filter { it.profiles.isNotEmpty() }.forEach {
+                issues += "$label depends on ${it.serviceName}, which starts only with the profile " +
+                    "${it.profiles.joinToString(" or ")}."
+            }
+        }
+        // Compose refuses a named volume or network that the top level does not declare.
+        if (singleFile) {
+            svc.volumes.mapNotNull(::namedVolumeFrom).filter { it !in declaredVolumes }.distinct()
+                .forEach { issues += "$label uses the volume $it, which the volumes: section does not declare." }
+            svc.networks.map { it.trim() }.filter { it.isNotBlank() && it != "default" && it !in declaredNetworks }.distinct()
+                .forEach { issues += "$label joins the network $it, which the networks: section does not declare." }
+        }
+        val containerName = svc.containerName.ifBlank { svc.base()?.containerName.orEmpty() }
+        val replicas = if (svc.replicas != 1) svc.replicas else svc.base()?.replicas ?: 1
+        if (containerName.isNotBlank() && replicas > 1) {
+            issues += "$label sets container_name, so it cannot run $replicas replicas. Container names must be unique."
+        }
     }
+    activeServices.mapNotNull { svc -> svc.containerName.ifBlank { svc.base()?.containerName.orEmpty() }.takeIf { it.isNotBlank() } }
+        .groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        .forEach { issues += "More than one service uses the container name $it." }
+    composeDependencyCycle(activeServices.associate { svc ->
+        svc.serviceName.trim() to svc.startsAfter().filter { it in liveNames }
+    })?.let { issues += "Dependency cycle: ${it.joinToString(" → ")}. Compose cannot start any of these services." }
     val topVolumeNames = draft.topVolumes.filterNot { it.isCommentedOut }.map { it.name.trim() }
     val topNetworkNames = draft.topNetworks.filterNot { it.isCommentedOut }.map { it.name.trim() }
     topVolumeNames.filter { it.isBlank() }.forEach { _ -> issues += "Top-level volumes cannot have blank names." }
@@ -393,6 +599,23 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
         issues += "Pod name has invalid characters. Use letters, numbers, dots, dashes, or underscores."
     }
     return issues.distinct()
+}
+
+// The first loop in [graph] (service → services it waits for), as a path that ends where it began.
+private fun composeDependencyCycle(graph: Map<String, List<String>>): List<String>? {
+    val done = mutableSetOf<String>()
+    val path = mutableListOf<String>()
+    fun visit(node: String): List<String>? {
+        val at = path.indexOf(node)
+        if (at >= 0) return path.subList(at, path.size) + node
+        if (!done.add(node)) return null
+        path += node
+        for (next in graph[node].orEmpty()) visit(next)?.let { return it }
+        path.removeAt(path.lastIndex)
+        return null
+    }
+    for (node in graph.keys) visit(node)?.let { return it }
+    return null
 }
 
 /**
@@ -432,6 +655,7 @@ fun parseDockerComposeYaml(
     var currentTopNet: TopLevelNetworkDraft? = null
     var serviceIndent = -1            // indent of service-name keys (e.g. 2)
     var topSectionItemIndent = -1     // indent of keys directly under volumes:/networks: (e.g. 2)
+    var entryPropIndent = -1          // indent of the current entry's own properties
 
     // Whether a "name:" line starts an entry of the top-level volumes:/networks: section. Only LIVE
     // entries establish the section's indent scale: a manually commented entry ("  # db_storage:")
@@ -450,6 +674,11 @@ fun parseDockerComposeYaml(
     var arrayKeyIndent = -1           // indent of the current array key, to spot its body's shape
     var dependsOnIndent = -1          // indent of a `depends_on:` whose body is a map
     var dependsOnEntryIndent = -1     // indent of that map's entry names
+    var spanKey = ""                  // body key whose block value is still open
+    var spanIsText = false            // that block is a `|`/`>` text block, not YAML structure
+    var extendsFromFile = false       // the open `extends:` names a service in another file
+    var envEntryIndent = -1           // indent of a map-form environment's entries
+    var dependsOnEntry = ""           // the map-form depends_on entry whose lines are being read
 
     fun indentOf(s: String) = s.takeWhile { it == ' ' }.length
     fun finish() {
@@ -503,8 +732,9 @@ fun parseDockerComposeYaml(
         // previous section still open, so the next section's parser absorbed it as one of its own
         // entries and stretched that entry's source span over an unrelated line.
         if (indent == 0 && !content.startsWith("-") && content.contains(":")) {
-            val sectionKey = blockKeyOf(content)
             val k = content.substringBefore(":").trim()
+            val sectionKey = blockKeyOf(content)
+                ?: k.takeIf { (it == "volumes" || it == "networks") && isEmptyFlowMapping(content) }
             finish(); finishTopVol(); finishTopNet()
             inServices = sectionKey == "services"
             inTopVolumes = sectionKey == "volumes"
@@ -516,7 +746,7 @@ fun parseDockerComposeYaml(
             if (inXPodman) draft.xPodmanSrcHeader = idx
             serviceIndent = -1; topSectionItemIndent = -1
             if (sectionKey == null && k == "name") {
-                val v = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
+                val v = yamlValueAfterKey(content)
                 if (v.isNotEmpty()) { draft.stackName = v; draft.stackNameSrcLine = idx }
             }
             continue
@@ -527,7 +757,7 @@ fun parseDockerComposeYaml(
         if (inXPodman && indent > 0 && content.contains(":")) {
             val key = content.substringBefore(":").trim()
             if (key == "in_pod") {
-                val value = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
+                val value = yamlValueAfterKey(content)
                 draft.xPodmanInPodSrcLine = idx
                 when {
                     value.equals("false", ignoreCase = true) -> {
@@ -554,6 +784,7 @@ fun parseDockerComposeYaml(
                 val inlineValue = content.substringAfter(":").trim().stripYamlInlineComment()
                 if (isTopSectionEntry(keyName, indent, isCommented)) {
                     finishTopVol()
+                    entryPropIndent = -1
                     currentTopVol = TopLevelVolumeDraft(
                         name = keyName,
                         isCommentedOut = isCommented,
@@ -569,9 +800,11 @@ fun parseDockerComposeYaml(
                 // sibling or a section note); only the entry's real lines extend its span.
                 if (isCommented && !vol.isCommentedOut) continue
                 vol.srcEnd = idx
-                if (content.contains(":") && !content.startsWith("-")) {
+                if (entryPropIndent == -1) entryPropIndent = indent
+                // Only the entry's own properties: `driver_opts:` and `labels:` hold keys of their own.
+                if (indent == entryPropIndent && content.contains(":") && !content.startsWith("-")) {
                     val k = content.substringBefore(":").trim()
-                    val v = content.substringAfter(":").trim().unquoteYaml()
+                    val v = yamlValueAfterKey(content)
                     if (k == "external" && v == "true") vol.external = true
                 }
             }
@@ -585,6 +818,7 @@ fun parseDockerComposeYaml(
                 val inlineValue = content.substringAfter(":").trim().stripYamlInlineComment()
                 if (isTopSectionEntry(keyName, indent, isCommented)) {
                     finishTopNet()
+                    entryPropIndent = -1
                     currentTopNet = TopLevelNetworkDraft(
                         name = keyName,
                         isCommentedOut = isCommented,
@@ -599,11 +833,14 @@ fun parseDockerComposeYaml(
             if (net != null) {
                 if (isCommented && !net.isCommentedOut) continue
                 net.srcEnd = idx
-                if (content.contains(":") && !content.startsWith("-")) {
+                if (entryPropIndent == -1) entryPropIndent = indent
+                // Only the entry's own properties: `ipam:` has a `driver:` of its own, which was
+                // read as the network's driver.
+                if (indent == entryPropIndent && content.contains(":") && !content.startsWith("-")) {
                     val k = content.substringBefore(":").trim()
-                    val v = content.substringAfter(":").trim().unquoteYaml()
+                    val v = yamlValueAfterKey(content)
                     when (k) {
-                        "driver" -> if (v.isNotBlank()) net.driver = v
+                        "driver" -> if (v.isNotBlank()) { net.driver = v; net.driverLine = idx }
                         "external" -> if (v == "true") net.external = true
                     }
                 }
@@ -644,6 +881,7 @@ fun parseDockerComposeYaml(
                 )
                 arrayKey = ""; arrayKeyIndent = -1
                 dependsOnIndent = -1; dependsOnEntryIndent = -1
+                spanKey = ""
                 continue
             }
         }
@@ -657,6 +895,19 @@ fun parseDockerComposeYaml(
         svc.srcEnd = idx
         if (svc.bodyIndent == -1 && indent > serviceIndent && !content.startsWith("-")) svc.bodyIndent = indent
 
+        // A block value runs over every deeper line, plus a list written at its key's own indent.
+        // The lines of a `|`/`>` text block are text, so nothing in them is read as a key.
+        if (spanKey.isNotEmpty()) {
+            val inside = indent > svc.bodyIndent ||
+                (!spanIsText && indent == svc.bodyIndent && content.startsWith("-"))
+            if (inside) {
+                svc.blockSpan[spanKey] = svc.blockSpan.getValue(spanKey).first..idx
+                if (spanIsText) continue
+            } else {
+                spanKey = ""
+            }
+        }
+
         // Drop an array key whose body turns out to be a map or Compose's long syntax. The list
         // editor cannot hold those, so they are surfaced as empty and — crucially — never
         // rewritten: splicing a freshly generated list over just the `key:` header left the map's
@@ -667,7 +918,8 @@ fun parseDockerComposeYaml(
             svc.arraySpan.remove(arrayKey)
             when (arrayKey) {
                 "ports" -> svc.ports
-                "environment" -> svc.environment
+                "environment" -> svc.environment.also { svc.environmentRowLine.clear(); svc.environmentIsMap = false }
+                "depends_on" -> svc.dependsOn.also { svc.dependsOnEntrySpan.clear(); svc.dependsOnIsMap = false }
                 "volumes" -> svc.volumes
                 "networks" -> svc.networks
                 else -> svc.dependsOn
@@ -693,6 +945,12 @@ fun parseDockerComposeYaml(
             if (arrayKey.isNotEmpty()) {
                 val prev = svc.arraySpan[arrayKey]
                 svc.arraySpan[arrayKey] = (prev?.first ?: arrayKeyLine)..idx
+            } else if (spanKey == "links" || spanKey == "volumes_from") {
+                // `links: [db:alias]` and `volumes_from: [db:ro]` name a service before any colon;
+                // `container:<name>` names a container instead.
+                if (!item.startsWith("container:")) svc.serviceRefs += ComposeServiceRef(item.substringBefore(":").trim(), idx, spanKey)
+            } else if (spanKey == "profiles") {
+                svc.profiles += item
             }
             continue
         }
@@ -700,26 +958,85 @@ fun parseDockerComposeYaml(
         // a key under the service
         if (content.contains(":")) {
             val key = content.substringBefore(":").trim()
-            val value = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
+            val value = yamlValueAfterKey(content)
+            // `environment:` written as a map: each `KEY: value` entry is a row, shown as KEY=value
+            // and saved back as an entry. A merge key, or anything nested deeper, is still unmodeled.
+            if (arrayKey == "environment" && indent > arrayKeyIndent && key != "<<" &&
+                (indent == envEntryIndent || (envEntryIndent == -1 && svc.environment.isEmpty())) &&
+                value.firstOrNull() !in listOf('{', '[', '|', '>', '&', '*')
+            ) {
+                envEntryIndent = indent
+                val name = key.unquoteYaml()
+                val row = if (content.substringAfter(":").trim().let { it.isEmpty() || it.startsWith("#") }) name else "$name=$value"
+                svc.environment += row
+                svc.environmentRowLine[row] = idx
+                svc.environmentIsMap = true
+                svc.arraySpan["environment"] = svc.arraySpan.getValue("environment").first..idx
+                continue
+            }
+            // `depends_on:` written as a map: each entry is a row named after the service, and the
+            // condition lines under it belong to that entry.
+            if (arrayKey == "depends_on" && indent > arrayKeyIndent && (svc.dependsOnIsMap || svc.dependsOn.isEmpty())) {
+                if (dependsOnEntryIndent == -1) dependsOnEntryIndent = indent
+                if (indent == dependsOnEntryIndent) {
+                    dependsOnEntry = key.unquoteYaml()
+                    svc.dependsOn += dependsOnEntry
+                    svc.dependsOnRefs += dependsOnEntry
+                    svc.serviceRefs += ComposeServiceRef(dependsOnEntry, idx, "depends_on")
+                    svc.dependsOnEntrySpan[dependsOnEntry] = idx..idx
+                } else if (dependsOnEntry.isNotEmpty()) {
+                    svc.dependsOnEntrySpan[dependsOnEntry] = svc.dependsOnEntrySpan.getValue(dependsOnEntry).first..idx
+                }
+                svc.dependsOnIsMap = true
+                svc.arraySpan["depends_on"] = svc.arraySpan.getValue("depends_on").first..idx
+                continue
+            }
             // A key nested INSIDE the open array key means that key's body is a map, not a list.
             if (arrayKey.isNotEmpty() && indent > arrayKeyIndent) demoteArrayKey() else arrayKey = ""
             // Map-form depends_on: its entry names are the real dependencies. Recorded read-only so
             // "commented out a service something still depends on" is catchable either way.
             if (dependsOnIndent >= 0 && indent > dependsOnIndent) {
                 if (dependsOnEntryIndent == -1) dependsOnEntryIndent = indent
-                if (indent == dependsOnEntryIndent) svc.dependsOnRefs += key.unquoteYaml()
+                if (indent == dependsOnEntryIndent) {
+                    val name = key.unquoteYaml()
+                    svc.dependsOnRefs += name
+                    svc.serviceRefs += ComposeServiceRef(name, idx, "depends_on")
+                }
             } else if (dependsOnIndent >= 0 && indent <= dependsOnIndent) {
                 dependsOnIndent = -1; dependsOnEntryIndent = -1
             }
-            if (value.isEmpty()) {
-                // block key whose value is on following lines (a list or map)
-                if (key in MODELED_ARRAY_KEYS) {
+            // Only the service's own keys are its fields. A key nested deeper belongs to a block:
+            // `restart: true` under a depends_on entry was read as the service's restart policy.
+            // A hand-commented block may sit a column off its siblings, so it gets one column of slack.
+            val atBody = if (svc.isCommentedOut) kotlin.math.abs(indent - svc.bodyIndent) <= 1 else indent == svc.bodyIndent
+            if (!atBody) {
+                if (key == "<<") ALIAS_ONLY.find(value)?.let { svc.aliasRefs += it.groupValues[1] }
+                when {
+                    spanKey == "extends" && key == "service" && !extendsFromFile ->
+                        svc.serviceRefs += ComposeServiceRef(value, idx, "extends")
+                    // The named service lives in another file.
+                    spanKey == "extends" && key == "file" -> {
+                        extendsFromFile = true
+                        svc.serviceRefs.removeAll { it.via == "extends" }
+                    }
+                    spanKey == "deploy" && key == "replicas" -> svc.replicas = value.toIntOrNull() ?: svc.replicas
+                }
+                continue
+            }
+            val textBlock = value.startsWith("|") || value.startsWith(">")
+            if (value.isEmpty() || textBlock) {
+                // block key whose value is on following lines (a list, a map or a text block)
+                svc.blockSpan[key] = idx..idx
+                spanKey = key; spanIsText = textBlock
+                if (key in MODELED_ARRAY_KEYS && !textBlock) {
                     arrayKey = key; arrayKeyLine = idx; arrayKeyIndent = indent
                     svc.arraySpan[key] = idx..idx
-                    if (key == "depends_on") { dependsOnIndent = indent; dependsOnEntryIndent = -1 }
+                    if (key == "depends_on") { dependsOnIndent = indent; dependsOnEntryIndent = -1; dependsOnEntry = "" }
+                    if (key == "environment") envEntryIndent = -1
                 }
                 // `build:` as a block — the image is produced, not pulled.
                 if (key == "build" || key == "extends") svc.inheritsImage = true
+                if (key == "extends") extendsFromFile = false
             } else {
                 when (key) {
                     "image" -> { svc.image = value; svc.scalarLine["image"] = idx }
@@ -727,13 +1044,34 @@ fun parseDockerComposeYaml(
                     "restart" -> { svc.restart = value; svc.scalarLine["restart"] = idx }
                     "command" -> { svc.command = value; svc.scalarLine["command"] = idx }
                     "userns_mode" -> { svc.usernsMode = value; svc.scalarLine["userns_mode"] = idx }
+                    "network_mode" -> svc.networkMode = value
+                    "scale" -> svc.replicas = value.toIntOrNull() ?: svc.replicas
+                    // `profiles: [debug]`: the service starts only when one of them is asked for.
+                    "profiles" -> svc.profiles += value.removeSurrounding("[", "]").split(",")
+                        .map { it.trim().unquoteYaml() }.filter { it.isNotEmpty() }
                     // `<<: *base` merges another mapping in, so image/ports/… can come from there.
                     "<<" -> {
                         svc.inheritsImage = true
                         ALIAS_ONLY.find(value)?.let { svc.aliasRefs += it.groupValues[1] }
                     }
-                    "build", "extends" -> svc.inheritsImage = true
+                    "build" -> svc.inheritsImage = true
+                    // `extends: web` and `extends: {service: web}` name a service in this file,
+                    // unless the flow form also names a `file:`.
+                    "extends" -> {
+                        svc.inheritsImage = true
+                        val named = if (value.startsWith("{")) FLOW_EXTENDS_SERVICE.find(value)?.groupValues?.get(1)
+                            ?.takeUnless { FLOW_EXTENDS_FILE.containsMatchIn(value) } else value
+                        named?.trim()?.unquoteYaml()?.takeIf { it.isNotEmpty() }
+                            ?.let { svc.serviceRefs += ComposeServiceRef(it, idx, "extends") }
+                    }
+                    // Run in another service's network, IPC or PID namespace.
+                    "ipc", "pid" -> if (value.startsWith("service:")) {
+                        svc.serviceRefs += ComposeServiceRef(value.removePrefix("service:").trim(), idx, key)
+                    }
                     // Inline KEY=VALUE handled when it appears as an environment list item above.
+                }
+                if (key == "network_mode" && value.startsWith("service:")) {
+                    svc.serviceRefs += ComposeServiceRef(value.removePrefix("service:").trim(), idx, key)
                 }
             }
         }
@@ -757,13 +1095,23 @@ private fun ComposeServiceDraft.isEmptyPlaceholder(): Boolean =
         usernsMode.isBlank() &&
         listOf(ports, environment, volumes, networks, dependsOn).all { l -> l.none { it.isNotBlank() } }
 
-/** Generate one service's YAML block (2-space service key, 4-space body), no trailing newline. */
-private fun generateServiceBlock(svc: ComposeServiceDraft, podmanRuntime: Boolean): String {
+/**
+ * Generate one service's YAML block, no trailing newline. The service key sits at [headerIndent] and
+ * its body [step] further in, so a block added to an existing file matches the services around it.
+ */
+private fun generateServiceBlock(
+    svc: ComposeServiceDraft,
+    podmanRuntime: Boolean,
+    headerIndent: Int = 2,
+    step: Int = 2,
+): String {
     val sb = StringBuilder()
     val name = svc.serviceName.ifBlank { "service" }
     val c = if (svc.isCommentedOut) "# " else ""
-    sb.append("$c  $name:\n")
-    fun scalar(k: String, v: String) { if (v.isNotBlank()) sb.append("$c    $k: ${yamlPlainOrSingleQuoted(v)}\n") }
+    val h = " ".repeat(headerIndent)
+    val b = " ".repeat(headerIndent + step)
+    sb.append("$c$h$name:\n")
+    fun scalar(k: String, v: String) { if (v.isNotBlank()) sb.append("$c$b$k: ${yamlPlainOrSingleQuoted(v)}\n") }
     scalar("image", svc.image)
     scalar("container_name", svc.containerName)
     scalar("restart", svc.restart)
@@ -774,8 +1122,8 @@ private fun generateServiceBlock(svc: ComposeServiceDraft, podmanRuntime: Boolea
     fun list(k: String, items: List<String>, quote: Boolean) {
         val v = items.filter { it.isNotBlank() }
         if (v.isEmpty()) return
-        sb.append("$c    $k:\n")
-        for (it in v) sb.append(if (quote) "$c      - ${yamlDoubleQuoted(it)}\n" else "$c      - ${yamlPlainOrSingleQuoted(it)}\n")
+        sb.append("$c$b$k:\n")
+        for (it in v) sb.append("$c$b  - ${yamlListItem(it, quote)}\n")
     }
     list("ports", svc.ports, quote = true)
     list("environment", svc.environment, quote = false)
@@ -852,6 +1200,11 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
 
     val originals = parsedFrom.services.associateBy { it.id }
     fun indentStr(n: Int) = " ".repeat(n.coerceAtLeast(0))
+    val renames = composeServiceRenames(draft, parsedFrom)
+    // The file's own indentation, read from its first live service, for blocks the builder adds.
+    val styleService = parsedFrom.services.firstOrNull { !it.isCommentedOut && it.srcStart in lines.indices }
+    val serviceHeaderIndent = styleService?.let { indentOfLine(lines[it.srcStart]) } ?: 2
+    val serviceStep = styleService?.bodyIndent?.minus(serviceHeaderIndent)?.takeIf { it > 0 } ?: 2
 
     // Top-level `name:` — surgically update/add/remove (it lives at indent 0, outside any service).
     if (draft.stackName != parsedFrom.stackName) {
@@ -859,16 +1212,16 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         when {
             // existing name line → rewrite or delete it
             nameLine in slot.indices && slot[nameLine] != null -> {
-                slot[nameLine] = if (draft.stackName.isBlank()) null else "name: ${draft.stackName}"
+                slot[nameLine] = if (draft.stackName.isBlank()) null else "name: ${yamlPlainOrSingleQuoted(draft.stackName)}"
             }
             // no name line yet → insert one just before the `services:` line. If `services:` is the
             // very first line, prepend by emitting before slot 0 (handled via the prepend list).
             draft.stackName.isNotBlank() -> {
-                val servicesIdx = lines.indexOfFirst { it.trimEnd() == "services:" }
+                val servicesIdx = servicesHeaderLine(lines)
                 if (servicesIdx > 0) {
-                    insert(servicesIdx - 1, "name: ${draft.stackName}")
+                    insert(servicesIdx - 1, "name: ${yamlPlainOrSingleQuoted(draft.stackName)}")
                 } else {
-                    prepend.add("name: ${draft.stackName}")
+                    prepend.add("name: ${yamlPlainOrSingleQuoted(draft.stackName)}")
                 }
             }
         }
@@ -884,7 +1237,8 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
 
     for (svc in draft.services) {
         val src = originals[svc.id] ?: continue   // new services are emitted after the loop
-        val bodyIndent = if (svc.bodyIndent > 0) svc.bodyIndent else 4
+        val bodyIndent = if (svc.bodyIndent > 0) svc.bodyIndent
+        else (src.srcStart.takeIf { it in lines.indices }?.let { seeThroughIndent(lines[it]) } ?: 2) + serviceStep
 
         // Comment-state toggle across the whole original block. We comment by putting "# " at
         // COLUMN 0 and consuming up to two leading indent spaces, matching the convention compose
@@ -930,15 +1284,45 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
             }
         }
 
+        // Rename: rewrite the key on the header line the toggle above may have just changed.
+        if (svc.serviceName.trim() != src.serviceName && svc.serviceName.isNotBlank() && src.srcStart in slot.indices) {
+            slot[src.srcStart]?.let { slot[src.srcStart] = renameYamlKey(it, svc.serviceName.trim()) }
+        }
+        // Every other reference to a renamed service follows it (the depends_on list is mapped
+        // where it is written below).
+        for (ref in src.serviceRefs) {
+            val new = renames[ref.name] ?: continue
+            if (ref.line in slot.indices) slot[ref.line]?.let { slot[ref.line] = renameServiceRef(it, ref, new) }
+        }
+
+        // What a new line in this body starts with: copied from one of its key lines as they stand
+        // after the toggle, so a commented or re-indented block gets lines that match it.
+        val bodyPrefix = (src.scalarLine.filterKeys { "." !in it }.values +
+            src.arraySpan.values.map { it.first } + src.blockSpan.values.map { it.first })
+            .sorted()
+            .firstNotNullOfOrNull { i -> slot.getOrNull(i)?.let(::linePrefix) }
+            ?: when {
+                svc.isCommentedOut -> "# " + indentStr(bodyIndent - 2)
+                src.isCommentedOut -> indentStr(bodyIndent - seeThroughIndent(lines.getOrElse(src.srcStart) { "" }) + 2)
+                else -> indentStr(bodyIndent)
+            }
+
         fun applyScalar(key: String, newVal: String, oldVal: String) {
             if (newVal == oldVal) return
+            val written = "$key: ${yamlPlainOrSingleQuoted(newVal)}"
             val lineIdx = src.scalarLine[key]
+            val block = src.blockSpan[key]
             if (lineIdx != null && lineIdx in slot.indices && slot[lineIdx] != null) {
                 if (newVal.isBlank()) { slot[lineIdx] = null; return }      // cleared → drop the line
                 val ind = slot[lineIdx]!!.takeWhile { it == ' ' || it == '#' }
-                slot[lineIdx] = "$ind$key: $newVal"
+                slot[lineIdx] = "$ind$written"
+            } else if (block != null && block.first in slot.indices && slot[block.first] != null) {
+                // The file writes this key as a list or text block: the new value replaces all of it.
+                val ind = slot[block.first]!!.takeWhile { it == ' ' || it == '#' }
+                for (i in block) if (i in slot.indices) slot[i] = null
+                if (newVal.isNotBlank()) slot[block.first] = "$ind$written"
             } else if (newVal.isNotBlank()) {
-                insert(src.srcStart, "${indentStr(bodyIndent)}$key: $newVal")  // add after header
+                insert(src.srcStart, "$bodyPrefix$written")  // add after header
             }
         }
         applyScalar("image", svc.image, src.image)
@@ -957,12 +1341,38 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
             // it, so leave the original bytes alone instead of splicing a list over them.
             if (key in src.unmodeledArrayKeys) return
             val cleaned = items.filter { it.isNotBlank() }
+                .map { if (key == "depends_on") renames[it.trim()] ?: it else it }
             if (cleaned == old.filter { it.isNotBlank() }) return
             val span = src.arraySpan[key]
             val block = buildList {
                 if (cleaned.isNotEmpty()) {
-                    add("${indentStr(bodyIndent)}$key:")
-                    for (it in cleaned) add("${indentStr(bodyIndent + 2)}- ${if (quote) "\"$it\"" else it}")
+                    add("$bodyPrefix$key:")
+                    if (key == "environment" && src.environmentIsMap) {
+                        // Untouched rows go back exactly as written; new or changed ones become
+                        // `KEY: "value"` at the entries' indent.
+                        val rowLine = { row: String -> src.environmentRowLine[row]?.let { slot.getOrNull(it) } }
+                        val entryPrefix = src.environmentRowLine.values.minOrNull()?.let { slot.getOrNull(it) }
+                            ?.let(::linePrefix) ?: "$bodyPrefix  "
+                        for (row in cleaned) add(rowLine(row) ?: entryPrefix + yamlEnvironmentEntry(row))
+                    } else if (key == "depends_on" && src.dependsOnIsMap) {
+                        // Kept entries go back with their conditions; a new one waits for the
+                        // service to start, the condition Compose requires each entry to name.
+                        val renamedFrom = renames.entries.associate { (old, new) -> new to old }
+                        val entryPrefix = src.dependsOnEntrySpan.values.minOfOrNull { it.first }?.let { slot.getOrNull(it) }
+                            ?.let(::linePrefix) ?: "$bodyPrefix  "
+                        for (row in cleaned) {
+                            val kept = (src.dependsOnEntrySpan[row] ?: src.dependsOnEntrySpan[renamedFrom[row]])
+                                ?.mapNotNull { slot.getOrNull(it) }
+                            if (!kept.isNullOrEmpty()) {
+                                addAll(kept)
+                            } else {
+                                add("$entryPrefix${yamlPlainOrSingleQuoted(row)}:")
+                                add("$entryPrefix  condition: service_started")
+                            }
+                        }
+                    } else {
+                        for (it in cleaned) add("$bodyPrefix  - ${yamlListItem(it, quote)}")
+                    }
                 }
             }
             if (span != null) {
@@ -982,11 +1392,16 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
     // ── Top-level volumes ──
     val origTopVols = parsedFrom.topVolumes.associateBy { it.id }
     val keptVolIds = draft.topVolumes.mapTo(HashSet()) { it.id }
+    // Entries the builder writes take the indent the file's own entries use.
+    fun entryIndent(srcStarts: List<Int>): String =
+        indentStr(srcStarts.firstOrNull { it in lines.indices && !lines[it].trimStart().startsWith("#") }
+            ?.let { indentOfLine(lines[it]) } ?: 2)
+    val volIndent = entryIndent(parsedFrom.topVolumes.map { it.srcStart })
     fun volumeBlock(v: TopLevelVolumeDraft): List<String> {
         val c = if (v.isCommentedOut) "# " else ""
         return buildList {
-            add("${c}  ${v.name}:")
-            if (v.external) add("${c}    external: true")
+            add("$c$volIndent${v.name}:")
+            if (v.external) add("$c$volIndent  external: true")
         }
     }
     // Delete removed entries
@@ -995,18 +1410,44 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
             for (i in src.srcStart..src.srcEnd) if (i in slot.indices) slot[i] = null
         }
     }
-    // Update existing entries (name, external, or comment-state changed)
+    // An entry whose comment state or name changes is edited in place: commenting puts "# " before
+    // each line, restoring strips one level and lines the entry up with [indent] again, and a rename
+    // changes only the key. Rewriting the whole entry dropped what the builder does not show
+    // (driver_opts, labels, ipam, name), so a volume lost its options when the one service using
+    // it was commented out.
+    fun editEntryInPlace(start: Int, end: Int, comment: Boolean?, newName: String?, indent: Int) {
+        if (start !in slot.indices) return
+        if (comment == true) {
+            for (i in start..end) slot.getOrNull(i)?.let { slot[i] = "# $it" }
+        } else if (comment == false) {
+            fun strip(line: String) = line.trimStart().dropWhile { it == '#' }.removePrefix(" ")
+            val delta = indent - indentOfLine(strip(slot[start] ?: lines[start]))
+            for (i in start..end) {
+                val line = slot.getOrNull(i) ?: continue
+                if (!line.trimStart().startsWith("#")) continue
+                val stripped = strip(line)
+                // Commented before the entry was: it stays a comment.
+                if (stripped.trimStart().startsWith("#")) { slot[i] = stripped; continue }
+                slot[i] = " ".repeat((indentOfLine(stripped) + delta).coerceAtLeast(0)) + stripped.trimStart()
+            }
+        }
+        if (newName != null) slot[start]?.let { slot[start] = renameYamlKey(it, newName) }
+    }
+    // Update existing entries. Turning external on or off still rewrites the entry: Compose refuses
+    // an external volume that also sets a driver, options or labels.
     for (vol in draft.topVolumes) {
         val src = origTopVols[vol.id] ?: continue
-        if (vol.name == src.name && vol.external == src.external && vol.isCommentedOut == src.isCommentedOut) continue
-        if (src.srcStart in slot.indices) {
-            val c = if (vol.isCommentedOut) "# " else ""
-            val newBlock = buildString {
-                append("${c}  ${vol.name}:")
-                if (vol.external) append("\n${c}    external: true")
-            }
-            slot[src.srcStart] = newBlock
+        if (src.srcStart !in slot.indices) continue
+        if (vol.external != src.external) {
+            slot[src.srcStart] = volumeBlock(vol).joinToString("\n")
             for (i in (src.srcStart + 1)..src.srcEnd) if (i in slot.indices) slot[i] = null
+        } else {
+            editEntryInPlace(
+                src.srcStart, src.srcEnd,
+                comment = vol.isCommentedOut.takeIf { it != src.isCommentedOut },
+                newName = vol.name.trim().takeIf { it != src.name && it.isNotEmpty() },
+                indent = volIndent.length,
+            )
         }
     }
     // Handle the volumes: header — add it if entries now exist but the header was absent
@@ -1016,21 +1457,19 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         val anchor = parsedFrom.topVolumes.maxOfOrNull { it.srcEnd } ?: parsedFrom.volumesSrcHeader
         newTopVols.forEach { insert(anchor, volumeBlock(it).joinToString("\n")) }
     }
-    // If the header exists but all volumes are now gone, null out the header line
-    if (hasExistingVolHeader && draft.topVolumes.none { it.name.isNotBlank() }) {
-        val hIdx = parsedFrom.volumesSrcHeader
-        if (hIdx in slot.indices) slot[hIdx] = null
-    }
+    if (hasExistingVolHeader) settleSectionHeader(slot, lines, parsedFrom.volumesSrcHeader, "volumes",
+        draft.topVolumes.filter { it.name.isNotBlank() }.map { it.isCommentedOut })
 
     // ── Top-level networks ──
     val origTopNets = parsedFrom.topNetworks.associateBy { it.id }
     val keptNetIds = draft.topNetworks.mapTo(HashSet()) { it.id }
+    val netIndent = entryIndent(parsedFrom.topNetworks.map { it.srcStart })
     fun networkBlock(n: TopLevelNetworkDraft): List<String> {
         val c = if (n.isCommentedOut) "# " else ""
         return buildList {
-            add("${c}  ${n.name}:")
-            if (n.driver.isNotBlank()) add("${c}    driver: ${n.driver}")
-            if (n.external) add("${c}    external: true")
+            add("$c$netIndent${n.name}:")
+            if (n.driver.isNotBlank()) add("$c$netIndent  driver: ${yamlPlainOrSingleQuoted(n.driver)}")
+            if (n.external) add("$c$netIndent  external: true")
         }
     }
     for (src in parsedFrom.topNetworks) {
@@ -1040,22 +1479,37 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
     }
     for (net in draft.topNetworks) {
         val src = origTopNets[net.id] ?: continue
-        if (net.name == src.name && net.driver == src.driver && net.external == src.external && net.isCommentedOut == src.isCommentedOut) continue
-        if (src.srcStart in slot.indices) {
-            val c = if (net.isCommentedOut) "# " else ""
-            val newBlock = buildString {
-                append("${c}  ${net.name}:")
-                if (net.driver.isNotBlank()) append("\n${c}    driver: ${net.driver}")
-                if (net.external) append("\n${c}    external: true")
-            }
-            slot[src.srcStart] = newBlock
+        if (src.srcStart !in slot.indices) continue
+        if (net.external != src.external) {
+            slot[src.srcStart] = networkBlock(net).joinToString("\n")
             for (i in (src.srcStart + 1)..src.srcEnd) if (i in slot.indices) slot[i] = null
+            continue
+        }
+        editEntryInPlace(
+            src.srcStart, src.srcEnd,
+            comment = net.isCommentedOut.takeIf { it != src.isCommentedOut },
+            newName = net.name.trim().takeIf { it != src.name && it.isNotEmpty() },
+            indent = netIndent.length,
+        )
+        // Then the driver, on the lines as the toggle above left them.
+        if (net.driver != src.driver) {
+            val written = "driver: ${yamlPlainOrSingleQuoted(net.driver)}"
+            val line = src.driverLine.takeIf { it in slot.indices && slot[it] != null }
+            when {
+                line != null && net.driver.isBlank() -> slot[line] = null
+                line != null -> slot[line] = slot[line]!!.takeWhile { it == ' ' || it == '#' } + written
+                net.driver.isNotBlank() -> {
+                    // Line up with the entry's first property, or one step in from its key.
+                    val prefix = ((src.srcStart + 1)..src.srcEnd).firstNotNullOfOrNull { i -> slot.getOrNull(i)?.takeIf { it.isNotBlank() } }
+                        ?.let(::linePrefix)
+                        ?: ((if (net.isCommentedOut) "# " else "") + netIndent + "  ")
+                    insert(src.srcStart, prefix + written)
+                }
+            }
         }
     }
-    if (parsedFrom.networksSrcHeader >= 0 && draft.topNetworks.none { it.name.isNotBlank() }) {
-        val hIdx = parsedFrom.networksSrcHeader
-        if (hIdx in slot.indices) slot[hIdx] = null
-    }
+    if (parsedFrom.networksSrcHeader >= 0) settleSectionHeader(slot, lines, parsedFrom.networksSrcHeader, "networks",
+        draft.topNetworks.filter { it.name.isNotBlank() }.map { it.isCommentedOut })
     val brandNewNets = draft.topNetworks.filter { it.name.isNotBlank() && it.id !in origTopNets }
     if (parsedFrom.networksSrcHeader >= 0 && brandNewNets.isNotEmpty()) {
         val anchor = parsedFrom.topNetworks.maxOfOrNull { it.srcEnd } ?: parsedFrom.networksSrcHeader
@@ -1087,9 +1541,9 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
     // parsed as a top-level volume named after the service.
     val newServices = draft.services.filter { it.id !in originals && !it.isEmptyPlaceholder() }
     val servicesSectionEnd = parsedFrom.services.filter { it.srcEnd >= 0 }.maxOfOrNull { it.srcEnd }
-        ?: lines.indexOfFirst { it.trimEnd() == "services:" }.takeIf { it >= 0 }
+        ?: servicesHeaderLine(lines).takeIf { it >= 0 }
     for (svc in newServices) {
-        val block = generateServiceBlock(svc, podmanRuntime = draft.runtime == "podman")
+        val block = generateServiceBlock(svc, draft.runtime == "podman", serviceHeaderIndent, serviceStep)
         if (servicesSectionEnd != null) insert(servicesSectionEnd, block) else appended += block
     }
 
@@ -1120,6 +1574,26 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
     return sb.toString()
 }
 
+/**
+ * The top-level [section] header at [header] once its entries are settled ([commented] holds each
+ * one's state). With no entries left it goes. With entries that are all commented out it becomes
+ * `section: {}`: a bare header over nothing but comments is null, which Compose rejects. It turns
+ * back into a plain header as soon as one entry is live again.
+ */
+private fun settleSectionHeader(slot: MutableList<String?>, lines: List<String>, header: Int, section: String, commented: List<Boolean>) {
+    if (header !in slot.indices || slot[header] == null) return
+    val wasEmpty = isEmptyFlowMapping(lines[header])
+    when {
+        commented.isEmpty() -> slot[header] = null
+        commented.all { it } && !wasEmpty -> slot[header] = "$section: {}"
+        commented.any { !it } && wasEmpty -> slot[header] = "$section:"
+    }
+}
+
+// The top-level `services:` line, or -1. A comment may follow the key.
+private fun servicesHeaderLine(lines: List<String>): Int =
+    lines.indexOfFirst { indentOfLine(it) == 0 && blockKeyOf(it.trim()) == "services" }
+
 /** Helper to build a fixed-size mutable slot list seeded from [lines]. */
 private fun arrayUListOfLines(lines: List<String>): MutableList<String?> =
     MutableList(lines.size) { lines[it] }
@@ -1134,6 +1608,7 @@ fun composeRawEditsDiffer(rawText: String, draft: ComposeStackDraft, parsedBasel
 
 @Composable
 fun ComposeBuilder(viewModel: AppViewModel) {
+    val dismissKeyboard = rememberDismissKeyboard()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val active = viewModel.activeComposeDraft
     val draftGeneration = viewModel.activeComposeGeneration
@@ -1259,8 +1734,8 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         attemptClearOrExit(exitBuilder = true)
     }
 
-    val validationIssues = remember(draft, rawMode) {
-        if (rawMode) emptyList() else validateComposeDraft(draft)
+    val validationIssues = remember(draft, rawMode, parsedBaseline) {
+        if (rawMode) emptyList() else validateComposeDraft(draft, parsedBaseline)
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -1561,11 +2036,14 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     } else {
                         "~/${draft.projectName.ifBlank { "stack" }}/$fileName"
                     }
+                    val dropsServices = isExisting && composeDeployDropsServices(yaml, parsedBaseline)
                     confirm.ask(
                         if (isExisting) confirm.str(R.string.deploy_changes) else confirm.str(R.string.deploy_stack),
-                            confirm.str(R.string.target_file_it_s_validated_first, composeFilePath),
+                            confirm.str(R.string.target_file_it_s_validated_first, composeFilePath) +
+                                if (dropsServices) "\n\n" + confirm.str(R.string.deploy_removes_dropped_services) else "",
                         confirmLabel = confirm.str(R.string.deploy),
                     ) {
+                        dismissKeyboard()
                         deploying = true
                         result = null
                             viewModel.deployComposeStack(
@@ -1576,6 +2054,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                 configFiles = draft.composeConfigFiles,
                                 runtime = draft.runtime,
                                 expectedServerId = draftServerId,
+                                removeOrphans = dropsServices,
                             ) { ok, out ->
                             deploying = false
                             result = ok to out
@@ -1590,10 +2069,25 @@ fun ComposeBuilder(viewModel: AppViewModel) {
     }
 }
 
+/**
+ * Whether deploying [yaml] drops a service the file running as [baseline] has: deleted, renamed or
+ * commented out. Compose leaves such a service's container running as an orphan unless told to
+ * remove it.
+ */
+internal fun composeDeployDropsServices(yaml: String, baseline: ComposeStackDraft?): Boolean {
+    if (baseline?.originalText == null) return false
+    fun ComposeStackDraft.activeNames() = services.filterNot { it.isCommentedOut }.map { it.serviceName.trim() }.toSet()
+    return (baseline.activeNames() - parseDockerComposeYaml(yaml, baseline.projectName).activeNames()).isNotEmpty()
+}
+
+private val WINDOWS_DRIVE_PATH = Regex("""^[A-Za-z]:[\\/]""")
+
 /** Extract the named-volume name from a service volumes entry, or null for bind-mounts. */
 private fun namedVolumeFrom(entry: String): String? {
     val raw = entry.trim()
     if (raw.isBlank() || raw.startsWith(".") || raw.startsWith("/")) return null
+    // A Windows drive path ("C:\data:/data") is a bind mount too; its drive letter is no volume.
+    if (WINDOWS_DRIVE_PATH.containsMatchIn(raw)) return null
     val name = if (raw.contains(":")) raw.substringBefore(":").trim() else raw
     // Only something that could actually BE a volume name earns a top-level declaration. A host
     // path Compose interpolates at deploy time ("${UPLOAD_LOCATION}:/data", "~/data:/data") is a
