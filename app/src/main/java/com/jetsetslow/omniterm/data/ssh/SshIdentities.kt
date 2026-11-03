@@ -29,7 +29,8 @@ internal class CertificateIdentity(private val inner: Identity, private val cert
 
     override fun getPublicKeyBlob(): ByteArray = certificate.blob
 
-    override fun getSignature(data: ByteArray): ByteArray? = getSignature(data, algName)
+    override fun getSignature(data: ByteArray): ByteArray? =
+        if (certificate.keyType == "ssh-rsa") getSignature(data, algName) else inner.getSignature(data)
 
     override fun getSignature(data: ByteArray, alg: String): ByteArray? =
         inner.getSignature(data, signatureAlgorithm(alg))

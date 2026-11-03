@@ -1734,6 +1734,7 @@ class AppViewModel @JvmOverloads constructor(
     /** The host [sftpBookmarks] belongs to. */
     private var sftpBookmarksServerId: Int? = null
     var sftpLoading by mutableStateOf(false); private set
+    var sftpFileCreation by mutableStateOf<String?>(null); private set
     var sftpError by mutableStateOf<String?>(null); private set
     /** Transient success/info banner for SFTP actions (save confirmed, copied, moved…). Auto-clears. */
     var sftpStatus by mutableStateOf<String?>(null)
@@ -3786,7 +3787,7 @@ class AppViewModel @JvmOverloads constructor(
     private fun subtabCount(screen: Screen): Int = when (screen) {
         Screen.Monitor -> if (servers.value.any { it.status == "online" }) MonitorTab.entries.size else 0
         Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) INFRA_TAB_COUNT else 0
-        Screen.Fleet -> 2
+        Screen.Fleet -> FLEET_TAB_COUNT
         Screen.SFTP -> 4
         Screen.Network -> 9
         Screen.Alerts -> 3
@@ -11881,26 +11882,41 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Create the empty file [name] in this folder and open it in the editor; an existing file is never touched. */
     fun sftpNewFile(name: String) {
+        if (sftpFileCreation != null) return
+        val srv = selectedServer ?: run {
+            sftpError = "Select a host before creating a file."
+            return
+        }
         if (sftpEntries.any { it.name == name }) {
             sftpError = "\"$name\" already exists here."
             return
         }
-        val srv = selectedServer
+        val directory = sftpPath
+        val sudo = sftpSudo
+        val path = joinPath(directory, name)
+        sftpError = null
+        sftpStatus = null
+        sftpFileCreation = "Creating \"$name\" on ${srv.name}…"
         viewModelScope.launch {
             try {
-                val path = joinPath(sftpPath, name)
                 // A subshell: a failed redirect on `:` would end the shell before the message.
-                val err = if (sftpSudo && srv != null)
+                val err = if (sudo)
                     runSftpSudo(srv, "(set -C; : > ${shellQuote(path)}) 2>/dev/null || echo ${shellQuote("Cannot create \"$name\" here.")}")
-                else { sftpClientOrNull()?.createFile(path); null }
+                else { sftpClientFor(srv).createFile(path); null }
                 if (err != null) { sftpError = err; return@launch }
-                sftpStatus = "Created \"$name\"${sudoTag()}"
-                loadSftp(sftpPath).join()
-                openSftpFileForEdit(sftpEntries.firstOrNull { it.name == name } ?: SftpFile(name, isDirectory = false, size = 0, modDate = ""))
+                sftpStatus = "Created \"$name\" on ${srv.name}${if (sudo) " (sudo)" else ""}"
+                if (!isSftpLocation(srv.id, directory, sudo)) return@launch
+                loadSftp(directory, clearError = false).join()
+                if (!isSftpLocation(srv.id, directory, sudo) || sftpError != null) return@launch
+                openSftpFileForEdit(sftpEntries.firstOrNull { it.name == name } ?: SftpFile(name, isDirectory = false, size = 0, modDate = ""))?.join()
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { sftpError = e.message ?: "Create failed" }
+            catch (e: Exception) { sftpError = "Could not create \"$name\" on ${srv.name}: ${e.message ?: "Create failed"}" }
+            finally { sftpFileCreation = null }
         }
     }
+
+    private fun isSftpLocation(serverId: Int, directory: String, sudo: Boolean): Boolean =
+        selectedServer?.id == serverId && sftpPath == directory && sftpSudo == sudo
 
     /**
      * The file name [sftpArchiveSelection] would write for this selection, so the UI can warn before
@@ -12056,13 +12072,16 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** Open a file for editing: read its text and stash it on [edittingSftpFile]. */
-    fun openSftpFileForEdit(file: SftpFile) {
-        val srv = selectedServer
-        viewModelScope.launch {
+    fun openSftpFileForEdit(file: SftpFile): Job? {
+        val srv = selectedServer ?: return null
+        val directory = sftpPath
+        val sudo = sftpSudo
+        return viewModelScope.launch {
+            if (!isSftpLocation(srv.id, directory, sudo)) return@launch
             sftpError = null
             try {
-                val path = joinPath(sftpPath, file.name)
-                val text = if (sftpSudo && srv != null) {
+                val path = joinPath(directory, file.name)
+                val text = if (sudo) {
                     // SFTP can't elevate; read protected files with `sudo cat` over an exec channel.
                     val out = executeSshCommand(srv, RemoteCommands.sudoReadCommand(path, srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword))
                     sftpReadError(out)?.let { sftpError = it; return@launch }
@@ -12074,8 +12093,9 @@ class AppViewModel @JvmOverloads constructor(
                         return@launch
                     }
                 } else {
-                    sftpClientOrNull()?.readText(path) ?: return@launch
+                    sftpClientFor(srv).readText(path)
                 }
+                if (!isSftpLocation(srv.id, directory, sudo)) return@launch
                 edittingSftpFilePath = file.name
                 edittingSftpFile = file.copy(content = text)
             } catch (e: CancellationException) { throw e }

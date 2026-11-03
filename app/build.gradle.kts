@@ -150,6 +150,9 @@ val linuxArm64Host =
     System.getProperty("os.arch").lowercase() in setOf("aarch64", "arm64")
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+  // CI has no test-report artifact on a failed build. Keep the missing class and root cause in
+  // its log, rather than reducing every affected test to ClassNotFoundException and a line number.
+  testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
   // Forward the fixture-regeneration opt-in into the test JVM. A bare `-Domniterm...` on the Gradle
   // command line only reaches the daemon, so without this the flag is silently ignored and the
   // fixture appears to regenerate while the committed file never changes.

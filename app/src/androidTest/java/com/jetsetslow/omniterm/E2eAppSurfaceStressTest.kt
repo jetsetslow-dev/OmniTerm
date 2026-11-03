@@ -5,6 +5,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.ui.AppViewModel
+import com.jetsetslow.omniterm.ui.FLEET_TAB_COUNT
+import com.jetsetslow.omniterm.ui.INFRA_TAB_COUNT
 import com.jetsetslow.omniterm.ui.MonitorTab
 import com.jetsetslow.omniterm.ui.Screen
 import kotlinx.coroutines.delay
@@ -51,10 +53,10 @@ class E2eAppSurfaceStressTest {
 
             // Render every nested tab; this catches tab-specific LaunchedEffect, empty/error state,
             // and compact-layout crashes without duplicating the dedicated network/compose suites.
-            renderSubtabs(vm, Screen.Fleet, 3) { vm.fleetTabIndex = it }
+            renderSubtabs(vm, Screen.Fleet, FLEET_TAB_COUNT) { vm.fleetTabIndex = it }
             renderSubtabs(vm, Screen.Monitor, MonitorTab.entries.size) { vm.activeMonitorTab = it }
             renderSubtabs(vm, Screen.SFTP, 4) { vm.activeSftpTab = it }
-            renderSubtabs(vm, Screen.Infra, 5) { vm.activeInfraTab = it }
+            renderSubtabs(vm, Screen.Infra, INFRA_TAB_COUNT) { vm.activeInfraTab = it }
             renderSubtabs(vm, Screen.Network, 9) { vm.activeNetworkTab = it }
             renderSubtabs(vm, Screen.Alerts, 3) { vm.activeAlertsTab = it }
             renderSubtabs(vm, Screen.QuickScripts, 2) { vm.activeScriptsTab = it }

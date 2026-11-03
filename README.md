@@ -97,6 +97,7 @@ Open **Files** to work with remote filesystems.
 
 **SFTP** browses the selected SSH host (the host picker lives here):
 - Upload, download, rename, delete, create folders, start a **new text file**, and **edit text files** in the built-in code editor (line numbers, syntax highlighting, find/replace, sudo-assisted writes).
+- **New file** shows progress and stays on the host and folder where you started it. Switching hosts while it finishes never opens a file from the new host. A stale browsing connection is replaced once; a failed fresh sign-in is reported without asking for a second one-time code.
 - **Multi-select** for batch copy/cut/download/delete; **sort** by name/size/date/type; **search** with a live folder filter, recursive tree search, and glob wildcards.
 - **Archive** the selection to zip/tar/tar.gz, or **extract here** an archive into a same-named subfolder — all server-side.
 - **Dual-pane** — toggle a second SFTP browser to view another host alongside the first, and copy/cut files across for a streamed transfer between the two.
@@ -181,7 +182,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
 - **No OmniTerm backend, no server agents** — administration traffic goes directly from your device to the hosts you configure. The Play Store flavor separately contacts Google for ads, consent, and billing; the source-available flavor omits those SDKs.
 - **On-device encryption** — credentials, private keys, sudo passwords, and proxy passwords use AES-GCM with an Android Keystore-managed key (hardware-backed where the device supports it).
 - **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it. If you reject a host's key, OmniTerm stops asking about it from background checks; it asks again when you connect to that host, tap **Retry** on it, or test its connection.
-- **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust. When a program on that host asks to use a security key through it, OmniTerm says so, and the user it is signing in as; cancel unless you started it. Such a request waits 20 seconds for the touch.
+- **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust. When a program on that host asks to use a security key through it, OmniTerm says so, and the user it is signing in as; cancel unless you started it. Such a request waits 20 seconds for the touch, including when the security key uses an SSH certificate.
 - **Biometric app lock** — lock the whole app behind biometrics or a PIN. Cold starts always lock;
   warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration
   up to 24 hours. Rotation does not start the background timer.

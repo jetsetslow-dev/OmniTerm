@@ -6,6 +6,7 @@ import com.jetsetslow.omniterm.data.shares.formatFsDate
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.SftpException
 import com.jcraft.jsch.SftpProgressMonitor
+import com.jcraft.jsch.Session
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -74,7 +75,7 @@ class JschSftp(
                 // without a word (a NAT that forgot it, a change of Wi-Fi) still says it is
                 // connected, and its channels never open, so it gets less time than a new one.
                 val openTimeout = if (lease.reused) WARM_CHANNEL_OPEN_TIMEOUT_MS else CONNECT_TIMEOUT_MS
-                (session.openChannel("sftp") as ChannelSftp).also { it.connect(openTimeout) }
+                openChannel(session, openTimeout)
             } catch (e: CancellationException) {
                 lease.close()
                 throw e
@@ -84,7 +85,7 @@ class JschSftp(
                 // the user for another one-time code.
                 if (lease.reused || !session.isConnected) {
                     pool.evict(creds, session)
-                    if (attempt++ < 1) {
+                    if (lease.reused && attempt++ < 1) {
                         lease.close()
                         continue
                     }
@@ -119,6 +120,17 @@ class JschSftp(
         throw IllegalStateException("withPooledChannel loop exited unexpectedly")
     }
 
+    private fun openChannel(session: Session, timeoutMs: Int): ChannelSftp {
+        val channel = session.openChannel("sftp") as ChannelSftp
+        try {
+            channel.connect(timeoutMs)
+            return channel
+        } catch (failure: Throwable) {
+            runCatching { channel.disconnect() }
+            throw failure
+        }
+    }
+
     /** Jump hosts can't be pooled: build a dedicated tunnelled session per call and tear it down. */
     private suspend fun <T> withJumpedChannel(block: (ChannelSftp) -> T): T {
         var jumped: JumpedSession? = null
@@ -132,7 +144,7 @@ class JschSftp(
         try {
             val session = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS, interactiveAuth).also { jumped = it }.target
             session.connect(CONNECT_TIMEOUT_MS)
-            channel = (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
+            channel = openChannel(session, CONNECT_TIMEOUT_MS)
             activeChannels += channel
             return block(channel)
         } finally {

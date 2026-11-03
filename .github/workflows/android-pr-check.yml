@@ -106,6 +106,7 @@ jobs:
         run: |
           ./scripts/test-release-version.sh
           ./scripts/test-ci-gradle-gate.sh
+          ./scripts/test-secret-scan.sh
           ./scripts/test-check-duplicates.sh
           ./scripts/test-repeat-changed-tests.sh
           python3 -B ./scripts/test-check-dependency-updates.py

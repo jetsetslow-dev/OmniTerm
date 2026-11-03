@@ -44,6 +44,8 @@ import com.jetsetslow.omniterm.data.*
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
+internal const val FLEET_TAB_COUNT = 2
+
 @Composable
 fun FleetScreen(viewModel: AppViewModel) {
     val srvList by viewModel.servers.collectAsStateWithLifecycle()

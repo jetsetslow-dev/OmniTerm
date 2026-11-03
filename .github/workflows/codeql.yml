@@ -129,15 +129,12 @@ jobs:
           ./scripts/test-release-version.sh
           ./scripts/test-change-detectors.sh
           ./scripts/test-ci-gradle-gate.sh
+          ./scripts/test-secret-scan.sh
 
       # This workflow is the automatic prerelease gate, so secret-history validation must be part
       # of this same aggregate result rather than a concurrent workflow that could fail later.
       - name: Scan complete history for committed secrets
-        run: >-
-          docker run --rm
-          -v "$PWD:/repo" -w /repo
-          zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055
-          git --redact --no-banner --no-color /repo
+        run: ./scripts/secret-scan.sh --pull
 
       # The script keeps the CodeQL compile phase identical on PRs and main. Main then runs the
       # exact-SHA unit/lint release gate in a fresh Gradle process, preventing compiler and lint

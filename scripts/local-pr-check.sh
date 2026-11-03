@@ -59,6 +59,8 @@ fi
 
 echo "Preflight host: $OS_NAME/$ARCH_NAME"
 git diff --check
+./scripts/test-secret-scan.sh
+./scripts/secret-scan.sh
 # A third-party action outside the repository's Actions allowlist makes GitHub refuse to start the
 # workflow: no check run exists, every visible check stays green and a required check never reports.
 # Local-only by necessity — CI's token cannot read that setting — so it warns when it cannot ask.

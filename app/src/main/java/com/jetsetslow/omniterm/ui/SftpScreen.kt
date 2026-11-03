@@ -1959,7 +1959,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         CompactSftpIconButton(onClick = { showCreateFolderDialog = true }) {
                             Icon(Icons.Filled.CreateNewFolder, contentDescription = stringResource(R.string.create_folder))
                         }
-                        CompactSftpIconButton(onClick = { showNewFileDialog = true }) {
+                        CompactSftpIconButton(enabled = viewModel.sftpFileCreation == null, onClick = { showNewFileDialog = true }) {
                             Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = stringResource(R.string.new_file))
                         }
                         CompactSftpIconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
@@ -2240,6 +2240,15 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 confirm = confirm,
                 onPaste = { viewModel.pasteIntoSftp() },
             )
+        }
+
+        viewModel.sftpFileCreation?.let {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(it, fontSize = 12.sp, fontFamily = OmniFonts.mono)
+            }
         }
 
         // Transient success/info banner (save confirmed, copied, moved, deleted…).

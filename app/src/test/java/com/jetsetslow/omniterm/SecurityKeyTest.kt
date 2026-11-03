@@ -3,6 +3,8 @@ package com.jetsetslow.omniterm
 import com.google.common.truth.Truth.assertThat
 import com.jetsetslow.omniterm.data.fido.SecurityKeyCtap
 import com.jetsetslow.omniterm.data.ssh.InteractiveAuth
+import com.jetsetslow.omniterm.data.ssh.CertificateIdentity
+import com.jetsetslow.omniterm.data.ssh.SshCertificate
 import com.jetsetslow.omniterm.data.ssh.KeyboardInteractiveUserInfo
 import com.jetsetslow.omniterm.data.ssh.NEEDS_SECURITY_KEY
 import com.jetsetslow.omniterm.data.ssh.OpenSshKeyFile
@@ -87,7 +89,15 @@ class SecurityKeyTest {
         val signIn = KeyboardInteractiveUserInfo(null, ask)
         val identity = SecurityKeyIdentity(key, "test", "me@bastion", ask, signIn)
         // JSch's agent forwarding asks without an algorithm (ChannelAgentForwarding).
-        assertThat(token.sshdAccepts(identity.getSignature(onward)!!, onward)).isTrue()
+        val certificate = io.mockk.mockk<SshCertificate> {
+            io.mockk.every { keyType } returns key.type.sshName
+            io.mockk.every { type } returns "sk-ssh-ed25519-cert-v01@openssh.com"
+        }
+        for (offered in listOf(identity, CertificateIdentity(identity, certificate))) {
+            assertThat(token.sshdAccepts(offered.getSignature(onward)!!, onward)).isTrue()
+            assertThat(asked!!.forwarded).isTrue()
+            assertThat(signIn.answeredByUser).isFalse()
+        }
         assertThat(asked!!.forwarded).isTrue()
         assertThat(asked!!.forwardedUser).isEqualTo("deploy")
         assertThat(asked!!.destination).isEqualTo("me@bastion")
