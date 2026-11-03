@@ -10,9 +10,6 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
@@ -117,15 +114,11 @@ class E2eTerminalNavigationMatrixTest {
             composeRule.onNodeWithText("Visible screen").assertIsDisplayed()
             clickText("Close")
             clickText("⋮ OPT")
-            composeRule.onNode(SemanticsMatcher("content below is indicated") {
-                it.config.contains(SemanticsProperties.StateDescription) &&
-                    it.config[SemanticsProperties.StateDescription].contains("More below")
-            }, useUnmergedTree = true).assertExists()
-            composeRule.onNodeWithText("Full buffer").performScrollTo().assertIsDisplayed()
-            composeRule.onNode(SemanticsMatcher("content above is indicated") {
-                it.config.contains(SemanticsProperties.StateDescription) &&
-                    it.config[SemanticsProperties.StateDescription].contains("More above")
-            }, useUnmergedTree = true).assertExists()
+            // Range actions are pinned outside the scroll body. On a tall portrait screen all
+            // settings fit as well, so requiring overflow indicators here is incorrect. The
+            // dedicated options matrix covers compact orientations and enlarged text.
+            composeRule.onNodeWithText("Visible screen").assertIsDisplayed()
+            composeRule.onNodeWithText("Full buffer").assertIsDisplayed()
             clickText("Full buffer")
             composeRule.onNodeWithText("Show visible screen").assertIsDisplayed()
             clickText("Close")

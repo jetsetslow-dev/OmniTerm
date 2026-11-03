@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 val Purple80 = Color(0xFFD0BCFF)
 val PurpleGrey80 = Color(0xFFCCC2DC)
@@ -41,27 +42,36 @@ object OmniColors {
     val textSecondary = Color(0xFF56708A)
     val textMuted = Color(0xFF2C3E52)
 
-    // Host colours. None is a status colour (green ok, amber warning, red failed, cyan running,
-    // grey offline), so a host's colour never reads as its state.
-    val blue = Color(0xFF448AFF)
-    val indigo = Color(0xFF536DFE)
-    val violet = Color(0xFF7C4DFF)
-    val magenta = Color(0xFFE040FB)
-    val pink = Color(0xFFFF80AB)
+    private data class HostColor(val name: String, val dark: Color, val light: Color) {
+        fun on(background: Color): Color = if (background.luminance() > 0.5f) light else dark
+    }
 
-    /** The colours a host can be given, by the name saved in `ServerEntity.serverColor`. */
-    val namedColors: List<Pair<String, Color>> = listOf(
-        "Blue" to blue, "Indigo" to indigo, "Violet" to violet,
-        "Purple" to purple, "Magenta" to magenta, "Pink" to pink,
+    // Muted identity hues span the colour wheel; adjacent automatic choices deliberately differ
+    // in hue. Each has a lighter dark-theme tone and a deeper light-theme tone. Status tokens
+    // above remain separate: a host's identity is not its connection or health state.
+    private val hostColors = listOf(
+        HostColor("Blue", Color(0xFF6FA7EE), Color(0xFF2B61A3)),
+        HostColor("Copper", Color(0xFFE68677), Color(0xFF994135)),
+        HostColor("Teal", Color(0xFF4DBC92), Color(0xFF007252)),
+        HostColor("Rose", Color(0xFFDA85B6), Color(0xFF8E4170)),
+        HostColor("Gold", Color(0xFFD09945), Color(0xFF825601)),
+        HostColor("Plum", Color(0xFFB093E5), Color(0xFF6B4E9A)),
+        HostColor("Olive", Color(0xFF9BB054), Color(0xFF586901)),
+        HostColor("Ocean", Color(0xFF6BAFB9), Color(0xFF246371)),
     )
 
-    /**
-     * Colours saved before hosts stopped using status colours, and the colour each became: hosts
-     * that differed still differ. Read here rather than rewritten, so older rows and backups keep
-     * working.
-     */
+    /** Default dark-surface tones, also usable without composition in identity-policy tests. */
+    val namedColors: List<Pair<String, Color>> = namedHostColors(bg2)
+
+    /** The same named choices in the tone suited to the surface hosting their text and swatches. */
+    fun namedHostColors(background: Color): List<Pair<String, Color>> =
+        hostColors.map { it.name to it.on(background) }
+
+    // Read old names without rewriting stored hosts or backups. The six previous explicit
+    // choices still map to six distinct identities; original status-name aliases also work.
     private val legacyColorNames = mapOf(
-        "cyan" to "Blue", "green" to "Indigo", "amber" to "Violet", "orange" to "Magenta", "red" to "Pink",
+        "cyan" to "Blue", "green" to "Teal", "amber" to "Gold", "orange" to "Copper", "red" to "Rose",
+        "indigo" to "Teal", "violet" to "Gold", "purple" to "Plum", "magenta" to "Copper", "pink" to "Rose",
     )
 
     /** [saved] as one of [namedColors]' names, or "Default" when it names none of them. */
@@ -71,12 +81,13 @@ object OmniColors {
             ?: "Default"
 
     /** The colour a host on "Default" gets: picked by its id, so it stays put through a rename. */
-    fun hostColor(serverId: Int): Color = namedColors[Math.floorMod(serverId, namedColors.size)].second
+    fun hostColor(serverId: Int, background: Color = bg2): Color =
+        hostColors[Math.floorMod(serverId, hostColors.size)].on(background)
 
     /**
      * A server's colour from its saved [colorName]. "Default" (or any unknown value) takes the
      * colour its id picks, while explicit user choices win.
      */
-    fun serverAccent(colorName: String, serverId: Int): Color =
-        namedColors.firstOrNull { it.first == hostColorName(colorName) }?.second ?: hostColor(serverId)
+    fun serverAccent(colorName: String, serverId: Int, background: Color = bg2): Color =
+        hostColors.firstOrNull { it.name == hostColorName(colorName) }?.on(background) ?: hostColor(serverId, background)
 }
