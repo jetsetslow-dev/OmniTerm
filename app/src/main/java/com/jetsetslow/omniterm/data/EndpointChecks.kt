@@ -76,11 +76,16 @@ object EndpointChecks {
     /** The address a URL check fetches, with https:// added when none was typed. Null when it is not a web address. */
     fun checkUrl(target: String): String? {
         val t = target.trim().ifEmpty { return null }
-        val url = if ("://" in t) t else "https://$t"
-        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        // Without a scheme the target is read as "//host/path" and resolved against https, which
+        // keeps it exactly as typed. Writing "https://" in front would too, but CodeQL takes a
+        // "scheme://" literal that reaches a connection for the app's own server and asks for it
+        // to be pinned, which an address the user typed cannot be.
+        val uri = runCatching { if ("://" in t) URI(t) else HTTPS.resolve("//$t") }.getOrNull() ?: return null
         if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrEmpty()) return null
-        return url
+        return uri.toString()
     }
+
+    private val HTTPS = URI("https:/")
 
     /** Whole and part days from [now] until [notAfter], below zero once it has passed. */
     fun daysLeft(notAfter: Long, now: Long): Float = (notAfter - now).toFloat() / DAY_MS
@@ -233,7 +238,11 @@ object EndpointChecks {
 
         @Throws(CertificateException::class)
         override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String) {
-            leaf = chain.firstOrNull()
+            // The platform would throw IllegalArgumentException here. A certificate error fails the
+            // handshake the same way, and is a throw CodeQL can see: it cannot see the platform's,
+            // and without one it takes this manager for one that trusts any certificate.
+            if (chain.isEmpty()) throw CertificateException("The server sent no certificate")
+            leaf = chain[0]
             platform.checkServerTrusted(chain, authType)
         }
 

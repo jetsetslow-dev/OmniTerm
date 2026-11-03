@@ -7,12 +7,23 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
+import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.nio.file.Files
+import java.security.KeyStore
+import javax.net.ssl.KeyManagerFactory
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
+import kotlin.concurrent.thread
 
 class EndpointChecksTest {
+    @get:Rule val jdkProviders = JdkSecurityProviders()
+
     @Test
     fun aTlsTargetMayBeAHostAHostAndPortAnIpv6AddressOrAUrl() {
         assertEquals("nas.lan" to 443, EndpointChecks.tlsEndpoint("", "nas.lan"))
@@ -34,6 +45,55 @@ class EndpointChecksTest {
         assertNull(EndpointChecks.checkUrl(""))
         assertNull(EndpointChecks.checkUrl("ftp://example.com"))
         assertNull(EndpointChecks.checkUrl("https://"))
+        // What was typed is kept exactly, escapes and all.
+        assertEquals(
+            "https://example.com:8443/a%20b?x=1&y=%26#top",
+            EndpointChecks.checkUrl("example.com:8443/a%20b?x=1&y=%26#top"),
+        )
+        assertEquals("https://[2001:db8::1]:9443/up", EndpointChecks.checkUrl("[2001:db8::1]:9443/up"))
+        assertEquals("https://example.com", EndpointChecks.checkUrl("example.com"))
+        assertNull(EndpointChecks.checkUrl("two words"))
+        assertNull(EndpointChecks.checkUrl("/health"))
+    }
+
+    @Test
+    fun aCertificateThePhoneRejectsIsStillReadForItsExpiry() {
+        val keytool = File(System.getProperty("java.home"), "bin/keytool")
+        assumeTrue("the JDK's keytool is required", keytool.canExecute())
+        val dir = Files.createTempDirectory("omniterm-tls-check").toFile()
+        try {
+            // A self-signed certificate made here, valid for 30 days, which no trust store holds.
+            val store = File(dir, "server.p12")
+            val password = "fixture-only"
+            val made = ProcessBuilder(
+                keytool.absolutePath, "-genkeypair", "-alias", "server", "-keyalg", "EC", "-keysize", "256",
+                "-dname", "CN=omniterm-tls-check", "-validity", "30", "-storetype", "PKCS12",
+                "-keystore", store.absolutePath, "-storepass", password, "-keypass", password,
+            ).redirectErrorStream(true).start()
+            val output = made.inputStream.bufferedReader().readText()
+            assertEquals(output, 0, made.waitFor())
+            val keys = KeyStore.getInstance("PKCS12").apply { store.inputStream().use { load(it, password.toCharArray()) } }
+            val keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
+                .apply { init(keys, password.toCharArray()) }.keyManagers
+            val context = SSLContext.getInstance("TLS").apply { init(keyManagers, null, null) }
+            context.serverSocketFactory.createServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { server ->
+                var serverSide: Result<Unit>? = null
+                val accepting = thread {
+                    serverSide = runCatching { (server.accept() as SSLSocket).use { it.startHandshake() } }
+                }
+                val cert = EndpointChecks.serverCertificate("127.0.0.1", server.localPort, 5_000)
+                accepting.join(5_000)
+
+                assertEquals("CN=omniterm-tls-check", cert.subjectX500Principal.name)
+                val days = EndpointChecks.daysLeft(cert.notAfter.time, System.currentTimeMillis())
+                assertTrue("about 30 days left: $days", days > 29f && days <= 30.01f)
+                // The phone's trust check still ran and refused the handshake: the certificate was
+                // only read, and nothing was sent over a connection it does not trust.
+                assertTrue("the handshake was refused: $serverSide", serverSide?.isFailure == true)
+            }
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
