@@ -178,6 +178,7 @@ fun SecurityKeyDialog(viewModel: AppViewModel) {
             Text(
                 when (val job = pending.job) {
                     is SecurityKeyJob.SignIn -> stringResource(R.string.sign_in_to, job.hostName)
+                    is SecurityKeyJob.Forwarded -> stringResource(R.string.security_key_forwarded_title, job.hostName)
                     is SecurityKeyJob.Create -> stringResource(R.string.security_key_create_title)
                 },
             )
@@ -186,6 +187,10 @@ fun SecurityKeyDialog(viewModel: AppViewModel) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (val job = pending.job) {
                     is SecurityKeyJob.SignIn -> Text(job.destination, fontWeight = FontWeight.Bold)
+                    is SecurityKeyJob.Forwarded -> Text(
+                        job.signingInAs?.let { stringResource(R.string.security_key_forwarded_as, it) }
+                            ?: stringResource(R.string.security_key_forwarded),
+                    )
                     is SecurityKeyJob.Create -> Text("${job.alias} · ${job.type.label}", fontWeight = FontWeight.Bold)
                 }
                 Text(

@@ -57,8 +57,9 @@ class JschSftp(
      * (potential) session handshake and the channel work run on [Dispatchers.IO] — never the caller's
      * (UI) thread — since [SshSessionPool.acquire] may dial+authenticate a brand-new connection.
      *
-     * A stale pooled session usually fails at channel open — before [block] has done anything —
-     * and that phase is always evict-and-retried once. Failures *inside* [block] retry only when
+     * A stale pooled session usually fails at channel open — before [block] has done anything — and
+     * a reused one that fails there is always evicted and retried once, even while JSch still calls
+     * it connected. Failures *inside* [block] retry only when
      * [retryBlockOnStaleSession] allows it: streaming transfers must pass false, because their
      * caller-owned streams are already partially written/consumed, and re-running the block would
      * silently duplicate downloaded bytes or upload only the leftover tail.
@@ -69,12 +70,19 @@ class JschSftp(
             val lease = pool.acquire(creds, interactiveAuth)
             val session = lease.session
             val channel: ChannelSftp = try {
-                (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
+                // A warm connection opens a channel in one round trip. One whose network went away
+                // without a word (a NAT that forgot it, a change of Wi-Fi) still says it is
+                // connected, and its channels never open, so it gets less time than a new one.
+                val openTimeout = if (lease.reused) WARM_CHANNEL_OPEN_TIMEOUT_MS else CONNECT_TIMEOUT_MS
+                (session.openChannel("sftp") as ChannelSftp).also { it.connect(openTimeout) }
             } catch (e: CancellationException) {
                 lease.close()
                 throw e
             } catch (e: Exception) {
-                if (!session.isConnected) {
+                // A reused connection that cannot open a channel is replaced, whatever it says. A new
+                // one that cannot is the server's answer (no SFTP there), and replacing it could ask
+                // the user for another one-time code.
+                if (lease.reused || !session.isConnected) {
                     pool.evict(creds, session)
                     if (attempt++ < 1) {
                         lease.close()
@@ -285,6 +293,9 @@ class JschSftp(
 
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15_000
+
+        /** How long a pooled connection gets to open a channel before it counts as gone. */
+        private const val WARM_CHANNEL_OPEN_TIMEOUT_MS = 5_000
         private const val METADATA_OPERATION_TIMEOUT_MS = 2 * 60_000L
         private const val TRANSFER_TIMEOUT_MS = 6 * 60 * 60_000L
         private const val PROGRESS_REPORT_BYTES = 64 * 1024L

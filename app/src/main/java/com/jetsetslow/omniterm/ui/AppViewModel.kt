@@ -531,6 +531,9 @@ class PendingInteractiveAuth(val hostName: String, val request: InteractiveAuthR
 /** What a security key is wanted for: signing in to a saved host, or making a new SSH key. */
 sealed interface SecurityKeyJob {
     data class SignIn(val hostName: String, val destination: String) : SecurityKeyJob
+
+    /** A program on [hostName] asks through agent forwarding, signing in somewhere else [signingInAs] that user. */
+    data class Forwarded(val hostName: String, val signingInAs: String?) : SecurityKeyJob
     data class Create(val alias: String, val type: SkKeyType) : SecurityKeyJob
 }
 
@@ -2191,7 +2194,14 @@ class AppViewModel @JvmOverloads constructor(
         }
 
         override suspend fun signWithSecurityKey(request: SecurityKeySignRequest): SecurityKeyAssertion? =
-            useSecurityKey(SecurityKeyJob.SignIn(hostName, request.destination), request.key.requiresPin) { session, pin, state ->
+            useSecurityKey(
+                if (request.forwarded) {
+                    SecurityKeyJob.Forwarded(hostName, request.forwardedUser)
+                } else {
+                    SecurityKeyJob.SignIn(hostName, request.destination)
+                },
+                request.key.requiresPin,
+            ) { session, pin, state ->
                 SecurityKeyCtap.sign(session, request, pin, state)
             }
     }

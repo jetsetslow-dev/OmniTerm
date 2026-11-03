@@ -150,6 +150,8 @@ internal fun buildJschSession(
         emptyList()
     }
     val session = jsch.getSession(creds.username, creds.host, creds.port)
+    // Before the proxy: JSch dials a proxy through the same factory.
+    session.setSocketFactory(EveryAddressSocketFactory())
     if (!creds.password.isNullOrEmpty()) session.setPassword(creds.password)
     session.userInfo = signIn
     applyProxy(session, creds)
@@ -266,6 +268,7 @@ internal fun buildJumpedJschSession(
         emptyList()
     }
     val jump = jumpJsch.getSession(jumpUser, creds.proxyHost.trim(), creds.proxyPort)
+    jump.setSocketFactory(EveryAddressSocketFactory())
     if (creds.proxyPassword.isNotEmpty()) jump.setPassword(creds.proxyPassword)
     jump.userInfo = jumpSignIn
     jump.setConfig(Properties().apply {

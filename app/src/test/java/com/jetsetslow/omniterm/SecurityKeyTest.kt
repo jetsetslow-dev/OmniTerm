@@ -9,11 +9,14 @@ import com.jetsetslow.omniterm.data.ssh.OpenSshKeyFile
 import com.jetsetslow.omniterm.data.ssh.SecurityKeyAssertion
 import com.jetsetslow.omniterm.data.ssh.SecurityKeyIdentity
 import com.jetsetslow.omniterm.data.ssh.SecurityKeySignRequest
+import com.jetsetslow.omniterm.data.ssh.SecurityKeySignatures
 import com.jetsetslow.omniterm.data.ssh.SkKey
 import com.jetsetslow.omniterm.data.ssh.SkKeyType
 import com.jetsetslow.omniterm.data.ssh.SshKeyMaterial
 import com.jetsetslow.omniterm.data.ssh.SshWire
+import com.jetsetslow.omniterm.data.ssh.SshWriter
 import com.jetsetslow.omniterm.data.ssh.signInFailureMessage
+import kotlinx.coroutines.awaitCancellation
 import org.junit.Test
 
 /**
@@ -64,6 +67,66 @@ class SecurityKeyTest {
         assertThat(SecurityKeyIdentity(key, "test", "me@host", InteractiveAuth { null }, cancelled).getSignature(ByteArray(8), key.type.sshName))
             .isNull()
         assertThat(cancelled.cancelledByUser).isTrue()
+    }
+
+    @Test
+    fun aForwardedRequestSaysSoAndWaitsOnlyBriefly() {
+        val token = SoftwareSecurityKey(SkKeyType.Ed25519)
+        val key = token.sshKey()
+        var asked: SecurityKeySignRequest? = null
+        val ask = object : InteractiveAuth {
+            override suspend fun answer(request: com.jetsetslow.omniterm.data.ssh.InteractiveAuthRequest) = null
+            override suspend fun signWithSecurityKey(request: SecurityKeySignRequest): SecurityKeyAssertion {
+                asked = request
+                return token.assert(request)
+            }
+        }
+        // What an onward ssh asks a forwarded agent to sign: its own sign-in, as "deploy".
+        val onward = SshWriter().bytes(ByteArray(32) { 7 }).byte(50).string("deploy").string("ssh-connection")
+            .string("publickey").byte(1).string(key.type.sshName).bytes(key.publicBlob).toByteArray()
+        val signIn = KeyboardInteractiveUserInfo(null, ask)
+        val identity = SecurityKeyIdentity(key, "test", "me@bastion", ask, signIn)
+        // JSch's agent forwarding asks without an algorithm (ChannelAgentForwarding).
+        assertThat(token.sshdAccepts(identity.getSignature(onward)!!, onward)).isTrue()
+        assertThat(asked!!.forwarded).isTrue()
+        assertThat(asked!!.forwardedUser).isEqualTo("deploy")
+        assertThat(asked!!.destination).isEqualTo("me@bastion")
+        assertThat(signIn.answeredByUser).isFalse()
+
+        // Its own sign-in is not forwarded.
+        identity.getSignature(onward, key.type.sshName)
+        assertThat(asked!!.forwarded).isFalse()
+
+        // The connection waits on a forwarded request only briefly, and an unanswered one is not
+        // this connection's own sign-in being cancelled.
+        val nobody = KeyboardInteractiveUserInfo(null, InteractiveAuth { null })
+        val waiting = object : InteractiveAuth {
+            override suspend fun answer(request: com.jetsetslow.omniterm.data.ssh.InteractiveAuthRequest) = null
+            override suspend fun signWithSecurityKey(request: SecurityKeySignRequest): SecurityKeyAssertion = awaitCancellation()
+        }
+        val started = System.nanoTime()
+        assertThat(SecurityKeyIdentity(key, "test", "me@bastion", waiting, nobody, forwardedTimeoutMs = 200).getSignature(onward)).isNull()
+        assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(5_000L)
+        assertThat(nobody.cancelledByUser).isFalse()
+        assertThat(SecurityKeyIdentity.FORWARDED_PROMPT_TIMEOUT_MS).isLessThan(KeyboardInteractiveUserInfo.PROMPT_TIMEOUT_MS)
+
+        assertThat(SecurityKeyIdentity.signInUser("not a sign-in".toByteArray())).isNull()
+    }
+
+    @Test
+    fun aSignatureWithoutTheTouchOrPinTheKeyRequiresIsRefusedHere() {
+        val token = SoftwareSecurityKey(SkKeyType.Ed25519)
+        val touch = token.sshKey(SkKey.USER_PRESENCE_REQUIRED)
+        val pin = token.sshKey(SkKey.USER_PRESENCE_REQUIRED or SkKey.USER_VERIFICATION_REQUIRED)
+        val noTouch = token.sshKey(0)
+        fun authData(key: SkKey, flags: Int) = token.assert(SecurityKeySignRequest("me@host", key, ByteArray(32)), flags).authenticatorData
+
+        assertThat(SecurityKeySignatures.missingConsent(touch, authData(touch, 0x01))).isNull()
+        assertThat(SecurityKeySignatures.missingConsent(touch, authData(touch, 0x00))).contains("without a touch")
+        assertThat(SecurityKeySignatures.missingConsent(pin, authData(pin, 0x05))).isNull()
+        assertThat(SecurityKeySignatures.missingConsent(pin, authData(pin, 0x01))).contains("without checking your PIN")
+        assertThat(SecurityKeySignatures.missingConsent(noTouch, authData(noTouch, 0x00))).isNull()
+        assertThat(SecurityKeySignatures.missingConsent(touch, ByteArray(10))).isNotNull()
     }
 
     @Test

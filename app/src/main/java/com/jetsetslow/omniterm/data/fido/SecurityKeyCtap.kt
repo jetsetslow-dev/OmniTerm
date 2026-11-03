@@ -2,6 +2,7 @@ package com.jetsetslow.omniterm.data.fido
 
 import com.jetsetslow.omniterm.data.ssh.SecurityKeyAssertion
 import com.jetsetslow.omniterm.data.ssh.SecurityKeySignRequest
+import com.jetsetslow.omniterm.data.ssh.SecurityKeySignatures
 import com.jetsetslow.omniterm.data.ssh.SkKey
 import com.jetsetslow.omniterm.data.ssh.SkKeyType
 import com.yubico.yubikit.core.application.CommandState
@@ -44,6 +45,7 @@ object SecurityKeyCtap {
                 state,
             ).first()
         }
+        SecurityKeySignatures.missingConsent(key, assertion.authenticatorData)?.let { throw Failure(it) }
         return SecurityKeyAssertion(assertion.authenticatorData, assertion.signature)
     }
 

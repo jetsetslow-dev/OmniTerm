@@ -1343,6 +1343,9 @@
     <string name="security_key_plug">"Plug in your security key."</string>
     <string name="security_key_nfc_off">"NFC is off. Turn it on to use a security key by holding it to the phone."</string>
     <string name="security_key_touch">"Touch your security key."</string>
+    <string name="security_key_forwarded_title">"%1$s asks to use your security key"</string>
+    <string name="security_key_forwarded_as">"A program there is signing in somewhere else as %1$s, through your forwarded agent. Cancel unless you started it."</string>
+    <string name="security_key_forwarded">"A program there is using your forwarded agent. Cancel unless you started it."</string>
     <string name="security_key_working">"Talking to your security key…"</string>
     <string name="security_key_pin">"Security key PIN"</string>
     <string name="security_key_pin_needed">"Enter your security key's PIN, then use the key again."</string>

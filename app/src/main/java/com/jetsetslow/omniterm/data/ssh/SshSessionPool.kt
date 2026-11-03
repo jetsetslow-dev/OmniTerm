@@ -33,8 +33,13 @@ internal class SshSessionPool(
         val retired = AtomicBoolean(false)
     }
 
+    /**
+     * [reused]: the session was connected before this lease, so its network may have gone away
+     * since without JSch noticing; a new one has just signed in.
+     */
     internal class Lease internal constructor(
         val session: Session,
+        val reused: Boolean = false,
         private val releaseAction: () -> Unit,
     ) : AutoCloseable {
         private val released = AtomicBoolean(false)
@@ -80,9 +85,11 @@ internal class SshSessionPool(
         // Per-key lock so two concurrent callers for the same host don't both open a session.
         val lock = locks.getOrPut(k) { Mutex() }
         return lock.withLock {
+            var reused = true
             val entry = sessions[k]?.takeIf {
                 it.generation == expectedGeneration && !it.retired.get() && it.session.isConnected
             } ?: run {
+                reused = false
                 sessions.remove(k)?.let(::retire)
                 if (interactiveAuth == null && (needsUserUntil[k] ?: 0L) > System.currentTimeMillis()) {
                     throw JSchException(needsUserBecause[k] ?: NEEDS_INTERACTIVE_AUTH)
@@ -116,7 +123,7 @@ internal class SshSessionPool(
                 release(entry)
                 error("SSH session pool was reset while acquiring a session")
             }
-            Lease(entry.session) { release(entry) }
+            Lease(entry.session, reused) { release(entry) }
         }
     }
 

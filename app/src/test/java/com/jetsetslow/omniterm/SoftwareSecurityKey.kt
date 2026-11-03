@@ -51,9 +51,10 @@ internal class SoftwareSecurityKey(val type: SkKeyType) {
     fun sshKey(flags: Int = SkKey.USER_PRESENCE_REQUIRED) =
         SkKey(type, publicKey, SkKey.DEFAULT_APPLICATION, flags, byteArrayOf(9, 8, 7, 6))
 
-    fun assert(request: SecurityKeySignRequest): SecurityKeyAssertion {
+    /** [flags]: the authenticator data's flags byte; 0x01 says the user touched the key, 0x04 that it checked their PIN. */
+    fun assert(request: SecurityKeySignRequest, flags: Int = 0x01): SecurityKeyAssertion {
         counter++
-        val authData = SshWire.sha256(request.key.application.toByteArray()) + byteArrayOf(0x01) +
+        val authData = SshWire.sha256(request.key.application.toByteArray()) + byteArrayOf(flags.toByte()) +
             SshWriter().uint32(counter).toByteArray()
         val signed = authData + request.clientDataHash
         val signature = when (type) {

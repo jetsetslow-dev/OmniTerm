@@ -65,17 +65,42 @@ class SkKey(
 
 /** What a security key signs to sign in: [key]'s handle and the hash of the SSH sign-in data. */
 class SecurityKeySignRequest(
-    /** Where the key signs in to, as `user@host`. */
+    /** Where the key signs in to, as `user@host`; for a [forwarded] request, the host that asks. */
     val destination: String,
     val key: SkKey,
     /** SHA-256 of the data SSH signs; CTAP's clientDataHash, as OpenSSH sends it. */
     val clientDataHash: ByteArray,
+    /** A program on [destination] asks through agent forwarding, to sign in somewhere else. */
+    val forwarded: Boolean = false,
+    /** The user a [forwarded] request signs in as there, when the data it signs says so. */
+    val forwardedUser: String? = null,
 )
 
 /** A security key's answer: CTAP authenticator data and the signature over it and the client data hash. */
 class SecurityKeyAssertion(val authenticatorData: ByteArray, val signature: ByteArray)
 
 internal object SecurityKeySignatures {
+    /** Bits of the authenticator data's flags byte (WebAuthn): the user touched the key, and the key checked who they are. */
+    private const val USER_PRESENT = 0x01
+    private const val USER_VERIFIED = 0x04
+
+    /**
+     * Why sshd would refuse [authenticatorData] for [key], or null: a key that requires a touch or
+     * the PIN only accepts a signature whose flags say it had one.
+     */
+    fun missingConsent(key: SkKey, authenticatorData: ByteArray): String? {
+        if (authenticatorData.size < 37) return "The security key's answer is too short."
+        val flags = authenticatorData[32].toInt() and 0xff
+        return when {
+            key.requiresTouch && flags and USER_PRESENT == 0 ->
+                "The security key signed without a touch, which this SSH key requires, so the server would refuse it. Try again."
+            key.requiresPin && flags and USER_VERIFIED == 0 ->
+                "The security key signed without checking your PIN, which this SSH key requires, so the server would refuse it. " +
+                    "Try again, and if it happens again, set a PIN on the key with its maker's app."
+            else -> null
+        }
+    }
+
     /**
      * [assertion] as the SSH signature blob for [type] (PROTOCOL.u2f): the algorithm, the raw
      * signature, then the flags and counter the security key signed over.

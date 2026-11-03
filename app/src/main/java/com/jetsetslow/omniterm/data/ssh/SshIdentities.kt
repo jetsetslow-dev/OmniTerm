@@ -55,6 +55,12 @@ internal class CertificateIdentity(private val inner: Identity, private val cert
 /**
  * A key on a FIDO security key. Each signature asks [ask] to have the user touch the key; without
  * anyone to ask (background work) it signs nothing, and [signIn] records why.
+ *
+ * JSch's own sign-in asks with the algorithm ([UserAuthPublicKey]); only agent forwarding asks
+ * without one (ChannelAgentForwarding, for every key but RSA), when a program on the host signs in
+ * somewhere else with this key. That request is answered on the thread that reads the whole
+ * connection, so nothing else on it moves until the key answers: it waits [forwardedTimeoutMs],
+ * within the time servers commonly allow for a keepalive reply, rather than [timeoutMs].
  */
 internal class SecurityKeyIdentity(
     private val key: SkKey,
@@ -63,24 +69,54 @@ internal class SecurityKeyIdentity(
     private val ask: InteractiveAuth?,
     private val signIn: KeyboardInteractiveUserInfo,
     private val timeoutMs: Long = KeyboardInteractiveUserInfo.PROMPT_TIMEOUT_MS,
+    private val forwardedTimeoutMs: Long = FORWARDED_PROMPT_TIMEOUT_MS,
 ) : Identity {
     override fun getAlgName(): String = key.type.sshName
     override fun getPublicKeyBlob(): ByteArray = key.publicBlob
-    override fun getSignature(data: ByteArray): ByteArray? = getSignature(data, algName)
+    override fun getSignature(data: ByteArray): ByteArray? = sign(data, forwarded = true)
+    override fun getSignature(data: ByteArray, alg: String): ByteArray? = sign(data, forwarded = false)
 
-    override fun getSignature(data: ByteArray, alg: String): ByteArray? {
+    private fun sign(data: ByteArray, forwarded: Boolean): ByteArray? {
         val ask = ask ?: run {
-            signIn.securityKeyNeeded()
+            if (!forwarded) signIn.securityKeyNeeded()
             return null
         }
-        val request = SecurityKeySignRequest(destination, key, SshWire.sha256(data))
-        val assertion = runBlocking { withTimeoutOrNull(timeoutMs) { ask.signWithSecurityKey(request) } }
+        val request = SecurityKeySignRequest(
+            destination,
+            key,
+            SshWire.sha256(data),
+            forwarded = forwarded,
+            forwardedUser = if (forwarded) signInUser(data) else null,
+        )
+        val wait = if (forwarded) forwardedTimeoutMs else timeoutMs
+        val assertion = runBlocking { withTimeoutOrNull(wait) { ask.signWithSecurityKey(request) } }
+        // A forwarded request is someone else's sign-in: it says nothing about this connection's own.
         if (assertion == null) {
-            signIn.securityKeyCancelled()
+            if (!forwarded) signIn.securityKeyCancelled()
             return null
         }
-        signIn.securityKeyUsed()
+        if (!forwarded) signIn.securityKeyUsed()
         return SecurityKeySignatures.encode(key.type, assertion)
+    }
+
+    companion object {
+        const val FORWARDED_PROMPT_TIMEOUT_MS = 20_000L
+
+        /**
+         * The user [data] signs in as, when it is an SSH public key sign-in (RFC 4252 §7: session
+         * id, then SSH_MSG_USERAUTH_REQUEST, user, service, "publickey"); null for anything else.
+         */
+        internal fun signInUser(data: ByteArray): String? = runCatching {
+            val reader = SshReader(data)
+            reader.bytes()
+            if (reader.byte() != SSH_MSG_USERAUTH_REQUEST) return null
+            val user = reader.string()
+            reader.string()
+            if (reader.string() != "publickey") return null
+            user
+        }.getOrNull()
+
+        private const val SSH_MSG_USERAUTH_REQUEST = 50
     }
 
     override fun getName(): String = name
