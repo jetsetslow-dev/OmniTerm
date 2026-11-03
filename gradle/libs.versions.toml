@@ -51,7 +51,7 @@ commonsNet = "3.13.0"
 jsch = "0.2.26"
 bcprov = "1.86"
 yubikit = "3.3.0"
-guavaAndroid = "33.7.2-android"
+guavaAndroid = "33.8.0-android"
 browser = "1.10.0"
 
 [libraries]
