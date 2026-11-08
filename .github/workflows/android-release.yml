@@ -334,7 +334,7 @@ jobs:
       - name: Run release unit tests and Android lint
         run: >-
           ./gradlew
-          testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest
+          testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest :shared:testAndroidHostTest
           lintOpenSourceDebug lintPlayStoreDebug
           --no-daemon --no-configuration-cache
           -Dorg.gradle.jvmargs=-Xmx4g

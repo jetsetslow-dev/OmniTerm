@@ -140,7 +140,8 @@ object SshConfigParser {
         val options = LinkedHashMap<String, String>()
         for (block in blocks) {
             if (!matches(alias, block.patterns)) continue
-            for ((key, value) in block.settings) options.putIfAbsent(key, value)
+            // The first value given for an option wins, as in ssh_config.
+            for ((key, value) in block.settings) options.getOrPut(key) { value }
         }
         return options
     }

@@ -2,11 +2,11 @@ package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.SshConfigJump
 import com.jetsetslow.omniterm.data.SshConfigParser
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 /** ssh_config files read as `ssh` reads them: first value wins, wildcard blocks fill in. */
 class SshConfigParserTest {
@@ -40,7 +40,7 @@ class SshConfigParserTest {
         assertEquals(listOf("web", "nas"), file.hosts.map { it.alias })
         val web = file.hosts[0]
         assertEquals("203.0.113.10", web.hostName)
-        assertEquals("the host's own User, not the later Host * one", "deploy", web.user)
+        assertEquals("deploy", web.user, "the host's own User, not the later Host * one")
         assertEquals(2222, web.port)
         assertEquals("~/.ssh/id_ed25519", web.identityFile)
         assertTrue(web.forwardAgent)
@@ -87,7 +87,7 @@ class SshConfigParserTest {
         assertEquals(SshConfigJump("bastion.example.net", 2200, "jump", "~/.ssh/bastion_key"), byAlias.getValue("db").jump)
         assertEquals(SshConfigJump("198.51.100.7", 2022, "ops", null), byAlias.getValue("app").jump)
         assertEquals(listOf("Goes through 2 jump hosts; only the first, ops@198.51.100.7:2022, is used."), byAlias.getValue("app").notes)
-        assertEquals("ProxyCommand ssh -W is a jump host", "bastion.example.net", byAlias.getValue("old").jump?.host)
+        assertEquals("bastion.example.net", byAlias.getValue("old").jump?.host, "ProxyCommand ssh -W is a jump host")
         assertNull(byAlias.getValue("odd").jump)
         assertEquals(listOf("Its ProxyCommand is not supported."), byAlias.getValue("odd").notes)
     }
@@ -110,7 +110,7 @@ class SshConfigParserTest {
         )
         val byAlias = file.hosts.associateBy { it.alias }
 
-        assertEquals("negated out of the Host * block", "", byAlias.getValue("secure").user)
+        assertEquals("", byAlias.getValue("secure").user, "negated out of the Host * block")
         assertEquals(listOf("Its local port forwards are not imported."), byAlias.getValue("secure").notes)
         assertEquals("192.0.2.2", byAlias.getValue("plain").hostName)
         assertEquals("everyone", byAlias.getValue("plain").user)

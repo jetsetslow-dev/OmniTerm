@@ -31,8 +31,10 @@ resolve_project_graphs() {
       buildEnvironment \
       :app:buildEnvironment \
       :benchmark:buildEnvironment \
+      :shared:buildEnvironment \
       :app:dependencies \
       :benchmark:dependencies \
+      :shared:dependencies \
       "${COMMON_ARGS[@]}" \
       "${metadata_args[@]}" >"$log_file" 2>&1; then
     cat "$log_file" >&2
@@ -76,10 +78,17 @@ resolve_compile_graph() {
   local -a metadata_args=("$@")
   local log_file
   log_file="$(mktemp "${TMPDIR:-/tmp}/omniterm-compile-graph.XXXXXX.log")"
-  echo "Resolving the compile graph (assemble, as CI does)"
+  echo "Resolving the compile graph (assemble, as CI does, and the shared module for iOS)"
+  # Kotlin/Native compiles the iOS klibs on any host, so this resolves the iOS libraries here. The
+  # compiler itself is downloaded per host: the macOS one that iOS CI uses is fetched only on a Mac,
+  # so its checksums in gradle/verification-metadata.xml were added by hand from Maven Central, and
+  # --write keeps them.
   if ! ./gradlew \
       :app:assembleOpenSourceDebug \
       :app:assemblePlayStoreDebug \
+      :shared:compileKotlinIosArm64 \
+      :shared:compileKotlinIosSimulatorArm64 \
+      :shared:compileTestKotlinIosSimulatorArm64 \
       "${COMMON_ARGS[@]}" \
       "${metadata_args[@]}" >"$log_file" 2>&1; then
     cat "$log_file" >&2

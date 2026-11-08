@@ -94,7 +94,7 @@ else
 fi
 
 ./gradlew \
-  testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest \
+  testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest :shared:testAndroidHostTest \
   lintOpenSourceDebug lintPlayStoreDebug \
   "${GRADLE_ARGS[@]}"
 # As PR Check does: the test classes this branch adds or changes, committed or not, five more

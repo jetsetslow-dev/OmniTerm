@@ -1,74 +1,64 @@
-# Kotlin host colors — 2026-11-03
+# Kotlin Multiplatform, phase 1 — 2026-11-09
 
-Scope: make host identity colors more varied, distinguishable and professional. This branch
-starts from the merged Kotlin fixes. Independent review and merge remain the user's responsibility.
+Scope: the shared Kotlin module and an iOS app that builds and tests on CI, the first step of
+OmniTerm on iOS (decision: `docs/adr/0004-kotlin-multiplatform-for-ios.md`). This branch starts
+from main 06474d5. New features land first on `kotlin-automation` (PR #138); this branch merges
+main as they do. Independent review and merge remain the user's responsibility.
 
 ## Implemented
 
-- Replace six neighboring neon hues with eight muted choices: Blue, Copper, Teal, Rose, Gold,
-  Plum, Olive and Ocean. Alternate hues for automatic ID-based assignment; renaming stays stable.
-- Give each hue a brighter dark-theme tone and a deeper light-theme tone. Share the theme-aware
-  host color helper across cards, session chrome, host menus, monitoring and tool results.
-- Replace unlabeled dots with wrapping named chips, visible selection checkmarks and a selectable
-  Automatic option in the shared Add/Edit/Clone form. Explain that host colors identify hosts;
-  connection health keeps its separate status indicators.
-- Read all legacy stored color names without rewriting hosts or backups. The previous six
-  explicit choices map to six distinct replacements. Keep global status tokens unchanged.
-- Add regression guards for perceptual separation, text contrast on supported surfaces, legacy
-  aliases, stable ID assignment and shared host-ID lookup. Exercise the real chooser in both themes.
+- `shared/`: a Kotlin Multiplatform module for Android and iOS (`iosArm64`,
+  `iosSimulatorArm64`), building the dynamic `OmniTermShared` framework.
+- Pure logic moved to `shared/src/commonMain` under its old package, so app imports are unchanged:
+  `HealthScoring`, `SshConfig`, `RefreshOutcome`, `RemoteModels`, `HostTools`.
+  - `HostTool`'s PATH and time bounds moved to a new shared `HostShell` object; `RemoteCommands`
+    points at it, so there is still one copy.
+  - `SshConfig`'s JVM-only `putIfAbsent` became `getOrPut` (first value wins, as before).
+- Their tests moved to `shared/src/commonTest` on `kotlin.test`. The JVM run is
+  `:shared:testAndroidHostTest`; the iOS run is `:shared:iosSimulatorArm64Test` (macOS only).
+  Kotlin/Native refuses a comma in a backtick test name, so `RefreshOutcomeTest` uses camelCase.
+- Compose Multiplatform 1.12.2 and the Compose compiler apply to the iOS source set only. The
+  Android app's dependencies are unchanged.
+- `iosApp/`: an XcodeGen project (iOS 17, Swift 6) for a SwiftUI app hosting a shared Compose
+  screen that says the iOS app is in development, a privacy manifest, and an XCTest suite that calls
+  the shared ssh_config parser from Swift and loads the screen.
+- CI:
+  - New `iOS Check` workflow on macOS: shared tests on the simulator, then `xcodebuild test` on the
+    newest iPhone simulator. Actions pinned to the Android workflows' commits; XcodeGen 2.46.0
+    checked against its SHA-256.
+  - `:shared:testAndroidHostTest` added to PR Check, the debug and release workflows, the
+    main-branch gate (`scripts/ci-gradle-gate.sh` and its test) and `scripts/local-pr-check.sh`.
+  - `shared/` added to the PR Check and CodeQL change detectors, with a detector test that fails
+    without it.
+- Dependency verification: the refresh resolves the shared module and its iOS libraries. The
+  macOS Kotlin/Native prebuilt, which only a Mac downloads, has hand-added checksums from Maven
+  Central (its SHA-1 matches Maven Central's published one).
+- Dependency updates the gate requires, the same versions `kotlin-automation` took in 82702ea: AGP
+  9.5.1, Gradle 9.9.0, biometric 1.4.0-beta01, mockk 1.14.12, Roborazzi 1.78.0, UI Automator
+  2.4.1, setup-java 6.2.0, codeql-action 4.39.3. Kotlin stays at 2.4.0 (CodeQL lists up to 2.4.20;
+  Dependabot would propose 2.4.21); the hold now names `org.jetbrains.kotlin.multiplatform` too.
 
-- Take the CodeQL Action 4.39.2 patch required by the dependency-update gate; pin its full
-  commit in analysis/SARIF workflows and align the local CLI and verified bundle digest to 2.27.4.
+## Validation
 
-## Final local validation
+- On this Linux host: `:shared:compileAndroidMain`, `:shared:compileKotlinIosArm64`,
+  `:shared:compileKotlinIosSimulatorArm64` and `:shared:compileTestKotlinIosSimulatorArm64`
+  pass; linking and running iOS tests need macOS, so CI does those.
+- `:shared:testAndroidHostTest`: HealthScoringTest 4, RefreshOutcomeTest 9, SshConfigParserTest 4,
+  all passed.
+- `scripts/test-change-detectors.sh`: 29 checks passed; the shared case fails with `shared/`
+  removed. `scripts/test-ci-gradle-gate.sh` passed. Actions allowlist: every action allowed.
+- `./scripts/local-pr-check.sh --full` passed on this tree: unit tests with the shared JVM run,
+  lint, strict dependency verification, no advisories or outstanding updates, secret scan, the API
+  35 device matrix (15 tests), and CodeQL 2.27.4 with no alerts (75,852 lines).
+- iOS Check on macOS: pending until the branch is pushed.
 
-`./scripts/local-pr-check.sh --full` passed on the final build-affecting tree.
+## Next on this branch
 
-| Check | Result |
-| --- | --- |
-| Both full unit variants | 909 discovered, **901 passed / 8 skipped** per variant; no failures/errors |
-| Changed test repeats | Six HostColorsTest cases, five additional Play Store runs; **6 passed / 0 skipped** each |
-| Both Android lint gates | Passed |
-| Strict fresh dependency verification | Project, buildscript, test, lint, instrumentation, benchmark, both release SBOM and compile graphs passed |
-| Metadata refresh | Required `--write` and its strict verify pass succeeded; no checksum-file changes needed |
-| Dependency advisories and updates | No moderate-or-higher advisories (201 Maven / 13 Actions); no proposed updates under holds (66 Gradle / 36 Actions) |
-| Secret scanner and duplicate checks | Passed, including complete history and both local diffs |
-| Ordinary API 35 instrumentation | 70 discovered, **28 passed / 42 opt-in E2E skipped**, no failures/errors |
-| API 35 Room matrix | **6 passed / 0 skipped**, included above |
-| Local CodeQL 2.27.4 | **Zero alerts; 75,770 lines analyzed**, all 121 production Java/Kotlin files extracted |
+1. Merge main as `kotlin-automation` features land.
+2. More pure logic into `commonMain` (the remote parsers need `String.format` and UTF-16LE
+   encoding replaced first).
+3. The Go network core behind `SshTransport` on Android, then iOS adapters (Keychain,
+   notifications, background limits) with a warning wherever Apple does not allow a feature.
 
-Unit skips are six opt-in SshSignInLiveTest cases and two unavailable TmuxAltScreenReplayTest
-captures. This x86_64 host excluded no ARM-unsupported native-runtime classes. CodeQL's 121/340
-source count covers all production files across both variants; tests and benchmark sources are
-outside the production compile. The final gate reused valid unchanged unit inputs after the
-CI-only CodeQL patch; the full suites had executed in the first attempt, and all five changed-test
-repeats executed again. The first attempt stopped at the update-policy check, not a source failure.
-
-## Explicit API 35 runtime checks
-
-The disposable repository SSH fleet was started with `./scripts/test-hosts.sh up`. App and test
-APKs were installed once before provisioning and explicit instrumentation, preserving seed data.
-
-- HostColorPickerInstrumentedTest: **1 passed / 0 skipped**; every named choice and restoration of
-  Automatic in both themes. It first failed on the old APK because Automatic was absent. The
-  separation guard first failed on the old Blue/Indigo pair.
-- E2eLabHostProvisioner, `omniterm_e2e_provision_host=yes` and `omniterm_e2e_trust_host=yes`:
-  **2 passed / 0 skipped** against the repository fixture.
-- E2eAppSurfaceStressTest, `omniterm_e2e_surfaces=yes` and `omniterm_e2e_sftp_home=/config`:
-  **1 passed / 0 skipped**; routes, subtabs, themes, rotation and remote loaders.
-- E2eTerminalNavigationMatrixTest, `omniterm_e2e_terminal_nav_matrix=yes`: **3 passed / 0 skipped**.
-  Its first run exposed a stale overflow assertion when all controls fit. Update only the test
-  to require pinned copy-range actions visible before scrolling; terminal behavior is unchanged.
-- E2eTerminalOptionsTest, `omniterm_e2e_terminal_options=yes`: **1 passed / 0 skipped**;
-  portrait/landscape and font scales 1.0, 1.5 and 2.0 against the disposable SSH fixture.
-
-## Publication boundary
-
-At checkpoint creation, exact-head hosted checks and the required API 29 Room gate are pending.
-Monitor Build & Test, Room migrations, release SBOM, CodeQL, dependency review, secret scanning
-and supply-chain analysis to terminal status after pushing; the PR description records their
-final result without creating another head merely to update CI status.
-
-Independent review and merge remain the user's responsibility. No automated approval or release
-is included. Before an authorized merge, consolidate this temporary tracker into the private
-handover and remove it from the merge tree.
+Before an authorized merge, consolidate this tracker into the private handover and remove it from
+the merge tree.
