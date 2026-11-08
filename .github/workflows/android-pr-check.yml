@@ -75,7 +75,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           match=0
-          grep -qE '^(app/|benchmark/|gradle/|scripts/|\.github/actions/|\.github/cyclonedx\.init\.gradle\.kts$|\.github/workflows/(android-pr-check|android-release|android-debug|dependabot-verification-metadata)\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)' "$changed_list" || match=$?
+          grep -qE '^(app/|shared/|benchmark/|gradle/|scripts/|\.github/actions/|\.github/cyclonedx\.init\.gradle\.kts$|\.github/workflows/(android-pr-check|android-release|android-debug|dependabot-verification-metadata)\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)' "$changed_list" || match=$?
           rm -f "$changed_list"
           if [ "$match" -eq 0 ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -130,7 +130,7 @@ jobs:
       - name: Run unit tests and Android lint
         run: >-
           ./gradlew
-          testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest
+          testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest :shared:testAndroidHostTest
           lintOpenSourceDebug lintPlayStoreDebug
           --no-daemon --no-configuration-cache
           -Dorg.gradle.jvmargs=-Xmx4g

@@ -2,10 +2,10 @@ package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.RefreshHostState
 import com.jetsetslow.omniterm.data.RefreshOutcome
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 /**
  * A pull-to-refresh that ends badly has to say so. The regression this guards is a host left on the
@@ -23,23 +23,23 @@ class RefreshOutcomeTest {
     ) = RefreshHostState(name, status, probed, authStatus, authError)
 
     @Test
-    fun `a healthy fleet reports nothing`() {
+    fun aHealthyFleetReportsNothing() {
         assertNull(RefreshOutcome.describe(listOf(host(), host(name = "beta")), 30))
     }
 
     @Test
-    fun `no hosts reports nothing`() {
+    fun noHostsReportsNothing() {
         assertNull(RefreshOutcome.describe(emptyList(), 30))
     }
 
     @Test
-    fun `a host still marked connecting is reported, not left silent`() {
+    fun aHostStillMarkedConnectingIsReportedNotLeftSilent() {
         val message = RefreshOutcome.describe(listOf(host(status = "connecting")), 30)
         assertEquals("Refresh problem on 1 host(s): atlas is still not answering after 30s", message)
     }
 
     @Test
-    fun `a host that never completed a probe is reported even when the row says online`() {
+    fun aHostThatNeverCompletedAProbeIsReportedEvenWhenTheRowSaysOnline() {
         // This is the exact stranding: the status column is not "connecting" but the row still
         // renders the spinner because no probe ever reached a verdict for it.
         assertTrue(RefreshOutcome.isStillChecking(host(status = "online", probed = false)))
@@ -48,7 +48,7 @@ class RefreshOutcomeTest {
     }
 
     @Test
-    fun `an offline host is reported as not responding on its route`() {
+    fun anOfflineHostIsReportedAsNotRespondingOnItsRoute() {
         assertEquals(
             "Refresh problem on 1 host(s): atlas did not respond on its configured SSH route",
             RefreshOutcome.describe(listOf(host(status = "offline")), 30),
@@ -56,7 +56,7 @@ class RefreshOutcomeTest {
     }
 
     @Test
-    fun `an auth failure surfaces the classified error`() {
+    fun anAuthFailureSurfacesTheClassifiedError() {
         assertEquals(
             "Refresh problem on 1 host(s): atlas: Permission denied (publickey).",
             RefreshOutcome.describe(
@@ -67,7 +67,7 @@ class RefreshOutcomeTest {
     }
 
     @Test
-    fun `an auth failure with no message still says something useful`() {
+    fun anAuthFailureWithNoMessageStillSaysSomethingUseful() {
         assertEquals(
             "Refresh problem on 1 host(s): atlas: SSH authentication failed.",
             RefreshOutcome.describe(listOf(host(authStatus = "failed", authError = null)), 30),
@@ -75,7 +75,7 @@ class RefreshOutcomeTest {
     }
 
     @Test
-    fun `still-checking wins over a stale auth failure on the same host`() {
+    fun stillCheckingWinsOverAStaleAuthFailureOnTheSameHost() {
         // Reporting a previous cycle's auth error for a host we could not check this time would be
         // a guess. "Still not answering" is what actually happened.
         assertEquals(
@@ -88,7 +88,7 @@ class RefreshOutcomeTest {
     }
 
     @Test
-    fun `every failing host is named and counted`() {
+    fun everyFailingHostIsNamedAndCounted() {
         val message = RefreshOutcome.describe(
             listOf(
                 host(name = "good"),

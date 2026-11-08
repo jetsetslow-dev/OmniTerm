@@ -4,6 +4,11 @@
 .android-sdk/
 /secrets/
 /app/build/
+/shared/build/
+# iOS: the Xcode project is generated from iosApp/project.yml.
+/iosApp/OmniTerm.xcodeproj/
+/iosApp/build/
+DerivedData/
 /local.properties
 /.idea/caches
 /.idea/libraries

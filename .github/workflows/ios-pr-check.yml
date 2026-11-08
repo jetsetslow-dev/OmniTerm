@@ -1,0 +1,108 @@
+name: iOS Check
+
+# actions/checkout initializes a temporary repository; define its branch name so Git does not emit
+# the legacy-default-branch warning on every job.
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  # XcodeGen generates iosApp/OmniTerm.xcodeproj from iosApp/project.yml. A pinned release with its
+  # SHA-256, as GitHub's release digest lists it, rather than whatever Homebrew has today.
+  XCODEGEN_VERSION: "2.46.0"
+  XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+
+# Builds the shared Kotlin module for iOS, runs its tests on the iOS simulator, and builds and tests
+# the iOS app. The repository is public, so macOS runners cost nothing.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "shared/**"
+      - "iosApp/**"
+      - "gradle/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/ios-pr-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS build and tests
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Record Apple toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          swift --version
+          xcrun simctl list runtimes available
+
+      - name: Run shared tests on the iOS simulator
+        run: >-
+          ./gradlew
+          :shared:iosSimulatorArm64Test
+          --no-daemon --no-configuration-cache
+          -Dorg.gradle.jvmargs=-Xmx4g
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/xcodegen-$XCODEGEN_VERSION"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $dir/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$dir/xcodegen.zip" -d "$dir"
+          echo "$dir/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Generate the Xcode project
+        run: xcodegen generate --spec iosApp/project.yml
+
+      - name: Build and test the iOS app on a simulator
+        run: |
+          set -euo pipefail
+          # The newest available iOS runtime's first iPhone, so a runner image update cannot leave the
+          # job naming a simulator that no longer exists.
+          udid="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          runtimes = sorted((r for r in devices if ".iOS-" in r), key=lambda r: [int(p) for p in r.rsplit(".iOS-", 1)[1].split("-")])
+          print(next(d["udid"] for r in reversed(runtimes) for d in devices[r] if d["name"].startswith("iPhone")))
+          ')"
+          echo "Simulator: $udid"
+          xcodebuild \
+            -project iosApp/OmniTerm.xcodeproj \
+            -scheme OmniTerm \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$udid" \
+            CODE_SIGNING_ALLOWED=NO \
+            test

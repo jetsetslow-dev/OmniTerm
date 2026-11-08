@@ -193,6 +193,9 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 }
 
 dependencies {
+    // Logic shared with the iOS app. Its Compose Multiplatform UI is iOS-only for now, so Android's
+    // own dependencies are unchanged.
+    implementation(project(":shared"))
     implementation("androidx.glance:glance-appwidget:1.2.0")
     // Material3 for Glance
     implementation("androidx.glance:glance-material3:1.2.0")

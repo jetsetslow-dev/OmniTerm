@@ -139,7 +139,7 @@ jobs:
       - name: Test and build source-available debug APK
         run: >-
           ./gradlew
-          testOpenSourceDebugUnitTest :app:assembleOpenSourceDebug
+          testOpenSourceDebugUnitTest :shared:testAndroidHostTest :app:assembleOpenSourceDebug
           --no-daemon --no-configuration-cache
           -Dorg.gradle.jvmargs=-Xmx4g
           -Domniterm.publishScan=true

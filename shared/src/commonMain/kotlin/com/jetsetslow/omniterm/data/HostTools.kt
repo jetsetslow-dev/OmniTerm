@@ -29,31 +29,31 @@ enum class HostTool(
 
     /**
      * Installs this tool with whichever package manager the host has, bounding every step (see
-     * [RemoteCommands.PM_UPDATE_SECONDS]), then checks that [command] answers. As root it runs
+     * [HostShell.PM_UPDATE_SECONDS]), then checks that [command] answers. As root it runs
      * directly; otherwise through sudo, reading the password from stdin when [withSudoPassword]
      * (see [RemoteCommands.sudoStdin]) and refusing rather than waiting for one when not. sudo's
      * own "[sudo] password for" prompt is left out of the output.
      */
     fun installCommand(withSudoPassword: Boolean = true): String {
         val sudo = if (withSudoPassword) "-S" else "-n"
-        val bound = RemoteCommands.PM_INSTALL_SECONDS
+        val bound = HostShell.PM_INSTALL_SECONDS
         fun branch(manager: String, package_: String?, install: (String) -> String): String =
             "command -v $manager >/dev/null 2>&1; then " + (
                 package_?.let(install)
                     ?: "echo 'OmniTerm cannot install $displayName with $manager: it has no $displayName package.' >&2; exit 1"
                 ) + "; "
         val branches = listOf(
-            branch("apt-get", apt) { "pm ${RemoteCommands.PM_UPDATE_SECONDS} apt-get update && pm $bound apt-get install -y $it" },
+            branch("apt-get", apt) { "pm ${HostShell.PM_UPDATE_SECONDS} apt-get update && pm $bound apt-get install -y $it" },
             branch("dnf", dnf) { "pm $bound dnf install -y $it" },
             branch("yum", dnf) { "pm $bound yum install -y $it" },
             branch("pacman", pacman) { "pm $bound pacman -Sy --noconfirm $it" },
             branch("apk", apk) { "pm $bound apk add $it" },
             branch("zypper", zypper) { "pm $bound zypper install -y $it" },
             branch("pkg", pkg) { "pm $bound pkg install -y $it" },
-            // [RemoteCommands.TMUX_PATH] puts Homebrew on PATH on a Mac.
+            // [HostShell.TMUX_PATH] puts Homebrew on PATH on a Mac.
             branch("brew", brew) { "pm $bound brew install $it" },
         )
-        return (if (this == Tmux) RemoteCommands.TMUX_PATH else "") + INSTALL_PATH +
+        return (if (this == Tmux) HostShell.TMUX_PATH else "") + INSTALL_PATH +
             "set -e; if command -v $command >/dev/null 2>&1; then echo '$displayName is already installed'; exit 0; fi; " +
             "if [ \"\$(id -u)\" = 0 ]; then SUDO=; else SUDO=$sudo; fi; " +
             // `pm <seconds> <command>` elevates the command unless already root, or it is Homebrew,
@@ -77,7 +77,7 @@ enum class HostTool(
 
     /** Prints "yes" when [command] answers on the host, else "no". */
     fun checkCommand(): String =
-        (if (this == Tmux) RemoteCommands.TMUX_PATH else "") + INSTALL_PATH +
+        (if (this == Tmux) HostShell.TMUX_PATH else "") + INSTALL_PATH +
             "command -v $command >/dev/null 2>&1 && echo yes || echo no"
 
     private companion object {

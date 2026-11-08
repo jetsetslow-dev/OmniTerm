@@ -40,6 +40,7 @@ if [[ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]]; then
   run_gradle \
     :app:testOpenSourceDebugUnitTest \
     :app:testPlayStoreDebugUnitTest \
+    :shared:testAndroidHostTest \
     :app:lintOpenSourceDebug \
     :app:lintPlayStoreDebug
 fi

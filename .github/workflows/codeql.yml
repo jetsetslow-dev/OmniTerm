@@ -74,7 +74,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           match=0
-          grep -qE '^(app/|gradle/|scripts/|\.github/actions/|\.github/workflows/codeql\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)' "$changed_list" || match=$?
+          grep -qE '^(app/|shared/|gradle/|scripts/|\.github/actions/|\.github/workflows/codeql\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)' "$changed_list" || match=$?
           rm -f "$changed_list"
           if [ "$match" -eq 0 ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -115,7 +115,7 @@ jobs:
             -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: java-kotlin
           build-mode: manual
@@ -174,7 +174,7 @@ jobs:
             -Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: "/language:java-kotlin"
 

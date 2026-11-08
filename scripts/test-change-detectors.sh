@@ -241,6 +241,20 @@ for entry in "${DETECTORS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# The shared Kotlin module is compiled into the Android app, so a change there alone must run the
+# Android build and the analysis.
+# ---------------------------------------------------------------------------
+echo
+echo "== shared module =="
+{ filler 20 docs; echo "shared/src/commonMain/kotlin/com/jetsetslow/omniterm/data/SshConfig.kt"; } > "$WORK/shared-only"
+for entry in ".github/workflows/codeql.yml|decide" ".github/workflows/android-pr-check.yml|filter"; do
+  IFS='|' read -r workflow step_id <<< "$entry"
+  script="$(extract_run "$REPO_ROOT/$workflow" "$step_id")" || { fail "$(basename "$workflow"): could not extract $step_id"; continue; }
+  expect "$(basename "$workflow"): a shared-module change runs the build" true \
+    "$(run_detector "$script" "$WORK/shared-only")"
+done
+
+# ---------------------------------------------------------------------------
 # CodeQL only: push and schedule are the prerelease gate and must never skip.
 # ---------------------------------------------------------------------------
 echo

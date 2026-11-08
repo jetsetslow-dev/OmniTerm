@@ -81,6 +81,7 @@ sed -n '/^<invocation>$/,/^--no-daemon$/p' "$INVOCATIONS" |
 cat >"$TMP_DIR/main-expected" <<'EOF'
 :app:testOpenSourceDebugUnitTest
 :app:testPlayStoreDebugUnitTest
+:shared:testAndroidHostTest
 :app:lintOpenSourceDebug
 :app:lintPlayStoreDebug
 EOF
