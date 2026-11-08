@@ -38,6 +38,7 @@ OmniTerm requests only permissions needed for its visible features:
 - `ACCESS_LOCAL_NETWORK` (Android 17 and later) to reach hosts, shares and devices on your local network: SSH, SFTP, LAN discovery, tunnels, shares and Wake-on-LAN.
 - `USE_BIOMETRIC` for optional app lock and privileged-action confirmation.
 - `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, and `CHANGE_NETWORK_STATE` for the optional background SSH keep-alive notification and monitoring alerts.
+- `ACCESS_NETWORK_STATE` to tell whether the phone has a network at all, so the Host Offline alert and the checks the phone runs itself record nothing while it is offline instead of reporting every host as down. Only whether a network is active is read.
 - `FOREGROUND_SERVICE_DATA_SYNC` for the progress notification that keeps a long file copy or other long operation running while the app is in the background.
 - `WAKE_LOCK` to keep an explicitly backgrounded live terminal from being suspended mid-session.
 - `NFC` to talk to a FIDO2 security key you hold to the phone when you sign in with it or make a key on it. USB security keys and USB serial consoles use Android's per-device USB permission prompt instead.

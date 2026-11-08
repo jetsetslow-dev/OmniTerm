@@ -68,22 +68,62 @@ The private audit (sources per finding, designs, order) is in the internal docs 
 - Validation: JVM and Robolectric tests, the API 35 device test `E2eRollingFleetTest` (fails
   without batching), and `./scripts/local-pr-check.sh --full` passed: unit and Robolectric tests, lint, dependency and SBOM verification, the API 35 device suite (including the rolling-run test), and CodeQL with no alerts.
 
+## Checkpoint C1 — host checks (this commit)
+
+- Seven rule types about a host's state (`data/HostChecks.kt`, pure Kotlin): Host Offline, Failed
+  Services, Container Problems, Storage Health (ZFS pools, mdadm, SMART), ZFS Scrub Age, UPS On
+  Battery, Reboot Required. Readings are plain numbers, so incidents and history are unchanged; no
+  database change.
+- One probe (`HostChecks.PROBE`, POSIX sh with the `ot` time limits) per host with such rules, at
+  most once a minute, in its own job. A section prints `!OK` only when its tool ran, so a host
+  without systemd, ZFS or NUT reads "Not available on this host" rather than "none". Windows hosts
+  skip it. Reboot Required covers the Debian flag and a newer installed kernel of the running
+  flavour (plain Debian and Proxmox never write the flag), needs-restarting, Arch and FreeBSD.
+- Containers stopped by hand (exit 0, 130, 137, 143) do not count; `SimContainer.exitCode` is new.
+- Host Offline comes from each finished probe's verdict. It and the phone-side TLS/URL checks
+  record nothing while the phone has no active network (`ACCESS_NETWORK_STATE`, now declared and
+  in `PRIVACY.md`).
+- Metrics polls skip host-check rules; before, a rule kind they did not know read as "recovered".
+- Editor: the new chips, a hint per check, no threshold for yes-or-no checks, no window for an old
+  scrub or a pending reboot; the dialog now scrolls. The rule list shows each host's last reading
+  (`RuleCheckLines`, shared with the TLS/URL checks). Notifications name up to five items.
+- Tests: `HostChecksTest` (parsing, values, texts, and the probe in a real sh against stub tools
+  with every system path moved to a scratch folder), `HostCheckAlertsRobolectricTest` (offline
+  incident; none while the phone is offline; a failed-service incident that metrics polls leave
+  open, both guards seen failing without the fix), device `E2eHostChecksTest`.
+- README: Host checks; Beszel and Uptime Kuma credited for the alert kinds.
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
 Kotlin app is the only one that went live. OmniTerm stays one Kotlin codebase and gains iOS through
 Compose Multiplatform, so nothing from this round is ported to Flutter. #92 is closed once Kotlin
 Multiplatform works for iOS: the shared module builds for Android and iOS, the iOS app builds and
-passes its tests on macOS CI, and a host connects with a working terminal on a simulator. iOS need
-not match Android feature for feature (user, Nov 8); it can start as a subset. The Flutter branches
-are kept.
+passes its tests on macOS CI, and a host connects with a working terminal on a simulator.
+
+Later on Nov 8 the user settled the rest:
+
+- Android and iOS must be in sync in features and behaviour. Shared Kotlin, plus one shared Go
+  network core, makes that the default; only small platform adapters differ.
+- Go core for both platforms: the Java-only engines move to one Go library built for Android (AAR)
+  and iOS (xcframework), the same library that carries the tunnels:
+  - SSH and SFTP: JSch → x/crypto/ssh and pkg/sftp.
+  - SMB: smbj → a go-smb2 fork.
+  - FTP/FTPS: commons-net → jlaffaye/ftp.
+  Licences are to be checked before use. It goes in behind the existing `SshTransport` interface
+  as a second implementation, runs the same device suites as JSch, and becomes the default only
+  when it passes them; JSch is then removed.
+- Flutter archived: PR #92 closed, branch tip 336b8b6 kept as the signed tag
+  `archive/flutter-migration`, remote branch deleted. Its 28 unpublished WIP commits stay local as
+  `archive/flutter-merge-main-wip`.
+- Branches, split like the old Kotlin/Flutter pair: `kotlin-automation` (features, PR #138) first;
+  `kotlin-multiplatform` (from main 06474d5) for the shared module, the Go engine move and iOS,
+  merging main as features land.
+- Order: the researched new features first, then iOS completion.
 
 ## Remaining, in order
 
-1. Alerts (checkpoint C):
-   - C1 host checks: host offline (with a guard for when the phone itself has no network), failed
-     services, containers in trouble, storage health (ZFS, md, SMART), ZFS scrub age, UPS on
-     battery, reboot required.
+1. Alerts (checkpoint C), C1 done above:
    - C2: phone-side ping, TCP and DNS checks.
    - C3: opt-in forwarding to ntfy, Gotify or a webhook.
    - C4: script checks, runbooks offered from the notification, run history.
@@ -97,8 +137,9 @@ are kept.
    plain host and port.
 5. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
    presets.
-6. Compose Multiplatform: a shared module from the Aug 1 groundwork, pure logic first, then UI,
-   then the iOS pieces (SSH engine, Keychain, notifications), with iOS CI on macOS runners.
+6. On `kotlin-multiplatform`: a shared module from the Aug 1 groundwork, pure logic first, then
+   UI; the Go engine behind `SshTransport` on Android and iOS; then the iOS pieces (Keychain,
+   notifications, background limits), with iOS CI on macOS runners.
 
 ## Validation
 

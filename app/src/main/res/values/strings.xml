@@ -713,6 +713,17 @@
     <string name="url_target_label">"Address to check"</string>
     <string name="endpoint_checked_from_phone">"Checked from this phone, so the address must be reachable from where the phone is."</string>
     <string name="endpoint_not_checked_yet">"Not checked yet"</string>
+    <string name="host_check_unknown">"Not available on this host"</string>
+    <string name="host_check_rule_summary_after">"%1$s · Alerts after %2$s"</string>
+    <string name="host_check_rule_summary_now">"%1$s · Alerts at once"</string>
+    <string name="host_check_rule_summary_scrub">"%1$s · Alerts when the last scrub is over %2$s old"</string>
+    <string name="host_check_hint_offline">"Alerts when the host has not answered over SSH for the chosen time. Nothing is recorded while this phone has no network."</string>
+    <string name="host_check_hint_failed_services">"Counts failed systemd units. Hosts without systemd show “Not available on this host”."</string>
+    <string name="host_check_hint_containers">"Counts Docker and Podman containers that are unhealthy, restarting, or exited with an error. Containers you stopped do not count."</string>
+    <string name="host_check_hint_storage">"Counts ZFS pools that are not ONLINE, degraded or inactive mdadm arrays, and drives whose SMART health is failing (SMART needs smartctl and root)."</string>
+    <string name="host_check_hint_scrub">"Days since the last finished scrub of the host’s least recently scrubbed ZFS pool."</string>
+    <string name="host_check_hint_ups">"Alerts when a UPS that NUT (upsc) can read is on battery or low battery."</string>
+    <string name="host_check_hint_reboot">"Alerts when installed updates need a reboot: Debian, Ubuntu and Proxmox, the Red Hat family, Arch and FreeBSD."</string>
     <string name="open_ports">"Open ports: %1$s"</string>
     <string name="already_saved_as">"Already saved as \"%1$s\"."</string>
     <string name="port_2">"Port %1$s"</string>

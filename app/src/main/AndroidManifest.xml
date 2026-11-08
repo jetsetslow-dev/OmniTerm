@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Host Offline and phone-side checks record nothing while the phone has no network. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- USB serial consoles and plugged-in security keys work on phones that can host USB devices;
          the app installs on any. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />

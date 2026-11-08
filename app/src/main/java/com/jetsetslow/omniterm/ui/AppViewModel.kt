@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
 import androidx.annotation.StringRes
@@ -3183,6 +3184,8 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
             }
+            // Only a verdict counts: a cancelled probe rethrew above and never gets here.
+            if (completed) evaluateHostOffline(srv)
         }
     }
 
@@ -3338,6 +3341,7 @@ class AppViewModel @JvmOverloads constructor(
             metrics.disks,
             metrics.cpuTempC,
         )
+        startHostChecks(srv, metrics.disks)
     }
 
     /**
@@ -3484,10 +3488,11 @@ class AppViewModel @JvmOverloads constructor(
         cpuTempC: Float? = null,
     ) = alertStateMutex.withLock {
         if (!alertsEnabled) return@withLock
-        // TLS and URL checks are not host metrics: they run on their own pace (runEndpointChecks),
-        // and here they would read as "not breaching" and close their incidents every poll.
+        // TLS and URL checks and host checks are not metrics: they run on their own pace
+        // (runEndpointChecks, runHostChecks, evaluateHostOffline), and here they would read as
+        // "not breaching" and close their incidents every poll.
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
-            .filter { it.enabled && !EndpointChecks.isEndpointMetric(it.metricName) }
+            .filter { it.enabled && !EndpointChecks.isEndpointMetric(it.metricName) && !HostChecks.isHostCheck(it.metricName) }
         val activeAlerts = repository.getActiveAlerts()
         val now = System.currentTimeMillis()
         // A sampling gap longer than a few poll intervals means we observed nothing —
@@ -3525,6 +3530,7 @@ class AppViewModel @JvmOverloads constructor(
         now: Long,
         staleGapMs: Long,
         notificationTarget: String = srv.host,
+        notificationText: String? = null,
     ) {
         val breachKey = r.id to srv.id
         val triggered = alertBreachTracker.onSample(
@@ -3562,7 +3568,7 @@ class AppViewModel @JvmOverloads constructor(
                     triggeredTime = now
                 )
                 repository.insertAlert(alert)
-                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget)
+                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget, notificationText)
             }
         } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
             // Recovered — but only after enough consecutive clean samples (hysteresis),
@@ -3594,6 +3600,8 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun runEndpointChecks() {
         if (!alertsEnabled) return
+        // From a phone with no network every check fails, which says nothing about the endpoints.
+        if (!phoneHasNetwork()) return
         val rules = repository.getAllRules().filter { it.enabled && EndpointChecks.isEndpointMetric(it.metricName) }
         if (rules.isEmpty()) return
         val servers = repository.getAllServers()
@@ -3649,8 +3657,112 @@ class AppViewModel @JvmOverloads constructor(
     /** Forget a rule's check pace and results, so an edited or new rule is checked at once. */
     private fun resetEndpointChecks(ruleId: Int) {
         endpointChecksDueAt.keys.removeIf { it.first == ruleId }
+        // Host checks share one probe per host, so any rule change makes every host due again.
+        hostChecksDueAt.clear()
         viewModelScope.launch(Dispatchers.Main) {
             endpointCheckResults.keys.filter { it.first == ruleId }.forEach(endpointCheckResults::remove)
+            hostCheckResults.keys.filter { it.first == ruleId }.forEach(hostCheckResults::remove)
+        }
+    }
+
+    /**
+     * Whether the phone has a network at all. Without one every host and endpoint looks down, so
+     * Host Offline and the phone-side checks record nothing rather than alert about all of them.
+     * Unknown counts as yes, so a platform quirk cannot silence alerts.
+     */
+    private fun phoneHasNetwork(): Boolean = runCatching {
+        val cm = getApplication<Application>().getSystemService(ConnectivityManager::class.java) ?: return@runCatching true
+        cm.activeNetwork != null
+    }.getOrDefault(true)
+
+    /** When each host's [HostChecks.PROBE] is next due, by host id. */
+    private val hostChecksDueAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    private val hostCheckJobs = java.util.concurrent.ConcurrentHashMap<Int, Job>()
+
+    /** What each (rule, host) host check last read, for the rule list; value null when unknown. */
+    val hostCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
+
+    /** At most once a minute, and never more often than the host is polled. */
+    private fun hostCheckIntervalMs() = telemetryIntervalMs.coerceAtLeast(60_000L)
+
+    /**
+     * Runs the host-check probe on [srv] when one of its rules needs it and it is due. Its own job,
+     * so the extra command never holds the host's metrics probe or the fleet-wide probe limit.
+     */
+    private fun startHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
+        if (!alertsEnabled) return
+        if (hostCheckJobs[srv.id]?.isActive == true) return
+        if (System.currentTimeMillis() < (hostChecksDueAt[srv.id] ?: 0L)) return
+        hostCheckJobs[srv.id] = viewModelScope.launch(Dispatchers.IO) { runHostChecks(srv, disks) }
+    }
+
+    private suspend fun runHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
+        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
+            .filter { it.enabled && HostChecks.needsProbe(it.metricName) }
+        if (rules.isEmpty()) return
+        hostChecksDueAt[srv.id] = System.currentTimeMillis() + hostCheckIntervalMs()
+        // The probe is POSIX sh; Windows has none of these tools, so its checks stay unknown.
+        val reading = if (hostOs(srv) == "Windows") {
+            null
+        } else {
+            val raw = executeSshCommand(srv, HostChecks.PROBE)
+            // A probe that never ran says nothing; leave every incident as it is.
+            if (!ranOnHost(raw)) return
+            HostChecks.parse(raw)
+        }
+        val now = System.currentTimeMillis()
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            val activeAlerts = repository.getActiveAlerts()
+            for (rule in rules) {
+                val key = rule.id to srv.id
+                val sample = reading?.let { HostChecks.valueOf(rule.metricName, it, disks, now / 1000) }
+                val result = if (sample == null) {
+                    EndpointChecks.Result(null, getApplication<Application>().getString(R.string.host_check_unknown), "")
+                } else {
+                    EndpointChecks.Result(sample.first, HostChecks.summary(rule.metricName, sample.first, sample.second), "")
+                }
+                withContext(Dispatchers.Main) { hostCheckResults[key] = result }
+                if (sample == null) continue
+                applyAlertSample(
+                    rule, srv, sample.first, sample.first > rule.thresholdValue, activeAlerts, now,
+                    staleGapMs = hostCheckIntervalMs() * 3,
+                    notificationText = HostChecks.alertText(rule.metricName, sample.first, rule.thresholdValue, sample.second),
+                )
+            }
+        }
+    }
+
+    /**
+     * Feeds [srv]'s Host Offline rules the verdict of the probe that just finished: 1 when it could
+     * not be reached, 0 when it answered. Skipped while the phone has no network, and for a probe
+     * that left the host still being checked.
+     */
+    private suspend fun evaluateHostOffline(srv: ServerEntity) {
+        if (!alertsEnabled) return
+        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
+            .filter { it.enabled && it.metricName == HostChecks.HOST_OFFLINE }
+        if (rules.isEmpty()) return
+        val value = when (repository.getServerById(srv.id)?.status) {
+            "offline" -> 1f
+            "online" -> 0f
+            else -> return
+        }
+        if (value > 0f && !phoneHasNetwork()) return
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            val activeAlerts = repository.getActiveAlerts()
+            val now = System.currentTimeMillis()
+            for (rule in rules) {
+                withContext(Dispatchers.Main) {
+                    hostCheckResults[rule.id to srv.id] = EndpointChecks.Result(value, HostChecks.describe(HostChecks.HOST_OFFLINE, value), "")
+                }
+                applyAlertSample(
+                    rule, srv, value, value > rule.thresholdValue, activeAlerts, now,
+                    staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L),
+                    notificationText = HostChecks.alertText(HostChecks.HOST_OFFLINE, value, rule.thresholdValue, emptyList()),
+                )
+            }
         }
     }
 
@@ -3674,7 +3786,13 @@ class AppViewModel @JvmOverloads constructor(
     private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
-    private fun postAlertNotification(srv: ServerEntity, rule: AlertRuleEntity, value: Float, target: String = srv.host) {
+    private fun postAlertNotification(
+        srv: ServerEntity,
+        rule: AlertRuleEntity,
+        value: Float,
+        target: String = srv.host,
+        detail: String? = null,
+    ) {
         val app = getApplication<Application>()
         val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
         val openAppIntent = Intent(app, MainActivity::class.java)
@@ -3699,10 +3817,12 @@ class AppViewModel @JvmOverloads constructor(
             } else {
                 rule.thresholdValue
             }
-        val text = if (EndpointChecks.isEndpointMetric(rule.metricName)) {
-            EndpointChecks.alertText(rule, target, value)
-        } else {
-            "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
+        val text = when {
+            detail != null -> detail
+            EndpointChecks.isEndpointMetric(rule.metricName) -> EndpointChecks.alertText(rule, target, value)
+            // Re-posted later (after a mute ends) without the names the probe found.
+            HostChecks.isHostCheck(rule.metricName) -> HostChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
+            else -> "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
         }
         val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
             .setContentTitle("${rule.severity}: ${srv.name}")
@@ -5048,6 +5168,9 @@ class AppViewModel @JvmOverloads constructor(
             if (EndpointChecks.isEndpointMetric(metricName)) {
                 // Check it now rather than at the next poll, so the rule list shows a result.
                 startEndpointChecks()
+            } else if (HostChecks.isHostCheck(metricName)) {
+                hostChecksDueAt.clear()
+                evaluateCachedAlertTargets(serverId)
             } else {
                 // Start the sustained window from the current observed value when available. Without
                 // this, a newly created five-minute rule waits for the next poll before its clock starts.
@@ -5059,7 +5182,9 @@ class AppViewModel @JvmOverloads constructor(
     private suspend fun evaluateCachedAlertTargets(serverId: Int) {
         val targets = repository.getAllServers().filter { serverId == 0 || it.id == serverId }
         for (server in targets) {
+            if (probedServerIds[server.id] == true) evaluateHostOffline(server)
             val metrics = hostMetricsById[server.id] ?: continue
+            startHostChecks(server, metrics.disks)
             evaluateAlertRules(
                 server,
                 metrics.cpuPercent,

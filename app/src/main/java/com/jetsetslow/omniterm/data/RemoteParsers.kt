@@ -1966,6 +1966,8 @@ object RemoteParsers {
                     restartCount = 0,
                     createdAt = t.getOrElse(9) { "" }.trim(),
                     runtime = runtime,
+                    exitCode = Regex("""^Exited \((-?\d+)\)""", RegexOption.IGNORE_CASE)
+                        .find(statusRaw)?.groupValues?.get(1)?.toIntOrNull(),
                 )
             }
             .toList()

@@ -21,6 +21,8 @@ data class SimContainer(
     val restartCount: Int = 0,
     val createdAt: String = "",
     val runtime: String = "docker",
+    /** The exit status of an exited container, from "Exited (137) 2 hours ago"; null otherwise. */
+    val exitCode: Int? = null,
 )
 
 data class SimDockerImage(
