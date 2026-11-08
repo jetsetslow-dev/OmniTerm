@@ -61,11 +61,11 @@ import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
 /**
- * Display unit for an alert metric: thresholds are percentages except latency, temperature, and
- * the TLS and URL checks.
+ * Display unit for an alert metric: thresholds are percentages except latency, temperature, the
+ * phone-side checks and the host checks.
  */
 private fun alertMetricUnit(metricName: String, system: MeasurementSystem): String = when (metricName) {
-    "Latency", EndpointChecks.URL_CHECK -> "ms"
+    "Latency", EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK -> "ms"
     "Temperature" -> temperatureUnit(system)
     EndpointChecks.TLS_EXPIRY, HostChecks.SCRUB_AGE -> "days"
     in HostChecks.ALL -> "count"
@@ -90,10 +90,13 @@ internal fun alertThresholdError(
     return when (metricName) {
         "Latency" -> if (value <= 0f) "Must be greater than 0 ms" else null
         EndpointChecks.TLS_EXPIRY -> if (value < 1f) "Must be 1 day or more" else null
-        EndpointChecks.URL_CHECK -> when {
-            value <= 0f -> "Must be greater than 0 ms"
-            value >= EndpointChecks.URL_TIMEOUT_MS -> "Must be under ${EndpointChecks.URL_TIMEOUT_MS} ms, when a check gives up"
-            else -> null
+        EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK -> {
+            val limit = EndpointChecks.timeoutMs(metricName) ?: EndpointChecks.URL_TIMEOUT_MS
+            when {
+                value <= 0f -> "Must be greater than 0 ms"
+                value >= limit -> "Must be under $limit ms, when a check gives up"
+                else -> null
+            }
         }
         "Temperature" -> {
             // Compare in Celsius so the bound holds in either unit system.
@@ -110,28 +113,52 @@ internal fun alertThresholdError(
 }
 
 /**
- * Validates what a TLS or URL check connects to, against the hosts the rule is for. Null when it
+ * Validates what a phone-side check connects to, against the hosts the rule is for. Null when it
  * is usable, otherwise the reason. Other metrics take no target.
  *
  * A typed address is one endpoint, so it belongs to one host: on "All hosts" or several hosts it
- * would be checked, and alert, once per host.
+ * would be checked, and alert, once per host. A bare TCP port and a bare DNS name are checked on
+ * each host's own address, so they suit any number of hosts.
  */
 internal fun alertTargetError(metricName: String, target: String, hostIds: Collection<Int>): String? {
     if (!EndpointChecks.isEndpointMetric(metricName)) return null
     val trimmed = target.trim()
-    if (metricName == EndpointChecks.URL_CHECK) {
-        if (trimmed.isEmpty()) return "Enter the address to check"
-        if (EndpointChecks.checkUrl(trimmed) == null) return "Enter a web address, like https://example.com/health"
-    } else if (trimmed.isNotEmpty() && EndpointChecks.tlsEndpoint(trimmed, hostAddress = "") == null) {
-        return "Enter a host, host:port or URL"
+    // Stands in for each host's own address, which the checks use when the target names none.
+    val anyHost = "host.invalid"
+    val perHost = when (metricName) {
+        EndpointChecks.URL_CHECK -> {
+            if (trimmed.isEmpty()) return "Enter the address to check"
+            if (EndpointChecks.checkUrl(trimmed) == null) return "Enter a web address, like https://example.com/health"
+            false
+        }
+        EndpointChecks.PING -> {
+            if (trimmed.isNotEmpty() && EndpointChecks.pingHost(trimmed) == null) return "Enter one host name or address"
+            trimmed.isEmpty()
+        }
+        EndpointChecks.TCP_PORT -> {
+            if (trimmed.isEmpty()) return "Enter a port, or host:port"
+            if (EndpointChecks.tcpEndpoint(trimmed, anyHost) == null) return "Enter a port from 1 to 65535, or host:port"
+            trimmed.toIntOrNull() != null
+        }
+        EndpointChecks.DNS_CHECK -> {
+            if (trimmed.isEmpty()) return "Enter the name to look up"
+            if (EndpointChecks.dnsTarget(trimmed, anyHost) == null) return "Enter a name, or name@server"
+            '@' !in trimmed
+        }
+        else -> {
+            if (trimmed.isNotEmpty() && EndpointChecks.tlsEndpoint(trimmed, hostAddress = "") == null) {
+                return "Enter a host, host:port or URL"
+            }
+            trimmed.isEmpty()
+        }
     }
-    if (trimmed.isNotEmpty() && (hostIds.size != 1 || 0 in hostIds)) return "Pick the one host this address belongs to"
+    if (!perHost && (hostIds.size != 1 || 0 in hostIds)) return "Pick the one host this address belongs to"
     return null
 }
 
 /**
- * An alert value as the user reads it. A TLS or URL reading says what was seen ("12 days left",
- * "HTTP 503"); its threshold ([threshold] true) is a plain amount.
+ * An alert value as the user reads it. A phone-side reading says what was seen ("12 days left",
+ * "HTTP 503", "no reply"); its threshold ([threshold] true) is a plain amount.
  */
 private fun alertMetricDisplay(
     metricName: String,
@@ -772,7 +799,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     Text(
                                         when (r.metricName) {
                                             EndpointChecks.TLS_EXPIRY -> stringResource(R.string.tls_rule_summary, targetName, shownThreshold)
-                                            EndpointChecks.URL_CHECK -> stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
+                                            // Every timed check alerts the same way: a failure, or a slow reply.
+                                            EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK ->
+                                                stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
                                             HostChecks.SCRUB_AGE -> stringResource(R.string.host_check_rule_summary_scrub, targetName, shownThreshold)
                                             in HostChecks.ALL -> when {
                                                 !HostChecks.isYesNo(r.metricName) -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
@@ -917,6 +946,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     val metricsOptions = listOf(
                         "CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature",
                         EndpointChecks.TLS_EXPIRY, EndpointChecks.URL_CHECK,
+                        EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK,
                     ) + HostChecks.ALL
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -932,6 +962,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                                 celsiusToDisplay(80f, measurementSystem).toString()
                                             EndpointChecks.TLS_EXPIRY -> "14"
                                             EndpointChecks.URL_CHECK -> "2000"
+                                            EndpointChecks.PING -> "200"
+                                            EndpointChecks.TCP_PORT -> "1000"
+                                            EndpointChecks.DNS_CHECK -> "500"
                                             in HostChecks.ALL -> HostChecks.defaultThreshold(opt).roundToInt().toString()
                                             else -> "90"
                                         }
@@ -963,17 +996,17 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         Text(stringResource(hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (EndpointChecks.isEndpointMetric(metricSelect)) {
-                        val tls = metricSelect == EndpointChecks.TLS_EXPIRY
+                        val field = endpointTargetField(metricSelect)
                         OutlinedTextField(
                             value = targetInput,
                             onValueChange = { targetInput = it },
-                            label = { Text(stringResource(if (tls) R.string.tls_target_label else R.string.url_target_label)) },
-                            placeholder = { Text(if (tls) "example.com:443" else "https://example.com/health") },
+                            label = { Text(stringResource(field.label)) },
+                            placeholder = { Text(field.placeholder) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("alertRule.target"),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             isError = targetError != null,
-                            supportingText = (targetError ?: if (tls && targetInput.isBlank()) stringResource(R.string.tls_target_blank_hint) else null)
+                            supportingText = (targetError ?: field.hint?.takeIf { targetInput.isBlank() || field.hintAlways }?.let { stringResource(it) })
                                 ?.let { { Text(it) } },
                         )
                         Text(
@@ -1049,6 +1082,20 @@ fun AlertsToolView(viewModel: AppViewModel) {
 }
 
 
+
+/**
+ * The target field of a phone-side check: its [label], an example as [placeholder], and a [hint]
+ * shown while it is blank, or always when [hintAlways].
+ */
+private class EndpointTargetField(val label: Int, val placeholder: String, val hint: Int?, val hintAlways: Boolean = false)
+
+private fun endpointTargetField(metricName: String): EndpointTargetField = when (metricName) {
+    EndpointChecks.TLS_EXPIRY -> EndpointTargetField(R.string.tls_target_label, "example.com:443", R.string.tls_target_blank_hint)
+    EndpointChecks.PING -> EndpointTargetField(R.string.ping_target_label, "192.168.1.1", R.string.ping_target_blank_hint)
+    EndpointChecks.TCP_PORT -> EndpointTargetField(R.string.tcp_target_label, "5432 or db.lan:5432", R.string.tcp_target_hint, hintAlways = true)
+    EndpointChecks.DNS_CHECK -> EndpointTargetField(R.string.dns_target_label, "nas.lan or nas.lan@192.168.1.1", R.string.dns_target_hint, hintAlways = true)
+    else -> EndpointTargetField(R.string.url_target_label, "https://example.com/health", null)
+}
 
 /** The hint under the metric picker for a host check, or null for other metrics. */
 private fun hostCheckHint(metricName: String): Int? = when (metricName) {

@@ -88,6 +88,10 @@ class InputValidationTest {
     fun `alert threshold requires positive latency`() {
         assertNull(alertThresholdError("250", "Latency", MeasurementSystem.Metric))
         assertNotNull(alertThresholdError("0", "Latency", MeasurementSystem.Metric))
+        assertNull(alertThresholdError("200", "Ping", MeasurementSystem.Metric))
+        assertNotNull("a ping gives up at 3 s", alertThresholdError("3000", "Ping", MeasurementSystem.Metric))
+        assertNotNull(alertThresholdError("0", "DNS", MeasurementSystem.Metric))
+        assertNull(alertThresholdError("14000", "URL Check", MeasurementSystem.Metric))
     }
 
     @Test
@@ -111,6 +115,21 @@ class InputValidationTest {
         assertNull(alertTargetError("TLS Expiry", "example.com:8443", listOf(3)))
         assertNotNull(alertTargetError("TLS Expiry", "example.com:8443", listOf(0)))
         assertNotNull(alertTargetError("TLS Expiry", "example.com:99999", listOf(3)))
+        // A bare port or DNS name is checked on each host's own address, so it suits "All hosts".
+        assertNull(alertTargetError("TCP Port", "22", listOf(0)))
+        assertNull(alertTargetError("TCP Port", "db.lan:5432", listOf(3)))
+        assertNotNull(alertTargetError("TCP Port", "db.lan:5432", listOf(3, 4)))
+        assertNotNull("a TCP check needs a port", alertTargetError("TCP Port", "", listOf(3)))
+        assertNotNull(alertTargetError("TCP Port", "db.lan", listOf(3)))
+        assertNotNull(alertTargetError("TCP Port", "70000", listOf(0)))
+        assertNull(alertTargetError("DNS", "nas.lan", listOf(0)))
+        assertNull(alertTargetError("DNS", "nas.lan@192.168.1.1", listOf(3)))
+        assertNotNull(alertTargetError("DNS", "nas.lan@192.168.1.1", listOf(0)))
+        assertNotNull(alertTargetError("DNS", "", listOf(3)))
+        assertNull(alertTargetError("Ping", "", listOf(0)))
+        assertNull(alertTargetError("Ping", "192.168.1.10", listOf(3)))
+        assertNotNull(alertTargetError("Ping", "192.168.1.10", listOf(0)))
+        assertNotNull("never an option", alertTargetError("Ping", "-f", listOf(3)))
         assertNull(alertTargetError("CPU Usage", "ignored", listOf(0)))
     }
 

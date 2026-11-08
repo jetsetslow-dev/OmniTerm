@@ -68,7 +68,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
 - Validation: JVM and Robolectric tests, the API 35 device test `E2eRollingFleetTest` (fails
   without batching), and `./scripts/local-pr-check.sh --full` passed: unit and Robolectric tests, lint, dependency and SBOM verification, the API 35 device suite (including the rolling-run test), and CodeQL with no alerts.
 
-## Checkpoint C1 — host checks (this commit)
+## Checkpoint C1 — host checks (d8dc948)
 
 - Seven rule types about a host's state (`data/HostChecks.kt`, pure Kotlin): Host Offline, Failed
   Services, Container Problems, Storage Health (ZFS pools, mdadm, SMART), ZFS Scrub Age, UPS On
@@ -92,6 +92,35 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   incident; none while the phone is offline; a failed-service incident that metrics polls leave
   open, both guards seen failing without the fix), device `E2eHostChecksTest`.
 - README: Host checks; Beszel and Uptime Kuma credited for the alert kinds.
+
+## Checkpoint C2 — phone-side ping, TCP and DNS checks (this commit)
+
+- Three more `EndpointChecks` kinds, each timing a reply in ms (below zero on failure), giving up
+  after 3 s (`QUICK_TIMEOUT_MS`), checked every poll but at most once a minute, like URL checks:
+  - Ping: one `-c 1 -W 3` through `/system/bin/ping` (`ANDROID_PING_BINARY`, now in the data
+    package). Blank target = the host's own address. A watchdog thread ends a ping that hangs past
+    the limit: the timed `Process.waitFor` needs API 26 and the app supports 24 (lint caught it).
+  - TCP Port: a bare port connects to each host's own address, so it suits "All hosts";
+    `host:port` is one endpoint and needs one host.
+  - DNS: an A, then AAAA, query over UDP. A bare name asks each host as its DNS server (Pi-hole,
+    AdGuard Home); `name@server[:port]` asks another one. Values: NXDOMAIN and other rcodes are
+    -(100 + rcode), no address is -100. Replies are matched on server address, port and a random
+    query id.
+- One target rule for every `ping`: `EndpointChecks.pingHost` refuses a leading `-` (an option) and
+  strips IPv6 brackets. Tools → Ping and Traceroute used to accept `-f` and similar; they now use it.
+- One copy of each network piece: `EndpointChecks.connect` also serves the SSH reachability probe,
+  the share probe and Host Scan's port probe. `serializeDnsQuery` moved to `data/DnsWire.kt` and
+  takes the query id, so Tools → DNS Lookup now sends a random id, not a fixed 0x1234.
+  `hostAndPort` is shared by the TLS, TCP and DNS targets.
+- Editor: the chips, defaults (Ping 200 ms, TCP 1000 ms, DNS 500 ms), labels, examples and hints;
+  thresholds must be under the check's time limit.
+- Tests: `PhoneChecksTest` (targets; TCP against local sockets; DNS against a stand-in server,
+  including NXDOMAIN, no address, no answer and a forged reply under another id; ping through stand-in
+  binaries, including the exact arguments). A second `EndpointAlertRobolectricTest`: one All-hosts
+  TCP rule given a bare port is quiet on the host that listens and opens an incident on the one that
+  does not. More `InputValidationTest` cases. Removing the leading-`-` guard or the query-id match
+  fails them. Device `E2ePhoneChecksTest` (`omniterm_e2e_phone_checks=yes`) passed on API 35.
+- README: the three checks; Uptime Kuma credited for them.
 
 ## Decision pivot — 2026-11-08
 
@@ -123,8 +152,7 @@ Later on Nov 8 the user settled the rest:
 
 ## Remaining, in order
 
-1. Alerts (checkpoint C), C1 done above:
-   - C2: phone-side ping, TCP and DNS checks.
+1. Alerts (checkpoint C), C1 and C2 done above:
    - C3: opt-in forwarding to ntfy, Gotify or a webhook.
    - C4: script checks, runbooks offered from the notification, run history.
 2. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,

@@ -152,7 +152,8 @@ data class AlertRuleEntity(
     val serverId: Int,
     // "CPU Usage", "Memory Usage", "Disk Usage", "Network In", "Network Out", "Latency",
     // "Temperature" (only evaluates on hosts that expose a thermal sensor), and the checks the
-    // phone runs itself, "TLS Expiry" and "URL Check" (see EndpointChecks)
+    // phone runs itself, "TLS Expiry", "URL Check", "Ping", "TCP Port" and "DNS" (see EndpointChecks),
+    // and the host checks (see HostChecks)
     val metricName: String,
     val mountPoint: String = "/",
     val thresholdValue: Float,

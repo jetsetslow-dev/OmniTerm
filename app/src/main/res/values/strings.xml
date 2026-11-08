@@ -711,6 +711,12 @@
     <string name="tls_target_label">"Host, host:port or URL (optional)"</string>
     <string name="tls_target_blank_hint">"Blank checks each host's own address on port 443."</string>
     <string name="url_target_label">"Address to check"</string>
+    <string name="ping_target_label">"Host or address (optional)"</string>
+    <string name="ping_target_blank_hint">"Blank pings each host's own address."</string>
+    <string name="tcp_target_label">"Port, or host:port"</string>
+    <string name="tcp_target_hint">"A port alone connects to each host's own address on that port."</string>
+    <string name="dns_target_label">"Name, or name@server"</string>
+    <string name="dns_target_hint">"A name alone asks each host, as a DNS server such as Pi-hole or AdGuard Home."</string>
     <string name="endpoint_checked_from_phone">"Checked from this phone, so the address must be reachable from where the phone is."</string>
     <string name="endpoint_not_checked_yet">"Not checked yet"</string>
     <string name="host_check_unknown">"Not available on this host"</string>

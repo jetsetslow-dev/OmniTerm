@@ -66,9 +66,7 @@ import com.jetsetslow.omniterm.ui.theme.OmniColors
 import androidx.compose.runtime.mutableStateMapOf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
-import java.net.InetSocketAddress
 import java.net.NetworkInterface
-import java.net.Socket
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.trySendBlocking
@@ -200,7 +198,6 @@ internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRu
         previous.target != next.target
 
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
-internal const val ANDROID_PING_BINARY = "/system/bin/ping"
 internal val ANDROID_TRACEROUTE_BINARIES = listOf(
     "/system/bin/traceroute",
     "/system/xbin/traceroute",
@@ -2951,15 +2948,8 @@ class AppViewModel @JvmOverloads constructor(
     private val prevDiskByServer = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Map<String, DiskIo>>>()
 
     /** TCP reachability probe; returns round-trip ms, or -1 if the host:port is unreachable. */
-    private fun tcpReachable(host: String, port: Int, timeoutMs: Int = 4000): Int {
-        return try {
-            val t0 = System.currentTimeMillis()
-            Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
-            (System.currentTimeMillis() - t0).toInt()
-        } catch (e: Exception) {
-            -1
-        }
-    }
+    private fun tcpReachable(host: String, port: Int, timeoutMs: Int = 4000): Int =
+        EndpointChecks.connect(host, port, timeoutMs).first.let { if (it < 0f) -1 else it.toInt() }
 
     /** Trim JSch/exec noise into a short, user-facing auth error. */
     /**
@@ -3627,12 +3617,12 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * URL checks run every poll, but at most once a minute. A certificate changes rarely, so TLS
-     * checks run every six hours: hourly while one is close to expiry (so a renewal is seen soon),
-     * and every quarter hour after one could not connect.
+     * URL, ping, TCP and DNS checks run every poll, but at most once a minute. A certificate changes
+     * rarely, so TLS checks run every six hours: hourly while one is close to expiry (so a renewal
+     * is seen soon), and every quarter hour after one could not connect.
      */
     private fun endpointCheckIntervalMs(rule: AlertRuleEntity, result: EndpointChecks.Result, breached: Boolean): Long = when {
-        rule.metricName == EndpointChecks.URL_CHECK -> telemetryIntervalMs.coerceAtLeast(60_000L)
+        EndpointChecks.isTimed(rule.metricName) -> telemetryIntervalMs.coerceAtLeast(60_000L)
         result.value == null -> 15 * 60_000L
         breached -> 60 * 60_000L
         else -> 6 * 60 * 60_000L
@@ -5672,13 +5662,7 @@ class AppViewModel @JvmOverloads constructor(
                 async {
                     limiter.withPermit {
                         val hostname = resolveLanHostname(host)
-                        val open = hostScanPorts.filter { port ->
-                            try {
-                                java.net.Socket().use { s ->
-                                    s.connect(java.net.InetSocketAddress(host, port), 250); true
-                                }
-                            } catch (_: Exception) { false }
-                        }
+                        val open = hostScanPorts.filter { port -> canConnect(host, port, 250) }
                         host to (hostname to open)
                     }
                 }
@@ -9775,8 +9759,8 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun startPing(host: String, count: Int) {
         if (pingRunning) return
-        val target = host.trim()
-        if (target.isEmpty() || !target.all { it.isLetterOrDigit() || it in ".-:%_[]" }) {
+        val target = EndpointChecks.pingHost(host)
+        if (target == null) {
             pingLines = listOf("Enter a valid hostname or IP address.")
             return
         }
@@ -9920,8 +9904,9 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun startTraceroute(host: String) {
         if (tracerouteRunning) return
-        val target = host.trim()
-        if (target.isEmpty() || !target.all { it.isLetterOrDigit() || it in ".-:%_[]" }) {
+        // The same rule as ping: one name or address, never an option.
+        val target = EndpointChecks.pingHost(host)
+        if (target == null) {
             tracerouteLines = listOf("Enter a valid hostname or IP address.")
             return
         }
@@ -10386,12 +10371,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     private fun canConnect(host: String, port: Int, timeoutMs: Int): Boolean =
-        runCatching {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(host, port), timeoutMs)
-                true
-            }
-        }.getOrDefault(false)
+        EndpointChecks.connect(host, port, timeoutMs).first >= 0f
 
     private fun expandScanTargets(input: String): List<String> {
         val trimmed = input.trim()
@@ -13620,7 +13600,7 @@ class AppViewModel @JvmOverloads constructor(
                     "AAAA" -> 28
                     else -> 1
                 }
-                val queryBytes = serializeDnsQuery(target, type)
+                val queryBytes = serializeDnsQuery(target, type, java.security.SecureRandom().nextInt(0x10000))
                 val response = resolveDnsRaw(queryBytes)
                 val results = parseDnsResponse(response, response.size)
                 dnsLookupResults.addAll(results)
@@ -15793,26 +15773,6 @@ internal fun parseTracerouteHop(ttl: Int, pingOutput: String, elapsedMs: Double)
     } else {
         TracerouteHop("%2d  *".format(ttl), false)
     }
-}
-
-internal fun serializeDnsQuery(target: String, type: Int): ByteArray {
-    val baos = java.io.ByteArrayOutputStream()
-    val dos = java.io.DataOutputStream(baos)
-    dos.writeShort(0x1234)
-    dos.writeShort(0x0100)
-    dos.writeShort(1)
-    dos.writeShort(0)
-    dos.writeShort(0)
-    dos.writeShort(0)
-    for (part in target.trim().trimEnd('.').split(".")) {
-        require(part.length <= 63) { "DNS label too long" }
-        dos.writeByte(part.length)
-        dos.write(part.toByteArray(Charsets.US_ASCII))
-    }
-    dos.writeByte(0)
-    dos.writeShort(type)
-    dos.writeShort(1)
-    return baos.toByteArray()
 }
 
 internal fun readName(data: ByteArray, startOffset: Int, packetLength: Int = data.size): Pair<String, Int> {
