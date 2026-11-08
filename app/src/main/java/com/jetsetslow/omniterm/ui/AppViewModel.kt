@@ -102,6 +102,9 @@ internal fun parseSerialSettings(stored: String): SerialSettings? {
 /** TLS and URL checks that may run at once; each can wait up to its timeout. */
 private const val ENDPOINT_CHECK_PARALLELISM = 4
 
+/** Waits before the second and third try of a forwarded alert the server did not take. */
+private val ALERT_FORWARD_RETRY_DELAYS_MS = listOf(5_000L, 30_000L)
+
 /** Notification channel for the low-battery saver engaging. */
 private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
 
@@ -1432,6 +1435,10 @@ class AppViewModel @JvmOverloads constructor(
     /** Settings toggle state for built-in command/rule presets. */
     var homelabPresetsEnabled by mutableStateOf(false); private set
     var alertsEnabled by mutableStateOf(true); private set
+    /** Where alerts also go besides this phone's notifications; off unless the user sets it up. */
+    var alertForwarding by mutableStateOf(AlertForwarding.Config()); private set
+    /** When the last forwarded alert was sent and how it went, for the Alerts screen. */
+    var alertForwardStatus by mutableStateOf<Pair<Long, AlertForwarding.Outcome>?>(null); private set
     var alertPresetsEnabled by mutableStateOf(false); private set
     var fleetPresetsEnabled by mutableStateOf(false); private set
     var backupExportSelection by mutableStateOf(BackupSelection()); private set
@@ -2831,6 +2838,14 @@ class AppViewModel @JvmOverloads constructor(
                 reviewPromptShown = reviewPromptShown || list.find { it.key == "review_prompt_shown" }?.value == "true"
                 homelabPresetsEnabled = list.find { it.key == "homelab_presets" }?.value == "true"
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
+                alertForwarding = AlertForwarding.Config(
+                    kind = list.find { it.key == AlertForwarding.SETTING_KIND }?.value
+                        ?.takeIf { it in AlertForwarding.KINDS } ?: AlertForwarding.KIND_OFF,
+                    url = list.find { it.key == AlertForwarding.SETTING_URL }?.value.orEmpty(),
+                    topic = list.find { it.key == AlertForwarding.SETTING_TOPIC }?.value.orEmpty(),
+                    token = list.find { it.key == AlertForwarding.SETTING_TOKEN }?.value.orEmpty(),
+                    includeResolved = list.find { it.key == AlertForwarding.SETTING_RESOLVED }?.value != "false",
+                )
                 alertPresetsEnabled = list.find { it.key == "alert_presets" }?.value == "true"
                 fleetPresetsEnabled = list.find { it.key == "fleet_presets" }?.value == "true"
                 val storedBackupSelection = decodeBackupSelection(list.find { it.key == "backup_export_selection" }?.value)
@@ -3559,6 +3574,14 @@ class AppViewModel @JvmOverloads constructor(
                 )
                 repository.insertAlert(alert)
                 postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget, notificationText)
+                forwardAlert(
+                    AlertForwarding.Event(
+                        resolved = false, severity = r.severity, host = srv.name, rule = r.metricName,
+                        title = alertNotificationTitle(r, srv),
+                        text = alertNotificationText(srv, r, currentValue ?: 0f, notificationTarget, notificationText),
+                        value = currentValue ?: 0f, threshold = r.thresholdValue, timeMs = now,
+                    ),
+                )
             }
         } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
             // Recovered — but only after enough consecutive clean samples (hysteresis),
@@ -3567,6 +3590,16 @@ class AppViewModel @JvmOverloads constructor(
                 recordAlertHistory(currentAlert, "resolved", srv.name)
                 repository.deleteAlert(currentAlert.id)
                 clearAlertNotification(r.id, srv.id)
+                // A muted incident stays quiet everywhere, its recovery included.
+                if (currentAlert.mutedUntil <= now) {
+                    forwardAlert(
+                        AlertForwarding.Event(
+                            resolved = true, severity = r.severity, host = srv.name, rule = r.metricName,
+                            title = "Resolved: ${srv.name}", text = "${r.metricName} on ${srv.name} is back to normal",
+                            value = currentValue ?: currentAlert.currentValue, threshold = r.thresholdValue, timeMs = now,
+                        ),
+                    )
+                }
             }
         }
     }
@@ -3775,6 +3808,91 @@ class AppViewModel @JvmOverloads constructor(
 
     private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
+    private fun alertNotificationTitle(rule: AlertRuleEntity, srv: ServerEntity) = "${rule.severity}: ${srv.name}"
+
+    /** An alert's notification line; forwarded alerts carry the same words. */
+    private fun alertNotificationText(
+        srv: ServerEntity,
+        rule: AlertRuleEntity,
+        value: Float,
+        target: String = srv.host,
+        detail: String? = null,
+    ): String {
+        val mountSuffix = if (rule.metricName == "Disk Usage" && rule.mountPoint.isNotBlank()) " on ${rule.mountPoint}" else ""
+        val unit = when (rule.metricName) {
+            "Latency" -> "ms"
+            "Temperature" -> temperatureUnit(measurementSystem)
+            else -> "%"
+        }
+        val shownValue =
+            if (rule.metricName == "Temperature") celsiusToDisplay(value, measurementSystem) else value
+        val shownThreshold =
+            if (rule.metricName == "Temperature") {
+                celsiusToDisplay(rule.thresholdValue, measurementSystem)
+            } else {
+                rule.thresholdValue
+            }
+        return when {
+            detail != null -> detail
+            EndpointChecks.isEndpointMetric(rule.metricName) -> EndpointChecks.alertText(rule, target, value)
+            // Re-posted later (after a mute ends) without the names the probe found.
+            HostChecks.isHostCheck(rule.metricName) -> HostChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
+            else -> "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
+        }
+    }
+
+    /**
+     * Sends [event] to the user's forwarding service, if one is set up, off the main thread. A
+     * failure with no answer or a server error is tried twice more; a refusal is not.
+     */
+    private fun forwardAlert(event: AlertForwarding.Event) {
+        val request = AlertForwarding.request(alertForwarding, event) ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            var outcome = AlertForwarding.send(request)
+            for (wait in ALERT_FORWARD_RETRY_DELAYS_MS) {
+                if (!AlertForwarding.isRetryable(outcome)) break
+                delay(wait)
+                outcome = AlertForwarding.send(request)
+            }
+            withContext(Dispatchers.Main) { alertForwardStatus = System.currentTimeMillis() to outcome }
+        }
+    }
+
+    fun saveAlertForwarding(config: AlertForwarding.Config) {
+        val saved = config.copy(url = config.url.trim(), topic = config.topic.trim(), token = config.token.trim())
+        alertForwarding = saved
+        alertForwardStatus = null
+        viewModelScope.launch {
+            repository.insertSetting(AlertForwarding.SETTING_KIND, saved.kind)
+            repository.insertSetting(AlertForwarding.SETTING_URL, saved.url)
+            repository.insertSetting(AlertForwarding.SETTING_TOPIC, saved.topic)
+            if (saved.token.isEmpty()) {
+                repository.deleteSetting(AlertForwarding.SETTING_TOKEN)
+            } else {
+                repository.insertSetting(AlertForwarding.SETTING_TOKEN, saved.token)
+            }
+            repository.insertSetting(AlertForwarding.SETTING_RESOLVED, saved.includeResolved.toString())
+        }
+    }
+
+    /** Sends one test alert through [config], which need not be saved yet, and reports how it went. */
+    fun testAlertForwarding(config: AlertForwarding.Config, onResult: (AlertForwarding.Outcome) -> Unit) {
+        viewModelScope.launch {
+            val event = AlertForwarding.Event(
+                resolved = false, severity = "WARNING", host = "OmniTerm", rule = "Test",
+                title = "OmniTerm test alert", text = "Alert forwarding from OmniTerm works.",
+                value = 0f, threshold = 0f, timeMs = System.currentTimeMillis(),
+            )
+            val request = AlertForwarding.request(config, event)
+            val outcome = if (request == null) {
+                AlertForwarding.Outcome(false, AlertForwarding.configError(config) ?: "Forwarding is off")
+            } else {
+                withContext(Dispatchers.IO) { AlertForwarding.send(request) }
+            }
+            onResult(outcome)
+        }
+    }
+
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
     private fun postAlertNotification(
         srv: ServerEntity,
@@ -3793,30 +3911,9 @@ class AppViewModel @JvmOverloads constructor(
             app, alertNotificationId(rule.id, srv.id), openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val mountSuffix = if (rule.metricName == "Disk Usage" && rule.mountPoint.isNotBlank()) " on ${rule.mountPoint}" else ""
-        val unit = when (rule.metricName) {
-            "Latency" -> "ms"
-            "Temperature" -> temperatureUnit(measurementSystem)
-            else -> "%"
-        }
-        val shownValue =
-            if (rule.metricName == "Temperature") celsiusToDisplay(value, measurementSystem) else value
-        val shownThreshold =
-            if (rule.metricName == "Temperature") {
-                celsiusToDisplay(rule.thresholdValue, measurementSystem)
-            } else {
-                rule.thresholdValue
-            }
-        val text = when {
-            detail != null -> detail
-            EndpointChecks.isEndpointMetric(rule.metricName) -> EndpointChecks.alertText(rule, target, value)
-            // Re-posted later (after a mute ends) without the names the probe found.
-            HostChecks.isHostCheck(rule.metricName) -> HostChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
-            else -> "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
-        }
         val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
-            .setContentTitle("${rule.severity}: ${srv.name}")
-            .setContentText(text)
+            .setContentTitle(alertNotificationTitle(rule, srv))
+            .setContentText(alertNotificationText(srv, rule, value, target, detail))
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)

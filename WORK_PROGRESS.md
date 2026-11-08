@@ -93,7 +93,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   open, both guards seen failing without the fix), device `E2eHostChecksTest`.
 - README: Host checks; Beszel and Uptime Kuma credited for the alert kinds.
 
-## Checkpoint C2 — phone-side ping, TCP and DNS checks (this commit)
+## Checkpoint C2 — phone-side ping, TCP and DNS checks (c24f0e9)
 
 - Three more `EndpointChecks` kinds, each timing a reply in ms (below zero on failure), giving up
   after 3 s (`QUICK_TIMEOUT_MS`), checked every poll but at most once a minute, like URL checks:
@@ -121,6 +121,47 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   does not. More `InputValidationTest` cases. Removing the leading-`-` guard or the query-id match
   fails them. Device `E2ePhoneChecksTest` (`omniterm_e2e_phone_checks=yes`) passed on API 35.
 - README: the three checks; Uptime Kuma credited for them.
+
+## Checkpoint C3 — opt-in alert forwarding (this commit)
+
+- `data/AlertForwarding`: Off (the default), an ntfy topic (ntfy.sh or the user's server, optional
+  access token), a Gotify server (application token) or any webhook (optional bearer token).
+  `request()` builds the JSON POST and does no I/O: ntfy's JSON publish to the server root (titles
+  stay out of HTTP headers), Gotify's `/message` with `X-Gotify-Key`, and a webhook object with
+  source, event (triggered or resolved), severity, host, rule, title, message, value, threshold and
+  UTC time. Priorities follow severity; a resolved message is low priority.
+- `send()` never follows a redirect (that would take the token to an address the user did not enter;
+  the outcome names where it pointed). No answer or a 5xx is tried twice more, after 5 s and 30 s; a
+  4xx or redirect is not.
+- What goes out is the notification's own title and text (`alertNotificationTitle`/`Text`, now
+  shared by both), and nothing else. Hooks: an incident opening (the same place the notification is
+  posted) and an incident resolving. A muted incident's recovery is not forwarded; the alerts switch
+  being off stops both, as it stops evaluation. Re-posts (unmute, alerts turned back on) are not
+  forwarded again.
+- Settings: `alert_forward_*`; the token is in `secureSettingKeys`, so it is stored with the
+  Keystore key like the app PIN. Backups carry it inside their passphrase-encrypted settings, so a
+  restored phone keeps forwarding.
+- UI: the Alerts screen's monitoring card has an **Alert forwarding** line (where alerts go, when the
+  last one went out or why not) and a dialog with the service chips, fields, the public-topic and
+  clear-text warnings, an optional resolved message, and **Send test** for the unsaved settings.
+- PRIVACY.md: an Alert Forwarding (Opt-In) section and the sharing exception. The network security
+  config comment now lists it (and URL checks) among the user-typed cleartext addresses.
+- Tests: `AlertForwardingTest` (validation; each service's request, byte for byte; JSON quoting of
+  quotes, controls and U+2028; delivery against a local server: 2xx ok, 401 not retried, 503
+  retried, a 302 not followed and the token never reaching the other address, a closed port
+  retried). `AlertForwardingRobolectricTest` (a webhook hears a Host Offline incident open and
+  recover, exactly once each; a muted incident recovers quietly; Off with an address filled in sends
+  nothing). Device `E2eAlertForwardingTest` (`omniterm_e2e_alert_forwarding=yes`): the dialog sets
+  up a webhook with a token, warns about clear text, Send test delivers with the token, the saved
+  token is stored encrypted, and a closed-port incident on the provisioned host is forwarded with
+  the notification's words; passed on API 35.
+- Guards seen failing: forwarding a muted recovery fails the Robolectric mute test; following
+  redirects (with the fixed-length body removed, which on its own already stops the JDK resending a
+  POST) fails the redirect test; storing the token in clear fails the device test.
+- `./scripts/local-pr-check.sh --full` passed: unit tests, five repeats of the 15 changed test
+  classes, lint, strict dependency verification, no advisories or outstanding updates, secret scan,
+  no new duplicates, the API 35 device matrix, and CodeQL 2.27.4 with no alerts (79,332 lines).
+- README: the feature, the privacy line, and Uptime Kuma and Beszel credited for the idea.
 
 ## Decision pivot — 2026-11-08
 
@@ -152,8 +193,7 @@ Later on Nov 8 the user settled the rest:
 
 ## Remaining, in order
 
-1. Alerts (checkpoint C), C1 and C2 done above:
-   - C3: opt-in forwarding to ntfy, Gotify or a webhook.
+1. Alerts (checkpoint C), C1 to C3 done above:
    - C4: script checks, runbooks offered from the notification, run history.
 2. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
    `ssh://` links, share target, one-tap public-key install.

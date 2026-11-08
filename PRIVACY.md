@@ -9,10 +9,15 @@ OmniTerm stores the following data locally on the user's device when the user en
 - SSH host names, addresses, ports, usernames, groups, notes, and connection settings.
 - SSH passwords, sudo passwords, proxy passwords, credential profiles, and imported private keys.
 - Quick scripts, alert rules, Wake-on-LAN targets, app settings, and recent metric history.
+- Alert forwarding settings, if the user sets them up: the service, its address and topic, and an optional access token (stored encrypted).
 
 ## Network Use
 
 The app connects directly from the user's device to servers and proxies configured by the user. OmniTerm does not operate a backend service for telemetry, analytics, advertising, crash reporting, or credential sync.
+
+## Alert Forwarding (Opt-In)
+
+Alert forwarding is off unless the user sets it up under Alerts. When it is on, each alert that opens (and, if the user keeps that option, each one that resolves) is sent from the device to the one address the user entered: an ntfy server and topic, a Gotify server, or a webhook. The message carries the alert's title and text (the host's name, the rule, the reading and its threshold), its severity and the time. Nothing else is sent: no credentials, files, terminal output or other metrics. Muted alerts are not forwarded. An access token the user enters is stored encrypted on the device with the Android Keystore and sent only to that address; redirects are not followed, so it never goes anywhere else. A plain `http://` address sends the alert and token unencrypted, and the form says so. On a public ntfy server, anyone who knows the topic can read its messages. The service receiving the alerts is the user's choice and is governed by its own terms.
 
 ## Advertising (Play Store Build Only)
 
@@ -20,7 +25,7 @@ The free Play Store build shows a single banner ad served by Google AdMob. AdMob
 
 ## Sharing And Sale
 
-OmniTerm does not sell user data. It does not share credentials, private keys, host inventory, metrics, or files with the project maintainers or third-party services.
+OmniTerm does not sell user data. It does not share credentials, private keys, host inventory, metrics, or files with the project maintainers or third-party services. The only exception is alert forwarding, when the user turns it on: alerts then go to the service the user chose, as described above.
 
 User-initiated SSH/SFTP operations send data directly to the host or proxy selected by the user. User-initiated exports, CSV files, and encrypted backups are written only to destinations selected through Android's system document picker.
 

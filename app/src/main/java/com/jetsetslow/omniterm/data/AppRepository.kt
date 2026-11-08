@@ -248,7 +248,7 @@ class AppRepository(private val db: AppDatabase) {
         if (setting.key in secureSettingKeys) setting.copy(value = SecretStore.encrypt(setting.value) ?: "") else setting
 
     companion object {
-        private val secureSettingKeys = setOf("app_pin")
+        private val secureSettingKeys = setOf("app_pin", AlertForwarding.SETTING_TOKEN)
     }
 }
 

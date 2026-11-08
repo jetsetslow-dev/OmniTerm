@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Cleartext is permitted because a WebDAV share may be set to plain HTTP: the user turns
-         "Use HTTPS" off for that share and the form warns that the password then travels in
-         clear text. Android cannot scope this to hosts the user picks at runtime. Every other
-         HTTP request the app makes is to a fixed https:// URL. -->
+    <!-- Cleartext is permitted for addresses the user types: a WebDAV share with "Use HTTPS"
+         turned off (the form warns that the password then travels in clear text), a URL check of
+         an http:// page, and alert forwarding to an http:// server (the form warns too). Android
+         cannot scope this to hosts the user picks at runtime. Every other HTTP request the app
+         makes is to a fixed https:// URL. -->
     <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

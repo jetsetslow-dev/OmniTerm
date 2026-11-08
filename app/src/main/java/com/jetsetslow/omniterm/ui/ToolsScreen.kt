@@ -639,6 +639,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         stringResource(R.string.rules_are_checked_on_each_metrics),
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    AlertForwardingRow(viewModel)
                 }
             }
 
