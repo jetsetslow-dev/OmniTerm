@@ -8,7 +8,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -317,17 +320,39 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     // run on, and the picked hosts the script's target leaves out.
     var paramsRequest by remember { mutableStateOf<Pair<List<ServerEntity>, List<ServerEntity>>?>(null) }
 
-    // Shows exactly what will run where, and runs that exact list on confirm.
-    fun confirmBroadcast(cmd: String, targets: List<ServerEntity>, mismatched: List<ServerEntity>, values: Map<String, String>) {
-        val skipped = offlinePicks
+    // Shows exactly what will run where, and runs that exact list on confirm. A retry runs the last
+    // command again on the hosts that did not succeed and keeps the other cards.
+    fun confirmBroadcast(
+        cmd: String,
+        targets: List<ServerEntity>,
+        mismatched: List<ServerEntity>,
+        values: Map<String, String>,
+        retry: Boolean = false,
+    ) {
+        val skipped = if (retry) emptyList() else offlinePicks
         val shown = if (values.isEmpty()) cmd else ScriptParams.preview(cmd, values)
         val danger = fleetCommandDangerWarning(shown)
+        val batchSize = viewModel.broadcastBatchSize.takeIf { it in 1 until targets.size }
+        val plural = if (targets.size == 1) "" else "s"
         confirm.ask(
-            title = confirm.str(R.string.run_on_host, targets.size, if (targets.size == 1) "" else "s"),
+            title = confirm.str(if (retry) R.string.broadcast_retry_title else R.string.run_on_host, targets.size, plural),
             message = buildString {
                 appendLine("$ $shown")
                 appendLine()
                 targets.forEach { appendLine("• ${HostDisplay.name(it)} (${HostDisplay.userAtHost(it)})") }
+                if (retry) {
+                    appendLine()
+                    appendLine(confirm.str(R.string.broadcast_retry_keeps_others))
+                }
+                if (batchSize != null) {
+                    appendLine()
+                    appendLine(
+                        confirm.str(
+                            if (viewModel.broadcastStopOnFailure) R.string.broadcast_rolling_stop_confirm else R.string.broadcast_rolling_confirm,
+                            batchSize,
+                        ),
+                    )
+                }
                 if (skipped.isNotEmpty()) {
                     appendLine()
                     appendLine(confirm.str(R.string.broadcast_skipped_offline, skipped.joinToString(", ") { HostDisplay.name(it) }))
@@ -352,8 +377,18 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             confirmLabel = confirm.str(R.string.run),
             destructive = danger != null,
         ) {
-            viewModel.runFleetBroadcast(cmd, targets.map { it.id }, values)
+            if (retry) viewModel.retryFailedBroadcastHosts(targets.map { it.id })
+            else viewModel.runFleetBroadcast(cmd, targets.map { it.id }, values)
         }
+    }
+
+    fun confirmRetryFailed() {
+        if (viewModel.isBroadcastExecuting) return
+        val ids = viewModel.broadcastRetryableIds
+        val byId = srvList.associateBy { it.id }
+        val targets = ids.mapNotNull(byId::get)
+        if (targets.isEmpty() || viewModel.lastBroadcastCommand.isBlank()) return
+        confirmBroadcast(viewModel.lastBroadcastCommand, targets, emptyList(), viewModel.lastBroadcastParams, retry = true)
     }
 
     // Snapshot the targets at tap time; group membership/online status is not re-resolved after the
@@ -471,6 +506,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 modifier = Modifier.testTag("fleet.broadcast.tmux"),
             )
         }
+        BroadcastRollingControls(viewModel)
         Spacer(modifier = Modifier.height(8.dp))
         Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
         Row(
@@ -520,16 +556,53 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             )
         }
     }
+    val context = LocalContext.current
+    val resources = LocalResources.current
     val outputsHeader = @Composable {
-        // Terminal text nodes feed displaying returned parallel response packages
-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+        // Once a run ends: retry the hosts that did not succeed, share every card as text, or clear.
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text(stringResource(R.string.execution_outputs), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (viewModel.broadcastResults.isNotEmpty() && !viewModel.isBroadcastExecuting) {
-                Text(stringResource(R.string.clear_outputs),
-                    fontSize = 11.sp,
-                    color = Color.Red,
-                    modifier = Modifier.clickable { confirmClearOutputs = true }
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val retryable = viewModel.broadcastRetryableIds.size
+                    if (retryable > 0) {
+                        Text(
+                            stringResource(R.string.broadcast_retry_failed, retryable),
+                            fontSize = 11.sp,
+                            color = OmniColors.amber,
+                            modifier = Modifier.clickable { confirmRetryFailed() }.padding(vertical = 4.dp).testTag("fleet.broadcast.retry"),
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.broadcast_share_output),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable {
+                            runCatching {
+                                TextShare.share(
+                                    context,
+                                    viewModel.broadcastReport(),
+                                    subject = resources.getString(R.string.broadcast_share_subject),
+                                    fileName = "omniterm-fleet-run.txt",
+                                    chooserTitle = resources.getString(R.string.broadcast_share_chooser),
+                                    cacheFolder = "shared-text",
+                                )
+                            }.onFailure {
+                                Toast.makeText(context, resources.getString(R.string.broadcast_share_failed, it.message.orEmpty()), Toast.LENGTH_LONG).show()
+                            }
+                        }.padding(vertical = 4.dp).testTag("fleet.broadcast.share"),
+                    )
+                    Text(
+                        stringResource(R.string.clear_outputs),
+                        fontSize = 11.sp,
+                        color = Color.Red,
+                        modifier = Modifier.clickable { confirmClearOutputs = true }.padding(vertical = 4.dp),
+                    )
+                }
             }
         }
     }
@@ -543,7 +616,8 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                     BroadcastStatus.Running -> OmniColors.cyan
                     BroadcastStatus.Success -> OmniColors.green
                     BroadcastStatus.Failure -> OmniColors.red
-                    BroadcastStatus.Reconnecting, BroadcastStatus.Detached, BroadcastStatus.NeedsTmux -> OmniColors.amber
+                    BroadcastStatus.Reconnecting, BroadcastStatus.Detached, BroadcastStatus.NeedsTmux, BroadcastStatus.NotRun -> OmniColors.amber
+                    BroadcastStatus.Waiting -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 val expanded = expandedOutputs[item.serverId] == true
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = hostAccent(allHosts, item.serverId)) {
@@ -566,14 +640,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                                     CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = accent)
                                 }
                                 Text(
-                                    when (item.status) {
-                                        BroadcastStatus.Running -> "streaming"
-                                        BroadcastStatus.Success -> "complete"
-                                        BroadcastStatus.Failure -> "failed"
-                                        BroadcastStatus.Reconnecting -> "reconnecting"
-                                        BroadcastStatus.Detached -> "disconnected"
-                                        BroadcastStatus.NeedsTmux -> "needs tmux"
-                                    },
+                                    stringResource(item.status.label),
                                     fontSize = 10.sp,
                                     color = accent,
                                     fontWeight = FontWeight.Bold,
@@ -581,16 +648,19 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                             }
                         }
                         if (expanded) {
+                            val placeholder = stringResource(
+                                when (item.status) {
+                                    BroadcastStatus.Running, BroadcastStatus.Reconnecting -> R.string.broadcast_waiting_for_output
+                                    BroadcastStatus.Waiting -> R.string.broadcast_waiting_for_batch
+                                    BroadcastStatus.Success -> R.string.broadcast_done_no_output
+                                    else -> R.string.broadcast_no_output
+                                },
+                            )
+                            val truncatedLine = stringResource(R.string.broadcast_output_truncated, BROADCAST_OUTPUT_MAX_CHARS)
                             StreamOutputBox(
                                 buildString {
-                                    if (item.truncated) append("[Output truncated; showing latest ${120_000} characters]\n")
-                                    append(item.output.ifBlank {
-                                        when (item.status) {
-                                            BroadcastStatus.Running, BroadcastStatus.Reconnecting -> "Waiting for output..."
-                                            BroadcastStatus.Success -> "Done (no output)"
-                                            else -> "No output"
-                                        }
-                                    })
+                                    if (item.truncated) appendLine(truncatedLine)
+                                    append(item.output.ifBlank { placeholder })
                                 },
                                 modifier = Modifier.heightIn(min = 72.dp, max = 260.dp),
                                 look = StreamOutputLook.Terminal,
@@ -745,6 +815,59 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 TextButton(onClick = { confirmClearOutputs = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+/**
+ * Rolling runs: how many hosts start at a time, and whether a batch with a failure stops the run.
+ * Credit: Komodo's batch deploys (moghtech/komodo#1080).
+ */
+@Composable
+private fun BroadcastRollingControls(viewModel: AppViewModel) {
+    val idle = !viewModel.isBroadcastExecuting
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text(stringResource(R.string.broadcast_rolling), fontWeight = FontWeight.Bold)
+        Text(
+            stringResource(R.string.broadcast_rolling_explained),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Wraps at large text sizes instead of pushing the last sizes off the screen.
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.broadcast_batch_size_label), fontSize = 12.sp, modifier = Modifier.padding(end = 2.dp))
+            BROADCAST_BATCH_SIZES.forEach { size ->
+                FilterChip(
+                    selected = viewModel.broadcastBatchSize == size,
+                    onClick = { viewModel.updateBroadcastBatchSize(size) },
+                    enabled = idle,
+                    label = { Text(if (size == 0) stringResource(R.string.broadcast_batch_all) else size.toString(), fontSize = 12.sp) },
+                    modifier = Modifier.testTag("fleet.broadcast.batch.$size"),
+                )
+            }
+        }
+        if (viewModel.broadcastBatchSize > 0) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.broadcast_stop_on_failure), fontSize = 13.sp)
+                    Text(
+                        stringResource(R.string.broadcast_stop_on_failure_explained),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = viewModel.broadcastStopOnFailure,
+                    onCheckedChange = viewModel::updateBroadcastStopOnFailure,
+                    enabled = idle,
+                    modifier = Modifier.testTag("fleet.broadcast.stop_on_failure"),
+                )
+            }
+        }
     }
 }
 
@@ -955,7 +1078,7 @@ private fun BroadcastHostFooter(viewModel: AppViewModel, item: BroadcastResultIt
                 add(stringResource(R.string.install_tool, "tmux") to { viewModel.installTmuxForBroadcast(item.serverId) })
                 add(stringResource(R.string.run_without_tmux) to { viewModel.runBroadcastHostWithoutTmux(item.serverId) })
             }
-            BroadcastStatus.Success, BroadcastStatus.Failure -> Unit
+            BroadcastStatus.Success, BroadcastStatus.Failure, BroadcastStatus.Waiting, BroadcastStatus.NotRun -> Unit
         }
     }
     if (actions.isNotEmpty()) {

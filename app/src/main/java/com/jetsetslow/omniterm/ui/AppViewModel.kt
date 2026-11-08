@@ -9,6 +9,7 @@ import android.content.Intent
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Build
+import androidx.annotation.StringRes
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.jetsetslow.omniterm.MainActivity
@@ -129,7 +130,20 @@ private const val IMAGE_PREVIEW_MAX_DIMENSION = 4096
 private const val PANE_ALT_CACHE_MS = 2_500L
 
 /** Cap per host for Fleet Broadcast output; long-running commands keep the latest tail only. */
-private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
+internal const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
+
+/** Hosts a broadcast talks to at once, whatever the batch size. */
+private const val BROADCAST_PARALLEL = 6
+
+/** Rolling-run batch sizes Fleet offers; 0 runs every host at once. */
+internal val BROADCAST_BATCH_SIZES = listOf(0, 1, 2, 5, 10)
+
+/**
+ * [hosts] in the batches a rolling run starts one after another, in the order given; one batch
+ * when [batchSize] is 0 or covers them all.
+ */
+internal fun <T> broadcastBatches(hosts: List<T>, batchSize: Int): List<List<T>> =
+    if (batchSize <= 0 || batchSize >= hosts.size) listOf(hosts) else hosts.chunked(batchSize)
 
 /** Default hard stop for one Fleet Broadcast run. */
 private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
@@ -775,10 +789,21 @@ data class RemoteFileRef(
 )
 
 /**
- * A broadcast host's state. Reconnecting and Detached are tmux runs whose connection dropped (still
- * trying, and stopped trying); NeedsTmux is a host without tmux, waiting for the user.
+ * A broadcast host's state, with the word its card shows. Reconnecting and Detached are tmux runs
+ * whose connection dropped (still trying, and stopped trying); NeedsTmux is a host without tmux,
+ * waiting for the user. Waiting is a rolling run's host whose batch has not started; NotRun is one
+ * that never started because an earlier host failed, or the run was stopped or timed out.
  */
-enum class BroadcastStatus { Running, Success, Failure, Reconnecting, Detached, NeedsTmux }
+enum class BroadcastStatus(@StringRes val label: Int) {
+    Running(R.string.broadcast_status_running),
+    Success(R.string.broadcast_status_success),
+    Failure(R.string.broadcast_status_failure),
+    Reconnecting(R.string.broadcast_status_reconnecting),
+    Detached(R.string.broadcast_status_detached),
+    NeedsTmux(R.string.broadcast_status_needs_tmux),
+    Waiting(R.string.broadcast_status_waiting),
+    NotRun(R.string.broadcast_status_not_run),
+}
 
 enum class FleetTargetMode { Servers, Groups }
 
@@ -2593,6 +2618,11 @@ class AppViewModel @JvmOverloads constructor(
     // Above init for the same reason: whether Fleet Broadcast runs each command in its own tmux session.
     var broadcastInTmux by mutableStateOf(false)
         private set
+    // Above init for the same reason: rolling runs (see [updateBroadcastBatchSize]).
+    var broadcastBatchSize by mutableStateOf(0)
+        private set
+    var broadcastStopOnFailure by mutableStateOf(true)
+        private set
 
     init {
         TerminalSessionManager.init(application)
@@ -2836,6 +2866,9 @@ class AppViewModel @JvmOverloads constructor(
                 )
                 hostSort = HostSort.fromSetting(list.find { it.key == "host_sort" }?.value)
                 broadcastInTmux = list.find { it.key == "broadcast_in_tmux" }?.value?.toBooleanStrictOrNull() ?: false
+                broadcastBatchSize = list.find { it.key == "broadcast_batch_size" }?.value?.toIntOrNull()
+                    ?.takeIf { it in BROADCAST_BATCH_SIZES } ?: 0
+                broadcastStopOnFailure = list.find { it.key == "broadcast_stop_on_failure" }?.value?.toBooleanStrictOrNull() ?: true
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
                     isKeepScreenOnEnabled = keepScreenOn
@@ -12934,10 +12967,51 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.insertSetting("broadcast_in_tmux", on.toString()) }
     }
 
+    /** Rolling runs: how many hosts start at a time (one of [BROADCAST_BATCH_SIZES]); 0 is all at once. */
+    fun updateBroadcastBatchSize(size: Int) {
+        broadcastBatchSize = size.takeIf { it in BROADCAST_BATCH_SIZES } ?: 0
+        viewModelScope.launch { repository.insertSetting("broadcast_batch_size", broadcastBatchSize.toString()) }
+    }
+
+    /** In a rolling run, leave the remaining hosts alone once a host in a batch fails. */
+    fun updateBroadcastStopOnFailure(on: Boolean) {
+        broadcastStopOnFailure = on
+        viewModelScope.launch { repository.insertSetting("broadcast_stop_on_failure", on.toString()) }
+    }
+
+    /** Hosts on the cards that did not succeed: failed, or not run after a failure or a stop. */
+    val broadcastRetryableIds: List<Int>
+        get() = broadcastResults.filter { it.status == BroadcastStatus.Failure || it.status == BroadcastStatus.NotRun }.map { it.serverId }
+
+    /**
+     * Runs the last command again, with the same values, on [ids] (the hosts that did not succeed,
+     * as the confirmation listed them); the other cards keep their results.
+     */
+    fun retryFailedBroadcastHosts(ids: List<Int> = broadcastRetryableIds) {
+        if (ids.isEmpty() || isBroadcastExecuting || lastBroadcastCommand.isBlank()) return
+        runFleetBroadcast(lastBroadcastCommand, ids, lastBroadcastParams, keepOtherResults = true)
+    }
+
+    /** The last run as plain text, one section per host, for Share. */
+    fun broadcastReport(): String {
+        val app = getApplication<Application>()
+        return buildString {
+            appendLine("$ ${ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams)}")
+            broadcastResults.forEach { item ->
+                appendLine()
+                appendLine("== ${item.serverName} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
+                if (item.truncated) appendLine(app.getString(R.string.broadcast_output_truncated, BROADCAST_OUTPUT_MAX_CHARS))
+                if (item.output.isNotBlank()) appendLine(item.output.trimEnd())
+            }
+        }.trimEnd() + "\n"
+    }
+
     /** The last run's command and tmux run id, for a host that installs tmux or reconnects later. */
-    private var lastBroadcastCommand = ""
+    var lastBroadcastCommand = ""
+        private set
     /** The last run's values for the command's `{{placeholders}}` (see [ScriptParams]). */
-    private var lastBroadcastParams: Map<String, String> = emptyMap()
+    var lastBroadcastParams: Map<String, String> = emptyMap()
+        private set
     private var lastBroadcastRunId = ""
     /** Hosts the app runs or follows again on their own, after the broadcast itself ended. */
     private val broadcastHostJobs = mutableMapOf<Int, Job>()
@@ -12956,20 +13030,27 @@ class AppViewModel @JvmOverloads constructor(
      * re-evaluated here, so the set can't drift between confirmation and execution. [paramValues]
      * fill the command's `{{placeholders}}`, quoted for each host's own shell.
      */
-    fun runFleetBroadcast(command: String, resolvedIds: List<Int>? = null, paramValues: Map<String, String> = emptyMap()) {
+    fun runFleetBroadcast(
+        command: String,
+        resolvedIds: List<Int>? = null,
+        paramValues: Map<String, String> = emptyMap(),
+        keepOtherResults: Boolean = false,
+    ) {
         if (command.isBlank()) return
         if (isBroadcastExecuting) return
         val cmd = command.trim()
         val targetIds = broadcastTargetServerIds.toList()
         val targetGroups = broadcastTargetGroups.toList()
         val inTmux = broadcastInTmux
+        val batchSize = broadcastBatchSize
+        val stopOnFailure = broadcastStopOnFailure && batchSize > 0
         val runId = UUID.randomUUID().toString().replace("-", "").take(10)
         lastBroadcastCommand = cmd
         lastBroadcastParams = paramValues
         lastBroadcastRunId = runId
         broadcastStopRequested = false
         isBroadcastExecuting = true
-        broadcastResults.clear()
+        if (!keepOtherResults) broadcastResults.clear()
 
         broadcastJob = viewModelScope.launch {
             val allServers = repository.getAllServers()
@@ -12978,7 +13059,8 @@ class AppViewModel @JvmOverloads constructor(
                 // can change between confirmation and execution (or simply be stale after resume),
                 // so do not silently drop an explicitly confirmed host here; attempt it and surface
                 // the real SSH result for that row.
-                resolvedIds != null -> allServers.filter { it.id in resolvedIds }
+                // In the confirmed order, which a rolling run's batches follow.
+                resolvedIds != null -> allServers.associateBy { it.id }.let { byId -> resolvedIds.distinct().mapNotNull(byId::get) }
                 broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.status == "online" && it.id in targetIds }
                 else -> allServers.filter { it.status == "online" && it.groupName.orEmpty() in targetGroups }
             }
@@ -12995,28 +13077,51 @@ class AppViewModel @JvmOverloads constructor(
             )
             var succeeded = false
             var cancelled = false
-            broadcastResults.addAll(selected.map { BroadcastResultItem(serverId = it.id, serverName = it.name) })
-            val limiter = Semaphore(6)
-            suspend fun runAll() = coroutineScope {
-                selected.map { srv ->
+            // A rolling run's later hosts wait their turn; the rest start at once.
+            val batches = broadcastBatches(selected, batchSize)
+            val waiting = if (batches.size > 1) BroadcastStatus.Waiting else BroadcastStatus.Running
+            val fresh = selected.map { BroadcastResultItem(serverId = it.id, serverName = it.name, status = waiting) }
+            if (keepOtherResults) {
+                fresh.forEach { item ->
+                    val index = broadcastResults.indexOfFirst { it.serverId == item.serverId }
+                    if (index >= 0) broadcastResults[index] = item else broadcastResults.add(item)
+                }
+            } else {
+                broadcastResults.addAll(fresh)
+            }
+            val app = getApplication<Application>()
+            val limiter = Semaphore(BROADCAST_PARALLEL)
+            suspend fun runBatch(batch: List<ServerEntity>) = coroutineScope {
+                batch.map { srv ->
                     async {
                         limiter.withPermit {
+                            updateBroadcastResult(srv.id) { it.copy(status = BroadcastStatus.Running) }
                             if (inTmux) broadcastHostInTmux(srv, cmd, runId) else broadcastHostPlain(srv, cmd)
                         }
                     }
                 }.awaitAll()
             }
             try {
-                // A tmux run outlives a dropped connection, so it is not cut off at the plain
-                // broadcast's limit; Stop ends it.
-                if (inTmux) runAll() else withTimeout(BROADCAST_TIMEOUT_MS) { runAll() }
-                succeeded = broadcastResults.all { it.status == BroadcastStatus.Success }
+                for ((index, batch) in batches.withIndex()) {
+                    // A tmux run outlives a dropped connection, so it is not cut off at the plain
+                    // broadcast's limit; Stop ends it. The limit is per batch, so a long rolling run
+                    // is not cut off at the total.
+                    if (inTmux) runBatch(batch) else withTimeout(BROADCAST_TIMEOUT_MS) { runBatch(batch) }
+                    val failed = batch.firstOrNull { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status != BroadcastStatus.Success }
+                    if (stopOnFailure && failed != null && index < batches.lastIndex) {
+                        markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_after_failure, failed.name))
+                        break
+                    }
+                }
+                succeeded = selected.all { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status == BroadcastStatus.Success }
             } catch (e: TimeoutCancellationException) {
-                markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_timed_out, BROADCAST_TIMEOUT_MS / 60_000))
+                markRunningBroadcastsFailed(app.getString(R.string.broadcast_timed_out, BROADCAST_TIMEOUT_MS / 60_000))
+                markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_timed_out))
             } catch (e: CancellationException) {
                 cancelled = true
                 if (inTmux && broadcastStopRequested) stopBroadcastTmuxRuns(selected.map { it.id })
-                markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_stopped))
+                markRunningBroadcastsFailed(app.getString(R.string.broadcast_stopped))
+                markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_stopped))
             } finally {
                 broadcastJob = null
                 updateBroadcastExecuting()
@@ -13301,6 +13406,14 @@ class AppViewModel @JvmOverloads constructor(
                 status = if (exit == 0) BroadcastStatus.Success else BroadcastStatus.Failure,
                 note = note?.takeUnless { current.output.trimEnd().endsWith(it) },
             )
+        }
+    }
+
+    /** Hosts of a rolling run still waiting for their batch: they will not run now. */
+    private fun markWaitingBroadcastsNotRun(message: String) {
+        for (i in broadcastResults.indices) {
+            val current = broadcastResults[i]
+            if (current.status == BroadcastStatus.Waiting) broadcastResults[i] = current.copy(status = BroadcastStatus.NotRun, note = message)
         }
     }
 

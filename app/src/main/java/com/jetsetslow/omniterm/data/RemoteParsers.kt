@@ -1380,6 +1380,13 @@ object RemoteCommands {
         append("command -v ha >/dev/null 2>&1 && echo homeassistant; ")
         append("{ command -v vcgencmd >/dev/null 2>&1 || grep -qi raspberry /proc/cpuinfo 2>/dev/null; } && echo raspberry; ")
         append("command -v docker >/dev/null 2>&1 && echo docker; ")
+        append("command -v podman >/dev/null 2>&1 && echo podman; ")
+        append("{ command -v kubectl || command -v k3s || command -v microk8s; } >/dev/null 2>&1 && echo kubernetes; ")
+        append("[ -f /etc/synoinfo.conf ] && echo synology; ")
+        // midclt is TrueNAS's middleware client, on SCALE (Linux) and CORE (FreeBSD) alike.
+        append("command -v midclt >/dev/null 2>&1 && echo truenas; ")
+        append("[ -f /etc/unraid-version ] && echo unraid; ")
+        append("[ -f /etc/openwrt_release ] && echo openwrt; ")
         append("true; ")
         // CPU: grep the first line mentioning "cpu" so we catch GNU top ("%Cpu(s): ... 95.6 id")
         // and BusyBox top ("CPU: ... 98% idle") alike.
@@ -1436,6 +1443,10 @@ object RemoteCommands {
         append("echo inactive \$(sysctl -n vm.stats.vm.v_inactive_count 2>/dev/null); ")
         append("echo cache \$(sysctl -n vm.stats.vm.v_cache_count 2>/dev/null); ")
         append("echo '@DISK'; df -Pk / 2>/dev/null | tail -1 || true; ")
+        // Appliances built on FreeBSD, so their scripts reach only them.
+        append("echo '@PLATFORM'; command -v midclt >/dev/null 2>&1 && echo truenas; ")
+        append("grep -qi pfsense /etc/platform 2>/dev/null && echo pfsense; ")
+        append("command -v opnsense-version >/dev/null 2>&1 && echo opnsense; true; ")
         append("echo '@DISKS'; df -Pk 2>/dev/null | tail -n +2 || true; ")
         append("echo '@LOADAVG'; sysctl -n vm.loadavg 2>/dev/null || true; ")
         append("echo '@BOOT'; sysctl -n kern.boottime 2>/dev/null || true; ")
@@ -2133,8 +2144,7 @@ object RemoteParsers {
         val osLabel = sections["DISTRO"]?.trim()?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
             ?.takeIf { it.isNotEmpty() } ?: "Linux"
 
-        val platforms = sections["PLATFORM"].orEmpty().lineSequence()
-            .map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet().apply { add("linux") }
+        val platforms = parsePlatforms(sections) + "linux"
 
         return HostMetrics(
             cpu, memUsed, memTotal, diskUsed, diskTotal, l1, l5, l15, uptime, procCount,
@@ -2150,8 +2160,13 @@ object RemoteParsers {
             .find(mem)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val pageSize = sm("pagesize").takeIf { it > 0 } ?: 4096L
         val freeBytes = (sm("free") + sm("inactive") + sm("cache")) * pageSize
-        return bsdFamilyMetrics(sections, memTotal = sm("phys"), freeBytes = freeBytes, os = os, platform = "freebsd")
+        val metrics = bsdFamilyMetrics(sections, memTotal = sm("phys"), freeBytes = freeBytes, os = os, platform = "freebsd")
+        return metrics.copy(platforms = metrics.platforms + parsePlatforms(sections))
     }
+
+    /** The probe's `@PLATFORM` lines: one platform key ([HostMetrics.platforms]) per line. */
+    private fun parsePlatforms(sections: Map<String, String>): Set<String> =
+        sections["PLATFORM"].orEmpty().lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
     /** macOS metrics: like BSD but memory from vm_stat + hw.memsize. */
     private fun parseMetricsDarwin(sections: Map<String, String>): HostMetrics {

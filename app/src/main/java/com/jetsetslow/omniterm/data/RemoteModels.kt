@@ -214,7 +214,8 @@ data class HostMetrics(
     // Remote OS family detected by the probe: "Linux" | "FreeBSD" | "Darwin" | "Windows" | "".
     val os: String = "",
     // Detected platform capabilities (e.g. "linux", "proxmox", "casaos", "homeassistant",
-    // "raspberry", "docker", "freebsd", "darwin", "windows"). Used to filter platform-specific
+    // "raspberry", "docker", "podman", "kubernetes", "synology", "truenas", "unraid", "openwrt",
+    // "pfsense", "opnsense", "freebsd", "darwin", "windows"). Used to filter platform-specific
     // quick scripts to relevant hosts. In-memory only (not persisted).
     val platforms: Set<String> = emptySet(),
 ) {

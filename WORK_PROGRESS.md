@@ -4,13 +4,14 @@ Scope (user request, Nov 7–8): review comparable open-source apps for missed b
 give OmniTerm a capability no other app has for homelab and server admins, re-check Quick Scripts
 and Fleet after the cross-OS/container/Kubernetes work, add automation hooks (Tasker and similar
 apps, an opt-in private MCP server), optional per-host WireGuard/Tailscale tunnels, credit every
-project we learn from, then bring Flutter level with Kotlin. Branch `kotlin-automation` from main
+project we learn from. (The Flutter sync first asked for was dropped on Nov 8; see the pivot below.)
+Branch `kotlin-automation` from main
 after #136 and #137. Independent review and merge remain the user's.
 
 The private audit (sources per finding, designs, order) is in the internal docs as
 `COMPETITOR_AUDIT_2026-11-08.md`.
 
-## Checkpoint A — scripts and Fleet defects (this commit)
+## Checkpoint A — scripts and Fleet defects (82702ea)
 
 - Script values: `{{name}}` and `{{name=default}}` in a saved script ask for a value when it runs
   from Monitor → Scripts or Fleet. Values are quoted for each host's shell (POSIX single quotes;
@@ -43,21 +44,61 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   Checksums via `scripts/refresh-verification-metadata.sh --write`; the Actions allowlist check
   passes.
 
+## Checkpoint B — rolling Fleet runs, retry, share, targets (this commit)
+
+- Rolling runs: Fleet → Broadcast → Rolling run takes 1, 2, 5 or 10 hosts at a time (persisted as
+  `broadcast_batch_size`, 0 = all at once) in the confirmed order, with "Stop if a host fails"
+  (`broadcast_stop_on_failure`, default on). New card states: waiting, not run (with the reason).
+  Stop or a timeout leaves the waiting hosts not run; the 10-minute limit applies per batch.
+  `broadcastBatches()` in `AppViewModel.kt`. Credit: Komodo batch deploys (moghtech/komodo#1080).
+- Retry: "Retry N" after a run re-runs the last command and values on the failed and not-run hosts
+  only, behind the same confirmation (with the danger warning); other cards keep their results.
+- Share output: the whole run as text through the share sheet. `data/TextShare.kt` is shared with
+  the crash report, whose after-crash screen now uses the same redacted payload
+  (`CrashLog.sharePayload`) as Tools: always an attached file, plus the message body up to 100,000 characters, because
+  a larger body overflows the Binder transaction and crashes the share. New FileProvider path
+  `shared-text/`.
+- Status words, placeholders and the truncation line moved to string resources
+  (`BroadcastStatus.label`).
+- Script targets: the Linux probe reports podman, kubernetes (kubectl, k3s or microk8s), synology,
+  truenas, unraid and openwrt; the BSD probe reports truenas, pfsense and opnsense. The script
+  editor offers all of them.
+- README: Fleet rolling runs, Retry, Share output, target list; Komodo in Acknowledgements and
+  NOTICE.
+- Validation: JVM and Robolectric tests, the API 35 device test `E2eRollingFleetTest` (fails
+  without batching), and `./scripts/local-pr-check.sh --full` passed: unit and Robolectric tests, lint, dependency and SBOM verification, the API 35 device suite (including the rolling-run test), and CodeQL with no alerts.
+
+## Decision pivot — 2026-11-08
+
+The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
+Kotlin app is the only one that went live. OmniTerm stays one Kotlin codebase and gains iOS through
+Compose Multiplatform, so nothing from this round is ported to Flutter. #92 is closed once Kotlin
+Multiplatform works for iOS: the shared module builds for Android and iOS, the iOS app builds and
+passes its tests on macOS CI, and a host connects with a working terminal on a simulator. iOS need
+not match Android feature for feature (user, Nov 8); it can start as a subset. The Flutter branches
+are kept.
+
 ## Remaining, in order
 
-1. Runbooks: rolling Fleet runs (batch size, stop on failure), retry failed hosts, export and run
-   history, per-OS variants, wider platform detection (podman, k3s/microk8s, Synology, TrueNAS,
-   Unraid).
-2. Alerts: host offline/online, phone-offline guard for probes and endpoint checks, failed systemd
-   units, unhealthy/exited containers, script-check rules; runbooks offered from alert
-   notifications.
-3. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
+1. Alerts (checkpoint C):
+   - C1 host checks: host offline (with a guard for when the phone itself has no network), failed
+     services, containers in trouble, storage health (ZFS, md, SMART), ZFS scrub age, UPS on
+     battery, reboot required.
+   - C2: phone-side ping, TCP and DNS checks.
+   - C3: opt-in forwarding to ntfy, Gotify or a webhook.
+   - C4: script checks, runbooks offered from the notification, run history.
+2. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
    `ssh://` links, share target, one-tap public-key install.
-4. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
+3. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
    on-phone approval for writes, audit log, `PRIVACY.md` section.
-5. Per-host WireGuard/Tailscale: blocked on a toolchain decision (needs Go; host installs are not
-   allowed without the user's approval).
-6. Flutter: one sync that merges main and ports #131, #132, #136, #137 and this round.
+4. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
+   Go library, built with a repo-local, checksum-verified Go toolchain (approved Nov 8). ZeroTier,
+   OpenVPN and Pangolin's Olm are left out for their licences; Pangolin raw TCP resources work as a
+   plain host and port.
+5. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
+   presets.
+6. Compose Multiplatform: a shared module from the Aug 1 groundwork, pure logic first, then UI,
+   then the iOS pieces (SSH engine, Keychain, notifications), with iOS CI on macOS runners.
 
 ## Validation
 
@@ -82,7 +123,19 @@ Results so far:
   advisories, no outstanding updates (66 Gradle, 36 Actions), secret scan, no new duplicate code,
   the API 35 device matrix, and local CodeQL 2.27.4 with zero alerts (76,475 lines). The CodeQL
   step's clean build removed the per-test result files, so this record has no per-test counts.
-- CI: pending (PR not yet opened).
+- CI for checkpoint A: see PR #138.
+
+Checkpoint B results:
+- Unit: `FleetRollingRunRobolectricTest` (4: batches, stop on failure then retry, no-stop order,
+  stop leaves waiting hosts not run), `ScriptTargetsTest` (+3: every target system is reported by a
+  probe, parsed platforms match targets, the Linux platform block in a real `sh` with stand-in
+  tools), and the existing Fleet broadcast tests pass. With batching removed all four rolling tests
+  fail.
+- API 35 against the repository fixture (the provisioned host plus a copy of it):
+  `E2eRollingFleetTest` with `-e omniterm_e2e_rolling_fleet yes` passed — one at a time, the first
+  host exits 3 and the second is not run, Retry runs both and they succeed, Share starts the share
+  sheet with the run as message text and as an attached file readable through the provider. With
+  batching removed it fails.
 
 ## Known exclusions
 

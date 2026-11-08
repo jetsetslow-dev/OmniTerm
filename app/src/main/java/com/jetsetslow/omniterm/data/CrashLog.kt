@@ -3,10 +3,8 @@ package com.jetsetslow.omniterm.data
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
 
@@ -132,25 +130,13 @@ object CrashLog {
     fun shareReport(context: Context, report: String) {
         // Defense in depth: callers normally pass an already-sanitized stored report, but this is
         // the final clipboard/file/IPC boundary and must never trust that invariant.
-        val full = sharePayload(report)
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "OmniTerm crash report")
-            // Always include the FULL report as text: many share targets show/keep EXTRA_TEXT and
-            // drop the attached file, so without this they'd receive an empty body. The file
-            // attachment (below) is added best-effort for targets that prefer attachments.
-            putExtra(Intent.EXTRA_TEXT, full)
-        }
-        runCatching {
-            val dir = File(context.cacheDir, "crash-reports").apply { mkdirs() }
-            val file = File(dir, "omniterm-crash-report.txt")
-            file.writeText(full)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            send.putExtra(Intent.EXTRA_STREAM, uri)
-            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(
-            Intent.createChooser(send, "Share crash report").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        TextShare.share(
+            context,
+            sharePayload(report),
+            subject = "OmniTerm crash report",
+            fileName = "omniterm-crash-report.txt",
+            chooserTitle = "Share crash report",
+            cacheFolder = "crash-reports",
         )
     }
 

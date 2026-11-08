@@ -19,6 +19,7 @@ code from them is included; see the README's Acknowledgements for what came from
 - Termix — https://github.com/Termix-SSH/Termix
 - ssh-mcp-server — https://github.com/classfang/ssh-mcp-server
 - ssh-mcp — https://github.com/tufantunc/ssh-mcp
+- Komodo — https://github.com/moghtech/komodo
 - Haven — https://github.com/GlassHaven/Haven
 - ConnectBot — https://github.com/connectbot/connectbot
 - ServerBox — https://github.com/lollipopkit/flutter_server_box

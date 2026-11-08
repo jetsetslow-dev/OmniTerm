@@ -2,6 +2,8 @@ package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.HostMetrics
 import com.jetsetslow.omniterm.data.QuickScriptEntity
+import com.jetsetslow.omniterm.data.RemoteCommands
+import com.jetsetslow.omniterm.data.RemoteParsers
 import com.jetsetslow.omniterm.data.ScriptParams
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.ui.FLEET_SYSLOG_COMMAND
@@ -10,6 +12,9 @@ import com.jetsetslow.omniterm.ui.builtInFleetPresetCommands
 import com.jetsetslow.omniterm.ui.fleetHostsScriptSkips
 import com.jetsetslow.omniterm.ui.homelabPresetScripts
 import com.jetsetslow.omniterm.ui.quickScriptMatchesHost
+import com.jetsetslow.omniterm.ui.quickScriptSystemOptions
+import com.jetsetslow.omniterm.ui.scriptTargetsHost
+import com.jetsetslow.omniterm.ui.systemPlatformKey
 import com.jetsetslow.omniterm.ui.retiredPresetScripts
 import com.jetsetslow.omniterm.ui.scriptTargetLabel
 import com.jetsetslow.omniterm.ui.scriptTargetsAnyHost
@@ -124,6 +129,58 @@ class ScriptTargetsTest {
             val output = process.inputStream.readBytes().toString(Charsets.UTF_8)
             assertTrue(output, output.contains("bash.x86_64"))
             assertEquals(output, 0, process.exitValue())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    /** Every system a script can target is one the metrics probe can report. */
+    @Test
+    fun everyTargetSystemIsDetected() {
+        val probes = RemoteCommands.METRICS + RemoteCommands.METRICS_BSD
+        quickScriptSystemOptions.filterNot { it == "Any" }.forEach { system ->
+            assertTrue("$system is never reported", probes.contains("echo ${systemPlatformKey(system)};"))
+        }
+    }
+
+    @Test
+    fun appliancesAndRuntimesAreTargetable() {
+        val linux = RemoteParsers.parseMetrics("@OS\nLinux\n@PLATFORM\npodman\nkubernetes\ntruenas\n")
+        assertEquals(setOf("linux", "podman", "kubernetes", "truenas"), linux.platforms)
+        assertTrue(scriptTargetsHost(script(system = "TrueNAS"), linux))
+        assertTrue(scriptTargetsHost(script(os = "Linux", system = "Podman"), linux))
+        assertFalse(scriptTargetsHost(script(system = "Synology"), linux))
+
+        val bsd = RemoteParsers.parseMetrics("@OS\nFreeBSD\n@PLATFORM\npfsense\n")
+        assertEquals(setOf("freebsd", "pfsense"), bsd.platforms)
+        assertTrue(scriptTargetsHost(script(os = "FreeBSD", system = "pfSense"), bsd))
+        assertFalse(scriptTargetsHost(script(system = "OPNsense"), bsd))
+        assertFalse(scriptTargetsHost(script(system = "pfSense"), linux))
+    }
+
+    /** The Linux probe's platform lines, run in sh against a PATH holding only stand-in tools. */
+    @Test
+    fun linuxPlatformProbeReportsTheToolsItFinds() {
+        val sh = File("/bin/sh")
+        assumeTrue("needs /bin/sh", sh.canExecute())
+        val start = RemoteCommands.METRICS.indexOf("echo '@PLATFORM'; ")
+        val end = RemoteCommands.METRICS.indexOf("echo '@CPU'", start)
+        assertTrue(start >= 0 && end > start)
+        val block = RemoteCommands.METRICS.substring(start, end)
+        val dir = kotlin.io.path.createTempDirectory("omniterm-platform").toFile()
+        try {
+            listOf("podman", "k3s", "midclt").forEach { tool ->
+                File(dir, tool).apply { writeText("#!/bin/sh\nexit 0\n"); setExecutable(true) }
+            }
+            val process = ProcessBuilder(sh.path, "-c", block)
+                .redirectErrorStream(true)
+                .apply { environment()["PATH"] = dir.path }
+                .start()
+            assertTrue(process.waitFor(10, TimeUnit.SECONDS))
+            val lines = process.inputStream.readBytes().toString(Charsets.UTF_8).lines().map { it.trim() }
+            assertEquals(lines.toString(), 0, process.exitValue())
+            assertTrue(lines.toString(), lines.containsAll(listOf("@PLATFORM", "podman", "kubernetes", "truenas")))
+            assertFalse("no docker on this PATH", "docker" in lines)
         } finally {
             dir.deleteRecursively()
         }

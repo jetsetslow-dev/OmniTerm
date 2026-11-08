@@ -6,7 +6,11 @@ import com.jetsetslow.omniterm.data.ServerEntity
 import java.util.Locale
 
 val quickScriptOsOptions = listOf("Any", "Linux", "FreeBSD", "Darwin", "Windows")
-val quickScriptSystemOptions = listOf("Any", "Proxmox", "CasaOS", "Home Assistant", "Raspberry Pi", "Docker")
+/** Systems a script can target; each matches the platform key the metrics probe reports ([systemPlatformKey]). */
+val quickScriptSystemOptions = listOf(
+    "Any", "Proxmox", "CasaOS", "Home Assistant", "Raspberry Pi", "Docker", "Podman", "Kubernetes",
+    "Synology", "TrueNAS", "Unraid", "OpenWrt", "pfSense", "OPNsense",
+)
 
 fun quickScriptMatchesHost(script: QuickScriptEntity, metrics: HostMetrics?): Boolean =
     script.availableForQuick && scriptTargetsHost(script, metrics)
