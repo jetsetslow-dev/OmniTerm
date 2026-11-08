@@ -98,7 +98,7 @@ class CrossShellCommandsTest {
         val command = RemoteCommands.powershell(script)
         assertTrue(command, command.matches(Regex("powershell -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+")))
         val decoded = String(java.util.Base64.getDecoder().decode(command.substringAfterLast(' ')), Charsets.UTF_16LE)
-        assertEquals("\$ProgressPreference='SilentlyContinue'; $script", decoded)
+        assertEquals(RemoteCommands.POWERSHELL_PRELUDE + script, decoded)
     }
 
     /** A built-in preset runs on Windows what its own text shows, under any login shell. */

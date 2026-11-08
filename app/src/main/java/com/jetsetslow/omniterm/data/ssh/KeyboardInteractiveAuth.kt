@@ -139,9 +139,25 @@ internal class KeyboardInteractiveUserInfo(
     override fun promptPassword(message: String?): Boolean = false
     override fun promptPassphrase(message: String?): Boolean = false
     override fun promptYesNo(message: String?): Boolean = false
-    override fun showMessage(message: String?) = Unit
+    private val messages = StringBuilder()
+
+    /**
+     * What the host showed before sign-in (sshd's `Banner`, often a legal notice or a maintenance
+     * message), for the terminal to print first as OpenSSH does. Empty when there was none.
+     */
+    val banner: String get() = synchronized(messages) { messages.toString() }
+
+    override fun showMessage(message: String?) {
+        if (message.isNullOrBlank()) return
+        synchronized(messages) {
+            if (messages.length < MAX_BANNER_CHARS) messages.append(message.take(MAX_BANNER_CHARS - messages.length).trimEnd()).append('\n')
+        }
+    }
 
     companion object {
+        /** A banner longer than this is cut: it is shown, not stored. */
+        const val MAX_BANNER_CHARS = 8_192
+
         /** How long a question waits for an answer, as a new host key's approval does. */
         const val PROMPT_TIMEOUT_MS = 120_000L
 
@@ -149,6 +165,19 @@ internal class KeyboardInteractiveUserInfo(
         private val PLAIN_PASSWORD_PROMPT =
             Regex("""\s*(enter\s+)?(your\s+)?(\S+'s\s+)?password(\s+for\s+\S+)?\s*:\s*""", RegexOption.IGNORE_CASE)
     }
+}
+
+/**
+ * [banner] as terminal bytes: line breaks as CRLF, and every control character except tab removed,
+ * so a host cannot move the cursor, retitle the window or send escape sequences through it. Null
+ * when nothing printable is left.
+ */
+internal fun bannerForTerminal(banner: String): ByteArray? {
+    val clean = banner.replace("\r\n", "\n").replace('\r', '\n')
+        .filter { it == '\n' || it == '\t' || (it >= ' ' && it != '\u007f' && it !in '\u0080'..'\u009f') }
+        .trim('\n')
+    if (clean.isBlank()) return null
+    return (clean.replace("\n", "\r\n") + "\r\n").toByteArray(Charsets.UTF_8)
 }
 
 /** [error], from connecting [session], as the user should read it; [fallback] when it says nothing. */

@@ -237,12 +237,23 @@ object RemoteCommands {
      * script as base64, which no shell alters. Progress records are off: over a pipe PowerShell
      * writes them out as CLIXML. Never pack a long script into a self-unpacking one instead:
      * Defender stops compressed, encoded PowerShell as a malware stager.
+     *
+     * Output is UTF-8. Left alone, PowerShell writes the console's OEM code page (437, 850, 936 …),
+     * which the app reads as UTF-8, so every accented or non-Latin service name, path or event
+     * message came back garbled. Setting it throws on a session without a console, hence the try.
+     * Credit: Termix (Termix-SSH/Termix#1725) and ssh-mcp-server (classfang/ssh-mcp-server#71).
      */
     fun powershell(script: String): String =
         "powershell -NoProfile -NonInteractive -EncodedCommand " +
             kotlin.io.encoding.Base64.Default.encode(
-                "\$ProgressPreference='SilentlyContinue'; $script".toByteArray(Charsets.UTF_16LE),
+                (POWERSHELL_PRELUDE + script).toByteArray(Charsets.UTF_16LE),
             )
+
+    /** Starts every [powershell] script. Uses New-Object so PowerShell 2 to 4 run it as well. */
+    internal const val POWERSHELL_PRELUDE =
+        "\$ProgressPreference='SilentlyContinue'; " +
+            "try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding \$false } catch {}; " +
+            "\$OutputEncoding = New-Object System.Text.UTF8Encoding \$false; "
 
     /** Marks the end of `crontab -l` output so its exit status can be read alongside it. */
     const val CRON_EXIT_MARKER = "---OMNITERM-CRON-EXIT---"

@@ -1,74 +1,90 @@
-# Kotlin host colors — 2026-11-03
+# Kotlin automation round — 2026-11-08
 
-Scope: make host identity colors more varied, distinguishable and professional. This branch
-starts from the merged Kotlin fixes. Independent review and merge remain the user's responsibility.
+Scope (user request, Nov 7–8): review comparable open-source apps for missed bugs and features,
+give OmniTerm a capability no other app has for homelab and server admins, re-check Quick Scripts
+and Fleet after the cross-OS/container/Kubernetes work, add automation hooks (Tasker and similar
+apps, an opt-in private MCP server), optional per-host WireGuard/Tailscale tunnels, credit every
+project we learn from, then bring Flutter level with Kotlin. Branch `kotlin-automation` from main
+after #136 and #137. Independent review and merge remain the user's.
 
-## Implemented
+The private audit (sources per finding, designs, order) is in the internal docs as
+`COMPETITOR_AUDIT_2026-11-08.md`.
 
-- Replace six neighboring neon hues with eight muted choices: Blue, Copper, Teal, Rose, Gold,
-  Plum, Olive and Ocean. Alternate hues for automatic ID-based assignment; renaming stays stable.
-- Give each hue a brighter dark-theme tone and a deeper light-theme tone. Share the theme-aware
-  host color helper across cards, session chrome, host menus, monitoring and tool results.
-- Replace unlabeled dots with wrapping named chips, visible selection checkmarks and a selectable
-  Automatic option in the shared Add/Edit/Clone form. Explain that host colors identify hosts;
-  connection health keeps its separate status indicators.
-- Read all legacy stored color names without rewriting hosts or backups. The previous six
-  explicit choices map to six distinct replacements. Keep global status tokens unchanged.
-- Add regression guards for perceptual separation, text contrast on supported surfaces, legacy
-  aliases, stable ID assignment and shared host-ID lookup. Exercise the real chooser in both themes.
+## Checkpoint A — scripts and Fleet defects (this commit)
 
-- Take the CodeQL Action 4.39.2 patch required by the dependency-update gate; pin its full
-  commit in analysis/SARIF workflows and align the local CLI and verified bundle digest to 2.27.4.
+- Script values: `{{name}}` and `{{name=default}}` in a saved script ask for a value when it runs
+  from Monitor → Scripts or Fleet. Values are quoted for each host's shell (POSIX single quotes;
+  Windows double quotes, refusing `" % ! $ \`` and line breaks), so a value is always one word.
+  Shared code: `data/ScriptParams.kt`, `ui/ScriptParamsDialog.kt`. Credit: Semaphore UI.
+- Proxmox presets: "start VM" and "shut down VM" ask for the VM id (they ran `qm start 100` /
+  `qm stop 100`); shutdown is `qm shutdown`. Untouched stored copies of retired presets are moved to
+  the current ones at startup (`retiredPresetScripts`); edited copies are left alone.
+- Fleet honours a picked preset's target OS/system: hosts known not to match are skipped and named
+  in the confirmation; none matching shows "No host matches". Unprobed hosts are tried. The target
+  fields in the script editor now apply to Fleet too.
+- Fleet's command field is multi-line. As a single-line field, Enter could not add a line break and a
+  pasted script showed as one long line (it still ran as written). Credit: ssh-mcp.
+- Broken fallbacks: "Syslog errors" never reached `/var/log` when `logread` was missing (pipeline
+  status is the last command's); "Updates available" never reached dnf and reported dnf's exit 100
+  as failure. Both now test for each tool; updates cover apt, dnf, yum, zypper, pacman, apk, pkg.
+- Danger warning: adds ZFS/LVM/mdadm, container prunes and `compose down -v`, `kubectl
+  delete|drain`, `helm uninstall`, `qm|pct destroy|stop`, `find -delete`, `crontab -r`, SSH
+  lock-outs (stop/disable sshd, `ufw enable`, INPUT DROP), and Windows deletes/formats/restarts.
+  `qm shutdown` no longer reads as a host shutdown.
+- Windows output is UTF-8 (`RemoteCommands.POWERSHELL_PRELUDE`). Credit: Termix, ssh-mcp-server.
+- SSH banners: kept by `KeyboardInteractiveUserInfo.showMessage` and printed at the top of a new
+  terminal session after removing control characters (`bannerForTerminal`).
+- Monitor → Scripts "Save" now keeps the notes field (it was dropped).
+- README: Terminal, Fleet, Scripts and Acknowledgements; NOTICE: acknowledgements.
+- Dependency updates the gate required (taken here rather than as Dependabot PRs): AGP 9.5.1,
+  Gradle wrapper 9.9.0 (distribution and wrapper-jar SHA-256 match services.gradle.org), biometric
+  1.4.0-beta01, mockk 1.14.12, Roborazzi 1.78.0, UI Automator 2.4.1, actions/setup-java 6.2.0,
+  github/codeql-action 4.39.3 (bundles CLI 2.27.4, so the local CodeQL pin is unchanged).
+  Checksums via `scripts/refresh-verification-metadata.sh --write`; the Actions allowlist check
+  passes.
 
-## Final local validation
+## Remaining, in order
 
-`./scripts/local-pr-check.sh --full` passed on the final build-affecting tree.
+1. Runbooks: rolling Fleet runs (batch size, stop on failure), retry failed hosts, export and run
+   history, per-OS variants, wider platform detection (podman, k3s/microk8s, Synology, TrueNAS,
+   Unraid).
+2. Alerts: host offline/online, phone-offline guard for probes and endpoint checks, failed systemd
+   units, unhealthy/exited containers, script-check rules; runbooks offered from alert
+   notifications.
+3. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
+   `ssh://` links, share target, one-tap public-key install.
+4. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
+   on-phone approval for writes, audit log, `PRIVACY.md` section.
+5. Per-host WireGuard/Tailscale: blocked on a toolchain decision (needs Go; host installs are not
+   allowed without the user's approval).
+6. Flutter: one sync that merges main and ports #131, #132, #136, #137 and this round.
 
-| Check | Result |
-| --- | --- |
-| Both full unit variants | 909 discovered, **901 passed / 8 skipped** per variant; no failures/errors |
-| Changed test repeats | Six HostColorsTest cases, five additional Play Store runs; **6 passed / 0 skipped** each |
-| Both Android lint gates | Passed |
-| Strict fresh dependency verification | Project, buildscript, test, lint, instrumentation, benchmark, both release SBOM and compile graphs passed |
-| Metadata refresh | Required `--write` and its strict verify pass succeeded; no checksum-file changes needed |
-| Dependency advisories and updates | No moderate-or-higher advisories (201 Maven / 13 Actions); no proposed updates under holds (66 Gradle / 36 Actions) |
-| Secret scanner and duplicate checks | Passed, including complete history and both local diffs |
-| Ordinary API 35 instrumentation | 70 discovered, **28 passed / 42 opt-in E2E skipped**, no failures/errors |
-| API 35 Room matrix | **6 passed / 0 skipped**, included above |
-| Local CodeQL 2.27.4 | **Zero alerts; 75,770 lines analyzed**, all 121 production Java/Kotlin files extracted |
+## Validation
 
-Unit skips are six opt-in SshSignInLiveTest cases and two unavailable TmuxAltScreenReplayTest
-captures. This x86_64 host excluded no ARM-unsupported native-runtime classes. CodeQL's 121/340
-source count covers all production files across both variants; tests and benchmark sources are
-outside the production compile. The final gate reused valid unchanged unit inputs after the
-CI-only CodeQL patch; the full suites had executed in the first attempt, and all five changed-test
-repeats executed again. The first attempt stopped at the update-policy check, not a source failure.
+Commands (run from the repository root):
 
-## Explicit API 35 runtime checks
+- `./scripts/local-pr-check.sh --full` before every push, plus `git diff --check` and
+  `git diff --cached --check`.
+- New unit tests: `ScriptParamsTest`, `ScriptTargetsTest`, `SshBannerTest`; extended
+  `CommandDangerHitsTest`; `CrossShellCommandsTest` and `HostOsCommandsTest` follow the prelude.
+- Device (API 35, repository Docker fixture via `./scripts/test-hosts.sh up`): provision with
+  `E2eLabHostProvisioner` (`omniterm_e2e_provision_host=yes`, `omniterm_e2e_trust_host=yes`), then
+  `E2eScriptParamsFleetTest` with `-e omniterm_e2e_script_params yes`.
 
-The disposable repository SSH fleet was started with `./scripts/test-hosts.sh up`. App and test
-APKs were installed once before provisioning and explicit instrumentation, preserving seed data.
+Results so far:
+- The eight affected unit classes pass locally (68 tests, 0 failures).
+- API 35 against the repository fixture: `E2eLabHostProvisioner` 2 passed, `E2eScriptParamsFleetTest`
+  1 passed (multi-line command typed with Enter, `{{msg}}` value `it's; echo INJECTED` arrives as
+  one word, a Windows-only preset leaves the Linux host out). With the old single-line field it
+  fails at the typed line break, as expected.
+- `./scripts/local-pr-check.sh --full` passed on the final tree: both unit variants, five extra
+  runs of the six changed test classes, both lint gates, strict dependency verification, no
+  advisories, no outstanding updates (66 Gradle, 36 Actions), secret scan, no new duplicate code,
+  the API 35 device matrix, and local CodeQL 2.27.4 with zero alerts (76,475 lines). The CodeQL
+  step's clean build removed the per-test result files, so this record has no per-test counts.
+- CI: pending (PR not yet opened).
 
-- HostColorPickerInstrumentedTest: **1 passed / 0 skipped**; every named choice and restoration of
-  Automatic in both themes. It first failed on the old APK because Automatic was absent. The
-  separation guard first failed on the old Blue/Indigo pair.
-- E2eLabHostProvisioner, `omniterm_e2e_provision_host=yes` and `omniterm_e2e_trust_host=yes`:
-  **2 passed / 0 skipped** against the repository fixture.
-- E2eAppSurfaceStressTest, `omniterm_e2e_surfaces=yes` and `omniterm_e2e_sftp_home=/config`:
-  **1 passed / 0 skipped**; routes, subtabs, themes, rotation and remote loaders.
-- E2eTerminalNavigationMatrixTest, `omniterm_e2e_terminal_nav_matrix=yes`: **3 passed / 0 skipped**.
-  Its first run exposed a stale overflow assertion when all controls fit. Update only the test
-  to require pinned copy-range actions visible before scrolling; terminal behavior is unchanged.
-- E2eTerminalOptionsTest, `omniterm_e2e_terminal_options=yes`: **1 passed / 0 skipped**;
-  portrait/landscape and font scales 1.0, 1.5 and 2.0 against the disposable SSH fixture.
+## Known exclusions
 
-## Publication boundary
-
-At checkpoint creation, exact-head hosted checks and the required API 29 Room gate are pending.
-Monitor Build & Test, Room migrations, release SBOM, CodeQL, dependency review, secret scanning
-and supply-chain analysis to terminal status after pushing; the PR description records their
-final result without creating another head merely to update CI status.
-
-Independent review and merge remain the user's responsibility. No automated approval or release
-is included. Before an authorized merge, consolidate this temporary tracker into the private
-handover and remove it from the merge tree.
+- Tunnels need a userspace WireGuard/TCP stack; every maintained one is Go (wireguard-go, tsnet).
+- ChatGPT's local MCP support could not be verified (its docs returned 404); not claimed.

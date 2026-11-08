@@ -77,6 +77,57 @@ class CommandDangerHitsTest {
     }
 
     @Test
+    fun storageContainerAndClusterDeletesAreFlagged() {
+        assertTrue(hits("zpool destroy tank").contains("storage pool or volume destruction"))
+        assertTrue(hits("zfs destroy -r tank/data").contains("storage pool or volume destruction"))
+        assertTrue(hits("lvremove -f vg0/root").contains("storage pool or volume destruction"))
+        assertTrue(hits("mdadm --zero-superblock /dev/sdb").contains("storage pool or volume destruction"))
+        assertTrue(hits("docker system prune -af").contains("container data removal"))
+        assertTrue(hits("podman volume prune").contains("container data removal"))
+        assertTrue(hits("docker compose -f stack.yml down -v").contains("container data removal"))
+        assertTrue(hits("docker-compose down --volumes").contains("container data removal"))
+        assertTrue(hits("kubectl -n media delete pod jellyfin-0").contains("Kubernetes resource deletion"))
+        assertTrue(hits("kubectl drain node2 --ignore-daemonsets").contains("Kubernetes resource deletion"))
+        assertTrue(hits("helm uninstall traefik").contains("Kubernetes resource deletion"))
+        assertTrue(hits("qm destroy 101 --purge").contains("Proxmox VM or container destroy/hard stop"))
+        assertTrue(hits("pct stop 200").contains("Proxmox VM or container destroy/hard stop"))
+        assertTrue(hits("find /var/log -name '*.gz' -delete").contains("recursive/forced delete"))
+        assertTrue(hits("crontab -r").contains("deleting every cron job"))
+    }
+
+    @Test
+    fun commandsThatEndSshAccessAreFlagged() {
+        assertTrue(hits("sudo systemctl stop sshd").contains("may cut off SSH access"))
+        assertTrue(hits("systemctl disable --now ssh.service").contains("may cut off SSH access"))
+        assertTrue(hits("ufw enable").contains("may cut off SSH access"))
+        assertTrue(hits("iptables -P INPUT DROP").contains("may cut off SSH access"))
+    }
+
+    @Test
+    fun windowsDestructiveCommandsAreFlagged() {
+        assertTrue(hits("Remove-Item C:\\Temp -Recurse -Force").contains("recursive/forced delete"))
+        assertTrue(hits("rd /s /q C:\\build").contains("recursive/forced delete"))
+        assertTrue(hits("Format-Volume -DriveLetter D").contains("filesystem format/wipe"))
+        assertTrue(hits("Stop-Computer -Force").contains("host reboot/shutdown"))
+        assertTrue(hits("Restart-Computer").contains("host reboot/shutdown"))
+    }
+
+    @Test
+    fun everydayAdminCommandsStayQuiet() {
+        assertTrue(hits("docker compose down").isEmpty())
+        assertTrue(hits("docker compose pull && docker compose up -d").isEmpty())
+        assertTrue(hits("kubectl get pods -A").isEmpty())
+        assertTrue(hits("zfs list -t snapshot").isEmpty())
+        assertTrue(hits("qm list").isEmpty())
+        assertTrue(hits("systemctl restart sshd").isEmpty())
+        assertTrue(hits("crontab -l").isEmpty())
+        assertTrue(hits("Get-ChildItem -Recurse C:\\Logs").isEmpty())
+        // A guest shutdown is not a host shutdown.
+        assertTrue(hits("qm shutdown 101").isEmpty())
+        assertTrue(hits("shutdown -h now").contains("host shutdown"))
+    }
+
+    @Test
     fun labelsAreNotRepeated() {
         // Two matches of the same rule should read as one reason, not two.
         assertEquals(

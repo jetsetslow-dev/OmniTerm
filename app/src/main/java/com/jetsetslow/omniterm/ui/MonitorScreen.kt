@@ -141,10 +141,16 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
+    // A script with {{placeholders}} asks for its values first, then confirms the filled command.
+    var paramsRequest by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val hostOs = viewModel.knownOs(srv)
+    // An unknown OS could still be Windows, so its values must suit both shells.
+    val hostShells = if (hostOs.isBlank()) ScriptParams.Shell.entries.toSet() else setOf(ScriptParams.shellFor(hostOs))
+
     // Show what will run where before executing — a stray tap on a script card must not be
     // enough to run an arbitrary command on the host. Mirrors the fleet broadcast dialog,
     // including the destructive-command heuristic.
-    fun confirmAndRun(title: String, command: String) {
+    fun confirmFilled(title: String, command: String) {
         val danger = commandDangerHits(command)
         confirm.ask(
             title = confirm.str(R.string.run_on, srv.name),
@@ -161,6 +167,21 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
             confirmLabel = confirm.str(R.string.run),
             destructive = danger.isNotEmpty(),
         ) { viewModel.runStreamingAction(title, command, inLoginShell = true) }
+    }
+    fun confirmAndRun(title: String, command: String) {
+        if (ScriptParams.hasParams(command)) paramsRequest = title to command else confirmFilled(title, command)
+    }
+    paramsRequest?.let { (title, template) ->
+        ScriptParamsDialog(
+            title = title,
+            command = template,
+            shells = hostShells,
+            onDismiss = { paramsRequest = null },
+            onSubmit = { values ->
+                paramsRequest = null
+                confirmFilled(title, ScriptParams.fill(template, values, ScriptParams.shellFor(hostOs)))
+            },
+        )
     }
     val visibleScripts = scripts
         .filter { quickScriptMatchesHost(it, metrics) }
@@ -288,6 +309,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                     availableForFleet = draft.availableForFleet,
                     targetOs = draft.targetOs,
                     targetSystem = draft.targetSystem,
+                    notes = draft.notes,
                 )
                 showSaveDialog = false
             }

@@ -1021,10 +1021,73 @@ private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
     QuickScriptEntity(0, "DSK", "Disk", "df -h 2>/dev/null | head -6 || powershell -NoProfile -Command \"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,Size,FreeSpace\"", "cyan", false, "Fleet", 1, availableForQuick = false, availableForFleet = true, presetKey = "fleet.disk"),
     QuickScriptEntity(0, "PRC", "Processes", "ps aux 2>/dev/null | sort -k3 -nr | head -8 || ps -axo pid,user,pcpu,pmem,comm 2>/dev/null | sort -k3 -nr | head -8 || powershell -NoProfile -Command \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet\"", "cyan", false, "Fleet", 2, availableForQuick = false, availableForFleet = true, presetKey = "fleet.processes"),
     QuickScriptEntity(0, "SVC", "Failed services", "systemctl --failed 2>/dev/null || rc-status -c 2>/dev/null || powershell -NoProfile -Command \"Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status\"", "cyan", false, "Fleet", 3, availableForQuick = false, availableForFleet = true, presetKey = "fleet.services"),
-    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8 2>/dev/null || logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || powershell -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message\"", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true, presetKey = "fleet.syslog"),
+    QuickScriptEntity(0, "LOG", "Syslog errors", FLEET_SYSLOG_COMMAND, "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true, presetKey = "fleet.syslog"),
     QuickScriptEntity(0, "CTR", "Containers", "docker ps --format \"table {{.Names}}\t{{.Status}}\" 2>/dev/null || podman ps --format \"table {{.Names}}\t{{.Status}}\"", "cyan", false, "Fleet", 5, availableForQuick = false, availableForFleet = true, presetKey = "fleet.containers"),
     QuickScriptEntity(0, "NET", "Listening ports", "ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || netstat -an 2>/dev/null | grep LISTEN || powershell -NoProfile -Command \"Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess\"", "cyan", false, "Fleet", 6, availableForQuick = false, availableForFleet = true, presetKey = "fleet.ports"),
     QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true, presetKey = "fleet.kernel"),
+)
+
+/**
+ * Recent errors from whichever log the host keeps: the journal, OpenWrt's logread, or the classic
+ * files (FreeBSD and Alpine write /var/log/messages, macOS /var/log/system.log). Each source is
+ * picked by testing for it, because a pipeline's status is its last command's, so a `||` after
+ * `logread | … | tail` never reached the files.
+ */
+internal const val FLEET_SYSLOG_COMMAND =
+    "if command -v journalctl >/dev/null 2>&1; then journalctl -p err -n 8 --no-pager; " +
+        "elif command -v logread >/dev/null 2>&1; then logread | grep -iE 'error|fail|critical' | tail -8; " +
+        "else grep -hiE 'error|fail|critical' /var/log/syslog /var/log/messages /var/log/system.log 2>/dev/null | tail -8; fi"
+
+/**
+ * Pending package updates from whichever package manager the host has. `dnf`/`yum check-update`
+ * exit 100 when updates exist, which is success here, not a failed script.
+ */
+internal const val HOMELAB_UPDATES_COMMAND =
+    "if command -v apt >/dev/null 2>&1; then apt list --upgradable 2>/dev/null | tail -n +2; " +
+        "elif command -v dnf >/dev/null 2>&1; then dnf -q check-update; r=\$?; [ \"\$r\" -eq 0 ] || [ \"\$r\" -eq 100 ]; " +
+        "elif command -v yum >/dev/null 2>&1; then yum -q check-update; r=\$?; [ \"\$r\" -eq 0 ] || [ \"\$r\" -eq 100 ]; " +
+        "elif command -v zypper >/dev/null 2>&1; then zypper -q list-updates; " +
+        "elif command -v pacman >/dev/null 2>&1; then checkupdates 2>/dev/null || pacman -Qu 2>/dev/null || true; " +
+        "elif command -v apk >/dev/null 2>&1; then apk version -l '<'; " +
+        "elif command -v pkg >/dev/null 2>&1; then pkg version -vRL=; " +
+        "else echo 'No supported package manager found.'; fi"
+
+/**
+ * Curated read-mostly command snippets popular in the homelab community (Proxmox VE, CasaOS,
+ * Home Assistant, Linux, plus general ops). Toggled on/off from Scripts.
+ */
+internal val homelabPresetScripts: List<QuickScriptEntity> = listOf(
+    QuickScriptEntity(0, "PVE", "PVE: list VMs", "qm list", "orange", false, "Proxmox", presetKey = "homelab.pve_vms"),
+    QuickScriptEntity(0, "PCT", "PVE: list containers", "pct list", "orange", false, "Proxmox", presetKey = "homelab.pve_containers"),
+    QuickScriptEntity(0, "CLS", "PVE: cluster status", "pvecm status 2>/dev/null || echo 'standalone node'", "orange", false, "Proxmox", presetKey = "homelab.pve_cluster"),
+    QuickScriptEntity(0, "STO", "PVE: storage status", "pvesm status", "orange", false, "Proxmox", presetKey = "homelab.pve_storage"),
+    QuickScriptEntity(0, "RUN", "PVE: start VM", "qm start {{vmid}}", "orange", false, "Proxmox", notes = "Asks for the VM ID, as qm list shows it.", presetKey = "homelab.pve_start_vm"),
+    QuickScriptEntity(0, "STP", "PVE: shut down VM", "qm shutdown {{vmid}}", "orange", false, "Proxmox", notes = "Asks for the VM ID. A clean ACPI shutdown; qm stop would cut power.", presetKey = "homelab.pve_stop_vm"),
+    QuickScriptEntity(0, "CAS", "CasaOS: status", "systemctl status 'casaos*' --no-pager 2>&1 | head -40", "green", false, "CasaOS", presetKey = "homelab.casaos_status"),
+    QuickScriptEntity(0, "RST", "CasaOS: restart", "sudo systemctl restart 'casaos*'", "green", false, "CasaOS", presetKey = "homelab.casaos_restart"),
+    QuickScriptEntity(0, "VER", "CasaOS: version", "casaos -v 2>/dev/null || cat /etc/casaos/* 2>/dev/null | head", "green", false, "CasaOS", presetKey = "homelab.casaos_version"),
+    QuickScriptEntity(0, "HA", "HA: info", "ha info 2>/dev/null || docker ps --filter name=homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_info"),
+    QuickScriptEntity(0, "LOG", "HA: core logs", "ha core logs 2>/dev/null || docker logs --tail 100 homeassistant 2>&1", "cyan", false, "Home Assistant", presetKey = "homelab.ha_core_logs"),
+    QuickScriptEntity(0, "RST", "HA: restart core", "ha core restart 2>/dev/null || docker restart homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_restart_core"),
+    QuickScriptEntity(0, "SUP", "HA: supervisor logs", "ha supervisor logs 2>/dev/null | tail -100", "cyan", false, "Home Assistant", presetKey = "homelab.ha_supervisor_logs"),
+    QuickScriptEntity(0, "TMP", "Temperature", "if [ \"\$(uname -s 2>/dev/null)\" = Linux ]; then max=\"\"; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r \"\$f\" ] || continue; v=\$(cat \"\$f\" 2>/dev/null); case \"\$v\" in ''|*[!0-9]*) continue;; esac; [ -z \"\$max\" ] || [ \"\$v\" -gt \"\$max\" ] && max=\"\$v\"; done; if [ -n \"\$max\" ]; then awk -v t=\"\$max\" 'BEGIN { printf \"CPU %.1f°C\\n\", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo \"No thermal sensor exposed\"; fi; else echo \"Temperature preset supports Linux hosts\"; fi", "red", false, "Linux", presetKey = "homelab.temperature"),
+    QuickScriptEntity(0, "UPD", "Updates available", HOMELAB_UPDATES_COMMAND, "amber", false, "Homelab", presetKey = "homelab.updates"),
+    QuickScriptEntity(0, "RBT", "Reboot required?", "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'", "amber", false, "Homelab", presetKey = "homelab.reboot_required"),
+    QuickScriptEntity(0, "CPU", "Top 10 by CPU", "ps aux --sort=-%cpu | head -11", "purple", false, "Homelab", presetKey = "homelab.top_cpu"),
+    QuickScriptEntity(0, "CTR", "Docker stats", "docker stats --no-stream 2>/dev/null || podman stats --no-stream", "purple", false, "Homelab", presetKey = "homelab.docker_stats"),
+    QuickScriptEntity(0, "DSK", "Disk usage", "df -h | grep -vE 'tmpfs|udev'", "purple", false, "Homelab", presetKey = "homelab.disk_usage"),
+)
+
+/**
+ * Earlier canonical rows of built-in presets that a release replaced. A stored row still equal to
+ * one of these was never edited, so startup moves it to the current preset; an edited row is the
+ * user's and stays as it is.
+ */
+internal val retiredPresetScripts: List<QuickScriptEntity> = listOf(
+    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8 2>/dev/null || logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || powershell -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message\"", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true, presetKey = "fleet.syslog"),
+    QuickScriptEntity(0, "RUN", "PVE: start VM <id>", "qm start 100", "orange", false, "Proxmox", presetKey = "homelab.pve_start_vm"),
+    QuickScriptEntity(0, "STP", "PVE: stop VM <id>", "qm stop 100", "orange", false, "Proxmox", presetKey = "homelab.pve_stop_vm"),
+    QuickScriptEntity(0, "UPD", "Updates available", "apt list --upgradable 2>/dev/null | tail -n +2 || (command -v dnf >/dev/null && dnf check-update)", "amber", false, "Homelab", presetKey = "homelab.updates"),
 )
 
 /**
@@ -1396,6 +1459,11 @@ class AppViewModel @JvmOverloads constructor(
     val broadcastTargetGroups = mutableStateListOf<String>()
     var broadcastTargetMode by mutableStateOf(FleetTargetMode.Servers)
     var broadcastCommandText by mutableStateOf("")
+    /**
+     * The saved script Broadcast's command came from, so a run skips hosts its target OS or system
+     * rules out. It stops applying once the command text no longer matches the script.
+     */
+    var broadcastPreset by mutableStateOf<QuickScriptEntity?>(null)
     var isBroadcastExecuting by mutableStateOf(false)
     val broadcastResults = mutableStateListOf<BroadcastResultItem>()
     private var broadcastJob: Job? = null
@@ -2631,6 +2699,7 @@ class AppViewModel @JvmOverloads constructor(
             if (initial.find { it.key == "alert_presets" }?.value == "true") {
                 seedMissingDefaultAlertRules()
             }
+            upgradeRetiredPresetScripts()
             val pinVal = initial.find { it.key == "app_pin" }?.value
             val hasPinLock =
                 !pinVal.isNullOrBlank() &&
@@ -5032,6 +5101,19 @@ class AppViewModel @JvmOverloads constructor(
         for (preset in presets) repository.insertScript(preset)
     }
 
+    /**
+     * Moves every stored preset row that still equals a [retiredPresetScripts] entry to the current
+     * preset with the same key, keeping its id and place. Edited rows are left alone.
+     */
+    private suspend fun upgradeRetiredPresetScripts() {
+        val current = (builtInFleetPresets + homelabPresetScripts).associateBy { it.presetKey }
+        repository.getAllScripts().forEach { stored ->
+            val retired = retiredPresetScripts.any { it.presetKey == stored.presetKey && it == stored.copy(id = 0) }
+            val replacement = current[stored.presetKey]
+            if (retired && replacement != null) repository.insertScript(replacement.copy(id = stored.id))
+        }
+    }
+
     /** Remove the seeded rows for one preset family, keeping the user's own scripts. */
     private suspend fun removePresetScripts(presets: List<QuickScriptEntity>) {
         val keys = presets.mapNotNull { it.presetKey }.toSet()
@@ -5062,32 +5144,6 @@ class AppViewModel @JvmOverloads constructor(
     fun deleteFleetPreset(preset: QuickScriptEntity) {
         deleteQuickScript(preset)
     }
-
-    /**
-     * Curated read-mostly command snippets popular in the homelab community (Proxmox VE, CasaOS,
-     * Home Assistant, Linux, plus general ops). Toggled on/off from Scripts.
-     */
-    private val homelabPresetScripts: List<QuickScriptEntity> = listOf(
-        QuickScriptEntity(0, "PVE", "PVE: list VMs", "qm list", "orange", false, "Proxmox", presetKey = "homelab.pve_vms"),
-        QuickScriptEntity(0, "PCT", "PVE: list containers", "pct list", "orange", false, "Proxmox", presetKey = "homelab.pve_containers"),
-        QuickScriptEntity(0, "CLS", "PVE: cluster status", "pvecm status 2>/dev/null || echo 'standalone node'", "orange", false, "Proxmox", presetKey = "homelab.pve_cluster"),
-        QuickScriptEntity(0, "STO", "PVE: storage status", "pvesm status", "orange", false, "Proxmox", presetKey = "homelab.pve_storage"),
-        QuickScriptEntity(0, "RUN", "PVE: start VM <id>", "qm start 100", "orange", false, "Proxmox", presetKey = "homelab.pve_start_vm"),
-        QuickScriptEntity(0, "STP", "PVE: stop VM <id>", "qm stop 100", "orange", false, "Proxmox", presetKey = "homelab.pve_stop_vm"),
-        QuickScriptEntity(0, "CAS", "CasaOS: status", "systemctl status 'casaos*' --no-pager 2>&1 | head -40", "green", false, "CasaOS", presetKey = "homelab.casaos_status"),
-        QuickScriptEntity(0, "RST", "CasaOS: restart", "sudo systemctl restart 'casaos*'", "green", false, "CasaOS", presetKey = "homelab.casaos_restart"),
-        QuickScriptEntity(0, "VER", "CasaOS: version", "casaos -v 2>/dev/null || cat /etc/casaos/* 2>/dev/null | head", "green", false, "CasaOS", presetKey = "homelab.casaos_version"),
-        QuickScriptEntity(0, "HA", "HA: info", "ha info 2>/dev/null || docker ps --filter name=homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_info"),
-        QuickScriptEntity(0, "LOG", "HA: core logs", "ha core logs 2>/dev/null || docker logs --tail 100 homeassistant 2>&1", "cyan", false, "Home Assistant", presetKey = "homelab.ha_core_logs"),
-        QuickScriptEntity(0, "RST", "HA: restart core", "ha core restart 2>/dev/null || docker restart homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_restart_core"),
-        QuickScriptEntity(0, "SUP", "HA: supervisor logs", "ha supervisor logs 2>/dev/null | tail -100", "cyan", false, "Home Assistant", presetKey = "homelab.ha_supervisor_logs"),
-        QuickScriptEntity(0, "TMP", "Temperature", "if [ \"\$(uname -s 2>/dev/null)\" = Linux ]; then max=\"\"; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r \"\$f\" ] || continue; v=\$(cat \"\$f\" 2>/dev/null); case \"\$v\" in ''|*[!0-9]*) continue;; esac; [ -z \"\$max\" ] || [ \"\$v\" -gt \"\$max\" ] && max=\"\$v\"; done; if [ -n \"\$max\" ]; then awk -v t=\"\$max\" 'BEGIN { printf \"CPU %.1f°C\\n\", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo \"No thermal sensor exposed\"; fi; else echo \"Temperature preset supports Linux hosts\"; fi", "red", false, "Linux", presetKey = "homelab.temperature"),
-        QuickScriptEntity(0, "UPD", "Updates available", "apt list --upgradable 2>/dev/null | tail -n +2 || (command -v dnf >/dev/null && dnf check-update)", "amber", false, "Homelab", presetKey = "homelab.updates"),
-        QuickScriptEntity(0, "RBT", "Reboot required?", "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'", "amber", false, "Homelab", presetKey = "homelab.reboot_required"),
-        QuickScriptEntity(0, "CPU", "Top 10 by CPU", "ps aux --sort=-%cpu | head -11", "purple", false, "Homelab", presetKey = "homelab.top_cpu"),
-        QuickScriptEntity(0, "CTR", "Docker stats", "docker stats --no-stream 2>/dev/null || podman stats --no-stream", "purple", false, "Homelab", presetKey = "homelab.docker_stats"),
-        QuickScriptEntity(0, "DSK", "Disk usage", "df -h | grep -vE 'tmpfs|udev'", "purple", false, "Homelab", presetKey = "homelab.disk_usage"),
-    )
 
     /** Enable/disable the homelab preset scripts. Disabling removes the (default) presets. */
     fun toggleHomelabPresets(enabled: Boolean) {
@@ -12880,6 +12936,8 @@ class AppViewModel @JvmOverloads constructor(
 
     /** The last run's command and tmux run id, for a host that installs tmux or reconnects later. */
     private var lastBroadcastCommand = ""
+    /** The last run's values for the command's `{{placeholders}}` (see [ScriptParams]). */
+    private var lastBroadcastParams: Map<String, String> = emptyMap()
     private var lastBroadcastRunId = ""
     /** Hosts the app runs or follows again on their own, after the broadcast itself ended. */
     private val broadcastHostJobs = mutableMapOf<Int, Job>()
@@ -12895,9 +12953,10 @@ class AppViewModel @JvmOverloads constructor(
     /**
      * Executes [command] on the broadcast targets. When [resolvedIds] is given (the list the user
      * just confirmed in the dialog), exactly those hosts are hit — group/online membership is NOT
-     * re-evaluated here, so the set can't drift between confirmation and execution.
+     * re-evaluated here, so the set can't drift between confirmation and execution. [paramValues]
+     * fill the command's `{{placeholders}}`, quoted for each host's own shell.
      */
-    fun runFleetBroadcast(command: String, resolvedIds: List<Int>? = null) {
+    fun runFleetBroadcast(command: String, resolvedIds: List<Int>? = null, paramValues: Map<String, String> = emptyMap()) {
         if (command.isBlank()) return
         if (isBroadcastExecuting) return
         val cmd = command.trim()
@@ -12906,6 +12965,7 @@ class AppViewModel @JvmOverloads constructor(
         val inTmux = broadcastInTmux
         val runId = UUID.randomUUID().toString().replace("-", "").take(10)
         lastBroadcastCommand = cmd
+        lastBroadcastParams = paramValues
         lastBroadcastRunId = runId
         broadcastStopRequested = false
         isBroadcastExecuting = true
@@ -12987,8 +13047,17 @@ class AppViewModel @JvmOverloads constructor(
         else fleetPresetWindowsScripts[preset.presetKey]?.let(RemoteCommands::powershell)
     }
 
-    private suspend fun broadcastHostPlain(srv: ServerEntity, cmd: String) {
+    /**
+     * [template] as [srv] runs it: the last run's placeholder values quoted for its shell. Throws
+     * [ScriptParams.UnsafeValueException] when a value cannot be passed to that shell safely.
+     */
+    private suspend fun broadcastCommandFor(srv: ServerEntity, template: String): String =
+        if (!ScriptParams.hasParams(template)) template
+        else ScriptParams.fill(template, lastBroadcastParams, ScriptParams.shellFor(hostOs(srv)))
+
+    private suspend fun broadcastHostPlain(srv: ServerEntity, template: String) {
         val result = try {
+            val cmd = broadcastCommandFor(srv, template)
             val preset = builtInPresetCommand(srv, cmd)
             val creds = if (preset != null) buildCredentials(srv) else loginShellCredentials(srv)
             sshTransport.execStream(creds, preset ?: cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
@@ -13000,13 +13069,14 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Starts [cmd] on [srv] in the run's own tmux session (see [RemoteCommands.broadcastTmuxStart])
+     * Starts [template] on [srv] in the run's own tmux session (see [RemoteCommands.broadcastTmuxStart])
      * and follows its output. A host without tmux waits for the user to install it or to run the
      * command without tmux.
      */
-    private suspend fun broadcastHostInTmux(srv: ServerEntity, cmd: String, runId: String) {
+    private suspend fun broadcastHostInTmux(srv: ServerEntity, template: String, runId: String) {
         val app = getApplication<Application>()
         val started = try {
+            val cmd = broadcastCommandFor(srv, template)
             sshTransport.exec(
                 buildCredentials(srv),
                 RemoteCommands.broadcastTmuxStart(runId),

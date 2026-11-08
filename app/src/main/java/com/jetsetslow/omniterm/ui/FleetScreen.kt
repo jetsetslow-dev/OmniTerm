@@ -311,28 +311,36 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         showPresetEditor = true
     }
 
-    // Snapshot the targets at tap time, show exactly what will run where, and execute that exact
-    // list on confirm — group membership/online status is not re-resolved after the dialog.
-    fun confirmAndRunBroadcast() {
-        val cmd = viewModel.broadcastCommandText.trim()
-        if (cmd.isBlank() || viewModel.isBroadcastExecuting) return
-        dismissKeyboard()
-        val targets = when (viewModel.broadcastTargetMode) {
-            FleetTargetMode.Servers -> srvList.filter { it.id in viewModel.broadcastTargetServerIds }
-            FleetTargetMode.Groups -> srvList.filter { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
-        }
-        if (targets.isEmpty()) return
+    // The saved script the command came from, while the command still is that script.
+    val activePreset = viewModel.broadcastPreset?.takeIf { it.command == viewModel.broadcastCommandText }
+    // A command with {{placeholders}} asks for its values before the confirmation: the hosts it will
+    // run on, and the picked hosts the script's target leaves out.
+    var paramsRequest by remember { mutableStateOf<Pair<List<ServerEntity>, List<ServerEntity>>?>(null) }
+
+    // Shows exactly what will run where, and runs that exact list on confirm.
+    fun confirmBroadcast(cmd: String, targets: List<ServerEntity>, mismatched: List<ServerEntity>, values: Map<String, String>) {
         val skipped = offlinePicks
-        val danger = fleetCommandDangerWarning(cmd)
+        val shown = if (values.isEmpty()) cmd else ScriptParams.preview(cmd, values)
+        val danger = fleetCommandDangerWarning(shown)
         confirm.ask(
             title = confirm.str(R.string.run_on_host, targets.size, if (targets.size == 1) "" else "s"),
             message = buildString {
-                appendLine("$ $cmd")
+                appendLine("$ $shown")
                 appendLine()
                 targets.forEach { appendLine("• ${HostDisplay.name(it)} (${HostDisplay.userAtHost(it)})") }
                 if (skipped.isNotEmpty()) {
                     appendLine()
                     appendLine(confirm.str(R.string.broadcast_skipped_offline, skipped.joinToString(", ") { HostDisplay.name(it) }))
+                }
+                if (mismatched.isNotEmpty() && activePreset != null) {
+                    appendLine()
+                    appendLine(
+                        confirm.str(
+                            R.string.broadcast_skipped_target,
+                            scriptTargetLabel(activePreset),
+                            mismatched.joinToString(", ") { HostDisplay.name(it) },
+                        ),
+                    )
                 }
                 appendLine()
                 appendLine(confirm.str(if (viewModel.broadcastInTmux) R.string.broadcast_tmux_confirm else R.string.broadcast_drop_warning))
@@ -344,8 +352,57 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             confirmLabel = confirm.str(R.string.run),
             destructive = danger != null,
         ) {
-            viewModel.runFleetBroadcast(cmd, targets.map { it.id })
+            viewModel.runFleetBroadcast(cmd, targets.map { it.id }, values)
         }
+    }
+
+    // Snapshot the targets at tap time; group membership/online status is not re-resolved after the
+    // dialog.
+    fun confirmAndRunBroadcast() {
+        val cmd = viewModel.broadcastCommandText.trim()
+        if (cmd.isBlank() || viewModel.isBroadcastExecuting) return
+        dismissKeyboard()
+        val picked = when (viewModel.broadcastTargetMode) {
+            FleetTargetMode.Servers -> srvList.filter { it.id in viewModel.broadcastTargetServerIds }
+            FleetTargetMode.Groups -> srvList.filter { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
+        }
+        if (picked.isEmpty()) return
+        val mismatched = fleetHostsScriptSkips(activePreset, picked, viewModel.hostMetricsById)
+        val targets = picked - mismatched.toSet()
+        if (targets.isEmpty()) {
+            confirm.ask(
+                title = confirm.str(R.string.broadcast_no_matching_hosts_title),
+                message = confirm.str(
+                    R.string.broadcast_no_matching_hosts,
+                    activePreset?.name.orEmpty(),
+                    activePreset?.let(::scriptTargetLabel).orEmpty(),
+                ),
+                confirmLabel = confirm.str(R.string.close),
+                destructive = false,
+            ) {}
+            return
+        }
+        if (ScriptParams.hasParams(cmd)) paramsRequest = targets to mismatched
+        else confirmBroadcast(cmd, targets, mismatched, emptyMap())
+    }
+
+    paramsRequest?.let { (targets, mismatched) ->
+        val cmd = viewModel.broadcastCommandText.trim()
+        // An unprobed host could still be Windows, so its values must suit both shells.
+        val shells = targets.flatMap { host ->
+            viewModel.knownOs(host).takeIf { it.isNotBlank() }
+                ?.let { listOf(ScriptParams.shellFor(it)) } ?: ScriptParams.Shell.entries
+        }.toSet()
+        ScriptParamsDialog(
+            title = activePreset?.name ?: stringResource(R.string.command),
+            command = cmd,
+            shells = shells,
+            onDismiss = { paramsRequest = null },
+            onSubmit = { values ->
+                paramsRequest = null
+                confirmBroadcast(cmd, targets, mismatched, values)
+            },
+        )
     }
 
     // The inputs stay above an output list that scrolls on its own, and scroll themselves within the
@@ -388,8 +445,10 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
             prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
             textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("fleet.broadcast.command"),
+            // Multi-line scripts run as written; a single-line field flattened them.
+            minLines = 1,
+            maxLines = 6,
             shape = RoundedCornerShape(8.dp),
             colors = omniTextFieldColors()
         )
@@ -610,6 +669,9 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                                     headlineContent = {
                                         Text("${preset.emoji} ${preset.name}", fontWeight = FontWeight.Bold)
                                     },
+                                    trailingContent = if (scriptTargetsAnyHost(preset)) null else {
+                                        { OmniTag(scriptTargetLabel(preset), color = OmniColors.amber) }
+                                    },
                                     supportingContent = {
                                         Text(
                                             preset.command,
@@ -623,6 +685,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                                         .clip(RoundedCornerShape(8.dp))
                                         .clickable {
                                             viewModel.broadcastCommandText = preset.command
+                                            viewModel.broadcastPreset = preset
                                             showPresetPicker = false
                                         },
                                 )
@@ -924,7 +987,8 @@ internal fun commandDangerHits(command: String): List<String> {
         // the way every tutorial writes it — was the one form this did not catch.
         Regex("""\bdd\s+[^;&|\n]*of=""") to "raw write with dd",
         Regex(""">+\s*/dev/(sd|nvme|mmcblk|vd|hd)""") to "writing directly to a block device",
-        Regex("""\b(shutdown|poweroff|halt)\b""") to "host shutdown",
+        // `qm shutdown 101` shuts down a guest, not the host it runs on.
+        Regex("""(?<!\b(?:qm|pct)\s)\b(shutdown|poweroff|halt)\b""") to "host shutdown",
         Regex("""\breboot\b|\binit\s+[06]\b|\bsystemctl\s+(reboot|poweroff|halt|kexec|emergency|rescue)\b""") to "host reboot/shutdown",
         Regex("""\b(userdel|groupdel)\b""") to "account deletion",
         // Same shape: `(-\w+\s+)*` stops at the first non-flag token, so `iptables -t nat -F`
@@ -933,6 +997,22 @@ internal fun commandDangerHits(command: String): List<String> {
         Regex("""\bchmod\s+(-\w+\s+)*[0-7]*777\s+/\S*""") to "world-writable permission change",
         Regex(""":\s*\(\s*\)\s*\{""") to "fork bomb",
         Regex("""\btruncate\s+(-\w+\s+)*-s\s*0\b""") to "file truncation",
+        Regex("""\bfind\s+[^;&|\n]*-delete\b""") to "recursive/forced delete",
+        Regex("""\b(zpool\s+(destroy|labelclear)|zfs\s+destroy|lvremove|vgremove|pvremove)\b|\bmdadm\s+[^;&|\n]*--zero-superblock""") to
+            "storage pool or volume destruction",
+        Regex("""\b(docker|podman)\s+(system|volume|image|container|network|builder)\s+prune\b|\b(docker|podman)\s+volume\s+rm\b|\b(docker|podman)[\s-]compose\s+[^;&|\n]*\bdown\s+[^;&|\n]*(-v\b|--volumes\b)""") to
+            "container data removal",
+        Regex("""\bkubectl\s+[^;&|\n]*\b(delete|drain)\b|\bhelm\s+(uninstall|delete)\b""") to "Kubernetes resource deletion",
+        Regex("""\b(qm|pct)\s+(destroy|stop)\b""") to "Proxmox VM or container destroy/hard stop",
+        Regex("""\bcrontab\s+(-\w+\s+)*-r\b""") to "deleting every cron job",
+        // Fleet's own risk: one command that ends SSH access to every host it reaches.
+        Regex("""\bsystemctl\s+(stop|disable|mask)\s+[^;&|\n]*\bssh(d)?(\.service)?\b|\bufw\s+(enable|default\s+deny)\b|\biptables\s+[^;&|\n]*-P\s+INPUT\s+DROP\b""") to
+            "may cut off SSH access",
+        // Windows hosts.
+        Regex("""(?i)\bRemove-Item\b[^;&|\n]*-Recurse\b|\b(rd|rmdir)\s+/s\b|\bdel\s+[^;&|\n]*/[sq]\b""") to "recursive/forced delete",
+        Regex("""(?i)\b(Format-Volume|Clear-Disk|Initialize-Disk)\b|\bformat\s+[a-z]:""") to "filesystem format/wipe",
+        Regex("""(?i)\b(Remove-Partition|diskpart)\b""") to "partition table changes",
+        Regex("""(?i)\b(Stop-Computer|Restart-Computer)\b""") to "host reboot/shutdown",
     )
     return patterns.mapNotNull { (re, label) -> label.takeIf { re.containsMatchIn(command) } }.distinct()
 }

@@ -130,8 +130,8 @@
     <string name="category_group">"Category / group"</string>
     <string name="quick">"Quick"</string>
     <string name="fleet">"Fleet"</string>
-    <string name="quick_os">"Quick OS"</string>
-    <string name="quick_system">"Quick system"</string>
+    <string name="quick_os">"Target OS"</string>
+    <string name="quick_system">"Target system"</string>
     <string name="notes_optional">"Notes (optional)"</string>
     <string name="what_this_script_does_caveats_etc">"What this script does, caveats, etc."</string>
     <string name="dashboard">"Dashboard"</string>
@@ -1376,4 +1376,11 @@
     <string name="ssh_certificate_any_user">"any user"</string>
     <string name="ssh_certificate_expired">"Certificate expired %1$s: get a new one from your certificate authority"</string>
     <string name="ssh_certificate_not_yet">"Certificate valid from %1$s"</string>
+    <string name="script_values_title">"Values for %1$s"</string>
+    <string name="script_values_explained">"Each value reaches the host as one word, quoted for its shell, so it cannot start a second command."</string>
+    <string name="script_params_hint">"{{name}} asks for a value each time the script runs; {{name=default}} fills one in. Leave quotes off: values are quoted for you."</string>
+    <string name="script_target_hint">"Quick Scripts and Fleet runs leave out hosts that run a different OS or system."</string>
+    <string name="broadcast_skipped_target">"Skipped, not %1$s: %2$s"</string>
+    <string name="broadcast_no_matching_hosts_title">"No host matches"</string>
+    <string name="broadcast_no_matching_hosts">"%1$s is for %2$s, and none of the picked hosts runs it."</string>
 </resources>

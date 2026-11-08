@@ -245,6 +245,6 @@ class HostOsCommandsTest {
         val prefix = "powershell -NoProfile -NonInteractive -EncodedCommand "
         assertTrue(command, command.startsWith(prefix))
         return String(java.util.Base64.getDecoder().decode(command.removePrefix(prefix)), Charsets.UTF_16LE)
-            .removePrefix("${'$'}ProgressPreference='SilentlyContinue'; ")
+            .removePrefix(RemoteCommands.POWERSHELL_PRELUDE)
     }
 }
