@@ -962,7 +962,7 @@ private fun SavedTargetsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.saved_targets_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
                 if (sets.isEmpty()) {
                     Text(stringResource(R.string.saved_targets_empty), fontSize = 12.sp, modifier = Modifier.testTag("saved_targets.empty"))
                 }

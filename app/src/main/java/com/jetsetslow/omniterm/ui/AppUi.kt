@@ -2368,7 +2368,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             Box(modifier = Modifier.clickable { scoreDialogServer = server }) {
                                                 ScoreRing(score = viewModel.currentHealthScore(server), size = 38.dp)
                                             }
-                                            IconButton(onClick = { selectedForActionSheet = server }) {
+                                            IconButton(onClick = { selectedForActionSheet = server }, modifier = Modifier.testTag("server.actions.${server.id}")) {
                                                 Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.actions))
                                             }
                                         }

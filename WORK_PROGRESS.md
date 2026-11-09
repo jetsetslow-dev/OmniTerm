@@ -782,8 +782,15 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       PRIVACY.md says the assistant sees.
     - Tests: `HostTagsTest` 8, `FleetTargetBackupRobolectricTest` 3, `VpnTunnelBackupRobolectricTest`
       1, `BackupSafetyTest` 4, all 0 failed. The migration test gains
-      `migrationToThirtyGivesHostsNoTagsAndAddsNoSavedTargets` (device sweep). Guards seen failing:
-      tags not restored, set hosts not re-pointed, Every read as Any.
+      `migrationToThirtyGivesHostsNoTagsAndAddsNoSavedTargets`. Guards seen failing: tags not
+      restored, set hosts not re-pointed, Every read as Any.
+    - Devices (API 35 emulator, fresh install, repository fixture on 127.0.0.1:2205):
+      `AppDatabaseMigrationTest` 13, `E2eScriptParamsFleetTest` 1, and the new `E2eFleetTagsTest`
+      (`-e omniterm_e2e_fleet_tags yes -e host 127.0.0.1`) 1, all 0 failed. The new test tags the
+      host in its editor, runs Broadcast on Every of two tags, saves the targets, clears them,
+      picks them again from Saved, and deletes the set. Guard: with the editor not saving tags, it
+      failed waiting for them.
+    - The saved-sets dialog now scrolls, and each host card's menu button has a test tag.
   - Next: file push to many hosts, scheduled runs, alert-triggered runs, then the other five.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
