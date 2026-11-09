@@ -33,7 +33,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Host checks open incidents from what the host says, and only from that. */
@@ -215,6 +217,41 @@ class HostCheckAlertsRobolectricTest {
         }
     }
 
+    /**
+     * A host check added while the host's probe runs is read by a probe right after that one, not
+     * at the next poll: the running probe was sent before the rule existed.
+     */
+    @Test
+    fun aHostCheckAddedDuringAProbeIsReadRightAfterIt() {
+        val answer = CountDownLatch(1)
+        val host = AnsweringHost(probeGate = answer)
+        withModel(host) { repository, model, hostId ->
+            try {
+                withContext(main) { model.addAlertRule(hostId, HostChecks.FAILED_SERVICES, "/", 0f, "WARNING", "0m") }
+                withTimeout(15_000) {
+                    while (host.probeStarted.count > 0) {
+                        withContext(main) { model.refreshServer(hostId) }
+                        delay(200)
+                    }
+                }
+                withContext(main) { model.addAlertRule(hostId, HostChecks.REBOOT_REQUIRED, "/", 0f, "WARNING", "0m") }
+                val rebootRule = withTimeout(5_000) {
+                    while (repository.getAllRules().size < 2) delay(10)
+                    repository.getAllRules().single { it.metricName == HostChecks.REBOOT_REQUIRED }.id
+                }
+                // Let the new rule's own start request land while the first probe still runs.
+                delay(500)
+                answer.countDown()
+
+                // No refresh: the next poll is 15 s away, so only the queued probe can read it now.
+                waitWhileOnMain(main, timeoutMillis = 5_000) { model.hostCheckResults[rebootRule to hostId] == null }
+                assertEquals(2, host.probeRuns.get())
+            } finally {
+                answer.countDown()
+            }
+        }
+    }
+
     private suspend fun saveScript(repository: AppRepository, name: String, command: String): Int {
         repository.insertScript(QuickScriptEntity(emoji = "LIN", name = name, command = command, color = "cyan"))
         return repository.getAllScripts().single { it.name == name }.id
@@ -273,10 +310,12 @@ class HostCheckAlertsRobolectricTest {
 
     /**
      * A Linux host with healthy metrics, two failed systemd units and a backup check that fails with
-     * exit 2. It keeps every command it was sent.
+     * exit 2. It keeps every command it was sent. Given [probeGate], the host-check probe answers
+     * only once the gate opens.
      */
-    private class AnsweringHost : FakeTransport() {
+    private class AnsweringHost(private val probeGate: CountDownLatch? = null) : FakeTransport() {
         val probeRuns = AtomicInteger()
+        val probeStarted = CountDownLatch(1)
         val metricsRuns = AtomicInteger()
         val scriptRuns = AtomicInteger()
         val commands = ConcurrentLinkedQueue<String>()
@@ -290,6 +329,8 @@ class HostCheckAlertsRobolectricTest {
                 }
                 "echo '@FAILED'" in command -> {
                     probeRuns.incrementAndGet()
+                    probeStarted.countDown()
+                    probeGate?.await(10, TimeUnit.SECONDS)
                     "@FAILED\n!OK\nnginx.service\nsmartd.service\n@CONTAINERS\n@ZFS\n@MDSTAT\n@UPS\n@REBOOT\n"
                 }
                 "echo '@MEM'" in command -> {
