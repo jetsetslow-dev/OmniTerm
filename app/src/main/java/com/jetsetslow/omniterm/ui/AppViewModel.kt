@@ -3960,7 +3960,9 @@ class AppViewModel @JvmOverloads constructor(
         }
         val raw = try {
             withTimeoutOrNull(ScriptChecks.TIMEOUT_MS) {
-                val (creds, command) = savedScriptRun(srv, ScriptParams.fill(script.command, emptyMap(), ScriptParams.shellFor(hostOs(srv))))
+                val os = hostOs(srv)
+                val filled = ScriptParams.fill(script.command, emptyMap(), ScriptParams.shellFor(os), ScriptParams.HostVars.of(srv, os))
+                val (creds, command) = savedScriptRun(srv, filled)
                 sshTransport.exec(creds, command)
             } ?: "SSH Error: command failed (${ScriptChecks.TIMED_OUT.toInt()}): " +
                 app.getString(R.string.script_check_timed_out, ScriptChecks.TIMEOUT_MS / 1000)
@@ -13943,12 +13945,15 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * [template] as [srv] runs it: the last run's placeholder values quoted for its shell. Throws
+     * [template] as [srv] runs it: the last run's placeholder values and the host's own details
+     * (`{{host.name}}` and the like) quoted for its shell. Throws
      * [ScriptParams.UnsafeValueException] when a value cannot be passed to that shell safely.
      */
-    private suspend fun broadcastCommandFor(srv: ServerEntity, template: String): String =
-        if (!ScriptParams.hasParams(template)) template
-        else ScriptParams.fill(template, lastBroadcastParams, ScriptParams.shellFor(hostOs(srv)))
+    private suspend fun broadcastCommandFor(srv: ServerEntity, template: String): String {
+        if (!ScriptParams.needsFill(template)) return template
+        val os = hostOs(srv)
+        return ScriptParams.fill(template, lastBroadcastParams, ScriptParams.shellFor(os), ScriptParams.HostVars.of(srv, os))
+    }
 
     private suspend fun broadcastHostPlain(srv: ServerEntity, template: String) {
         val result = try {

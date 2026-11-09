@@ -71,6 +71,17 @@ class FleetBroadcastOutcomeRobolectricTest {
     }
 
     @Test
+    fun eachHostFillsInItsOwnDetails() = withBroadcast { model, main, transport ->
+        transport.streamReplies.add(Reply(listOf("ok\n"), "ok\n"))
+        withContext(main) {
+            model.updateBroadcastInTmux(false)
+            model.runFleetBroadcast("echo {{host.name}} {{host.user}}@{{host.address}}", listOf(serverId))
+        }
+        awaitCard(model) { card -> card.status == BroadcastStatus.Success }
+        assertTrue(transport.streamed.toString(), transport.streamed.single().contains("echo 'Broadcast fixture' fixture@fixture.invalid"))
+    }
+
+    @Test
     fun aHostWithoutTmuxWaitsForTheUser() = withBroadcast { model, main, transport ->
         transport.execReplies.add(RemoteCommands.BROADCAST_NO_TMUX + "\n")
         withContext(main) {

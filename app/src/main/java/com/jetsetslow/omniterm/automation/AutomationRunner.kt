@@ -213,8 +213,9 @@ class AutomationRunner(
                 context.getString(R.string.broadcast_skipped_target, scriptTargetLabel(script), srv.name),
             )
         }
+        // A command an AI assistant typed (no values) is not a template: its braces are the shell's.
         val filled = if (values == null) script.command else try {
-            ScriptParams.fill(script.command, values, ScriptParams.shellFor(os))
+            ScriptParams.fill(script.command, values, ScriptParams.shellFor(os), ScriptParams.HostVars.of(srv, os))
         } catch (e: ScriptParams.UnsafeValueException) {
             return Automation.HostResult(srv.id, srv.name, Automation.UNSAFE_VALUE, "", e.message ?: "unsafe value")
         }

@@ -335,6 +335,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             title = confirm.str(if (retry) R.string.broadcast_retry_title else R.string.run_on_host, targets.size, plural),
             message = buildString {
                 appendLine("$ $shown")
+                if (ScriptParams.usesHostVars(cmd)) appendLine(confirm.str(R.string.broadcast_host_vars))
                 appendLine()
                 targets.forEach { appendLine("• ${HostDisplay.name(it)} (${HostDisplay.userAtHost(it)})") }
                 if (retry) {

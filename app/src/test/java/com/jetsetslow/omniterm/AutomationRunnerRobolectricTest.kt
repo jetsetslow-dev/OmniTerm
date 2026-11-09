@@ -134,6 +134,16 @@ class AutomationRunnerRobolectricTest {
     }
 
     @Test
+    fun eachHostFillsInItsOwnDetails() = withLab { transport ->
+        transport.os[PI] = "Windows"
+        val (grant, hash) = grant(script("echo {{host.name}} {{host.address}} {{host.os}}"), listOf(nasId, piId))
+        assertTrue(runner(transport).run(grant, hash).succeeded)
+        val byHost = transport.commands.filter { it.second != RemoteCommands.OS_PROBE }.associateBy { it.first.host }
+        assertEquals("echo nas $NAS linux", byHost.getValue(NAS).second)
+        assertEquals("echo pi $PI windows", byHost.getValue(PI).second)
+    }
+
+    @Test
     fun aBuiltInPresetRunsInTheAppsOwnFormForTheHost() = withLab { transport ->
         transport.os[PI] = "Windows"
         val kernel = "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\""

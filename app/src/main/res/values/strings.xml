@@ -1432,7 +1432,9 @@
     <string name="ssh_certificate_not_yet">"Certificate valid from %1$s"</string>
     <string name="script_values_title">"Values for %1$s"</string>
     <string name="script_values_explained">"Each value reaches the host as one word, quoted for its shell, so it cannot start a second command."</string>
-    <string name="script_params_hint">"{{name}} asks for a value each time the script runs; {{name=default}} fills one in. Leave quotes off: values are quoted for you."</string>
+    <string name="script_params_hint">"{{name}} asks for a value each time the script runs; {{name=default}} fills one in. {{host.name}}, {{host.address}}, {{host.user}}, {{host.port}}, {{host.os}} and {{host.group}} are each host's own. Leave quotes off: values are quoted for you."</string>
+    <string name="broadcast_host_vars">"Each host fills in its own {{host.…}} details."</string>
+    <string name="script_params_cannot_run">"Can't run on %1$s"</string>
     <string name="script_target_hint">"Quick Scripts and Fleet runs leave out hosts that run a different OS or system."</string>
     <string name="broadcast_skipped_target">"Skipped, not %1$s: %2$s"</string>
     <string name="broadcast_no_matching_hosts_title">"No host matches"</string>

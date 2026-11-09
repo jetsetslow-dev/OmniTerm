@@ -9,7 +9,11 @@ package com.jetsetslow.omniterm.data
  * own: `systemctl status {{service}}`, not `systemctl status "{{service}}"`. That quoting is what
  * keeps a value such as `x; rm -rf /` an argument instead of a second command.
  *
- * Idea credit: Semaphore UI's survey variables (semaphoreui/semaphore#904).
+ * `{{host.name}}` and the other [HOST_VARS] are never asked: each host fills them in with its own
+ * details ([HostVars]), quoted the same way.
+ *
+ * Idea credit: Semaphore UI's survey variables (semaphoreui/semaphore#904); the per-host ones,
+ * Termix Fleets' `$HOST` variables (docs.termix.site/plugins/fleets).
  */
 object ScriptParams {
     /** One placeholder: its name and the default the form starts with (empty when none). */
@@ -21,7 +25,40 @@ object ScriptParams {
     /** A value [fill] could not pass to the host's shell safely. */
     class UnsafeValueException(val param: String, message: String) : IllegalArgumentException(message)
 
+    /**
+     * What one host fills `{{host.…}}` with: its saved name, address, user, port and group, and
+     * [os] as [RemoteCommands.normaliseOs] names it, given to the script as `linux`, `bsd`,
+     * `macos` or `windows`.
+     */
+    data class HostVars(val name: String, val address: String, val user: String, val port: Int, val os: String, val group: String) {
+        internal fun value(key: String): String? = when (key) {
+            "name" -> name
+            "address" -> address
+            "user" -> user
+            "port" -> port.toString()
+            "os" -> when (os) {
+                "Windows" -> "windows"
+                "Darwin" -> "macos"
+                "FreeBSD" -> "bsd"
+                else -> "linux"
+            }
+            "group" -> group
+            else -> null
+        }
+
+        companion object {
+            fun of(srv: ServerEntity, os: String) = HostVars(srv.name, srv.host, srv.username, srv.port, os, srv.groupName.orEmpty())
+        }
+    }
+
+    /** The `{{host.…}}` names, in the order the help lists them. */
+    val HOST_VARS = listOf("name", "address", "user", "port", "os", "group")
+
     private val PLACEHOLDER = Regex("""\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,31})\s*(?:=([^{}\r\n]*))?\}\}""")
+
+    // A host variable or a placeholder, matched in one pass: a value is never searched again for
+    // either, so a value written as {{host.name}} stays the text it is, quoted.
+    private val TOKEN = Regex("""\{\{\s*(?:host\.([a-z]+)\s*|([A-Za-z_][A-Za-z0-9_]{0,31})\s*(?:=([^{}\r\n]*))?)\}\}""")
 
     // Characters that mean the same thing to sh, cmd and PowerShell when left unquoted.
     private val BARE_WORD = Regex("""[A-Za-z0-9._:/@+,=-]+""")
@@ -41,12 +78,28 @@ object ScriptParams {
 
     fun hasParams(command: String): Boolean = PLACEHOLDER.containsMatchIn(command)
 
-    /** [command] with each placeholder replaced by its value from [values], quoted for [shell]. */
-    fun fill(command: String, values: Map<String, String>, shell: Shell): String =
-        PLACEHOLDER.replace(command) { match ->
-            val name = match.groupValues[1]
-            val value = values[name] ?: match.groupValues[2].trim()
-            quote(name, value, shell)
+    /** Whether [command] uses any of [HOST_VARS]. */
+    fun usesHostVars(command: String): Boolean =
+        TOKEN.findAll(command).any { it.groupValues[1] in HOST_VARS }
+
+    /** Whether [fill] would change [command] on a host: it has placeholders or host variables. */
+    fun needsFill(command: String): Boolean = hasParams(command) || usesHostVars(command)
+
+    /**
+     * [command] with each placeholder replaced by its value from [values], and, given [host], each
+     * of [HOST_VARS] by that host's, all quoted for [shell]. Without [host], and for a name that is
+     * not one of [HOST_VARS], `{{host.…}}` is left as written.
+     */
+    fun fill(command: String, values: Map<String, String>, shell: Shell, host: HostVars? = null): String =
+        TOKEN.replace(command) { match ->
+            val hostKey = match.groupValues[1]
+            if (hostKey.isNotEmpty()) {
+                val value = host?.value(hostKey) ?: return@replace match.value
+                quote("host.$hostKey", value, shell)
+            } else {
+                val name = match.groupValues[2]
+                quote(name, values[name] ?: match.groupValues[3].trim(), shell)
+            }
         }
 
     /** Fills [command] for display in a confirmation dialog, the way a Unix host will receive it. */
