@@ -121,6 +121,16 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <!-- The opt-in MCP server for AI assistants: loopback only, off until the user turns it on. -->
+        <service
+            android:name=".mcp.McpService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
+
+        <receiver
+            android:name=".mcp.McpApprovalReceiver"
+            android:exported="false" />
+
         <!-- Shares the saved crash report as a file attachment via the Android share sheet.
              Authority is per-flavor (${applicationId}) so the openSource/playStore builds don't
              collide. Only the app's private crash-report cache dir is exposed. -->

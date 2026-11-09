@@ -1097,6 +1097,7 @@ private fun fleetRunOutcome(summary: FleetRunSummary): String =
 private fun fleetRunSourceLabel(source: String): String? = when (source) {
     FleetRunHistory.SOURCE_RETRY -> stringResource(R.string.fleet_history_source_retry)
     FleetRunHistory.SOURCE_RUNBOOK -> stringResource(R.string.fleet_history_source_runbook)
+    FleetRunHistory.SOURCE_MCP -> stringResource(R.string.fleet_history_source_mcp)
     else -> null
 }
 

@@ -90,25 +90,40 @@ class AutomationRunner(
         script!!
         val servers = Automation.parseServerIds(grant.serverIds).mapNotNull { repository.getServerById(it) }
         if (servers.isEmpty()) return refused(context.getString(R.string.automation_no_hosts))
+        return runScript(script, servers, emptyMap(), FleetRunHistory.SOURCE_AUTOMATION)
+    }
+
+    /**
+     * Runs [script] on [servers] and keeps the run in Fleet's history under [source]. [values] fill
+     * its `{{values}}` (a value left out takes its default); null runs the command exactly as written,
+     * for a command that was typed rather than saved. The caller has already decided it may run.
+     */
+    suspend fun runScript(
+        script: QuickScriptEntity,
+        servers: List<ServerEntity>,
+        values: Map<String, String>?,
+        source: String,
+    ): Automation.RunResult {
+        val started = clock()
         val deadline = started + runTimeoutMs
         val gate = Semaphore(Automation.PARALLEL_HOSTS)
         val hosts = coroutineScope {
-            servers.map { srv -> async { gate.withPermit { runOn(script, srv, deadline) } } }.awaitAll()
+            servers.map { srv -> async { gate.withPermit { runOn(script, srv, values, deadline) } } }.awaitAll()
         }
-        record(script, started, hosts)
+        record(script, started, hosts, source)
         return Automation.RunResult(hosts)
     }
 
     private fun refused(reason: String) = Automation.RunResult(emptyList(), reason)
 
-    private suspend fun runOn(script: QuickScriptEntity, srv: ServerEntity, deadline: Long): Automation.HostResult =
-        withTimeoutOrNull((deadline - clock()).coerceAtLeast(1)) { attempt(script, srv) }
+    private suspend fun runOn(script: QuickScriptEntity, srv: ServerEntity, values: Map<String, String>?, deadline: Long): Automation.HostResult =
+        withTimeoutOrNull((deadline - clock()).coerceAtLeast(1)) { attempt(script, srv, values) }
             ?: Automation.HostResult(
                 srv.id, srv.name, Automation.TIMED_OUT, "",
-                context.getString(R.string.broadcast_timed_out, (runTimeoutMs / 60_000).toInt()),
+                context.getString(R.string.broadcast_timed_out, (runTimeoutMs / 60_000).toInt().coerceAtLeast(1)),
             )
 
-    private suspend fun attempt(script: QuickScriptEntity, srv: ServerEntity): Automation.HostResult {
+    private suspend fun attempt(script: QuickScriptEntity, srv: ServerEntity, values: Map<String, String>?): Automation.HostResult {
         val probe = exec(HostCredentials.build(repository, srv, posixShell = false), RemoteCommands.OS_PROBE)
         if (sshCommandExit(probe) == null) return unreachable(srv, probe)
         val os = RemoteCommands.normaliseOs(probe)
@@ -118,8 +133,8 @@ class AutomationRunner(
                 context.getString(R.string.broadcast_skipped_target, scriptTargetLabel(script), srv.name),
             )
         }
-        val filled = try {
-            ScriptParams.fill(script.command, emptyMap(), ScriptParams.shellFor(os))
+        val filled = if (values == null) script.command else try {
+            ScriptParams.fill(script.command, values, ScriptParams.shellFor(os))
         } catch (e: ScriptParams.UnsafeValueException) {
             return Automation.HostResult(srv.id, srv.name, Automation.UNSAFE_VALUE, "", e.message ?: "unsafe value")
         }
@@ -147,14 +162,14 @@ class AutomationRunner(
         else result.removePrefix("SSH Error:").trim(),
     )
 
-    private suspend fun record(script: QuickScriptEntity, started: Long, hosts: List<Automation.HostResult>) {
+    private suspend fun record(script: QuickScriptEntity, started: Long, hosts: List<Automation.HostResult>, source: String) {
         val run = FleetRunEntity(
             runKey = "automation-" + UUID.randomUUID(),
             startedAt = started,
             finishedAt = clock(),
             command = script.command,
             scriptName = script.name,
-            source = FleetRunHistory.SOURCE_AUTOMATION,
+            source = source,
         )
         repository.recordFleetRun(
             run,

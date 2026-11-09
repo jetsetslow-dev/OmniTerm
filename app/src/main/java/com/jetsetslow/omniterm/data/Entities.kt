@@ -370,6 +370,7 @@ object FleetRunHistory {
     const val SOURCE_RETRY = "retry"
     const val SOURCE_RUNBOOK = "runbook"
     const val SOURCE_AUTOMATION = "automation"
+    const val SOURCE_MCP = "mcp"
 
     /** [output]'s end, at most [OUTPUT_CHARS], as one host's row; [runId] is set when the run is saved. */
     fun host(serverId: Int, serverName: String, status: String, note: String?, output: String, truncated: Boolean) =
@@ -402,3 +403,26 @@ data class AutomationGrantEntity(
     val createdAt: Long,
     val lastUsedAt: Long? = null,
 )
+
+/**
+ * One call an AI assistant made to the MCP server, so the user can see what was asked and what
+ * came of it: the newest [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, on
+ * this phone only and not in backups. [outcome] is one of [McpCallOutcome]'s values; [detail] is
+ * the first line of the answer, short.
+ */
+@Entity(tableName = "mcp_calls")
+data class McpCallEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val at: Long,
+    val client: String,
+    val tool: String,
+    val outcome: String,
+    val detail: String,
+)
+
+object McpCallOutcome {
+    const val OK = "ok"
+    const val FAILED = "failed"
+    /** A request turned away for its token, host name or origin. */
+    const val REFUSED = "refused"
+}

@@ -14,6 +14,7 @@ OmniTerm is a native Android app for running your homelab and servers from a pho
 - **Fleet Broadcast** — run a command across many hosts or groups at once with live per-host output.
 - **Scripts, alerts, cron, and Wake-on-LAN** management.
 - **Tasker and automation** — let Tasker or another app run one of your saved scripts on hosts you pick, with a token you make in OmniTerm. Off until you turn it on.
+- **AI assistants (MCP)** — let Claude Code, Gemini CLI or Codex read the hosts you pick and ask to run your scripts, with every run approved on your phone. Off until you turn it on; reachable only from this phone or through one of your own hosts.
 - **Install keys on hosts** — put a key on one host or many in one go, check that it works, and switch those hosts to sign in with it.
 - **Links and sharing** — open `ssh://` links from a browser or chat, share a command from another app into a new script, and share files from any app to upload them to a host.
 - **Encrypted, selective backups** (AES-256-GCM) of your app data.
@@ -207,12 +208,21 @@ Open **Tools → Settings**:
 
 **Tools → About OmniTerm → Device & diagnostics** shows app version, build, device info, and an on-device crash-history viewer for bug reports.
 
+### AI assistants (MCP)
+Open **Tools → AI assistants** to let an AI assistant on your computer, such as Claude Code, Gemini CLI or Codex, look at your hosts and ask OmniTerm to run things on them. It uses the Model Context Protocol (MCP).
+- **Off until you turn it on.** Turning it on asks for your App Lock PIN or fingerprint, or your phone's screen lock, and shows a token once: copy it then. OmniTerm keeps only a fingerprint of it. **Make a new token** replaces it, and **Revoke** shuts every assistant out at once. While it is on, a notification says so; tap **Turn off** there or on the screen.
+- **Only the hosts you tick.** None are shared until you pick them. For those, an assistant can see the name, group, whether it is online, its health score and latency, the metrics and alerts OmniTerm last recorded, and the host's containers. It never gets a host's address, user name, passwords, keys or notes. It can list your saved scripts by name and the `{{values}}` they take, but not their commands.
+- **Every run waits for you.** When an assistant asks to run a saved script, your phone shows who is asking, the full command and the hosts; approve it with your PIN, fingerprint or screen lock, or tap **Deny**. Nothing runs if you deny it or don't answer within two minutes. With **Allow any command** on, an assistant can also ask for a command of its own, shown to you in full and approved the same way; the danger list flags anything that looks destructive. Runs are kept in Fleet's **History**, marked as from an AI assistant.
+- **Reach it from a computer through your own host.** The server listens only on the phone's own address, so nothing else on your network can reach it. Under **Reach from a computer**, pick one of your hosts: OmniTerm keeps an SSH tunnel open so the same port on that host, on its own address only, leads to your phone. Then run the command the screen shows on that host, for example `claude mcp add --transport http omniterm http://127.0.0.1:47821/mcp --header "Authorization: Bearer $OMNITERM_MCP_TOKEN"`. The screen also shows the settings for Gemini CLI and Codex. You can change both ports. Pick **Only this phone** to use an assistant running on the phone itself, for example in Termux.
+- **See every call.** **Recent calls** lists each call: when, which assistant, the tool, and whether it worked. Requests with a wrong token, or from a web page, are listed as refused.
+- **What you share goes to the assistant.** Whatever it reads, including the output of runs you approve, goes to that assistant program and may reach the company behind it. Share only the hosts you are happy for it to see.
+
 ## Backup & restore
 Open **Tools → App backup** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, credential profiles, scripts, alert data, saved shares, tunnels, and settings).
 - Backups containing sensitive sections are compressed and encrypted with AES-256-GCM using a passphrase-derived key.
 - App backups never copy files from your remote hosts.
 - OmniTerm does not store the backup passphrase — keep it safe.
-- Automation tokens and the **Let other apps run scripts** switch stay on the phone where you made them: they are never in a backup, and restoring one never turns automation on.
+- Automation tokens and the **Let other apps run scripts** switch stay on the phone where you made them: they are never in a backup, and restoring one never turns automation on. The same goes for every AI assistant setting and its token.
 
 ## Security & privacy
 - **No OmniTerm backend, no server agents** — administration traffic goes directly from your device to the hosts you configure. The Play Store flavor separately contacts Google for ads, consent, and billing; the source-available flavor omits those SDKs. If you turn on alert forwarding, alerts also go to the ntfy, Gotify or webhook address you enter, and nowhere else.
@@ -224,6 +234,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
   up to 24 hours. Rotation does not start the background timer.
 - **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
 - **Automation is opt-in** — other apps can run your scripts only after you turn on **Tools → Automation** and give them a token, and then only that token's script on its hosts. A request with a token OmniTerm does not know gets no answer at all.
+- **AI assistants are opt-in** — the MCP server runs only after you turn it on under **Tools → AI assistants**, listens only on the phone's own address, needs its token on every request, sees only the hosts you tick, and runs nothing you have not approved on the phone.
 - **Links and shares wait for you** — an `ssh://` link or a share from another app only opens a screen. Nothing connects, is saved or is uploaded until you tap, and a password in a link is never kept.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
 - **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The source-available build has no ads SDK and accesses no advertising ID.
@@ -251,6 +262,7 @@ bug reports that shaped features here:
 - [Beszel](https://github.com/henrygd/beszel) and [Uptime Kuma](https://github.com/louislam/uptime-kuma) — the host-down, failed-service and container alert kinds; Uptime Kuma also the ping, TCP port and DNS checks. Both also gave the idea of forwarding alerts to ntfy, Gotify and webhooks (their notification settings), and of alerting on a script's exit status (script checks).
 - [Termux:Tasker](https://github.com/termux/termux-tasker) and [Home Assistant for Android](https://github.com/home-assistant/android) — running a saved script from Tasker and other apps, and waiting for its result (Termux:Tasker's plug-in and its bug reports, Home Assistant's broadcast intents). The plug-in follows [Tasker's plug-in documentation](https://tasker.joaoapps.com/plugins.html) and the [Locale plug-in spec](https://github.com/twofortyfouram/android-monorepo).
 - [electerm](https://github.com/electerm/electerm) — opening `ssh://` links, and the bug where a trailing `/` was read as part of the address (electerm#4357).
+- [Haven](https://github.com/GlassHaven/Haven), [electerm](https://github.com/electerm/electerm) and [ssh-mcp](https://github.com/tufantunc/ssh-mcp) — an MCP server for AI assistants (Haven's MCP tools, electerm's MCP widget). electerm#4431 showed that a `GET` must be refused plainly rather than answered empty; ssh-mcp#36 and ssh-mcp#214 asked for tools that say whether they change anything and keep fixed descriptions. Built from the [Model Context Protocol specification](https://modelcontextprotocol.io).
 - [ConnectBot](https://github.com/connectbot/connectbot) — installing a key on a host from the phone, as `ssh-copy-id` does (ConnectBot#428, ConnectBot#666).
 - [Material Files](https://github.com/zhanghai/MaterialFiles) — sharing files from any app to save them where you choose (MaterialFiles#976).
 - [Haven](https://github.com/GlassHaven/Haven), [ConnectBot](https://github.com/connectbot/connectbot), [ServerBox](https://github.com/lollipopkit/flutter_server_box), [Nexterm](https://github.com/gnmyt/Nexterm), [Beszel](https://github.com/henrygd/beszel), [Uptime Kuma](https://github.com/louislam/uptime-kuma) and [Home Assistant for Android](https://github.com/home-assistant/android) — feature and bug reviews for the homelab and server-admin features OmniTerm covers.

@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 27
+        const val CURRENT_VERSION = 28
     }
 
     @get:Rule
@@ -397,6 +397,34 @@ class AppDatabaseMigrationTest {
                 db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (8, '3', 'aa', 'Other', 2, NULL)")
             }
             assertTrue("one grant per token", duplicate.isFailure)
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToTwentyEightKeepsGrantsAndStartsAnEmptyRecordOfCalls() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-27-mcp"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 27).use { db ->
+            db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (7, '1,2', 'aa', 'Tasker', 1, NULL)")
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT COUNT(*) FROM automation_grants").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("the automation grants are kept", 1, cursor.getInt(0))
+            }
+            db.query("SELECT COUNT(*) FROM mcp_calls").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade records no call", 0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO mcp_calls (at, client, tool, outcome, detail) VALUES (1, 'Claude Code', 'list_hosts', 'ok', '')")
         }
         context.deleteDatabase(databaseName)
     }
