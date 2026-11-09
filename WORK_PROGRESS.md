@@ -662,6 +662,72 @@ changed there). The user then asked for it in the same PR: "merge that into the 
     waits for the saver without accepting the prompt that #98 added, and it needs a lab host
     ("E2E Foreground Demo") that the fixtures do not have. Left for later.
 
+## Bundle after #147 — more tunnels, homelab, Fleet (branch `kotlin-homelab-bundle`)
+
+User, Nov 9: "bundle 1,2 and 3with small items and keep rest two as separate prs". After #147, one
+PR carries items 3–5 of "Remaining", plus the small items. The Go engine and iOS stay separate PRs.
+Also Nov 9: "we should start bundling things to reduce the number of times we run the gates". So
+there is one full gate when the bundle is complete, and targeted tests per piece until then.
+
+- Branched from #147's head after main was merged in (e64e1f0). Retarget to main once #147 merges.
+- Contents:
+  - tunnels T2+: Tailscale/Headscale, NetBird, Nebula, Cloudflare Access;
+  - homelab F: Proxmox VE API, SNMP, container image updates, backup freshness presets;
+  - the five Fleet enhancements approved on Nov 9;
+  - small items: the bundling rule in AGENTS.md, and `E2eSettingsStateStressTest`'s opt-in
+    battery-saver case. That case waits for the saver without accepting #98's prompt, and needs
+    a lab host ("E2E Foreground Demo").
+- Seeing runs that other apps start (user, Nov 9: "if tasker triggers a command, where can I see
+  what is happening in omniterm ... same with MCP"). Today they reach Fleet's History only when they
+  finish, and Tasker runs carry no label there, although the README says they do. In the bundle:
+  - the Automation label in History;
+  - a run saved when it starts and updated as each host finishes;
+  - a notification per run, chosen per token (user, Nov 9: "Choose per token"). Each automation
+    token and the AI assistant get off, failures only or always. New ones start at failures only:
+    progress while running, gone when every host succeeds, kept naming the failed hosts when one
+    fails, and a tap opens the run. The setting is backed up with its grant;
+  - Recent calls entries open the run they started;
+  - a History filter by source.
+  Alert-triggered runs use the same notification and History path.
+- Token usage history (user, Nov 9: "also add token usage history for automation and MCP with
+  success and failure status of each run"):
+  - Each automation token, and the AI assistant's token, lists every use: when, script or tool,
+    hosts, and succeeded, failed or refused. Refused covers the switch being off, the danger list,
+    a missing value and an unknown host.
+  - A use that made a Fleet run opens it.
+  - The newest few hundred per token are kept, and backed up with Automation & AI assistants.
+  - "Token" means OmniTerm's access tokens; the app never sees an AI model's token counts.
+- The other Fleet candidates are in too (user, Nov 9: "also bundle this etc the rest"):
+  - identical output grouped;
+  - a failure threshold;
+  - saved target sets;
+  - output filtering;
+  - sudo in Fleet, asking as every sudo action does (App Lock, then device lock, then a plain
+    confirm);
+  - broadcast typing, last.
+- Build order, so nothing is redone:
+  1. Run visibility and token usage history. This is the run-recording and notification path that
+     scheduled and alert-triggered runs reuse.
+  2. Fleet: the five approved enhancements, then the other six.
+  3. Homelab F.
+  4. Tunnels T2+, the largest piece and Go-only.
+  5. The small items.
+  Targeted tests and device runs per piece; one full gate at the end.
+- Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
+  - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
+  - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,
+    `omnitunnel` still builds and its tests pass, and an Android arm64 build without cgo works.
+  - tsnet brings 568 packages, against 206 today. Size is still to measure.
+  - Licences (`check-licenses.py --module` on the copy): 41 modules, 3 problems.
+    - Tailscale's `PATENTS` is a patent grant shaped like Google's Go grant: it only gives rights.
+      ScanCode has no Tailscale entry, so Dependency review's name for it is unknown before it runs.
+      It may match `google-patent-license(-golang)`, which is already allowed, or come out unknown.
+    - `coder/websocket` is ISC, worded "modify, and distribute" instead of "and/or". The script's
+      ISC signature needs that wording.
+    - `tailscale.com/license_test.go` was read as a licence file. The script should skip source files.
+  - Still open: Android blocks netlink, so interfaces must come from Kotlin, as tailscale-android
+    does.
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
