@@ -71,6 +71,10 @@ python3 ./scripts/check-actions-allowlist.py
 ./scripts/test-repeat-changed-tests.sh
 python3 -B ./scripts/test-check-dependency-updates.py
 python3 -I -B ./scripts/test-check-licenses.py
+# Scorecard's Dockerfile rule: base images pinned by digest, one digest per image. Scorecard only
+# annotates the pull request, so an unpinned image was seen after the push.
+python3 -I -B ./scripts/test-check-pinned-images.py
+python3 -I -B ./scripts/check-pinned-images.py
 # Workflow wiring that only shows on GitHub, such as the CodeQL Go job's step order.
 ./scripts/test-workflow-guards.sh
 python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json \

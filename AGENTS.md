@@ -32,14 +32,17 @@ These rules apply to every contributor and automation tool working in this repos
   test racing a thread it starts can pass every time on a desktop and lose on a CI runner. Fix such
   a test's race; never retry it until it passes.
 - Every gate also checks what only showed on GitHub before: the Go modules' licences against
-  Dependency review's `allow-licenses` (`scripts/check-licenses.py`), and workflow wiring such as the
-  CodeQL Go job setting up the pinned toolchain before CodeQL's init (`scripts/test-workflow-guards.sh`).
+  Dependency review's `allow-licenses` (`scripts/check-licenses.py`), workflow wiring such as the
+  CodeQL Go job setting up the pinned toolchain before CodeQL's init (`scripts/test-workflow-guards.sh`),
+  and Scorecard's Dockerfile rule: every base image pinned by digest, one digest per image and tag
+  (`scripts/check-pinned-images.py`). Scorecard annotates the pull request instead of failing a check.
 - `--full` also catches what GitHub would only report after the push: updates Dependabot would
   open a PR for (`scripts/check-dependency-updates.py`; take them in the change, or hold one in
   `.github/dependabot.yml` with its reason and the condition that lifts it), dependencies with a known
   vulnerability (`scripts/check-dependency-advisories.py`, Dependabot's database and graphs, the Go
   modules included) and CodeQL alerts in Kotlin/Java and Go (`scripts/local-codeql.sh`, the
-  workflow's CLI version and `security-extended` queries; it prints how to install the Java CLI and
+  workflow's CLI version and `security-extended` queries, over the test sources too, which only
+  main's run compiles; it prints how to install the Java CLI and
   fetches the Go bundle itself, checked against its digest). Bump the CLI pin and both digests in
   that script with the `github/codeql-action` pin in `codeql.yml`.
 - Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.

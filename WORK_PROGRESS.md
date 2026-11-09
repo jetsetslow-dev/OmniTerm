@@ -593,6 +593,20 @@ Its own PR against main, after #145.
     and none of 5 on two, so two would not have caught it. The fixed
     test passed 13 of 13 runs on one processor, and still passes with the server's accept slowed by
     200 ms (#147's version fails that every time).
+- Two security findings the gate could not see (user, Nov 9: "there's a security comment from git
+  hub bot"):
+  - Scorecard alert 40 on #147: the WireGuard fixture's `FROM alpine:3.22` had no digest. It now
+    uses the digest the other fixtures already pin. `scripts/check-pinned-images.py` applies
+    Scorecard's Dockerfile rule in the gate and PR Check, and also requires one digest per image
+    and tag. It fails on #147's fixture, and on the digest Scorecard suggested, which differs from
+    the other fixtures'.
+  - CodeQL alert 39, open on main since Nov 3 (#136): `SshSignInLiveTest` ran `ssh-keygen` by
+    relative path. Pull request runs compile no tests, so only main's run saw it. The test now uses
+    `TestShell.find`'s absolute path. `scripts/local-codeql.sh` also compiles the unit and device
+    test sources, as main's run does. On the old test it reports the same alert, at
+    `SshSignInLiveTest.kt:190`.
+  - Checked: the live sign-in test passes 7 of 7 against the repo's fixtures, and with the rebuilt
+    fixture `E2eVpnTunnelTest` passes on the API 35 emulator.
 
 ## Decision pivot — 2026-11-08
 

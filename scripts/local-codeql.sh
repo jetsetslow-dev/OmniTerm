@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the CodeQL analyses of .github/workflows/codeql.yml on this working tree, Java/Kotlin and the
 # Go tunnel library, so an alert or a broken analysis shows up before a push instead of on the pull
-# request. main has no open alerts, so any result fails.
+# request or, for test code, on main. main has no open alerts, so any result fails.
 #
 # The CLI version follows the workflow's github/codeql-action pin (its src/defaults.json
 # "cliVersion"); bump CODEQL_VERSION and both bundle digests together with that pin.
@@ -67,14 +67,27 @@ trap 'rm -rf "$work"' EXIT
 # everything. Without the clean, up-to-date Kotlin tasks would leave the database nearly empty.
 ./gradlew clean --no-daemon --quiet
 # The workflow traces scripts/ci-gradle-gate.sh; on a pull request that is the compile of both
-# variants and nothing else. The repo-local Go toolchain's module cache (.go-toolchain/, ignored by
-# git) holds gomobile's example apps, whose manifests would read as five alerts of our own. The
-# Java extractor indexes XML files by these filters (its own `exclude` option does not reach XML);
-# the workflow sets the same.
+# variants and nothing else. main's run also compiles the tests: its unit tests, lint and the Room
+# migration suite run under the same tracer. So an alert in test code showed only after a merge,
+# and alert 39 (ssh-keygen by relative path in SshSignInLiveTest) sat on main for six days. This
+# traces the pull request's compile and then the test sources main's run compiles.
+cat > "$work/build.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+GITHUB_EVENT_NAME=pull_request "$ROOT/scripts/ci-gradle-gate.sh"
+"$ROOT/gradlew" --no-daemon --no-build-cache --no-configuration-cache --quiet \\
+  :app:compileOpenSourceDebugUnitTestKotlin :app:compilePlayStoreDebugUnitTestKotlin \\
+  :app:compileOpenSourceDebugAndroidTestKotlin
+EOF
+chmod +x "$work/build.sh"
+# The repo-local Go toolchain's module cache (.go-toolchain/, ignored by git) holds gomobile's
+# example apps, whose manifests would read as five alerts of our own. The Java extractor indexes
+# XML files by these filters (its own `exclude` option does not reach XML); the workflow sets the
+# same.
 export LGTM_INDEX_FILTERS='exclude:.go-toolchain/**'
-GITHUB_EVENT_NAME=pull_request "$CODEQL" database create "$work/db" \
+"$CODEQL" database create "$work/db" \
   --language=java-kotlin --source-root="$ROOT" --overwrite \
-  --command="$ROOT/scripts/ci-gradle-gate.sh"
+  --command="$work/build.sh"
 "$CODEQL" database analyze "$work/db" codeql/java-queries:codeql-suites/java-security-extended.qls \
   --format=sarif-latest --output="$work/results.sarif" --threads=0 --ram=8192
 

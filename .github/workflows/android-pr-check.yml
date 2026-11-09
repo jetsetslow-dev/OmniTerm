@@ -111,6 +111,8 @@ jobs:
           ./scripts/test-repeat-changed-tests.sh
           python3 -B ./scripts/test-check-dependency-updates.py
           python3 -I -B ./scripts/test-check-licenses.py
+          python3 -I -B ./scripts/test-check-pinned-images.py
+          python3 -I -B ./scripts/check-pinned-images.py
           ./scripts/test-workflow-guards.sh
           ./scripts/test-tunnel.sh
 
