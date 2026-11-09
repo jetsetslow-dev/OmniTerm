@@ -540,6 +540,8 @@ sealed interface ExternalLaunchRequest {
     data object OpenBackup : ExternalLaunchRequest
     /** An alert's "Run" action: its rule's runbook on that host, after the usual confirmation. */
     data class OpenRunbook(val ruleId: Int, val serverId: Int) : ExternalLaunchRequest
+    /** An `ssh://` link, text or files another app handed over; each opens a screen and waits. */
+    data class FromApp(val incoming: com.jetsetslow.omniterm.incoming.Incoming) : ExternalLaunchRequest
 }
 
 /** [request], a host's sign-in questions, waiting in [AppViewModel.pendingInteractiveAuth] for the user's answers. */
@@ -4602,9 +4604,74 @@ class AppViewModel @JvmOverloads constructor(
                 ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
                 ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
                 is ExternalLaunchRequest.OpenRunbook -> openRunbook(request.ruleId, request.serverId)
+                is ExternalLaunchRequest.FromApp -> openIncoming(request.incoming)
             }
         }
     }
+
+    // LINKS AND SHARES FROM OTHER APPS (incoming/Incoming.kt). Each opens a screen; nothing
+    // connects, saves or uploads until the user taps.
+
+    /** An `ssh://` link another app opened, waiting in [SshLinkDialog] for the user's choice. */
+    var pendingSshLink by mutableStateOf<SshLink?>(null)
+        private set
+
+    /** The saved hosts [pendingSshLink] names: its address and port, and its user when it has one. */
+    var sshLinkMatches by mutableStateOf<List<ServerEntity>>(emptyList())
+        private set
+
+    /** Files another app shared, waiting for Upload here in Files → SFTP. */
+    var sharedUploads by mutableStateOf<List<android.net.Uri>>(emptyList())
+        private set
+
+    /** Text another app shared, for a new script; the Scripts screen takes it when it opens. */
+    var pendingScriptText by mutableStateOf<String?>(null)
+        private set
+
+    private fun openIncoming(incoming: com.jetsetslow.omniterm.incoming.Incoming) {
+        when (incoming) {
+            is com.jetsetslow.omniterm.incoming.Incoming.Link -> viewModelScope.launch {
+                val profiles = repository.getAllProfiles()
+                sshLinkMatches = repository.getAllServers().filter { srv ->
+                    incoming.link.matches(srv, HostCredentials.loginName(srv, profiles.find { it.id == srv.authProfileId }))
+                }
+                pendingSshLink = incoming.link
+            }
+            is com.jetsetslow.omniterm.incoming.Incoming.Text -> {
+                pendingScriptText = incoming.text
+                navigateTo(Screen.QuickScripts)
+            }
+            is com.jetsetslow.omniterm.incoming.Incoming.Files -> {
+                sharedUploads = incoming.uris
+                activeSftpTab = 1
+                navigateTo(Screen.SFTP)
+            }
+            is com.jetsetslow.omniterm.incoming.Incoming.Unusable -> Unit
+        }
+    }
+
+    fun connectSshLinkHost(serverId: Int) {
+        dismissSshLink()
+        connectTerminalByServerId(serverId)
+    }
+
+    /** Opens Add host with the link's address, port and user filled in; nothing is saved yet. */
+    fun addSshLinkHost() {
+        val link = pendingSshLink ?: return
+        dismissSshLink()
+        pendingNewServerPrefill = NewServerPrefill(host = link.host, suggestedName = link.host, port = link.port, username = link.user)
+        requestAddServerFromShortcut()
+    }
+
+    fun dismissSshLink() {
+        pendingSshLink = null
+        sshLinkMatches = emptyList()
+    }
+
+    /** The shared files, which stop waiting. */
+    fun takeSharedUploads(): List<android.net.Uri> = sharedUploads.also { sharedUploads = emptyList() }
+
+    fun takePendingScriptText(): String? = pendingScriptText.also { pendingScriptText = null }
 
     /**
      * Set when [openRunbook] has filled in Broadcast; Fleet then asks to run it, with the same
@@ -5757,11 +5824,12 @@ class AppViewModel @JvmOverloads constructor(
 
     /**
      * One-shot prefill for the Add-server sheet, set when saving a discovered host as a real
-     * OmniTerm host. Only the address and a suggested name — the sheet stays a normal empty add
-     * form for everything else (credentials, port, group), so nothing is written until the user
-     * saves and the first-connect host-key trust gate applies exactly as for any new host.
+     * OmniTerm host, or adding an `ssh://` link's host. Only the address, a suggested name and, from
+     * a link, its port and user — the sheet stays a normal empty add form for everything else
+     * (credentials, group), so nothing is written until the user saves and the first-connect
+     * host-key trust gate applies exactly as for any new host.
      */
-    data class NewServerPrefill(val host: String, val suggestedName: String, val port: Int = 22)
+    data class NewServerPrefill(val host: String, val suggestedName: String, val port: Int = 22, val username: String? = null)
 
     var pendingNewServerPrefill by mutableStateOf<NewServerPrefill?>(null)
         private set
@@ -13164,8 +13232,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** A picked device file's name for its remote copy; [index] keeps unnamed picks in one batch apart. */
     private fun pickedUploadName(context: android.content.Context, uri: android.net.Uri, index: Int): String =
-        contentDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-            ?: "upload_${System.currentTimeMillis()}_${index + 1}"
+        deviceUploadName(context, uri) ?: "upload_${System.currentTimeMillis()}_${index + 1}"
 
     /**
      * Uploads the device file [uri] to [stagedPath] and returns its size, 0 when the device does

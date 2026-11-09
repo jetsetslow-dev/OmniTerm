@@ -25,6 +25,10 @@ Alert forwarding is off unless the user sets it up under Alerts. When it is on, 
 
 Automation is off unless the user turns it on under Tools → Automation. When it is on, another app on the device that presents a token the user made (Tasker, for example) can run that token's saved script on its hosts. The run happens as any Fleet run does, directly from the device to those hosts. Its result (each host's output, its exit status and which hosts failed) goes back only to the app that asked: to Tasker on its completion intent, which must name an app, or as a broadcast to the one package the request named. A request with a token OmniTerm does not know is ignored and gets no answer. The token is shown once, when it is made; the app the user gives it to keeps it (Tasker stores it in its action, so its exports and backups contain it). Revoking a token in OmniTerm stops it working.
 
+## Links And Shares From Other Apps
+
+Another app can open an `ssh://` link in OmniTerm or share text or files with it. That only opens a screen: nothing connects, is saved or is uploaded until the user taps. From a link, OmniTerm reads the address, port and user; a password or other parameters in the link are dropped and never stored. Shared text fills in a new script, which is saved only if the user saves it. Shared files are read only when the user taps Upload here, and only to send them to the host and folder the user opened; OmniTerm keeps no copy. It reads only what another app shares through Android's content sharing, never a raw file path or OmniTerm's own files. This needs no extra permission.
+
 ## Advertising (Play Store Build Only)
 
 The free Play Store build shows a single banner ad served by Google AdMob. AdMob may collect device identifiers and ad-interaction data as described in [Google's privacy policy](https://policies.google.com/privacy). In the EEA/UK, ads are only requested after consent is collected through Google's User Messaging Platform. Purchasing ad removal or the full unlock removes the banner and stops all ad requests. The source-available build contains no ad SDK and makes no ad requests.

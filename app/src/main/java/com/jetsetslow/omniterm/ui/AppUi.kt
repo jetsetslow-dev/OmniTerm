@@ -809,6 +809,9 @@ fun MainAppScreen(viewModel: AppViewModel) {
         // so it overlays both the terminal screen and the server-list connect action.
         OfflineConnectDialog(viewModel)
 
+        // An ssh:// link another app opened, over whatever screen is showing.
+        SshLinkDialog(viewModel)
+
         // Full-screen SFTP text editor, hosted here at the top of the Activity window rather than
         // inside SftpScreen. SftpScreen lives under AppCoreScaffold's content Box, which calls
         // consumeWindowInsets() — so any editor placed there sees a zero IME inset and its bottom
@@ -2931,7 +2934,7 @@ fun AddServerSheet(
     }
     var host by remember { mutableStateOf(src?.host ?: prefillAddress?.host ?: "") }
     var port by remember { mutableStateOf((src?.port ?: prefillAddress?.port ?: 22).toString()) }
-    var user by remember { mutableStateOf(src?.username ?: "") }
+    var user by remember { mutableStateOf(src?.username ?: prefillAddress?.username ?: "") }
     var group by remember { mutableStateOf(src?.groupName ?: "Default") }
     var serverColor by remember { mutableStateOf(OmniColors.hostColorName(src?.serverColor ?: "Default")) }
 

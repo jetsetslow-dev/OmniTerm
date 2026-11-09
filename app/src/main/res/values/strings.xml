@@ -1529,4 +1529,26 @@
     <string name="automation_plugin_off">"Automation is off in OmniTerm, so this action fails until you turn it on in Tools → Automation."</string>
     <string name="automation_plugin_no_caller">"Open this from Tasker or another automation app to save it."</string>
     <string name="automation_plugin_caller">"The token will be saved in %1$s (%2$s)."</string>
+    <!-- ssh:// links and shares from other apps (incoming/Incoming.kt) -->
+    <string name="incoming_bad_link">"OmniTerm can't open this link. It needs an address such as ssh://user@host:22."</string>
+    <string name="incoming_files_refused">"OmniTerm can't read the shared files."</string>
+    <plurals name="incoming_some_files_refused">
+        <item quantity="one">"%d shared file can't be read by OmniTerm and was left out."</item>
+        <item quantity="other">"%d shared files can't be read by OmniTerm and were left out."</item>
+    </plurals>
+    <string name="incoming_text_too_long">"The shared text is too long to save as a script."</string>
+    <string name="ssh_link_title">"Open SSH link"</string>
+    <string name="ssh_link_matches">"Another app opened this link. Connect to a saved host, or add it as a new one."</string>
+    <string name="ssh_link_no_match">"Another app opened this link. No saved host has this address, port and user; add it to connect."</string>
+    <string name="ssh_link_connect">"Connect to %1$s"</string>
+    <string name="ssh_link_add">"Add as new host"</string>
+    <plurals name="sftp_shared_files_here">
+        <item quantity="one">"%d shared file to upload into this folder."</item>
+        <item quantity="other">"%d shared files to upload into this folder."</item>
+    </plurals>
+    <plurals name="sftp_shared_files_waiting">
+        <item quantity="one">"%d shared file is waiting. Open an online host's folder in the SFTP tab to upload it."</item>
+        <item quantity="other">"%d shared files are waiting. Open an online host's folder in the SFTP tab to upload them."</item>
+    </plurals>
+    <string name="sftp_shared_upload">"Upload here"</string>
 </resources>

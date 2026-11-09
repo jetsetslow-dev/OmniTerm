@@ -12,18 +12,22 @@ object HostCredentials {
      * [srv]'s credentials. [posixShell] says the host is known to have a Unix shell, so the app's
      * own commands can go to `sh`; a command the user wrote goes to the login shell (false).
      */
+    /** The user [srv] signs in as: its credential profile's, when it uses [profile], else its own. */
+    fun loginName(srv: ServerEntity, profile: CredentialProfileEntity?): String =
+        profile?.takeIf { srv.authType == "profile" && it.id == srv.authProfileId }?.username ?: srv.username
+
     suspend fun build(repository: AppRepository, srv: ServerEntity, posixShell: Boolean): SshCredentials {
         // Read keys and profiles from the database, never from a screen's flow: with no screen
         // collecting it, such a flow is still empty, and the private key was silently dropped,
         // which surfaced as "invalid credentials" for key and profile sign-in.
         val allKeys = repository.getAllKeys()
-        var user = srv.username
+        val profile = if (srv.authType == "profile") repository.getAllProfiles().find { it.id == srv.authProfileId } else null
+        val user = loginName(srv, profile)
         var pass: String? = srv.authPassword
         var key: SshKeyEntity? = null
         when (srv.authType) {
             "key" -> key = allKeys.find { it.alias == srv.authKeyAlias }
-            "profile" -> repository.getAllProfiles().find { it.id == srv.authProfileId }?.let { p ->
-                user = p.username
+            "profile" -> profile?.let { p ->
                 if (p.authType == "password") pass = p.password
                 else key = allKeys.find { it.alias == p.keyAlias }
             }

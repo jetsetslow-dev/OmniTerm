@@ -27,3 +27,6 @@ code from them is included; see the README's Acknowledgements for what came from
 - Beszel — https://github.com/henrygd/beszel
 - Uptime Kuma — https://github.com/louislam/uptime-kuma
 - Home Assistant for Android — https://github.com/home-assistant/android
+- Termux:Tasker — https://github.com/termux/termux-tasker
+- electerm — https://github.com/electerm/electerm
+- Material Files — https://github.com/zhanghai/MaterialFiles

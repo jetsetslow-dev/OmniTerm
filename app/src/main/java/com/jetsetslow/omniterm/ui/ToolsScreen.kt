@@ -1269,6 +1269,18 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
     var createScriptTab by remember { mutableStateOf(0) }
     // When non-null the add/edit dialog opens pre-filled to edit this existing script.
     var editScript by remember { mutableStateOf<QuickScriptEntity?>(null) }
+    // Text another app shared opens a new script with it as the command; it waits while another
+    // editor is open, so a draft is never replaced.
+    var sharedCommand by remember { mutableStateOf("") }
+    LaunchedEffect(viewModel.pendingScriptText, showCreateScriptSheet, editScript) {
+        if (!showCreateScriptSheet && editScript == null) {
+            viewModel.takePendingScriptText()?.let { text ->
+                sharedCommand = text
+                createScriptTab = 0
+                showCreateScriptSheet = true
+            }
+        }
+    }
 
     val visibleScripts = if (activeScriptTab == 0) {
         scripts.filter { it.availableForQuick }
@@ -1486,11 +1498,12 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
         SharedScriptEditorDialog(
             existing = existing,
             title = if (existing != null) "Edit script" else "Add script",
+            initialCommand = if (existing == null) sharedCommand else "",
             initialCategory = if (addingFleetCommand) "Fleet" else "General",
             defaultAvailableForQuick = !addingFleetCommand,
             defaultAvailableForFleet = addingFleetCommand,
             knownCategories = knownCategories,
-            onDismiss = { showCreateScriptSheet = false; editScript = null },
+            onDismiss = { showCreateScriptSheet = false; editScript = null; sharedCommand = "" },
             onSave = { draft ->
                 if (existing != null) {
                     viewModel.updateQuickScript(
@@ -1523,6 +1536,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                 }
                 showCreateScriptSheet = false
                 editScript = null
+                sharedCommand = ""
             }
         )
     }

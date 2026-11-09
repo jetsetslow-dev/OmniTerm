@@ -2,7 +2,6 @@ package com.jetsetslow.omniterm
 
 import android.app.Application
 import android.app.NotificationManager
-import android.os.ParcelFileDescriptor
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.ui.AppViewModel
@@ -28,7 +27,7 @@ class E2eTerminalNetworkRecoveryStressTest {
         )
         val app = instrumentation.targetContext.applicationContext as Application
         val vm = AppViewModel(app)
-        val originalWifi = shellOutput("settings get global wifi_on").trim()
+        val originalWifi = DeviceShell.run("settings get global wifi_on").trim()
         TerminalSessionManager.clearAll()
 
         await("seeded proxy terminal profiles", 15_000) {
@@ -75,10 +74,10 @@ class E2eTerminalNetworkRecoveryStressTest {
             val paneOrder = listOf(vm.multiSshSessionId1, vm.multiSshSessionId2)
 
             instrumentation.uiAutomation.executeShellCommand("svc wifi disable").close()
-            await("Wi-Fi disabled", 10_000) { shellOutput("settings get global wifi_on").trim() == "0" }
+            await("Wi-Fi disabled", 10_000) { DeviceShell.run("settings get global wifi_on").trim() == "0" }
             delay(12_000) // Exceeds the seeded ten-second SSH keepalive interval.
             instrumentation.uiAutomation.executeShellCommand("svc wifi enable").close()
-            await("Wi-Fi enabled", 20_000) { shellOutput("settings get global wifi_on").trim() == "1" }
+            await("Wi-Fi enabled", 20_000) { DeviceShell.run("settings get global wifi_on").trim() == "1" }
 
             // Sessions retain their identity and pane attachment while their transports recover.
             await("all terminal transports recovered", 120_000) {
@@ -121,11 +120,6 @@ class E2eTerminalNetworkRecoveryStressTest {
                 instrumentation.uiAutomation.executeShellCommand("svc wifi enable").close()
             }
         }
-    }
-
-    private fun shellOutput(command: String): String {
-        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
-        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
     }
 
     private fun activeTerminalNotifications(): Int {

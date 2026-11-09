@@ -44,7 +44,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   Checksums via `scripts/refresh-verification-metadata.sh --write`; the Actions allowlist check
   passes.
 
-## Checkpoint B — rolling Fleet runs, retry, share, targets (this commit)
+## Checkpoint B — rolling Fleet runs, retry, share, targets (783db95)
 
 - Rolling runs: Fleet → Broadcast → Rolling run takes 1, 2, 5 or 10 hosts at a time (persisted as
   `broadcast_batch_size`, 0 = all at once) in the confirmed order, with "Stop if a host fails"
@@ -257,7 +257,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   no new duplicates (its first run caught the Share code copied into the history; both now use
   one helper), the API 35 device matrix, and CodeQL 2.27.4 with no alerts (80,960 lines).
 
-## Checkpoint D1 — Tasker and other apps run a saved script (this commit)
+## Checkpoint D1 — Tasker and other apps run a saved script (d1c5483)
 
 - Tools → Automation, off by default (`automation_enabled`). A token runs one saved script on the
   hosts picked for it: `omt_` plus 128 random bits, shown once, stored only as its SHA-256 in
@@ -314,6 +314,73 @@ The private audit (sources per finding, designs, order) is in the internal docs 
 - `./scripts/local-pr-check.sh --full` passed on the final tree: both unit variants, five repeats of
   the changed test classes, lint, dependency and SBOM verification, the API 35 device suite (85
   tests, the automation classes among them), and CodeQL 2.27.4 with no alerts (82,851 lines).
+- Dependabot #139 (AGP 9.5.1, UI Automator 2.4.1), #140 (biometric 1.4.0-beta01) and #143
+  (setup-java 6.2.0, codeql-action 4.39.3), and the bot's metadata PRs #141 and #142, were opened
+  against main for updates checkpoint A already made here, at the same pins. Checked line by line,
+  then closed on Nov 9 at the user's request, each pointing to #138.
+
+## Checkpoint D2 — `ssh://` links and sharing to OmniTerm (this commit)
+
+- `incoming/IncomingActivity` (exported, no UI, `noHistory`, empty task affinity) takes `ssh://`
+  VIEW links and SEND / SEND_MULTIPLE shares and passes what it can use to `MainActivity` with
+  NEW_TASK | SINGLE_TOP, so a share opens the app the user already has instead of a second copy in
+  the sender's task. `MainActivity` is exported too, so it reads the intent again with the same
+  `Incoming.read` rules, and `Incoming.consume` clears it so a rotation does not hand it over twice.
+- Shared files keep their read grant: the forward carries them in ClipData with
+  FLAG_GRANT_READ_URI_PERMISSION, so `MainActivity` holds its own grant after the forwarding
+  activity (and the grant Android gave it) is gone. Only `content:` URIs from other apps are read:
+  never `file:` paths or OmniTerm's own providers (read from its package info; all refused if that
+  fails). Refused files are counted and the user told.
+- `data/SshLink`: `ssh://[user[;params][:password]@]host[:port][/…]`. The password and parameters
+  (a fingerprint too) are dropped; the path, query and fragment are ignored, not read as the
+  address (electerm#4357). The host and port use `EndpointChecks.hostAndPort` and `pingHost` (now
+  shared). `uri` writes a link back with the user escaped, for the forward. A link opens
+  `SshLinkDialog`: the saved hosts with that address, port and user (`HostCredentials.loginName`,
+  so a profile's user counts) to connect to, or Add as new host with the address, port and user in
+  `NewServerPrefill`. Nothing connects or saves without a tap.
+- Shared text opens Scripts' new-script editor with it as the command (65,536 characters at most;
+  longer is refused); text that is an `ssh://` link opens as one. Shared files wait in `sharedUploads`:
+  `SharedFilesBar` in Files → SFTP offers Upload here into the folder the user opened, through the
+  same overwrite question as the picker. Elsewhere in Files the bar says where to go.
+- One copy each: `confirmUploadOverwrites` (the picker's overwrite question, which the SFTP and
+  Shares tabs had each copied, and now the share bar too), `UploadName` (a device file's name on
+  the host: last part only, `\` too, never `.` or `..`, no control characters; the picker had kept
+  everything after the last `/`), `DeviceShell` in the device tests (eleven private copies of the
+  shell helper moved onto it), `keepLaunchIntent` in the device tests (onNewIntent replaces
+  MainActivity's intent and ActivityScenario then cannot close it; `E2eScriptCheckTest`'s own copy
+  moved onto it).
+- Credit (README): electerm (#4357) and Material Files (#976).
+- Tests: `SshLinkTest` (8), `UploadNameTest` (3), `IncomingRobolectricTest` (6). Device:
+  `IncomingTest` (no host needed, runs in the gate's matrix) and `E2eIncomingTest`
+  (`-e omniterm_e2e_incoming yes`, lab host).
+- Results, API 35 emulator, repository fixture only (lab host provisioned by
+  `E2eLabHostProvisioner` on 127.0.0.1:2205):
+  - `IncomingTest`: 4 tests, 0 failed. `E2eIncomingTest` (`-e omniterm_e2e_incoming yes -e host
+    127.0.0.1 -e port 2205`): 1 test, 0 failed, status 0 (ran, not skipped): the link connected;
+    the contact card OmniTerm could not read alone uploaded to `/tmp` after the forwarding screen
+    had gone; shared again, it waited for the overwrite answer, replaced the first copy and left no
+    staged or previous copy. `E2eScriptCheckTest` (`-e omniterm_e2e_script_check yes`) on the
+    shared `keepLaunchIntent`: 1 test, 0 failed.
+  - Seen failing on the device: dropping FLAG_GRANT_READ_URI_PERMISSION from the forward (the upload
+    never succeeds), and sending files past the overwrite question (no question appears).
+  - Unit-level mutations: 12 of 13 caught (path read as address, password kept, user not escaped,
+    backslash kept, `..` allowed, `file://localhost` path accepted, own provider accepted, grant not
+    passed on, sender's task, not consumed, long text allowed, refused not counted). One is
+    equivalent: a signed `%` escape always decodes to a control character or invalid UTF-8, which
+    are refused anyway; the hex-digit check stays.
+  - Checked by hand (the accessibility tree, as screenshot protection blanks screen captures): the
+    link dialog shows `admin@nas.example.lan:2222` and no password; Add as new host fills the name,
+    address, port 2222 and user `admin`, with the password empty; a shared file shows "1 shared
+    file to upload into this folder." with Upload here and Cancel on Files → SFTP, and Cancel clears
+    it. No crash in logcat.
+  - Two test mistakes found and fixed on the way: the user field is on Add host's Credentials tab,
+    and the transfer list is newest first.
+- `./scripts/local-pr-check.sh --full` passed on this tree: both unit variants, five repeats of the
+  changed test classes, both lint gates, strict dependency verification, no advisories, no
+  outstanding updates, secret scan, no new duplicate code, the API 35 device suite (90 tests, 0
+  failed) and CodeQL with no alerts (83,578 lines). Afterwards `NOTICE.md` gained the three
+  missing credits (Termux:Tasker from D1, electerm and Material Files); for that text-only change
+  `git diff --check` and both secret scans were run again and passed.
 
 ## Decision pivot — 2026-11-08
 
@@ -343,10 +410,28 @@ Later on Nov 8 the user settled the rest:
   merging main as features land.
 - Order: the researched new features first, then iOS completion.
 
+On Nov 9 the user added:
+
+- `kotlin-multiplatform` is a development branch only, so Kotlin fixes ship from main without
+  waiting for iOS; in the end everything, iOS included, builds from `main`.
+- There is no Apple Developer account. iOS work goes as far as it can without one (shared code, the
+  simulator, GitHub's macOS CI); signing, TestFlight, the App Store and installs on a real iPhone
+  are left out.
+- The move from JSch to the Go engine stays. New SSH behaviour goes through `SshTransport` and
+  `SshCredentials` only, and each new `SshCredentials` field is part of the contract the Go engine
+  must honour.
+- The Go engine and every swap the shared code needs come after the features (item 5 below). Only
+  iOS-specific work stays on `kotlin-multiplatform`.
+- Each feature set gets its own PR once it is complete, so it can be tested and shipped: this PR
+  ends with D3 (scripts, Fleet, alerts, automation) and then goes to review. MCP, tunnels, the
+  homelab additions and the Go engine with its swaps each follow in their own PR from main (built
+  on the previous one, and retargeted, if that is not merged yet). Review and merge stay the user's.
+
 ## Remaining, in order
 
-1. Automation, the rest: `ssh://` links, share target, one-tap public-key install (D1, the Tasker
-   plug-in and broadcast, is done).
+1. Automation, the rest: one-tap public-key install (D3). D1 (the Tasker plug-in and broadcast)
+   and D2 (`ssh://` links, the share target) are done. This PR (#138) ends here; items 2–5 are
+   each their own PR.
 2. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
    on-phone approval for writes, audit log, `PRIVACY.md` section.
 3. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
@@ -355,11 +440,19 @@ Later on Nov 8 the user settled the rest:
    plain host and port.
 4. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
    presets.
-5. On `kotlin-multiplatform` (draft PR #144): its first step, the shared module with the pure
-   logic and its tests in `commonMain`, the iOS app shell and iOS CI on macOS runners, is up and
-   green. Next there: merge main as these features land, more logic into `commonMain`, the Go
-   engine behind `SshTransport` on Android and iOS, then the iOS pieces (Keychain, notifications,
-   background limits).
+5. Portability, last (user, Nov 9), about 2–3 weeks for the engine:
+   - The Go engine for SSH (commands, sign-in, terminal, port forwarding, agent, certificates,
+     security-key signing through Kotlin), SFTP, SMB and FTP, built on the library and toolchain
+     the tunnels bring. It goes in behind `SshTransport` and `RemoteFsClient` beside JSch, must pass
+     every device suite, then becomes the default; JSch, smbj and commons-net are removed. Go's SSH
+     library has no compression, so the per-host compression option goes.
+   - `SshCredentials` fields the Go engine must honour beyond today's: `keyOnly` (D3).
+   - Swaps for shared code: Room → Room KMP (same schema and migrations), Moshi →
+     kotlinx.serialization, OkHttp/Retrofit → Ktor, `R.string` → Compose resources.
+6. On `kotlin-multiplatform` (draft PR #144), iOS-specific work only: the shared-module layout,
+   the iOS app, and the iOS adapters (Keychain, Face ID, notifications, file picker, widgets,
+   Shortcuts, background limits). Its first step (shared module with pure logic in `commonMain`,
+   the iOS app shell, iOS CI on macOS runners) is up and green; it merges main as work lands.
 
 ## Validation
 

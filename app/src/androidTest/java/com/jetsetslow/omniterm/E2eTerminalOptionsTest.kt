@@ -29,7 +29,7 @@ class E2eTerminalOptionsTest {
     fun primaryAndCopyRangeActionsStayVisibleBeforeScrolling() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_terminal_options") == "yes")
-        val originalScale = shellOutput("settings get system font_scale").trim()
+        val originalScale = DeviceShell.run("settings get system font_scale").trim()
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         val originalOrientation = composeRule.activity.requestedOrientation
         TerminalSessionManager.clearAll()
@@ -143,11 +143,6 @@ class E2eTerminalOptionsTest {
             composeRule.runOnUiThread { composeRule.activity.requestedOrientation = originalOrientation }
             TerminalSessionManager.clearAll()
         }
-    }
-
-    private fun shellOutput(command: String): String {
-        val fd = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
-        return android.os.ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText() }
     }
 
     private suspend fun await(label: String, timeoutMs: Long, ready: () -> Boolean) {

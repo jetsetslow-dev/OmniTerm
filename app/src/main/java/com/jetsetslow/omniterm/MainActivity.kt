@@ -14,6 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import com.jetsetslow.omniterm.incoming.Incoming
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.ExternalLaunchRequest
 import com.jetsetslow.omniterm.ui.MainAppScreen
@@ -184,6 +185,14 @@ class MainActivity : AppCompatActivity() {
       intent.getIntExtra("shortcut_share_id", 0)
         .takeIf { intent.hasExtra("shortcut_share_id") && it > 0 }
         ?.let { add(ExternalLaunchRequest.OpenShare(it)) }
+
+      // A link or share, usually passed on by IncomingActivity. This activity is exported, so it
+      // applies the same rules again rather than trusting whoever started it.
+      when (val incoming = Incoming.read(this@MainActivity, intent)) {
+        null -> Unit
+        is Incoming.Unusable -> android.widget.Toast.makeText(this@MainActivity, incoming.reason, android.widget.Toast.LENGTH_LONG).show()
+        else -> add(ExternalLaunchRequest.FromApp(incoming))
+      }
     }
 
     // Notification disconnect actions are handled by the non-exported SessionService. The exported
@@ -201,6 +210,7 @@ class MainActivity : AppCompatActivity() {
     if (intent.action?.startsWith("com.jetsetslow.omniterm.action.") == true) {
       intent.action = Intent.ACTION_MAIN
     }
+    Incoming.consume(intent)
 
     val vm = appViewModel ?: return
     requests.forEach(vm::handleExternalLaunch)

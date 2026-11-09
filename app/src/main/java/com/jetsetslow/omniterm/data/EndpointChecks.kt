@@ -132,7 +132,7 @@ object EndpointChecks {
      * The host and port in `host`, `host:port`, `[v6]`, `[v6]:port`, a bare IPv6 address or a URL.
      * Without a port it is [defaultPort], and with no default the text is not usable.
      */
-    private fun hostAndPort(t: String, defaultPort: Int?): Pair<String, Int>? {
+    internal fun hostAndPort(t: String, defaultPort: Int?): Pair<String, Int>? {
         if (t.isEmpty() || t.any { it.isWhitespace() }) return null
         if ("://" in t) {
             val uri = runCatching { URI(t) }.getOrNull() ?: return null

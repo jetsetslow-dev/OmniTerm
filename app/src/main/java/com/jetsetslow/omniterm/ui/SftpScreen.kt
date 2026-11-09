@@ -124,6 +124,10 @@ fun SftpScreen(viewModel: AppViewModel) {
             }
         }
 
+        // Shared files can only go to an SFTP folder; elsewhere the bar says where to go.
+        if (viewModel.sharedUploads.isNotEmpty() && (srv == null || viewModel.activeSftpTab != 1)) {
+            Box(Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp)) { SharedFilesBar(viewModel, onUpload = null) }
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -573,26 +577,10 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
     val uploadLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        fun proceed() {
+        confirmUploadOverwrites(confirm, context, uris, viewModel.shareEntries.mapTo(mutableSetOf()) { it.name }) {
             if (uris.size >= largeBatchFileThreshold) pendingLargeUploadUris = uris
             else viewModel.shareUploadMany(uris, context)
         }
-        // Uploads silently replace same-named files on the share, so warn about collisions first.
-        val existing = viewModel.shareEntries.mapTo(mutableSetOf()) { it.name }
-        val conflicts = uris
-            .mapNotNull { contentDisplayName(context, it)?.substringAfterLast('/') }
-            .filter { it in existing }
-            .distinct()
-        if (conflicts.isEmpty()) proceed()
-        else confirm.ask(
-            confirm.str(R.string.overwrite_existing_file_s),
-            "Already in this folder and will be replaced: " +
-                conflicts.take(5).joinToString(", ") +
-                (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
-                ". This cannot be undone.",
-            confirmLabel = confirm.str(R.string.overwrite),
-        ) { proceed() }
     }
 
     var showCreateFolderDialog by remember { mutableStateOf(false) }
@@ -1651,40 +1639,22 @@ fun SftpFilesTab(viewModel: AppViewModel) {
         pendingDownloadName = null
     }
 
+    // Device files (picked here, or shared from another app) go into the current remote directory,
+    // after asking about any same-named file they would replace.
+    fun uploadFromDevice(uris: List<android.net.Uri>) {
+        confirmUploadOverwrites(confirm, context, uris, filesList.mapTo(mutableSetOf()) { it.name }) {
+            if (uris.size >= largeBatchFileThreshold) pendingLargeUploadUris = uris
+            else viewModel.sftpUploadMany(uris, context)
+        }
+    }
+
     // Pick a file from the device and upload it into the current remote directory. OpenDocument
     // (Storage Access Framework) hands back a stable, readable content URI; the older GetContent
     // contract often returns URIs whose read grant is already gone by the time we open the stream,
     // which surfaced as a bogus "No such file" and a broken upload button.
     val uploadLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        if (uris.isNotEmpty()) {
-            fun proceed() {
-                if (uris.size >= largeBatchFileThreshold) {
-                    pendingLargeUploadUris = uris
-                } else {
-                    viewModel.sftpUploadMany(uris, context)
-                }
-            }
-            // Uploads silently replace same-named remote files, so warn about collisions with the
-            // current listing first. Best-effort: files whose display name can't be resolved are
-            // uploaded under a generated unique name and can't collide.
-            val existing = filesList.mapTo(mutableSetOf()) { it.name }
-            val conflicts = uris
-                .mapNotNull { contentDisplayName(context, it)?.substringAfterLast('/') }
-                .filter { it in existing }
-                .distinct()
-            if (conflicts.isEmpty()) proceed()
-            else confirm.ask(
-                confirm.str(R.string.overwrite_existing_file_s),
-                "Already in this folder and will be replaced: " +
-                    conflicts.take(5).joinToString(", ") +
-                    (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
-                    ". This cannot be undone.",
-                confirmLabel = confirm.str(R.string.overwrite),
-            ) { proceed() }
-        }
-    }
+    ) { uris -> uploadFromDevice(uris) }
 
     var pendingFolderDownloadNames by remember { mutableStateOf<List<String>>(emptyList()) }
     val downloadFolderLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -1713,6 +1683,8 @@ fun SftpFilesTab(viewModel: AppViewModel) {
         modifier = Modifier.fillMaxSize()
             .onSizeChanged { columnHeightPx = it.height.toFloat() },
     ) {
+        // Files another app shared wait here for the folder the user opens.
+        SharedFilesBar(viewModel) { uploadFromDevice(viewModel.takeSharedUploads()) }
         // Breadcrumb / selection toolbar
         OmniCard(
             modifier = Modifier
@@ -3382,6 +3354,35 @@ private fun globToRegex(glob: String): Regex {
 }
 
 /** Resolves a content URI's display name (the filename an upload will use), or null if unknown. */
+/** The name the device file [uri] takes on the host (see [UploadName]), or null when it reports none usable. */
+internal fun deviceUploadName(context: android.content.Context, uri: android.net.Uri): String? =
+    UploadName.from(contentDisplayName(context, uri))
+
+/**
+ * Uploads replace same-named files without asking, so this asks first when any of [uris] would
+ * replace one of [existing], the folder's names, and runs [proceed] once the user agrees. A file
+ * with no usable name gets a generated one and cannot collide.
+ */
+internal fun confirmUploadOverwrites(
+    confirm: ConfirmController,
+    context: android.content.Context,
+    uris: List<android.net.Uri>,
+    existing: Set<String>,
+    proceed: () -> Unit,
+) {
+    if (uris.isEmpty()) return
+    val conflicts = uris.mapNotNull { deviceUploadName(context, it) }.filter { it in existing }.distinct()
+    if (conflicts.isEmpty()) proceed()
+    else confirm.ask(
+        confirm.str(R.string.overwrite_existing_file_s),
+        "Already in this folder and will be replaced: " +
+            conflicts.take(5).joinToString(", ") +
+            (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
+            ". This cannot be undone.",
+        confirmLabel = confirm.str(R.string.overwrite),
+    ) { proceed() }
+}
+
 internal fun contentDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
     runCatching {
         context.contentResolver.query(uri, null, null, null, null)?.use { c ->

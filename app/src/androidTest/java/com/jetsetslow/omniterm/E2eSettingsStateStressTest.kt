@@ -1,7 +1,6 @@
 package com.jetsetslow.omniterm
 
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -178,7 +177,7 @@ class E2eSettingsStateStressTest {
             vm.saveBiometricsToggle(true); await("biometric setting", 5_000) { vm.useBiometrics }
             vm.saveAppLockToggle(false); assertFalse(vm.useBiometrics); assertFalse(vm.isAppLocked)
         } finally {
-            shell("cmd battery reset")
+            DeviceShell.run("cmd battery reset")
             vm.settingsDirty = false; vm.isAppLocked = false; vm.resumeFromBatterySaver(); vm.stopFleetBroadcast()
             for (key in touched) {
                 val original = before[key]
@@ -204,9 +203,9 @@ class E2eSettingsStateStressTest {
             await("battery settings", 5_000) {
                 vm.isKeepScreenOnEnabled && vm.batterySaverEnabled && vm.batterySaverThresholdPct == 50
             }
-            shell("cmd battery unplug")
-            shell("cmd battery set status 3")
-            shell("cmd battery set level 1")
+            DeviceShell.run("cmd battery unplug")
+            DeviceShell.run("cmd battery set status 3")
+            DeviceShell.run("cmd battery set level 1")
             await("battery saver engage", 10_000) { vm.batterySaverActive }
             assertFalse(vm.isKeepScreenOnEnabled)
             vm.refreshAllServers()
@@ -246,7 +245,7 @@ class E2eSettingsStateStressTest {
             val firstCycle = vm.lastTelemetryStartMs
             await("auto refresh next cycle", 12_000) { vm.lastTelemetryStartMs > firstCycle }
         } finally {
-            shell("cmd battery reset")
+            DeviceShell.run("cmd battery reset")
             vm.resumeFromBatterySaver()
             vm.stopFleetBroadcast()
             for (key in touched) {
@@ -256,11 +255,6 @@ class E2eSettingsStateStressTest {
         }
     }
 
-    private fun shell(command: String) {
-        ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
-        ).use { it.readBytes() }
-    }
     private suspend fun await(label: String, timeoutMs: Long, predicate: suspend () -> Boolean) {
         try { withTimeout(timeoutMs) { while (!predicate()) delay(100) } }
         catch (e: kotlinx.coroutines.TimeoutCancellationException) { throw AssertionError("$label did not finish within ${timeoutMs}ms", e) }

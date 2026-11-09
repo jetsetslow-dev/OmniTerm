@@ -14,6 +14,7 @@ OmniTerm is a native Android app for running your homelab and servers from a pho
 - **Fleet Broadcast** — run a command across many hosts or groups at once with live per-host output.
 - **Scripts, alerts, cron, and Wake-on-LAN** management.
 - **Tasker and automation** — let Tasker or another app run one of your saved scripts on hosts you pick, with a token you make in OmniTerm. Off until you turn it on.
+- **Links and sharing** — open `ssh://` links from a browser or chat, share a command from another app into a new script, and share files from any app to upload them to a host.
 - **Encrypted, selective backups** (AES-256-GCM) of your app data.
 - **On-device security** — Keystore-backed credential encryption, SSH host-key pinning, FIDO2 security keys (USB or NFC) and SSH certificates, optional app lock and biometrics, and per-host SSH agent forwarding.
 
@@ -186,6 +187,12 @@ Open **Tools → Automation** to let other apps on your phone run your saved scr
 - **From other apps or `adb`:** send a broadcast with the action `com.jetsetslow.omniterm.action.RUN_SCRIPT` to the package `com.jetsetslow.omniterm`, with the token in the extra `com.jetsetslow.omniterm.extra.TOKEN`. To get the result back, add `com.jetsetslow.omniterm.extra.REPLY_PACKAGE` (your app's package) and `com.jetsetslow.omniterm.extra.REPLY_ACTION`: OmniTerm sends a broadcast to that app only, with `com.jetsetslow.omniterm.extra.EXIT`, `.OUTPUT`, `.FAILED_HOSTS`, `.ERROR` and, if you sent one, `.REQUEST_ID`.
 - **Keep tokens private.** Anyone or any app that has a token can run its script on its hosts. Tasker keeps the token in its action, so a Tasker export or backup contains it too. A host whose key OmniTerm has not yet trusted is refused, since nobody is there to approve it; connect to it once from the app first. A run gives up on a host that has not finished after 9 minutes.
 
+### Links and sharing from other apps
+Nothing here connects, saves or uploads until you tap.
+- **`ssh://` links.** Tap a link such as `ssh://admin@nas.lan:2222` in a browser, chat or notes app and choose OmniTerm. It shows the address and every saved host with that address, port and user (a host that signs in with a credential profile counts by the profile's user). Tap one to connect, or **Add as new host** to open a new host with that address, port and user filled in. A password written into a link is ignored and never shown or saved, and so is a host-key fingerprint: the host's key is checked the usual way the first time you connect. Anything after the address, such as a trailing `/`, is ignored.
+- **Share text.** Share a command or script from another app to OmniTerm: it opens a new script with that text as its command, for you to name and save. Shared text that is an `ssh://` link opens like a tapped link.
+- **Share files.** Share photos, documents or any other files to OmniTerm. **Files** opens with a bar saying how many are waiting: in the **SFTP** tab, pick the host, open the folder you want and tap **Upload here**, or **Cancel** to drop them. As with any upload, OmniTerm asks before replacing a file with the same name. It reads only the files you shared, only to upload them where you choose, and keeps no copy. Files that are not another app's to share, such as a path into OmniTerm's own storage, are left out, and OmniTerm says how many.
+
 ## Settings & customization
 Open **Tools → Settings**:
 - App lock and biometric unlock.
@@ -214,6 +221,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
   up to 24 hours. Rotation does not start the background timer.
 - **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
 - **Automation is opt-in** — other apps can run your scripts only after you turn on **Tools → Automation** and give them a token, and then only that token's script on its hosts. A request with a token OmniTerm does not know gets no answer at all.
+- **Links and shares wait for you** — an `ssh://` link or a share from another app only opens a screen. Nothing connects, is saved or is uploaded until you tap, and a password in a link is never kept.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
 - **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The source-available build has no ads SDK and accesses no advertising ID.
 
@@ -239,6 +247,8 @@ bug reports that shaped features here:
 - [Komodo](https://github.com/moghtech/komodo) — rolling Fleet runs, a few hosts at a time (its batch deploys).
 - [Beszel](https://github.com/henrygd/beszel) and [Uptime Kuma](https://github.com/louislam/uptime-kuma) — the host-down, failed-service and container alert kinds; Uptime Kuma also the ping, TCP port and DNS checks. Both also gave the idea of forwarding alerts to ntfy, Gotify and webhooks (their notification settings), and of alerting on a script's exit status (script checks).
 - [Termux:Tasker](https://github.com/termux/termux-tasker) and [Home Assistant for Android](https://github.com/home-assistant/android) — running a saved script from Tasker and other apps, and waiting for its result (Termux:Tasker's plug-in and its bug reports, Home Assistant's broadcast intents). The plug-in follows [Tasker's plug-in documentation](https://tasker.joaoapps.com/plugins.html) and the [Locale plug-in spec](https://github.com/twofortyfouram/android-monorepo).
+- [electerm](https://github.com/electerm/electerm) — opening `ssh://` links, and the bug where a trailing `/` was read as part of the address (electerm#4357).
+- [Material Files](https://github.com/zhanghai/MaterialFiles) — sharing files from any app to save them where you choose (MaterialFiles#976).
 - [Haven](https://github.com/GlassHaven/Haven), [ConnectBot](https://github.com/connectbot/connectbot), [ServerBox](https://github.com/lollipopkit/flutter_server_box), [Nexterm](https://github.com/gnmyt/Nexterm), [Beszel](https://github.com/henrygd/beszel), [Uptime Kuma](https://github.com/louislam/uptime-kuma) and [Home Assistant for Android](https://github.com/home-assistant/android) — feature and bug reviews for the homelab and server-admin features OmniTerm covers.
 
 ## Support the project

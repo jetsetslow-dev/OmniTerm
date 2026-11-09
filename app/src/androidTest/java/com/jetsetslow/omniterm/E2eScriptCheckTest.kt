@@ -75,9 +75,7 @@ class E2eScriptCheckTest {
         val originalPreset = vm.broadcastPreset
         val originalTargets = vm.broadcastTargetServerIds.toList()
         val originalMode = vm.broadcastTargetMode
-        // onNewIntent replaces the activity's intent, and ActivityScenario only follows an
-        // activity whose intent is the one it launched; put it back afterwards.
-        val launchIntent = composeRule.activity.intent
+        val restoreLaunchIntent = composeRule.keepLaunchIntent()
         var failure: Throwable? = null
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -222,8 +220,8 @@ class E2eScriptCheckTest {
         } finally {
             // The activity's own intent first: without it the rule cannot close the activity, and
             // a later cleanup failure would hide why the test failed.
+            restoreLaunchIntent()
             composeRule.runOnUiThread {
-                composeRule.activity.intent = launchIntent
                 vm.activeAlertsTab = originalTab
                 vm.fleetTabIndex = originalFleetTab
                 vm.broadcastCommandText = originalCommand
@@ -248,13 +246,9 @@ class E2eScriptCheckTest {
      */
     private fun logWindows(vm: AppViewModel) {
         runCatching {
-            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-            fun shell(command: String) = automation.executeShellCommand(command).let { fd ->
-                android.os.ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText() }
-            }
-            val windows = shell("dumpsys window windows").lineSequence()
+            val windows = DeviceShell.run("dumpsys window windows").lineSequence()
                 .filter { it.contains("mCurrentFocus") || it.contains("mFocusedApp") || it.contains("imeLayeringTarget") || it.contains("Window #") }
-            val ime = shell("dumpsys input_method").lineSequence().filter { it.contains("mInputShown") || it.contains("isInputViewShown") }
+            val ime = DeviceShell.run("dumpsys input_method").lineSequence().filter { it.contains("mInputShown") || it.contains("isInputViewShown") }
             android.util.Log.w("E2eScriptCheckTest", "executing=${vm.isBroadcastExecuting} command='${vm.broadcastCommandText}'")
             (windows + ime).forEach { android.util.Log.w("E2eScriptCheckTest", it.trim()) }
         }
