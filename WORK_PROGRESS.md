@@ -163,7 +163,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   no new duplicates, the API 35 device matrix, and CodeQL 2.27.4 with no alerts (79,332 lines).
 - README: the feature, the privacy line, and Uptime Kuma and Beszel credited for the idea.
 
-## Checkpoint C4 — script checks and runbooks (this commit)
+## Checkpoint C4 — script checks and runbooks (b169d75)
 
 - `HostChecks.SCRIPT_CHECK`: a rule whose `target` holds a saved script's id. `runHostChecks` now
   runs the probe for the probed checks and each Script Check's script on its own, at the same pace
@@ -211,6 +211,52 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   classes, lint, strict dependency verification, no advisories or outstanding updates, secret scan,
   no new duplicates, the API 35 device matrix, and CodeQL 2.27.4 with no alerts (80,155 lines).
 
+## Checkpoint C5 — Fleet run history (this commit)
+
+- Schema v26 (`MIGRATION_25_26`): `fleet_runs` (one row per run, unique on the run's own id) and
+  `fleet_run_hosts` (one row per host in it). A run keeps its command as written, the saved script
+  it came from when the command still matched it, its source (Run, Retry, or an alert's runbook),
+  when it started and ended, and per host the name, status, note and the last 16,000 characters
+  of output. The newest 50 runs are kept; older ones go with their hosts. Not in backups.
+- Saved when nothing runs any more (`updateBroadcastExecuting` going from running to idle), so a
+  tmux run that reconnects or a host that installs tmux and runs later updates its own run rather
+  than adding one. Each card remembers the run it belongs to: a retry is a run of its own with
+  only the hosts it ran, and the run it retried keeps their first results (`recordFleetRun`
+  updates the hosts it is given and leaves the rest). Leaving the app ends a plain run, so a save
+  then goes to the process scope.
+- The values typed for `{{placeholders}}` are not stored; the details say so. PRIVACY.md lists the
+  history, and that a host's output can still show those values.
+- UI: Broadcast's output header has History. The list shows each run's script or first command
+  line, when, "N of M succeeded" and Retry/Runbook; a run opens to the same host cards as the live
+  output (`BroadcastResultCard`, now shared), with Share (one `fleetReport` builds both texts),
+  Use again (command, matching saved script and the hosts that still exist; runs nothing),
+  Delete, and Clear history behind confirmations. "Clear outputs" clears the cards, not the
+  history.
+- Tests: `FleetRunHistoryRobolectricTest`: a run is kept with each host's status, output and note,
+  and survives clearing the cards; a retry is its own run and the first run still says the host
+  failed; a host that finishes later (Run without tmux) updates the same run; long output keeps its
+  end and the placeholder value never reaches the history; Use again restores the script and the
+  hosts that still exist and runs nothing; the repository keeps the newest runs and deletes whole
+  runs. `AppDatabaseMigrationTest`: 25 → 26. Device `E2eScriptCheckTest` now continues after the
+  runbook runs: History lists it as "1 of 1 succeeded · Runbook", the run opens to the host's
+  output, Use again fills in Broadcast without running, Delete removes it. Ten runs in a row
+  passed on API 35.
+- That device test also no longer hides its own failure: the launch intent is put back first and
+  cleanup errors are attached to the test's error rather than replacing it; rules are read from
+  the repository (the `alertRules` flow only follows the database while collected); the alert's
+  notification is cancelled once checked, so its heads-up is not over the screen; and it waits for
+  Use again to be enabled (it is disabled while the run's hosts load) rather than tapping a frame
+  early, which failed about one run in seven.
+- Guards seen failing: deleting a run's hosts when it is saved again, not pruning, not marking a
+  later host's run, saving every card into every run, storing the filled-in command, a retry saved
+  as a plain run, and Use again not restoring the script each fail a `FleetRunHistoryRobolectricTest`
+  case; a runbook run saved as a plain run fails the device test (`expected:<runbook> but
+  was:<fleet>`).
+- `./scripts/local-pr-check.sh --full` passed: unit tests, five repeats of the 19 changed test
+  classes, lint, strict dependency verification, no advisories or outstanding updates, secret scan,
+  no new duplicates (its first run caught the Share code copied into the history; both now use
+  one helper), the API 35 device matrix, and CodeQL 2.27.4 with no alerts (80,960 lines).
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
@@ -241,21 +287,21 @@ Later on Nov 8 the user settled the rest:
 
 ## Remaining, in order
 
-1. Alerts (checkpoint C), C1 to C4 done above:
-   - C5: run history (schema v26).
-2. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
+1. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
    `ssh://` links, share target, one-tap public-key install.
-3. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
+2. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
    on-phone approval for writes, audit log, `PRIVACY.md` section.
-4. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
+3. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
    Go library, built with a repo-local, checksum-verified Go toolchain (approved Nov 8). ZeroTier,
    OpenVPN and Pangolin's Olm are left out for their licences; Pangolin raw TCP resources work as a
    plain host and port.
-5. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
+4. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
    presets.
-6. On `kotlin-multiplatform`: a shared module from the Aug 1 groundwork, pure logic first, then
-   UI; the Go engine behind `SshTransport` on Android and iOS; then the iOS pieces (Keychain,
-   notifications, background limits), with iOS CI on macOS runners.
+5. On `kotlin-multiplatform` (draft PR #144): its first step, the shared module with the pure
+   logic and its tests in `commonMain`, the iOS app shell and iOS CI on macOS runners, is up and
+   green. Next there: merge main as these features land, more logic into `commonMain`, the Go
+   engine behind `SshTransport` on Android and iOS, then the iOS pieces (Keychain, notifications,
+   background limits).
 
 ## Validation
 

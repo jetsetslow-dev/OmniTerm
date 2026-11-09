@@ -320,3 +320,53 @@ data class AppSettingEntity(
     @PrimaryKey val key: String,
     val value: String
 )
+
+/**
+ * One Fleet run, kept in its run history: the newest [FleetRunHistory.KEEP_RUNS] are kept, on this
+ * device only (never in a backup). Each host's result is a [FleetRunHostEntity].
+ */
+@Entity(tableName = "fleet_runs", indices = [Index(value = ["runKey"], unique = true)])
+data class FleetRunEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    // The run's own id, so a host that finishes after the run (a tmux run followed again, a
+    // reconnect) updates this row instead of adding another.
+    val runKey: String,
+    val startedAt: Long,
+    val finishedAt: Long,
+    // The command as written, `{{placeholders}}` unfilled: the values typed for them are not kept.
+    val command: String,
+    // The saved script the command came from, if it still matched one.
+    val scriptName: String? = null,
+    // FleetRunHistory.SOURCE_*: a run from Broadcast, a retry of failed hosts, or an alert's runbook.
+    val source: String = FleetRunHistory.SOURCE_FLEET,
+)
+
+/** One host's result in a [FleetRunEntity]. */
+@Entity(tableName = "fleet_run_hosts", primaryKeys = ["runId", "serverId"])
+data class FleetRunHostEntity(
+    val runId: Int,
+    val serverId: Int,
+    // As named when it ran, so the history still reads after the host is renamed or deleted.
+    val serverName: String,
+    // A BroadcastStatus name.
+    val status: String,
+    val note: String? = null,
+    // The end of the host's output, at most FleetRunHistory.OUTPUT_CHARS.
+    val output: String = "",
+    val truncated: Boolean = false,
+)
+
+/** A [FleetRunEntity] with how many of its hosts succeeded, for the history list. */
+data class FleetRunSummary(
+    @androidx.room.Embedded val run: FleetRunEntity,
+    val hosts: Int,
+    val succeeded: Int,
+)
+
+object FleetRunHistory {
+    const val KEEP_RUNS = 50
+    const val OUTPUT_CHARS = 16_000
+    const val SOURCE_FLEET = "fleet"
+    const val SOURCE_RETRY = "retry"
+    const val SOURCE_RUNBOOK = "runbook"
+}

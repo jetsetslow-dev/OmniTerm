@@ -1282,6 +1282,8 @@ class AppViewModel @JvmOverloads constructor(
     val activeAlerts = repository.activeAlertsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val alertHistory = repository.alertHistoryFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val quickScripts = repository.scriptsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    /** Fleet's run history, newest first (see [FleetRunHistory]). */
+    val fleetRunHistory = repository.fleetRunsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val wolTargets = repository.wolTargetsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val portForwards = repository.portForwardsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val networkShares = repository.networkSharesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -13305,21 +13307,75 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun retryFailedBroadcastHosts(ids: List<Int> = broadcastRetryableIds) {
         if (ids.isEmpty() || isBroadcastExecuting || lastBroadcastCommand.isBlank()) return
-        runFleetBroadcast(lastBroadcastCommand, ids, lastBroadcastParams, keepOtherResults = true)
+        runFleetBroadcast(lastBroadcastCommand, ids, lastBroadcastParams, keepOtherResults = true, source = FleetRunHistory.SOURCE_RETRY)
     }
 
     /** The last run as plain text, one section per host, for Share. */
-    fun broadcastReport(): String {
+    fun broadcastReport(): String =
+        fleetReport(ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams), broadcastResults, BROADCAST_OUTPUT_MAX_CHARS)
+
+    /** A run from the history as plain text, as [broadcastReport] words the last run. */
+    fun fleetRunReport(run: FleetRunEntity, hosts: List<BroadcastResultItem>): String =
+        fleetReport(run.command, hosts, FleetRunHistory.OUTPUT_CHARS)
+
+    private fun fleetReport(command: String, hosts: List<BroadcastResultItem>, keptChars: Int): String {
         val app = getApplication<Application>()
         return buildString {
-            appendLine("$ ${ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams)}")
-            broadcastResults.forEach { item ->
+            appendLine("$ $command")
+            hosts.forEach { item ->
                 appendLine()
                 appendLine("== ${item.serverName} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
-                if (item.truncated) appendLine(app.getString(R.string.broadcast_output_truncated, BROADCAST_OUTPUT_MAX_CHARS))
+                if (item.truncated) appendLine(app.getString(R.string.broadcast_output_truncated, keptChars))
                 if (item.output.isNotBlank()) appendLine(item.output.trimEnd())
             }
         }.trimEnd() + "\n"
+    }
+
+    /** The visible cards go; the history keeps the runs. */
+    fun clearBroadcastOutputs() {
+        if (isBroadcastExecuting) return
+        broadcastResults.clear()
+        broadcastCardRun.clear()
+        historyRuns.clear()
+    }
+
+    /** One run's hosts from the history, as cards. */
+    suspend fun fleetRunResults(runId: Int): List<BroadcastResultItem> =
+        repository.fleetRunHosts(runId).map { host ->
+            BroadcastResultItem(
+                serverId = host.serverId,
+                serverName = host.serverName,
+                output = host.output,
+                status = BroadcastStatus.entries.firstOrNull { it.name == host.status } ?: BroadcastStatus.Failure,
+                truncated = host.truncated,
+                note = host.note,
+            )
+        }
+
+    fun deleteFleetRun(runId: Int) {
+        viewModelScope.launch { repository.deleteFleetRun(runId) }
+    }
+
+    fun clearFleetRunHistory() {
+        viewModelScope.launch { repository.clearFleetRuns() }
+    }
+
+    /**
+     * Puts [run]'s command back into Broadcast, with the saved script it came from when that still
+     * has the same command, and its hosts that still exist as the targets. It does not run it: Run
+     * asks first, and for the `{{placeholder}}` values again, which the history does not keep.
+     */
+    fun loadFleetRunIntoBroadcast(run: FleetRunEntity, serverIds: List<Int>) {
+        if (isBroadcastExecuting) return
+        viewModelScope.launch {
+            val known = repository.getAllServers().map { it.id }.toSet()
+            val script = run.scriptName?.let { name -> repository.getAllScripts().firstOrNull { it.name == name && it.command.trim() == run.command } }
+            broadcastCommandText = run.command
+            broadcastPreset = script
+            broadcastTargetMode = FleetTargetMode.Servers
+            broadcastTargetServerIds.clear()
+            broadcastTargetServerIds.addAll(serverIds.filter { it in known })
+        }
     }
 
     /** The last run's command and tmux run id, for a host that installs tmux or reconnects later. */
@@ -13329,6 +13385,21 @@ class AppViewModel @JvmOverloads constructor(
     var lastBroadcastParams: Map<String, String> = emptyMap()
         private set
     private var lastBroadcastRunId = ""
+    private var lastBroadcastScriptName: String? = null
+
+    /** A run on the cards, for the history: saved when it ends, and again when a host in it finishes later. */
+    private class PendingFleetRun(
+        val runKey: String,
+        val startedAt: Long,
+        val command: String,
+        val scriptName: String?,
+        val source: String,
+        var dirty: Boolean = true,
+    )
+    /** The runs whose cards are on screen, by run id. */
+    private val historyRuns = linkedMapOf<String, PendingFleetRun>()
+    /** The run each card belongs to: a retry takes over the cards it runs again. */
+    private val broadcastCardRun = mutableMapOf<Int, String>()
     /** Hosts the app runs or follows again on their own, after the broadcast itself ended. */
     private val broadcastHostJobs = mutableMapOf<Int, Job>()
     /** Set by Stop, so cancelling ends the tmux runs on the hosts; leaving the app does not. */
@@ -13337,7 +13408,54 @@ class AppViewModel @JvmOverloads constructor(
     private val broadcastReconnectNow = java.util.concurrent.ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
 
     private fun updateBroadcastExecuting() {
+        val was = isBroadcastExecuting
         isBroadcastExecuting = broadcastJob?.isActive == true || broadcastHostJobs.values.any { it.isActive }
+        if (was && !isBroadcastExecuting) saveFleetRunHistory()
+    }
+
+    /**
+     * Saves the runs on the cards that changed since they were last saved, now that nothing runs:
+     * each with the hosts whose cards it still has. Leaving the app ends a plain run, so a save
+     * then goes to the process scope, which outlives this model.
+     */
+    private fun saveFleetRunHistory() {
+        val now = System.currentTimeMillis()
+        val saves = historyRuns.values.filter { it.dirty }.map { run ->
+            run.dirty = false
+            val hosts = broadcastResults.filter { broadcastCardRun[it.serverId] == run.runKey }.map { item ->
+                FleetRunHostEntity(
+                    runId = 0,
+                    serverId = item.serverId,
+                    serverName = item.serverName,
+                    status = item.status.name,
+                    note = item.note,
+                    output = item.output.takeLast(FleetRunHistory.OUTPUT_CHARS),
+                    truncated = item.truncated || item.output.length > FleetRunHistory.OUTPUT_CHARS,
+                )
+            }
+            FleetRunEntity(
+                runKey = run.runKey,
+                startedAt = run.startedAt,
+                finishedAt = now,
+                command = run.command,
+                scriptName = run.scriptName,
+                source = run.source,
+            ) to hosts
+        }
+        // A run a retry took every card from is saved already and is done with.
+        historyRuns.values.removeAll { run -> run.runKey !in broadcastCardRun.values }
+        if (saves.isEmpty()) return
+        val scope = if (viewModelScope.isActive) viewModelScope else TerminalSessionManager.scope
+        scope.launch {
+            for ((run, hosts) in saves) {
+                try {
+                    repository.recordFleetRun(run, hosts)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    android.util.Log.w("OmniTermFleet", "Saving a run to the history failed", e)
+                }
+            }
+        }
     }
 
     /**
@@ -13351,10 +13469,15 @@ class AppViewModel @JvmOverloads constructor(
         resolvedIds: List<Int>? = null,
         paramValues: Map<String, String> = emptyMap(),
         keepOtherResults: Boolean = false,
+        // FleetRunHistory.SOURCE_*, for the run history.
+        source: String = FleetRunHistory.SOURCE_FLEET,
     ) {
         if (command.isBlank()) return
         if (isBroadcastExecuting) return
         val cmd = command.trim()
+        // A retry runs the last command again, whatever the picker shows now.
+        val scriptName = if (source == FleetRunHistory.SOURCE_RETRY) lastBroadcastScriptName
+        else broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
         val targetIds = broadcastTargetServerIds.toList()
         val targetGroups = broadcastTargetGroups.toList()
         val inTmux = broadcastInTmux
@@ -13364,9 +13487,14 @@ class AppViewModel @JvmOverloads constructor(
         lastBroadcastCommand = cmd
         lastBroadcastParams = paramValues
         lastBroadcastRunId = runId
+        lastBroadcastScriptName = scriptName
         broadcastStopRequested = false
         isBroadcastExecuting = true
-        if (!keepOtherResults) broadcastResults.clear()
+        if (!keepOtherResults) {
+            broadcastResults.clear()
+            broadcastCardRun.clear()
+            historyRuns.clear()
+        }
 
         broadcastJob = viewModelScope.launch {
             val allServers = repository.getAllServers()
@@ -13384,6 +13512,8 @@ class AppViewModel @JvmOverloads constructor(
                 isBroadcastExecuting = false
                 return@launch
             }
+            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source)
+            selected.forEach { broadcastCardRun[it.id] = runId }
             val operationId = "fleet-broadcast-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
@@ -13644,6 +13774,7 @@ class AppViewModel @JvmOverloads constructor(
         if (broadcastHostJobs[serverId]?.isActive == true) return
         if (broadcastResults.none { it.serverId == serverId }) return
         broadcastStopRequested = false
+        broadcastCardRun[serverId]?.let { historyRuns[it]?.dirty = true }
         updateBroadcastResult(serverId) { it.copy(output = "", truncated = false, status = BroadcastStatus.Running, note = null) }
         val job = viewModelScope.launch {
             try {

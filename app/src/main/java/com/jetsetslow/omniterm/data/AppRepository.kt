@@ -149,6 +149,38 @@ class AppRepository(private val db: AppDatabase) {
         db.alertRuleDao().clearRunbook(script.id)
     }
 
+    // Fleet run history
+    val fleetRunsFlow: Flow<List<FleetRunSummary>> = db.fleetRunDao().summariesFlow()
+    suspend fun fleetRunHosts(runId: Int): List<FleetRunHostEntity> = db.fleetRunDao().hostsFor(runId)
+
+    /**
+     * Saves [run] with [hosts], updating an earlier save of the same run (same runKey): its row,
+     * and the hosts given. A host left out keeps what was saved for it, so a retry, which takes
+     * over the failed hosts' cards, leaves their first results in the run they failed in. Then
+     * drops the runs past the newest [keep].
+     */
+    suspend fun recordFleetRun(run: FleetRunEntity, hosts: List<FleetRunHostEntity>, keep: Int = FleetRunHistory.KEEP_RUNS) =
+        db.withTransaction {
+            val dao = db.fleetRunDao()
+            val earlier = dao.byKey(run.runKey)
+            val id = dao.insertRun(run.copy(id = earlier?.id ?: 0, startedAt = earlier?.startedAt ?: run.startedAt)).toInt()
+            dao.insertHosts(hosts.map { it.copy(runId = id) })
+            for (old in dao.idsBeyond(keep)) {
+                dao.deleteHostsOf(old)
+                dao.deleteRunRow(old)
+            }
+        }
+
+    suspend fun deleteFleetRun(runId: Int) = db.withTransaction {
+        db.fleetRunDao().deleteHostsOf(runId)
+        db.fleetRunDao().deleteRunRow(runId)
+    }
+
+    suspend fun clearFleetRuns() = db.withTransaction {
+        db.fleetRunDao().clearHosts()
+        db.fleetRunDao().clearRuns()
+    }
+
     // WOL Target functions
     val telnetHostsFlow: Flow<List<TelnetHostEntity>> = db.telnetHostDao().getAllTelnetHostsFlow()
     suspend fun getAllTelnetHosts(): List<TelnetHostEntity> = db.telnetHostDao().getAllTelnetHosts()

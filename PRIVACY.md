@@ -9,6 +9,7 @@ OmniTerm stores the following data locally on the user's device when the user en
 - SSH host names, addresses, ports, usernames, groups, notes, and connection settings.
 - SSH passwords, sudo passwords, proxy passwords, credential profiles, and imported private keys.
 - Quick scripts, alert rules, Wake-on-LAN targets, app settings, and recent metric history.
+- Fleet's run history: the last 50 Broadcast runs, each with its command as written, which hosts it ran on, and the end of each host's output. The values typed for a script's `{{placeholders}}` are not kept, though a host's output can still show them. The history is not included in backups, and the user can delete a run or clear it all in Fleet.
 - Alert forwarding settings, if the user sets them up: the service, its address and topic, and an optional access token (stored encrypted).
 
 ## Network Use

@@ -409,3 +409,40 @@ interface PersistentSessionDao {
     @Query("DELETE FROM persistent_sessions WHERE serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 }
+
+@Dao
+interface FleetRunDao {
+    @Query(
+        "SELECT r.*, COUNT(h.serverId) AS hosts, COALESCE(SUM(h.status = 'Success'), 0) AS succeeded " +
+            "FROM fleet_runs r LEFT JOIN fleet_run_hosts h ON h.runId = r.id GROUP BY r.id ORDER BY r.startedAt DESC, r.id DESC"
+    )
+    fun summariesFlow(): Flow<List<FleetRunSummary>>
+
+    @Query("SELECT * FROM fleet_run_hosts WHERE runId = :runId ORDER BY serverName COLLATE NOCASE")
+    suspend fun hostsFor(runId: Int): List<FleetRunHostEntity>
+
+    @Query("SELECT * FROM fleet_runs WHERE runKey = :runKey")
+    suspend fun byKey(runKey: String): FleetRunEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRun(run: FleetRunEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertHosts(hosts: List<FleetRunHostEntity>)
+
+    @Query("DELETE FROM fleet_run_hosts WHERE runId = :runId")
+    suspend fun deleteHostsOf(runId: Int)
+
+    @Query("DELETE FROM fleet_runs WHERE id = :runId")
+    suspend fun deleteRunRow(runId: Int)
+
+    /** Runs past the newest [keep], oldest last. */
+    @Query("SELECT id FROM fleet_runs ORDER BY startedAt DESC, id DESC LIMIT -1 OFFSET :keep")
+    suspend fun idsBeyond(keep: Int): List<Int>
+
+    @Query("DELETE FROM fleet_run_hosts")
+    suspend fun clearHosts()
+
+    @Query("DELETE FROM fleet_runs")
+    suspend fun clearRuns()
+}

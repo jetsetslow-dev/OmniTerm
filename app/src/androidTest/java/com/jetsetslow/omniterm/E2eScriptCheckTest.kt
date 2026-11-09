@@ -7,8 +7,10 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -21,12 +23,15 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
+import com.jetsetslow.omniterm.data.FleetRunHistory
+import com.jetsetslow.omniterm.data.FleetRunSummary
 import com.jetsetslow.omniterm.data.HostChecks
 import com.jetsetslow.omniterm.data.QuickScriptEntity
 import com.jetsetslow.omniterm.data.ScriptChecks
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.NotificationLinks
 import com.jetsetslow.omniterm.ui.Screen
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -42,6 +47,8 @@ import org.junit.Test
  *   incident opens, and the notification names the script and offers "Run <runbook>".
  * - That action's link opens Fleet with the runbook and asks for the usual confirmation; it runs
  *   only once Run is tapped, and its output comes back from the host.
+ * - Fleet's History keeps that run, marked as a runbook's, with the host's output; "Use again"
+ *   puts its script and host back into Broadcast without running it, and Delete removes it.
  */
 class E2eScriptCheckTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -54,6 +61,8 @@ class E2eScriptCheckTest {
         // quickScripts only follows the database while a screen collects it; read the repository.
         val repository = AppRepository(AppDatabase.getDatabase(context))
         fun scripts(): List<QuickScriptEntity> = kotlinx.coroutines.runBlocking { repository.getAllScripts() }
+        fun runbookRuns(): List<FleetRunSummary> =
+            kotlinx.coroutines.runBlocking { repository.fleetRunsFlow.first() }.filter { it.run.scriptName == RUNBOOK }
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.waitUntil(15_000) { vm.servers.value.any { it.name == HOST } }
         val host = vm.servers.value.single { it.name == HOST }
@@ -69,6 +78,7 @@ class E2eScriptCheckTest {
         // onNewIntent replaces the activity's intent, and ActivityScenario only follows an
         // activity whose intent is the one it launched; put it back afterwards.
         val launchIntent = composeRule.activity.intent
+        var failure: Throwable? = null
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -78,7 +88,7 @@ class E2eScriptCheckTest {
                     "pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS",
                 ).close()
             }
-            cleanUp(vm, ::scripts)
+            cleanUp(vm, repository, ::scripts)
             vm.addQuickScript("LIN", CHECK, "echo 'e2e check says no'; exit 3", "cyan", false)
             vm.addQuickScript("LIN", RUNBOOK, "echo e2e-runbook-ran", "cyan", false)
             vm.addQuickScript("LIN", DESTRUCTIVE, "rm -rf /tmp/e2e-script-check-nothing", "cyan", false)
@@ -134,6 +144,8 @@ class E2eScriptCheckTest {
             val action = posted.actions?.singleOrNull()
             assertNotNull("the notification offers the runbook", action)
             assertEquals("Run $RUNBOOK", action!!.title.toString())
+            // Its heads-up would sit over the top of the screen while Fleet is tapped below.
+            context.getSystemService(NotificationManager::class.java)?.cancel("alert_${saved.id}_${host.id}".hashCode())
 
             assertEquals(context.packageName, action.actionIntent.creatorPackage)
             // The action's own link, delivered to this activity as a tap does when OmniTerm's task
@@ -157,10 +169,61 @@ class E2eScriptCheckTest {
             composeRule.waitUntil(60_000) {
                 vm.broadcastResults.any { it.serverId == host.id && it.output.contains("e2e-runbook-ran") }
             }
-        } finally {
-            cleanUp(vm, ::scripts)
-            vm.saveAlertsEnabled(originalAlertsEnabled)
+
+            // The run is in the history once it ends, marked as the runbook's.
+            composeRule.waitUntil(60_000) { !vm.isBroadcastExecuting && runbookRuns().isNotEmpty() }
+            val kept = runbookRuns().single()
+            assertEquals(FleetRunHistory.SOURCE_RUNBOOK, kept.run.source)
+            assertEquals("echo e2e-runbook-ran", kept.run.command)
+            assertEquals(1, kept.hosts)
+            assertEquals(1, kept.succeeded)
+            composeRule.onNodeWithTag("fleet.history").performClick()
+            composeRule.onNodeWithTag("fleet.history.run.${kept.run.id}").assertExists()
+            composeRule.onNode(hasText("1 of 1 succeeded · Runbook", substring = true) and hasAnyAncestor(isDialog())).assertExists()
+            composeRule.onNodeWithTag("fleet.history.run.${kept.run.id}").performClick()
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodes(hasText("$ echo e2e-runbook-ran") and hasAnyAncestor(isDialog())).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNode(hasText(HOST) and hasAnyAncestor(isDialog())).performClick()
+            composeRule.waitUntil(10_000) {
+                // The command line, and now the host's output under it.
+                composeRule.onAllNodes(hasText("e2e-runbook-ran", substring = true) and hasAnyAncestor(isDialog()))
+                    .fetchSemanticsNodes().size >= 2
+            }
             composeRule.runOnUiThread {
+                vm.broadcastCommandText = ""
+                vm.broadcastPreset = null
+                vm.broadcastTargetServerIds.clear()
+            }
+            val ranBefore = runbookRuns().size
+            // Use again waits for the run's hosts and for no broadcast to be running: a tap a frame
+            // early would land on a disabled button and do nothing.
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodes(hasTestTag("fleet.history.load") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("fleet.history.load").performClick()
+            composeRule.waitUntil(10_000) { vm.broadcastCommandText == "echo e2e-runbook-ran" }
+            assertEquals(RUNBOOK, vm.broadcastPreset?.name)
+            assertEquals(listOf(host.id), vm.broadcastTargetServerIds.toList())
+            composeRule.onNodeWithTag("fleet.history.details").assertDoesNotExist()
+            assertTrue("Use again does not run it", !vm.isBroadcastExecuting && runbookRuns().size == ranBefore)
+
+            composeRule.onNodeWithTag("fleet.history").performClick()
+            composeRule.onNodeWithTag("fleet.history.run.${kept.run.id}").performClick()
+            composeRule.onNodeWithTag("fleet.history.delete").performClick()
+            composeRule.onNodeWithTag("fleet.history.delete.confirm").performClick()
+            composeRule.waitUntil(10_000) { runbookRuns().isEmpty() }
+            composeRule.onNodeWithTag("fleet.history.run.${kept.run.id}").assertDoesNotExist()
+            composeRule.onNode(hasText("Close") and hasAnyAncestor(isDialog())).performClick()
+        } catch (e: Throwable) {
+            failure = e
+            logWindows(vm)
+            throw e
+        } finally {
+            // The activity's own intent first: without it the rule cannot close the activity, and
+            // a later cleanup failure would hide why the test failed.
+            composeRule.runOnUiThread {
+                composeRule.activity.intent = launchIntent
                 vm.activeAlertsTab = originalTab
                 vm.fleetTabIndex = originalFleetTab
                 vm.broadcastCommandText = originalCommand
@@ -169,8 +232,31 @@ class E2eScriptCheckTest {
                 vm.broadcastTargetServerIds.addAll(originalTargets)
                 vm.broadcastTargetMode = originalMode
                 vm.navigateTo(originalScreen)
-                composeRule.activity.intent = launchIntent
             }
+            val cleanup = runCatching {
+                runbookRuns().forEach { kotlinx.coroutines.runBlocking { repository.deleteFleetRun(it.run.id) } }
+                cleanUp(vm, repository, ::scripts)
+                vm.saveAlertsEnabled(originalAlertsEnabled)
+            }
+            cleanup.exceptionOrNull()?.let { problem -> failure?.addSuppressed(problem) ?: throw problem }
+        }
+    }
+
+    /**
+     * Which window had focus, and whether the keyboard was up, when the test failed: the app
+     * blocks screenshots, so this is what says whether a tap could have reached it.
+     */
+    private fun logWindows(vm: AppViewModel) {
+        runCatching {
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+            fun shell(command: String) = automation.executeShellCommand(command).let { fd ->
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText() }
+            }
+            val windows = shell("dumpsys window windows").lineSequence()
+                .filter { it.contains("mCurrentFocus") || it.contains("mFocusedApp") || it.contains("imeLayeringTarget") || it.contains("Window #") }
+            val ime = shell("dumpsys input_method").lineSequence().filter { it.contains("mInputShown") || it.contains("isInputViewShown") }
+            android.util.Log.w("E2eScriptCheckTest", "executing=${vm.isBroadcastExecuting} command='${vm.broadcastCommandText}'")
+            (windows + ime).forEach { android.util.Log.w("E2eScriptCheckTest", it.trim()) }
         }
     }
 
@@ -182,12 +268,13 @@ class E2eScriptCheckTest {
         composeRule.waitUntil(5_000) { composeRule.onAllNodes(hasText("LIN $name")).fetchSemanticsNodes().size == 1 }
     }
 
-    private fun cleanUp(vm: AppViewModel, scripts: () -> List<QuickScriptEntity>) {
-        vm.alertRules.value.filter { it.notes == NOTE }.forEach(vm::deleteAlertRule)
+    // The rules come from the repository too: alertRules, like quickScripts, only follows the
+    // database while a screen collects it.
+    private fun cleanUp(vm: AppViewModel, repository: AppRepository, scripts: () -> List<QuickScriptEntity>) {
+        fun ours() = kotlinx.coroutines.runBlocking { repository.getAllRules() }.filter { it.notes == NOTE }
+        ours().forEach(vm::deleteAlertRule)
         scripts().filter { it.name in NAMES }.forEach(vm::deleteQuickScript)
-        composeRule.waitUntil(10_000) {
-            vm.alertRules.value.none { it.notes == NOTE } && scripts().none { it.name in NAMES }
-        }
+        composeRule.waitUntil(10_000) { ours().isEmpty() && scripts().none { it.name in NAMES } }
     }
 
     private fun notification(ruleId: Int, serverId: Int): Notification? {

@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 25
+        const val CURRENT_VERSION = 26
     }
 
     @get:Rule
@@ -321,6 +321,50 @@ class AppDatabaseMigrationTest {
                 assertTrue(cursor.moveToFirst())
                 assertEquals(9, cursor.getInt(0))
             }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /** The run history starts empty, keeps the hosts and the rules it migrated alongside, and holds one row per run id. */
+    @Test
+    fun migrationToTwentySixAddsAnEmptyRunHistory() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-25-run-history"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 25).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey, target, runbookScriptId) " +
+                    "VALUES (5, 3, 'Script Check', '/', 0.0, 'CRITICAL', '2m', 1, '', NULL, '7', 8)"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT target, runbookScriptId FROM alert_rules WHERE id = 5").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("7", cursor.getString(0))
+                assertEquals(8, cursor.getInt(1))
+            }
+            db.query("SELECT COUNT(*) FROM fleet_runs").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('abc', 1, 2, 'uptime', NULL, 'fleet')")
+            db.execSQL("INSERT INTO fleet_run_hosts (runId, serverId, serverName, status, note, output, truncated) VALUES (1, 3, 'nas', 'Success', NULL, 'up', 0)")
+            db.query("SELECT r.command, h.serverName, h.output FROM fleet_runs r JOIN fleet_run_hosts h ON h.runId = r.id").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("uptime", cursor.getString(0))
+                assertEquals("nas", cursor.getString(1))
+                assertEquals("up", cursor.getString(2))
+            }
+            val duplicate = runCatching {
+                db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('abc', 3, 4, 'df', NULL, 'fleet')")
+            }
+            assertTrue(duplicate.isFailure)
         }
         context.deleteDatabase(databaseName)
     }

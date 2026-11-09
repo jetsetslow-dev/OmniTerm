@@ -1464,6 +1464,21 @@
     <string name="broadcast_retry_keeps_others">"Only the hosts that failed or did not run. The other results stay."</string>
     <string name="broadcast_share_output">"Share output"</string>
     <string name="broadcast_share_subject">"OmniTerm Fleet run"</string>
+    <string name="fleet_history">"History"</string>
+    <string name="fleet_history_title">"Run history"</string>
+    <string name="fleet_history_empty">"No runs yet. Each Broadcast run is kept here once it ends: the last 50, on this device only."</string>
+    <string name="fleet_history_succeeded">"%1$d of %2$d succeeded"</string>
+    <string name="fleet_history_source_retry">"Retry"</string>
+    <string name="fleet_history_source_runbook">"Runbook"</string>
+    <string name="fleet_history_clear">"Clear history"</string>
+    <string name="fleet_history_clear_title">"Clear run history?"</string>
+    <string name="fleet_history_clear_message">"This deletes every run kept in Fleet's history from this device. The hosts are not changed."</string>
+    <string name="fleet_history_run_title">"Fleet run"</string>
+    <string name="fleet_history_ran_at">"%1$s, took %2$s"</string>
+    <string name="fleet_history_values_not_kept">"The values typed for this command's placeholders are not kept, so the command is shown as written."</string>
+    <string name="fleet_history_load">"Use again"</string>
+    <string name="fleet_history_delete_title">"Delete this run?"</string>
+    <string name="fleet_history_delete_message">"This deletes the run and its output from the history. The hosts are not changed."</string>
     <string name="broadcast_share_chooser">"Share Fleet output"</string>
     <string name="broadcast_share_failed">"Couldn't share the output: %1$s"</string>
 </resources>
