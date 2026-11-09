@@ -114,6 +114,7 @@ jobs:
           python3 -I -B ./scripts/test-check-pinned-images.py
           python3 -I -B ./scripts/check-pinned-images.py
           ./scripts/test-workflow-guards.sh
+          ./scripts/test-retry-network.sh
           ./scripts/test-tunnel.sh
 
       # Same check as scripts/local-pr-check.sh: a new copy-pasted block fails the build.

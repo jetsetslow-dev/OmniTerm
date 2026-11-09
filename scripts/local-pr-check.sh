@@ -81,7 +81,9 @@ python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline
   app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
 ./scripts/test-ci-gradle-gate.sh
-# The Go tunnel library: gofmt, vet and its handshake tests (CI's PR Check runs the same).
+# The Go tunnel library: gofmt, vet and its handshake tests (CI's PR Check runs the same), and
+# the network retry its build uses.
+./scripts/test-retry-network.sh
 ./scripts/test-tunnel.sh
 # Dependency review's licence policy on the Go modules, from the same allow-licenses list.
 (eval "$(./scripts/go-toolchain.sh)" && python3 -I ./scripts/check-licenses.py)

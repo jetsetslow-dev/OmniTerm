@@ -34,13 +34,17 @@ fi
 eval "$("$ROOT/scripts/go-toolchain.sh")"
 cd "$ROOT/tunnel"
 mkdir -p "$GOPATH/bin" "$(dirname "$OUT")"
-# The versions come from go.mod and go.sum, so these are the same binaries everywhere.
-go build -trimpath -o "$GOPATH/bin/gomobile" golang.org/x/mobile/cmd/gomobile
-go build -trimpath -o "$GOPATH/bin/gobind" golang.org/x/mobile/cmd/gobind
+# Each step that downloads or checks modules is tried again on a network failure only
+# (scripts/retry-network.sh): gomobile's own `go mod tidy` asks sum.golang.org about the whole
+# module graph on every clean build. The versions come from go.mod and go.sum, so these are the
+# same binaries everywhere.
+RETRY="$ROOT/scripts/retry-network.sh"
+"$RETRY" go build -trimpath -o "$GOPATH/bin/gomobile" golang.org/x/mobile/cmd/gomobile
+"$RETRY" go build -trimpath -o "$GOPATH/bin/gobind" golang.org/x/mobile/cmd/gobind
 
 tmp="$OUT.tmp.aar"
 rm -f "$tmp" "${tmp%.aar}-sources.jar"
-gomobile bind \
+"$RETRY" gomobile bind \
   -target="$TARGETS" \
   -androidapi 24 \
   -javapkg com.jetsetslow.omniterm.gotunnel \
