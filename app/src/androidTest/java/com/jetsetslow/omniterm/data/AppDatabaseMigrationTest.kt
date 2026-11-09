@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 29
+        const val CURRENT_VERSION = 30
     }
 
     @get:Rule
@@ -460,6 +460,40 @@ class AppDatabaseMigrationTest {
             }
             db.execSQL("INSERT INTO tunnels (name, kind, config, createdAt) VALUES ('Home', 'wireguard', 'enc:v1:x', 1)")
             db.execSQL("UPDATE servers SET tunnelId = 1, tunnelHost = '100.64.0.5' WHERE name = 'nas'")
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToThirtyGivesTokensTheDefaultNotificationAndAnEmptyHistory() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-29-run-visibility"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 29).use { db ->
+            db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (7, '1,2', 'aa', 'Tasker', 1, 5)")
+            db.execSQL("INSERT INTO mcp_calls (at, client, tool, outcome, detail) VALUES (1, 'Claude Code', 'run_script', 'ok', 'nas')")
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT notify, lastUsedAt FROM automation_grants").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an existing token shows progress and failures", "failures", cursor.getString(0))
+                assertEquals("and keeps when it was last used", 5L, cursor.getLong(1))
+            }
+            db.query("SELECT runKey FROM mcp_calls").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue("an earlier call links no run", cursor.isNull(0))
+            }
+            db.query("SELECT COUNT(*) FROM automation_uses").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade invents no use", 0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO automation_uses (grantId, at, outcome, detail, runKey) VALUES (1, 9, 'refused', 'Automation is off', NULL)")
         }
         context.deleteDatabase(databaseName)
     }

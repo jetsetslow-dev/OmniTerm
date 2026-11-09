@@ -47,10 +47,16 @@ object Automation {
     const val TIMED_OUT = 124
     /** The exit status for a host whose shell cannot be given a `{{value}}`'s default safely. */
     const val UNSAFE_VALUE = 2
+    /** The exit status for a host whose run Android stopped part-way, as a process ended by SIGTERM reports. */
+    const val STOPPED = 143
     /** The most of the hosts' combined output a reply carries; the end is kept. */
     const val REPLY_OUTPUT_CHARS = 32_000
     /** Hosts run at once. */
     const val PARALLEL_HOSTS = 8
+    /** Uses kept per token, newest first. */
+    const val KEEP_USES = 300
+    /** The longest [AutomationUseEntity.detail] and [McpCallEntity.detail]. */
+    const val USE_DETAIL_CHARS = 160
 
     private const val TOKEN_PREFIX = "omt_"
     private const val TOKEN_BYTES = 16
@@ -96,8 +102,11 @@ object Automation {
         val note: String? = null,
     )
 
-    /** A finished run, or one refused before it started ([error] set, no hosts). */
-    data class RunResult(val hosts: List<HostResult>, val error: String? = null) {
+    /**
+     * A finished run, or one refused before it started ([error] set, no hosts). [runKey] is the run
+     * in Fleet's history, once it started.
+     */
+    data class RunResult(val hosts: List<HostResult>, val error: String? = null, val runKey: String? = null) {
         val ran: List<HostResult> get() = hosts.filter { it.exit != null }
         val failed: List<HostResult> get() = ran.filter { it.exit != 0 }
         /** It ran somewhere and every host that ran succeeded. */
@@ -125,7 +134,17 @@ object Automation {
             }
             return if (text.length > REPLY_OUTPUT_CHARS) text.takeLast(REPLY_OUTPUT_CHARS) else text
         }
+
+        /** A use's line in its token's history: the hosts it ran on, or why it failed or was refused. */
+        fun useDetail(): String = when {
+            error != null -> error
+            succeeded -> ran.joinToString(", ") { it.name }
+            else -> errorMessage.orEmpty()
+        }.take(USE_DETAIL_CHARS)
     }
+
+    /** A new run's key in Fleet's history. */
+    fun newRunKey(): String = "automation-" + java.util.UUID.randomUUID()
 
     /** The Locale and Tasker plug-in protocol, from their published pages. */
     object Plugin {
@@ -176,5 +195,31 @@ object Automation {
             putString(VAR_FAILED_HOSTS, result.failed.joinToString(",") { it.name })
             result.errorMessage?.takeUnless { result.succeeded }?.let { putString(VAR_ERRMSG, it) }
         }
+    }
+}
+
+/**
+ * Whether a run another app or an AI assistant started shows a notification: chosen per automation
+ * token, and once for the AI assistant (user, Nov 9). A tap on it opens the run in Fleet's history.
+ */
+object RunNotify {
+    const val OFF = "off"
+    /** Progress while it runs; gone when every host succeeds, kept naming the failed hosts when one fails. New tokens start here. */
+    const val FAILURES = "failures"
+    /** Progress while it runs, and the result kept however it ends. */
+    const val ALWAYS = "always"
+
+    val ALL = listOf(OFF, FAILURES, ALWAYS)
+
+    /** [value] when it is one of [ALL]; anything else, a missing setting included, is [FAILURES]. */
+    fun of(value: String?): String = value?.takeIf { it in ALL } ?: FAILURES
+
+    fun showsProgress(policy: String): Boolean = of(policy) != OFF
+
+    /** Whether the result stays on screen once the run is over. */
+    fun keepsResult(policy: String, succeeded: Boolean): Boolean = when (of(policy)) {
+        ALWAYS -> true
+        FAILURES -> !succeeded
+        else -> false
     }
 }

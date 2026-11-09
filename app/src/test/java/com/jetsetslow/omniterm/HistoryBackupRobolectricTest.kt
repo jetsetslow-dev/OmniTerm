@@ -11,12 +11,12 @@ import com.jetsetslow.omniterm.data.AutomationGrantEntity
 import com.jetsetslow.omniterm.data.FleetRunEntity
 import com.jetsetslow.omniterm.data.FleetRunHistory
 import com.jetsetslow.omniterm.data.McpCallEntity
-import com.jetsetslow.omniterm.data.McpCallOutcome
 import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.QuickScriptEntity
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.StackRegistryEntity
+import com.jetsetslow.omniterm.data.UseOutcome
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupContents
@@ -87,8 +87,8 @@ class HistoryBackupRobolectricTest {
         repo.insertMetric(sample(dbHost, minute, cpu = 1f))
         repo.insertMetric(sample(dbHost, minute + 60_000, cpu = 2f))
         repo.insertMetric(sample(dbHost, minute + 120_000, cpu = 3f))
-        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = McpCallOutcome.OK, detail = "2 hosts"))
-        repo.recordMcpCall(McpCallEntity(at = minute + 1, client = "Claude", tool = "run_command", outcome = McpCallOutcome.REFUSED, detail = "not allowed"))
+        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = UseOutcome.OK, detail = "2 hosts"))
+        repo.recordMcpCall(McpCallEntity(at = minute + 1, client = "Claude", tool = "run_command", outcome = UseOutcome.REFUSED, detail = "not allowed"))
 
         val backup = export(model, main, BackupSelection())
         assertTrue("Fleet output is sensitive, so the backup is encrypted", JSONObject(backup).has("data"))
@@ -145,7 +145,7 @@ class HistoryBackupRobolectricTest {
         val web = repo.insertServer(host("web")).toInt()
         repo.recordFleetRun(FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute, command = "uptime"), emptyList())
         repo.insertMetric(sample(web, minute, cpu = 10f))
-        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = McpCallOutcome.OK, detail = ""))
+        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = UseOutcome.OK, detail = ""))
 
         val none = BackupSelection(fleetHistory = false, monitoringHistory = false, assistantLog = false)
         val withoutHistory = inspect(model, main, export(model, main, none))

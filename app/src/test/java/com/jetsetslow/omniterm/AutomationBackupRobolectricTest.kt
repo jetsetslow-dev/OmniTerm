@@ -8,10 +8,17 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.Automation
 import com.jetsetslow.omniterm.data.AutomationGrantEntity
+import com.jetsetslow.omniterm.data.AutomationUseEntity
+import com.jetsetslow.omniterm.data.McpCallEntity
 import com.jetsetslow.omniterm.data.QuickScriptEntity
+import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.ServerEntity
+import com.jetsetslow.omniterm.data.UseOutcome
+import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.ui.AppViewModel
+import com.jetsetslow.omniterm.ui.BackupHistory
 import com.jetsetslow.omniterm.ui.BackupSelection
+import org.json.JSONArray
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -54,8 +61,18 @@ class AutomationBackupRobolectricTest {
         repo.insertScript(QuickScriptEntity(emoji = "", name = "Uptime", command = "uptime", color = "cyan"))
         val script = repo.getAllScripts().single { it.name == "Uptime" }
         val token = Automation.hash(Automation.newToken())
-        repo.insertAutomationGrant(
-            AutomationGrantEntity(scriptId = script.id, serverIds = host.toString(), tokenHash = token, label = "Tasker", createdAt = 1L),
+        val grant = repo.insertAutomationGrant(
+            AutomationGrantEntity(
+                scriptId = script.id, serverIds = host.toString(), tokenHash = token, label = "Tasker", createdAt = 1L,
+                notify = RunNotify.ALWAYS,
+            ),
+        )
+        repo.recordAutomationUse(AutomationUseEntity(grantId = grant, at = 5L, outcome = UseOutcome.OK, detail = "web", runKey = "automation-run-a"))
+        repo.recordAutomationUse(AutomationUseEntity(grantId = grant, at = 6L, outcome = UseOutcome.REFUSED, detail = "Automation is off"))
+        repo.insertSetting(McpSettings.TOKEN_HASH, "b".repeat(64))
+        repo.insertSetting(McpSettings.NOTIFY, RunNotify.OFF)
+        repo.recordMcpCall(
+            McpCallEntity(at = 7L, client = "Claude Code", tool = "run_script", outcome = UseOutcome.FAILED, detail = "web: Exited with status 1.", runKey = "automation-run-b"),
         )
         repo.insertSetting(Automation.SETTING_ENABLED, "true")
         repo.insertSetting(OTHER_SETTING, "kept")
@@ -76,6 +93,31 @@ class AutomationBackupRobolectricTest {
         assertEquals("a restore leaves automation off", "false", repo.getSetting(Automation.SETTING_ENABLED))
         assertEquals("the token comes back", listOf(token), repo.automationGrantsFlow.first().map { it.tokenHash })
         assertEquals("the script itself is", listOf("Uptime"), repo.getAllScripts().map { it.name }.filter { it == "Uptime" })
+        val restored = repo.automationGrantsFlow.first().single()
+        assertEquals("the token keeps its notification choice", RunNotify.ALWAYS, restored.notify)
+        val uses = { runBlocking { repo.automationUsesFlow(restored.id).first().map { Triple(it.outcome, it.detail, it.runKey) } } }
+        assertEquals(
+            "and its uses, each still opening its run",
+            listOf(Triple(UseOutcome.REFUSED, "Automation is off", null), Triple(UseOutcome.OK, "web", "automation-run-a")),
+            uses(),
+        )
+        assertEquals("the AI assistant keeps its choice", RunNotify.OFF, repo.getSetting(McpSettings.NOTIFY))
+        assertEquals("a call still opens its run", "automation-run-b", repo.mcpCallsFlow.first().single().runKey)
+
+        restore(model, main, bytes.toString(Charsets.UTF_8))
+        assertEquals("restoring twice adds no use twice", 2, uses().size)
+    }
+
+    @Test
+    fun aRunLinkInABackupIsReadOnlyWhenItHasARunsShape() {
+        val uses = BackupHistory.usesFrom(
+            JSONArray()
+                .put(JSONObject().put("at", 1L).put("outcome", UseOutcome.OK).put("detail", "web").put("runKey", "automation-1f2e"))
+                .put(JSONObject().put("at", 2L).put("outcome", "exploded").put("detail", "x").put("runKey", "../../settings"))
+                .put(JSONObject().put("at", 0L).put("outcome", UseOutcome.OK)),
+        )
+        assertEquals(listOf("automation-1f2e", null), uses.map { it.runKey })
+        assertEquals("an unknown outcome reads as a failure", listOf(UseOutcome.OK, UseOutcome.FAILED), uses.map { it.outcome })
     }
 
     @Test

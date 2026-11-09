@@ -365,11 +365,16 @@ data class FleetRunHostEntity(
     val truncated: Boolean = false,
 )
 
-/** A [FleetRunEntity] with how many of its hosts succeeded, for the history list. */
+/**
+ * A [FleetRunEntity] with how many of its hosts succeeded, for the history list. [running] counts
+ * the hosts still running: a run another app or an AI assistant started is saved when it starts
+ * and updated as each host finishes, so it can be watched from the history.
+ */
 data class FleetRunSummary(
     @androidx.room.Embedded val run: FleetRunEntity,
     val hosts: Int,
     val succeeded: Int,
+    val running: Int = 0,
 )
 
 object FleetRunHistory {
@@ -380,6 +385,18 @@ object FleetRunHistory {
     const val SOURCE_RUNBOOK = "runbook"
     const val SOURCE_AUTOMATION = "automation"
     const val SOURCE_MCP = "mcp"
+
+    /** The sources whose runs are saved while they run: nobody is watching them on the Broadcast screen. */
+    val LIVE_SOURCES = listOf(SOURCE_AUTOMATION, SOURCE_MCP)
+
+    /** Every source a saved run may have; a backup's run with any other is read as [SOURCE_FLEET]. */
+    val SOURCES = setOf(SOURCE_FLEET, SOURCE_RETRY, SOURCE_RUNBOOK, SOURCE_AUTOMATION, SOURCE_MCP)
+
+    /**
+     * A live run still "running" this long after it started was cut off with its process (a run
+     * that ends normally, or is stopped, always saves its end): the longest run's limit and a margin.
+     */
+    const val STALE_RUNNING_MS = Automation.RUN_TIMEOUT_MS + 2 * 60_000L
 
     /** [output]'s end, at most [OUTPUT_CHARS], as one host's row; [runId] is set when the run is saved. */
     fun host(serverId: Int, serverName: String, status: String, note: String?, output: String, truncated: Boolean) =
@@ -397,7 +414,8 @@ object FleetRunHistory {
 /**
  * Lets other apps (Tasker and similar) run one saved script on chosen hosts, when they present the
  * matching token. The token is shown once when the grant is made and never stored: only its
- * SHA-256 is. Deleting the grant revokes it. Not in backups.
+ * SHA-256 is. Deleting the grant revokes it. Backups carry it, restored with automation off.
+ * [notify] is the token's [RunNotify] choice; each use is an [AutomationUseEntity].
  */
 @Entity(tableName = "automation_grants", indices = [Index(value = ["tokenHash"], unique = true)])
 data class AutomationGrantEntity(
@@ -411,13 +429,30 @@ data class AutomationGrantEntity(
     val label: String,
     val createdAt: Long,
     val lastUsedAt: Long? = null,
+    val notify: String = RunNotify.FAILURES,
+)
+
+/**
+ * One use of an automation token: when, and what came of it ([UseOutcome]). [detail] names the
+ * hosts it ran on, why it failed, or why it was refused; [runKey] is the Fleet run it started,
+ * when it got that far. The newest [Automation.KEEP_USES] per token are kept, and go with it.
+ */
+@Entity(tableName = "automation_uses", indices = [Index(value = ["grantId", "at"])])
+data class AutomationUseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val grantId: Int,
+    val at: Long,
+    val outcome: String,
+    val detail: String,
+    val runKey: String? = null,
 )
 
 /**
  * One call an AI assistant made to the MCP server, so the user can see what was asked and what
- * came of it: the newest [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, and
- * backups carry them (the AI assistant log section). [outcome] is one of [McpCallOutcome]'s
- * values; [detail] is the first line of the answer, short.
+ * came of it: the AI assistant token's use history. The newest
+ * [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, and backups carry them (the
+ * AI assistant log section). [outcome] is one of [UseOutcome]'s values; [detail] is the first line
+ * of the answer, short; [runKey] is the Fleet run a run tool started.
  */
 @Entity(tableName = "mcp_calls")
 data class McpCallEntity(
@@ -427,13 +462,20 @@ data class McpCallEntity(
     val tool: String,
     val outcome: String,
     val detail: String,
+    val runKey: String? = null,
 )
 
-object McpCallOutcome {
+/** What came of one use of a token: an automation token's ([AutomationUseEntity]) or the AI assistant's ([McpCallEntity]). */
+object UseOutcome {
     const val OK = "ok"
     const val FAILED = "failed"
-    /** A request turned away for its token, host name or origin. */
+    /**
+     * Turned away before anything ran: automation or the assistant off, a script on the danger
+     * list, a value missing, a host not shared, a run not approved, or a bad token or origin.
+     */
     const val REFUSED = "refused"
+
+    val ALL = setOf(OK, FAILED, REFUSED)
 }
 
 /**

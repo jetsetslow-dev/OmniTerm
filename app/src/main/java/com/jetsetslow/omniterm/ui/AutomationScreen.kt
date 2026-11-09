@@ -14,9 +14,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,7 +73,7 @@ fun AutomationToolView(viewModel: AppViewModel) {
                 )
             }
             grants.forEach { grant ->
-                GrantCard(grant, scripts, servers, onRevoke = { revoking = grant })
+                GrantCard(viewModel, grant, scripts, servers, onRevoke = { revoking = grant })
             }
 
             OmniCard(modifier = Modifier.fillMaxWidth()) {
@@ -128,9 +130,22 @@ fun AutomationToolView(viewModel: AppViewModel) {
 private fun hostNames(ids: Collection<Int>, servers: List<ServerEntity>): String =
     servers.filter { it.id in ids }.joinToString(", ") { it.name }
 
+/**
+ * One token: what it runs where, whether its runs show a notification, and its uses, newest first,
+ * each opening the run it started.
+ */
 @Composable
-private fun GrantCard(grant: AutomationGrantEntity, scripts: List<QuickScriptEntity>, servers: List<ServerEntity>, onRevoke: () -> Unit) {
+private fun GrantCard(
+    viewModel: AppViewModel,
+    grant: AutomationGrantEntity,
+    scripts: List<QuickScriptEntity>,
+    servers: List<ServerEntity>,
+    onRevoke: () -> Unit,
+) {
     val script = scripts.find { it.id == grant.scriptId }
+    val uses by remember(grant.id) { viewModel.automationUses(grant.id) }.collectAsStateWithLifecycle(emptyList())
+    var showUses by rememberSaveable(grant.id) { mutableStateOf(false) }
+    var shown by rememberSaveable(grant.id) { mutableIntStateOf(USES_SHOWN) }
     OmniCard(modifier = Modifier.fillMaxWidth().testTag("automation.grant.${grant.id}")) {
         Row(modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -155,8 +170,41 @@ private fun GrantCard(grant: AutomationGrantEntity, scripts: List<QuickScriptEnt
                 Text(stringResource(R.string.automation_revoke), color = MaterialTheme.colorScheme.error)
             }
         }
+        Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            RunNotifyPicker(grant.notify, { viewModel.saveAutomationNotify(grant.id, it) }, tag = "automation.grant.${grant.id}.notify")
+            TextButton(
+                onClick = { showUses = !showUses },
+                modifier = Modifier.testTag("automation.grant.${grant.id}.uses"),
+            ) {
+                Text(if (showUses) stringResource(R.string.automation_uses_hide) else stringResource(R.string.automation_uses_show, uses.size))
+            }
+            if (showUses) {
+                if (uses.isEmpty()) {
+                    Text(stringResource(R.string.automation_no_uses), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                uses.take(shown).forEach { use ->
+                    TokenUseRow(
+                        at = use.at,
+                        outcome = use.outcome,
+                        detail = use.detail,
+                        runKey = use.runKey,
+                        onOpenRun = viewModel::openFleetRun,
+                        tag = "automation.use.${use.id}",
+                    )
+                }
+                if (uses.size > shown) {
+                    TextButton(onClick = { shown += USES_MORE }, modifier = Modifier.testTag("automation.grant.${grant.id}.uses.more")) {
+                        Text(stringResource(R.string.automation_uses_more))
+                    }
+                }
+            }
+        }
     }
 }
+
+/** Uses listed when a token's history opens, and how many more each "Show more" adds. */
+private const val USES_SHOWN = 20
+private const val USES_MORE = 50
 
 /**
  * Picks the script and hosts for a new token. The script must be one automation can run; the

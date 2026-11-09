@@ -2,18 +2,23 @@ package com.jetsetslow.omniterm
 
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import com.jetsetslow.omniterm.automation.RunNotifications
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
+import com.jetsetslow.omniterm.data.FleetRunHistory
 import com.jetsetslow.omniterm.data.HostCredentials
-import com.jetsetslow.omniterm.data.McpCallOutcome
+import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.ServerEntity
+import com.jetsetslow.omniterm.data.UseOutcome
 import com.jetsetslow.omniterm.data.mcp.Mcp
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.data.ssh.JschSshTransport
@@ -38,7 +43,9 @@ import java.util.concurrent.TimeUnit
  * - lists hosts and gets the host's name but never its address or user;
  * - is refused with the wrong token or a web page's origin;
  * - asks to run a command, which waits for the phone: denied, it does not run; approved, it does.
- * Turning the server off closes the port on the host. Every setting is put back.
+ * Recent calls tells the refused run from the one that ran, and opens that run in Fleet's history;
+ * chosen "Always" on the screen, its notification stays. Turning the server off closes the port on
+ * the host. Every setting is put back.
  */
 class E2eMcpTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -53,6 +60,7 @@ class E2eMcpTest {
         val host: ServerEntity = vm.servers.value.single { it.name == HOST }
         assertEquals("Use the repository fixture endpoint", args.getString("host", "127.0.0.1"), host.host)
         assertTrue("start from the server off", runBlocking { repository.getSetting(McpSettings.ENABLED) } != "true")
+        TestNotifications.allow()
         val creds = runBlocking { HostCredentials.build(repository, host, posixShell = true) }
         val transport = JschSshTransport()
         fun has(tag: String) = composeRule.showsNode(hasTestTag(tag))
@@ -104,6 +112,10 @@ class E2eMcpTest {
             assertTrue("a token is shown: ${token.length} characters", token.startsWith("omt_") && token.length == 26)
             assertEquals("only its hash is kept", runBlocking { repository.getSetting(McpSettings.TOKEN_HASH) }?.length, 64)
             composeRule.onNodeWithTag("mcp.token.done").performClick()
+            // The assistant's runs keep their result notification however they end.
+            assertEquals(RunNotify.FAILURES, vm.mcpConfig.value.notify)
+            composeRule.onNodeWithTag("mcp.notify.${RunNotify.ALWAYS}").performScrollTo().performClick()
+            composeRule.waitUntil(5_000) { vm.mcpConfig.value.notify == RunNotify.ALWAYS }
             composeRule.waitUntil(60_000) { vm.mcpState.value.running && vm.mcpState.value.tunnelUp }
             val listening = sh("netstat -ltn 2>/dev/null || ss -ltn")
             assertTrue("the host listens on its own loopback address", listening.contains("127.0.0.1:$port"))
@@ -162,12 +174,36 @@ class E2eMcpTest {
                 pool.shutdownNow()
             }
 
-            // Every call is in the record, with what came of it.
+            // Every call is in the record, with what came of it: the denied run was refused, since
+            // nothing ran, and the approved one links its run.
             val calls = runBlocking { repository.mcpCallsFlow.first() }
-            assertTrue(calls.toString(), calls.any { it.tool == "list_hosts" && it.outcome == McpCallOutcome.OK && it.client == "e2e-curl" })
-            assertTrue(calls.toString(), calls.any { it.tool == "run_command" && it.outcome == McpCallOutcome.FAILED })
-            assertTrue(calls.toString(), calls.any { it.tool == "run_command" && it.outcome == McpCallOutcome.OK })
-            assertTrue(calls.toString(), calls.any { it.outcome == McpCallOutcome.REFUSED })
+            assertTrue(calls.toString(), calls.any { it.tool == "list_hosts" && it.outcome == UseOutcome.OK && it.client == "e2e-curl" })
+            assertTrue(calls.toString(), calls.any { it.tool == "run_command" && it.outcome == UseOutcome.REFUSED && it.runKey == null })
+            assertTrue(calls.toString(), calls.any { it.client.isEmpty() && it.outcome == UseOutcome.REFUSED })
+            val approvedCall = calls.single { it.tool == "run_command" && it.outcome == UseOutcome.OK }
+            val runKey = requireNotNull(approvedCall.runKey) { "the approved run is linked: $approvedCall" }
+            val run = requireNotNull(runBlocking { repository.fleetRunByKey(runKey) })
+            assertEquals(FleetRunHistory.SOURCE_MCP, run.source)
+            assertEquals(command, run.command)
+
+            // Its notification stays, as chosen, and names who ran what.
+            val notice = RunNotifications.idFor(runKey)
+            composeRule.waitUntil(5_000) { TestNotifications.posted(notice) != null }
+            assertEquals("e2e-curl ran Command from e2e-curl", TestNotifications.title(notice))
+            assertEquals("Succeeded on its host.", TestNotifications.text(notice))
+            TestNotifications.dismiss(notice)
+
+            // Recent calls opens the run in Fleet's history.
+            composeRule.onNodeWithTag("mcp.call.${approvedCall.id}").performScrollTo()
+            composeRule.onNodeWithTag("mcp.call.${approvedCall.id}.outcome", useUnmergedTree = true).assert(hasText("Succeeded"))
+            composeRule.onNodeWithTag("mcp.call.${approvedCall.id}").performClick()
+            composeRule.waitUntil(10_000) { vm.currentScreen == Screen.Fleet && has("fleet.history.details") }
+            assertTrue(
+                "the run says an AI assistant started it",
+                composeRule.onAllNodes(hasText("AI assistant", substring = true) and hasAnyAncestor(hasTestTag("fleet.history.details")))
+                    .fetchSemanticsNodes().isNotEmpty(),
+            )
+            composeRule.runOnUiThread { vm.navigateTo(Screen.Mcp) }
 
             // Off: the host's port closes.
             composeRule.runOnUiThread { vm.saveMcpEnabled(false) }
@@ -179,6 +215,8 @@ class E2eMcpTest {
             runBlocking {
                 McpSettings.ALL.forEach { repository.deleteSetting(it) }
                 repository.clearMcpCalls()
+                repository.fleetRunsFlow.first().filter { it.run.command.contains("mcp-e2e-$stamp") }
+                    .forEach { repository.deleteFleetRun(it.run.id) }
             }
             runCatching { sh("rm -f /tmp/mcp-e2e-$stamp") }
             transport.shutdown()

@@ -452,13 +452,28 @@ interface PersistentSessionDao {
 @Dao
 interface FleetRunDao {
     @Query(
-        "SELECT r.*, COUNT(h.serverId) AS hosts, COALESCE(SUM(h.status = 'Success'), 0) AS succeeded " +
+        "SELECT r.*, COUNT(h.serverId) AS hosts, COALESCE(SUM(h.status = 'Success'), 0) AS succeeded, " +
+            "COALESCE(SUM(h.status = 'Running'), 0) AS running " +
             "FROM fleet_runs r LEFT JOIN fleet_run_hosts h ON h.runId = r.id GROUP BY r.id ORDER BY r.startedAt DESC, r.id DESC"
     )
     fun summariesFlow(): Flow<List<FleetRunSummary>>
 
     @Query("SELECT * FROM fleet_run_hosts WHERE runId = :runId ORDER BY serverName COLLATE NOCASE")
     suspend fun hostsFor(runId: Int): List<FleetRunHostEntity>
+
+    /** [hostsFor], following the run as its hosts finish. */
+    @Query("SELECT * FROM fleet_run_hosts WHERE runId = :runId ORDER BY serverName COLLATE NOCASE")
+    fun hostsFlow(runId: Int): Flow<List<FleetRunHostEntity>>
+
+    /**
+     * Ends the hosts still "running" in [sources]' runs that started before [before]: their run
+     * was cut off with its process, so it will never save their end itself.
+     */
+    @Query(
+        "UPDATE fleet_run_hosts SET status = :status, note = :note WHERE status = 'Running' AND runId IN " +
+            "(SELECT id FROM fleet_runs WHERE source IN (:sources) AND startedAt < :before)"
+    )
+    suspend fun endStaleHosts(before: Long, sources: List<String>, status: String, note: String): Int
 
     @Query("SELECT * FROM fleet_runs WHERE runKey = :runKey")
     suspend fun byKey(runKey: String): FleetRunEntity?
@@ -517,6 +532,38 @@ interface AutomationGrantDao {
 
     @Query("UPDATE automation_grants SET lastUsedAt = :at WHERE id = :id")
     suspend fun markUsed(id: Int, at: Long)
+
+    @Query("UPDATE automation_grants SET notify = :notify WHERE id = :id")
+    suspend fun setNotify(id: Int, notify: String)
+}
+
+@Dao
+interface AutomationUseDao {
+    @Query("SELECT * FROM automation_uses WHERE grantId = :grantId ORDER BY at DESC, id DESC")
+    fun usesFlow(grantId: Int): Flow<List<AutomationUseEntity>>
+
+    @Query("SELECT * FROM automation_uses WHERE grantId = :grantId ORDER BY at DESC, id DESC")
+    suspend fun usesOf(grantId: Int): List<AutomationUseEntity>
+
+    @Query("SELECT * FROM automation_uses ORDER BY grantId, at DESC, id DESC")
+    suspend fun all(): List<AutomationUseEntity>
+
+    @Insert
+    suspend fun insert(use: AutomationUseEntity): Long
+
+    /** Keeps [grantId]'s newest [keep] uses. */
+    @Query(
+        "DELETE FROM automation_uses WHERE grantId = :grantId AND id NOT IN " +
+            "(SELECT id FROM automation_uses WHERE grantId = :grantId ORDER BY at DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun prune(grantId: Int, keep: Int)
+
+    @Query("DELETE FROM automation_uses WHERE grantId = :grantId")
+    suspend fun deleteForGrant(grantId: Int)
+
+    /** The uses of [scriptId]'s grants, which go with the script. */
+    @Query("DELETE FROM automation_uses WHERE grantId IN (SELECT id FROM automation_grants WHERE scriptId = :scriptId)")
+    suspend fun deleteForScript(scriptId: Int)
 }
 
 @Dao

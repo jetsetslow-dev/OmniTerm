@@ -158,6 +158,10 @@ class MainActivity : AppCompatActivity() {
         intent.data?.pathSegments?.let(com.jetsetslow.omniterm.ui.NotificationLinks::parseRunbook)?.let { (ruleId, serverId) ->
           add(ExternalLaunchRequest.OpenRunbook(ruleId, serverId))
         }
+        // A run another app or an AI assistant started (NotificationLinks.fleetRun).
+        intent.data?.pathSegments?.let(com.jetsetslow.omniterm.ui.NotificationLinks::parseFleetRun)?.let { runKey ->
+          add(ExternalLaunchRequest.OpenFleetRun(runKey))
+        }
         when (intent.data?.lastPathSegment) {
           "transfers" -> add(ExternalLaunchRequest.OpenTransfers)
           "network" -> add(ExternalLaunchRequest.OpenNetworkTools)

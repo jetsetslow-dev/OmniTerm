@@ -713,6 +713,53 @@ there is one full gate when the bundle is complete, and targeted tests per piece
   4. Tunnels T2+, the largest piece and Go-only.
   5. The small items.
   Targeted tests and device runs per piece; one full gate at the end.
+- #147 merged as 7a50379. Main's publish failed twice without a code fault: first a GitHub
+  "Internal server error" before any job ran, then sum.golang.org dropping an HTTP/2 stream inside
+  gomobile's own `go mod tidy`. The third attempt published v0.9.296-main.1, and every other main
+  workflow passed. In this bundle, `scripts/retry-network.sh` (tested by
+  `scripts/test-retry-network.sh`, run by the gate and PR Check) retries those Go downloads twice
+  on network errors only.
+- Piece 1, run visibility and token usage history: done (commit "See what other apps and
+  assistants run").
+  - A run from Tasker, another app or the AI assistant is saved when it starts, with every host
+    running, and each host is saved as it finishes. A host cut off when the run stops is saved as
+    stopped. A run left running when OmniTerm died is ended the next time a run starts or History
+    opens, if it began more than 11 minutes before (the 9-minute run limit plus 2).
+  - History shows the Automation label, a running state that follows the run live, and filter
+    chips by kind when there is more than one.
+  - Notifications per token, on channel `external_runs`: off, running and failures (the default),
+    or always. A tap opens the run (`omniterm://notification/fleet-run/<key>`; MainActivity reads
+    only a key of a run's shape, since anything can send it).
+  - Each token's uses (newest 300; revoking deletes them) and the assistant's Recent calls: when,
+    succeeded, failed or refused, a detail, and a link to the run. A denied assistant run is now
+    refused, not failed, since nothing ran.
+  - Backups carry each token's notification choice and uses, the assistant's notification choice,
+    and each call's run link. A restore adds only uses it lacks, so restoring twice adds nothing.
+    Room schema 30 (migration 29→30).
+  - Validation: unit tests `AutomationRunnerRobolectricTest` 16, `McpToolsTest` 11,
+    `AutomationBackupRobolectricTest` 3, `HistoryBackupRobolectricTest` 7,
+    `NotificationLinksTest` 4, `AppMcpBackendRobolectricTest`, all 0 failed. Guards seen failing:
+    no save at start, stopped hosts not saved, a result never kept, stale cleanup ignoring the
+    source, uses dropped on restore, uses restored twice.
+  - Devices (API 35 emulator, repository fixture on 127.0.0.1:2205):
+    - `E2eAutomationTest` (`-e omniterm_e2e_automation yes -e host 127.0.0.1`): 1 test, 0 failed.
+      It checks that a new token's notification is gone after a success. With "Always" picked on
+      the card, the result stays as "E2E Tasker ran E2E automation / Succeeded on its host.", and
+      tapping it opens the run's details, marked Automation. The card's uses show Succeeded and
+      open their runs.
+    - `E2eMcpTest` (`-e omniterm_e2e_mcp yes -e host 127.0.0.1`): 1 test, 0 failed. The denied
+      run is refused and the approved one links an AI-assistant run. Its kept notification names
+      the client, and Recent calls opens the run.
+    - Guard: with MainActivity ignoring run links, `E2eAutomationTest` failed waiting for the run
+      to open (line 153).
+    - The notification tap goes to the test's own activity. The test therefore uses
+      `keepLaunchIntent()`, or the rule cannot close the activity (seen: "never becomes DESTROYED",
+      last state PAUSED).
+  - `TestNotifications` (androidTest) is now the one copy of the permission grant and the posted
+    notification lookups that three alert suites each had. `alertNotificationId` moved out of
+    AppViewModel so tests use the app's own id. Those three suites (`E2eAlertLifecycleStressTest`,
+    `E2eHostChecksTest`, `E2ePhoneChecksTest`) compile but have not run on a device since. They
+    are in the bundle's device sweep.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,

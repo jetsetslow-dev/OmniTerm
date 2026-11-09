@@ -178,7 +178,8 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {
         db.quickScriptDao().deleteScript(script)
         db.alertRuleDao().clearRunbook(script.id)
-        // A grant for a deleted script could never run; it goes with it.
+        // A grant for a deleted script could never run; it goes with it, and so does its history.
+        db.automationUseDao().deleteForScript(script.id)
         db.automationGrantDao().deleteForScript(script.id)
     }
 
@@ -187,21 +188,65 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun automationGrantByTokenHash(tokenHash: String): AutomationGrantEntity? = db.automationGrantDao().byTokenHash(tokenHash)
     suspend fun automationGrantById(id: Int): AutomationGrantEntity? = db.automationGrantDao().byId(id)
     suspend fun insertAutomationGrant(grant: AutomationGrantEntity): Int = db.automationGrantDao().insert(grant).toInt()
-    suspend fun deleteAutomationGrant(id: Int) = db.automationGrantDao().delete(id)
+    /** Revokes grant [id]; its use history goes with it. */
+    suspend fun deleteAutomationGrant(id: Int) = db.withTransaction {
+        db.automationUseDao().deleteForGrant(id)
+        db.automationGrantDao().delete(id)
+    }
     suspend fun markAutomationGrantUsed(id: Int, at: Long) = db.automationGrantDao().markUsed(id, at)
+    suspend fun setAutomationGrantNotify(id: Int, notify: String) = db.automationGrantDao().setNotify(id, RunNotify.of(notify))
     suspend fun getAutomationGrants(): List<AutomationGrantEntity> = db.automationGrantDao().all()
 
-    /** Adds the grants whose token this phone does not know yet; returns how many. */
-    suspend fun restoreAutomationGrants(grants: List<AutomationGrantEntity>): Int = db.withTransaction {
+    fun automationUsesFlow(grantId: Int): Flow<List<AutomationUseEntity>> = db.automationUseDao().usesFlow(grantId)
+
+    /** Adds [use] to its token's history, keeping the newest [keep]. */
+    suspend fun recordAutomationUse(use: AutomationUseEntity, keep: Int = Automation.KEEP_USES) = db.withTransaction {
+        db.automationUseDao().insert(use.copy(detail = use.detail.take(Automation.USE_DETAIL_CHARS)))
+        db.automationUseDao().prune(use.grantId, keep)
+    }
+
+    /** Every token's uses, by grant id, for a backup. */
+    suspend fun automationUsesForBackup(): Map<Int, List<AutomationUseEntity>> = db.automationUseDao().all().groupBy { it.grantId }
+
+    /**
+     * Adds the grants whose token this phone does not know yet, and each grant's uses this phone
+     * has not logged (a token it knows keeps its own notification choice). Returns how many grants
+     * were added.
+     */
+    suspend fun restoreAutomationGrants(
+        grants: List<Pair<AutomationGrantEntity, List<AutomationUseEntity>>>,
+        keepUses: Int = Automation.KEEP_USES,
+    ): Int = db.withTransaction {
         val dao = db.automationGrantDao()
-        grants.count { grant ->
-            if (dao.byTokenHash(grant.tokenHash) != null) false else { dao.insert(grant.copy(id = 0)); true }
+        val uses = db.automationUseDao()
+        var added = 0
+        for ((grant, used) in grants) {
+            val id = dao.byTokenHash(grant.tokenHash)?.id ?: dao.insert(grant.copy(id = 0)).toInt().also { added++ }
+            val logged = uses.usesOf(id).mapTo(mutableSetOf()) { it.copy(id = 0) }
+            used.map { it.copy(id = 0, grantId = id) }.filter(logged::add).forEach { uses.insert(it) }
+            uses.prune(id, keepUses)
         }
+        added
     }
 
     // Fleet run history
     val fleetRunsFlow: Flow<List<FleetRunSummary>> = db.fleetRunDao().summariesFlow()
     suspend fun fleetRunHosts(runId: Int): List<FleetRunHostEntity> = db.fleetRunDao().hostsFor(runId)
+    fun fleetRunHostsFlow(runId: Int): Flow<List<FleetRunHostEntity>> = db.fleetRunDao().hostsFlow(runId)
+    suspend fun fleetRunByKey(runKey: String): FleetRunEntity? = db.fleetRunDao().byKey(runKey)
+
+    /**
+     * Ends, with [note], the hosts of live runs ([FleetRunHistory.LIVE_SOURCES]) still "running"
+     * [FleetRunHistory.STALE_RUNNING_MS] after their run started: Android ended the process
+     * running them, so nothing else ever will. Returns how many hosts it ended.
+     */
+    suspend fun endStaleLiveRuns(now: Long, note: String): Int =
+        db.fleetRunDao().endStaleHosts(
+            before = now - FleetRunHistory.STALE_RUNNING_MS,
+            sources = FleetRunHistory.LIVE_SOURCES,
+            status = "Failure",
+            note = note,
+        )
 
     /**
      * Saves [run] with [hosts], updating an earlier save of the same run (same runKey): its row,

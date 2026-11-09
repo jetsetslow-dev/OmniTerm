@@ -381,6 +381,9 @@ enum class HostSort(val settingValue: String) {
     }
 }
 
+/** The notification of [ruleId]'s alert on [serverId]: posted, updated and cleared under this id. */
+internal fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
+
 /**
  * [hosts] (loaded by name) in [sort] order. Status puts online hosts first, then those being
  * checked, then offline ones. Health puts the lowest scores first, so hosts needing attention lead,
@@ -577,6 +580,8 @@ sealed interface ExternalLaunchRequest {
     data object OpenTransfers : ExternalLaunchRequest
     data object OpenNetworkTools : ExternalLaunchRequest
     data object OpenFleet : ExternalLaunchRequest
+    /** A run another app or an AI assistant started, from its notification. */
+    data class OpenFleetRun(val runKey: String) : ExternalLaunchRequest
     data object OpenInfra : ExternalLaunchRequest
     data object OpenBackup : ExternalLaunchRequest
     /** An alert's "Run" action: its rule's runbook on that host, after the usual confirmation. */
@@ -4042,7 +4047,6 @@ class AppViewModel @JvmOverloads constructor(
         return nm
     }
 
-    private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
     private fun alertNotificationTitle(rule: AlertRuleEntity, srv: ServerEntity) = "${rule.severity}: ${srv.name}"
 
@@ -4741,6 +4745,7 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 ExternalLaunchRequest.OpenNetworkTools -> navigateTo(Screen.Network)
                 ExternalLaunchRequest.OpenFleet -> navigateTo(Screen.Fleet)
+                is ExternalLaunchRequest.OpenFleetRun -> openFleetRun(request.runKey)
                 ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
                 ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
                 is ExternalLaunchRequest.OpenRunbook -> openRunbook(request.ruleId, request.serverId)
@@ -13661,17 +13666,44 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** One run's hosts from the history, as cards. */
-    suspend fun fleetRunResults(runId: Int): List<BroadcastResultItem> =
-        repository.fleetRunHosts(runId).map { host ->
-            BroadcastResultItem(
-                serverId = host.serverId,
-                serverName = host.serverName,
-                output = host.output,
-                status = BroadcastStatus.entries.firstOrNull { it.name == host.status } ?: BroadcastStatus.Failure,
-                truncated = host.truncated,
-                note = host.note,
-            )
-        }
+    suspend fun fleetRunResults(runId: Int): List<BroadcastResultItem> = repository.fleetRunHosts(runId).map(::fleetRunResult)
+
+    /** [fleetRunResults], following the run as its hosts finish: a run another app started is saved as it runs. */
+    fun fleetRunResultsFlow(runId: Int): Flow<List<BroadcastResultItem>> =
+        repository.fleetRunHostsFlow(runId).map { hosts -> hosts.map(::fleetRunResult) }
+
+    private fun fleetRunResult(host: FleetRunHostEntity) = BroadcastResultItem(
+        serverId = host.serverId,
+        serverName = host.serverName,
+        output = host.output,
+        status = BroadcastStatus.entries.firstOrNull { it.name == host.status } ?: BroadcastStatus.Failure,
+        truncated = host.truncated,
+        note = host.note,
+    )
+
+    /**
+     * Ends the hosts of runs other apps or AI assistants started that Android cut off with the
+     * process running them, so the history stops showing them as running.
+     */
+    fun endStaleLiveRuns() {
+        val note = getApplication<Application>().getString(R.string.external_run_cut_off)
+        viewModelScope.launch { repository.endStaleLiveRuns(System.currentTimeMillis(), note) }
+    }
+
+    /** The run Fleet's history should open, by its key: from a run's notification or a token's use. */
+    var openFleetRunKey by mutableStateOf<String?>(null)
+        private set
+
+    fun openFleetRun(runKey: String) {
+        openFleetRunKey = runKey
+        // The history is on Fleet's Broadcast tab.
+        fleetTabIndex = 1
+        navigateTo(Screen.Fleet)
+    }
+
+    fun consumeOpenFleetRun() {
+        openFleetRunKey = null
+    }
 
     fun deleteFleetRun(runId: Int) {
         viewModelScope.launch { repository.deleteFleetRun(runId) }
@@ -14625,6 +14657,14 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.deleteAutomationGrant(id) }
     }
 
+    /** Grant [grantId]'s uses, newest first. */
+    fun automationUses(grantId: Int): Flow<List<AutomationUseEntity>> = repository.automationUsesFlow(grantId)
+
+    /** Whether runs with grant [id]'s token show a notification ([RunNotify]). */
+    fun saveAutomationNotify(id: Int, notify: String) {
+        viewModelScope.launch { repository.setAutomationGrantNotify(id, notify) }
+    }
+
     // ── AI ASSISTANTS (MCP) ──
     /** The MCP server's settings, live from the settings table. */
     val mcpConfig: StateFlow<McpConfig> = repository.settingsFlow
@@ -14679,6 +14719,11 @@ class AppViewModel @JvmOverloads constructor(
 
     fun clearMcpCalls() {
         viewModelScope.launch { repository.clearMcpCalls() }
+    }
+
+    /** Whether runs an AI assistant starts show a notification ([RunNotify]). */
+    fun saveMcpNotify(notify: String) {
+        viewModelScope.launch { repository.insertSetting(McpSettings.NOTIFY, RunNotify.of(notify)) }
     }
 
     /** The user's answer to an assistant's request; the dialog asks for the lock before approving. */
@@ -15466,6 +15511,7 @@ class AppViewModel @JvmOverloads constructor(
             if (closedSelection.automation) settings.associate { it.key to it.value } else emptyMap(),
             { id -> scriptRef(id) },
             exportedServerIds,
+            history.automationUses,
         )
 
         return org.json.JSONObject()
@@ -15507,6 +15553,7 @@ class AppViewModel @JvmOverloads constructor(
             fleetRuns = if (selection.fleetHistory) repository.fleetRunsForBackup() else emptyList(),
             assistantCalls = if (selection.assistantLog) repository.getMcpCalls() else emptyList(),
             automationGrants = if (selection.automation) repository.getAutomationGrants() else emptyList(),
+            automationUses = if (selection.automation) repository.automationUsesForBackup() else emptyMap(),
         )
     }
 

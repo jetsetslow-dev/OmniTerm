@@ -80,7 +80,7 @@ class AppMcpBackend(
 
     override fun dangerHits(command: String): List<String> = commandDangerHits(command)
 
-    override suspend fun run(script: QuickScriptEntity, servers: List<ServerEntity>, values: Map<String, String>?): Automation.RunResult =
+    override suspend fun run(script: QuickScriptEntity, servers: List<ServerEntity>, values: Map<String, String>?, by: String): Automation.RunResult =
         AutomationRunner(context, repository, transport, runTimeoutMs = McpSettings.RUN_TIMEOUT_MS)
-            .runScript(script, servers, values, FleetRunHistory.SOURCE_MCP)
+            .runScript(script, servers, values, FleetRunHistory.SOURCE_MCP, config().notify, by)
 }

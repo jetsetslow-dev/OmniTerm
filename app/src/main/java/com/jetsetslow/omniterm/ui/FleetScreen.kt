@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -258,6 +259,8 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     val quickScripts by viewModel.quickScripts.collectAsStateWithLifecycle()
     var confirmClearOutputs by remember { mutableStateOf(false) }
     var showRunHistory by remember { mutableStateOf(false) }
+    // A run's notification, or a token's use, opens it in the history.
+    LaunchedEffect(viewModel.openFleetRunKey) { if (viewModel.openFleetRunKey != null) showRunHistory = true }
     var showPresetPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
     val commandPresets = quickScripts
@@ -1097,19 +1100,47 @@ private fun fleetRunOutcome(summary: FleetRunSummary): String =
 private fun fleetRunSourceLabel(source: String): String? = when (source) {
     FleetRunHistory.SOURCE_RETRY -> stringResource(R.string.fleet_history_source_retry)
     FleetRunHistory.SOURCE_RUNBOOK -> stringResource(R.string.fleet_history_source_runbook)
+    FleetRunHistory.SOURCE_AUTOMATION -> stringResource(R.string.fleet_history_source_automation)
     FleetRunHistory.SOURCE_MCP -> stringResource(R.string.fleet_history_source_mcp)
     else -> null
 }
 
+/** The history's filters, in the order they are offered: a retry counts as a Broadcast run. */
+private val FLEET_RUN_GROUPS = listOf(
+    FleetRunHistory.SOURCE_FLEET, FleetRunHistory.SOURCE_RUNBOOK, FleetRunHistory.SOURCE_AUTOMATION, FleetRunHistory.SOURCE_MCP,
+)
+
+private fun fleetRunGroup(source: String): String =
+    if (source == FleetRunHistory.SOURCE_RETRY) FleetRunHistory.SOURCE_FLEET else source
+
+/** A run's line in the history: when, how it went (or how far it is), and who started it. */
+@Composable
+private fun fleetRunLine(summary: FleetRunSummary): String = listOfNotNull(
+    formatShortDateTime(summary.run.startedAt),
+    if (summary.running > 0) stringResource(R.string.fleet_history_running, summary.hosts - summary.running, summary.hosts)
+    else fleetRunOutcome(summary),
+    fleetRunSourceLabel(summary.run.source),
+).joinToString(" · ")
+
 /**
- * Fleet's run history: the newest [FleetRunHistory.KEEP_RUNS] runs, kept on this device only.
- * A run opens to its hosts' results, to share, delete, or put back into Broadcast.
+ * Fleet's run history: the newest [FleetRunHistory.KEEP_RUNS] runs, kept on this device only. A
+ * run another app or an AI assistant started shows while it runs. A run opens to its hosts'
+ * results, to share, delete, or put back into Broadcast; [AppViewModel.openFleetRunKey] opens one
+ * straight away.
  */
 @Composable
 private fun FleetRunHistoryDialog(viewModel: AppViewModel, allHosts: List<ServerEntity>, onDismiss: () -> Unit) {
     val runs by viewModel.fleetRunHistory.collectAsStateWithLifecycle()
     var openRunId by remember { mutableStateOf<Int?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
+    var filter by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { viewModel.endStaleLiveRuns() }
+    val wanted = viewModel.openFleetRunKey
+    LaunchedEffect(wanted, runs) {
+        if (wanted == null || runs.isEmpty()) return@LaunchedEffect
+        runs.firstOrNull { it.run.runKey == wanted }?.let { openRunId = it.run.id }
+        viewModel.consumeOpenFleetRun()
+    }
     val open = openRunId?.let { id -> runs.firstOrNull { it.run.id == id } }
     if (open != null) {
         FleetRunDetailsDialog(viewModel, open, allHosts, onBack = { openRunId = null }, onDone = onDismiss)
@@ -1119,15 +1150,44 @@ private fun FleetRunHistoryDialog(viewModel: AppViewModel, allHosts: List<Server
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.fleet_history_title)) },
         text = {
+            val groups = FLEET_RUN_GROUPS.filter { group -> runs.any { fleetRunGroup(it.run.source) == group } }
+            val shown = runs.filter { filter == null || fleetRunGroup(it.run.source) == filter }
             if (runs.isEmpty()) {
                 Text(stringResource(R.string.fleet_history_empty), modifier = Modifier.testTag("fleet.history.empty"))
-            } else {
+            } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (groups.size > 1) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = filter == null,
+                            onClick = { filter = null },
+                            label = { Text(stringResource(R.string.fleet_history_filter_all), fontSize = 12.sp) },
+                            modifier = Modifier.testTag("fleet.history.filter.all"),
+                        )
+                        for (group in groups) {
+                            FilterChip(
+                                selected = filter == group,
+                                onClick = { filter = group },
+                                label = {
+                                    Text(
+                                        fleetRunSourceLabel(group) ?: stringResource(R.string.fleet_history_filter_fleet),
+                                        fontSize = 12.sp,
+                                    )
+                                },
+                                modifier = Modifier.testTag("fleet.history.filter.$group"),
+                            )
+                        }
+                    }
+                }
+                if (shown.isEmpty()) {
+                    Text(stringResource(R.string.fleet_history_filter_empty), modifier = Modifier.testTag("fleet.history.filter.empty"))
+                }
                 OverflowLazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).testTag("fleet.history.list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(runs, key = { it.run.id }) { summary ->
+                    items(shown, key = { it.run.id }) { summary ->
                         val accent = when {
+                            summary.running > 0 -> OmniColors.cyan
                             summary.hosts > 0 && summary.succeeded == summary.hosts -> OmniColors.green
                             summary.succeeded == 0 -> OmniColors.red
                             else -> OmniColors.amber
@@ -1145,15 +1205,7 @@ private fun FleetRunHistoryDialog(viewModel: AppViewModel, allHosts: List<Server
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Text(
-                                listOfNotNull(
-                                    formatShortDateTime(summary.run.startedAt),
-                                    fleetRunOutcome(summary),
-                                    fleetRunSourceLabel(summary.run.source),
-                                ).joinToString(" · "),
-                                fontSize = 11.sp,
-                                color = accent,
-                            )
+                            Text(fleetRunLine(summary), fontSize = 11.sp, color = accent)
                         }
                     }
                 }
@@ -1198,7 +1250,9 @@ private fun FleetRunDetailsDialog(
 ) {
     val run = summary.run
     val context = LocalContext.current
-    val hosts by produceState<List<BroadcastResultItem>?>(null, run.id, run.finishedAt) { value = viewModel.fleetRunResults(run.id) }
+    // Followed, not read once: a run another app started fills in as its hosts finish.
+    val hosts by remember(run.id) { viewModel.fleetRunResultsFlow(run.id) }.collectAsStateWithLifecycle<List<BroadcastResultItem>?>(null)
+    val running = summary.running > 0
     val expanded = remember(run.id) { mutableStateMapOf<Int, Boolean>() }
     var confirmDelete by remember { mutableStateOf(false) }
     AlertDialog(
@@ -1213,11 +1267,15 @@ private fun FleetRunDetailsDialog(
                     Text("$ ${run.command}", fontFamily = OmniFonts.mono, fontSize = 12.sp)
                     Text(
                         listOfNotNull(
-                            stringResource(
-                                R.string.fleet_history_ran_at,
-                                formatDateTime(run.startedAt),
-                                formatTook(run.finishedAt - run.startedAt),
-                            ),
+                            if (running) {
+                                stringResource(R.string.fleet_history_running_since, formatDateTime(run.startedAt))
+                            } else {
+                                stringResource(
+                                    R.string.fleet_history_ran_at,
+                                    formatDateTime(run.startedAt),
+                                    formatTook(run.finishedAt - run.startedAt),
+                                )
+                            },
                             fleetRunSourceLabel(run.source),
                         ).joinToString(" · "),
                         fontSize = 11.sp,
@@ -1270,8 +1328,9 @@ private fun FleetRunDetailsDialog(
         },
         dismissButton = {
             Row {
-                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.testTag("fleet.history.delete")) {
-                    Text(stringResource(R.string.delete), color = Color.Red)
+                // A run still going would only save itself again; it can go once it ends.
+                TextButton(onClick = { confirmDelete = true }, enabled = !running, modifier = Modifier.testTag("fleet.history.delete")) {
+                    Text(stringResource(R.string.delete), color = if (running) Color.Unspecified else Color.Red)
                 }
                 TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
             }

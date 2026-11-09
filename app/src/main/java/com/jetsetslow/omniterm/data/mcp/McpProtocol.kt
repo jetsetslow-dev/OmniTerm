@@ -66,11 +66,25 @@ object Mcp {
 /** Who is calling, as far as the request says: the client's own name, for the record of calls. */
 data class McpCaller(val clientName: String)
 
-/** What a tool returns: text for the model, the same as JSON when the tool has an output shape. */
-data class McpToolResult(val text: String, val structured: JsonObject? = null, val isError: Boolean = false)
+/**
+ * What a tool returns: text for the model, the same as JSON when the tool has an output shape. For
+ * the record of calls: [refused] when nothing was done (a bad argument, a host not shared, a run not
+ * approved), [runKey] for the Fleet run a run tool started, and [detail] for its line there.
+ */
+data class McpToolResult(
+    val text: String,
+    val structured: JsonObject? = null,
+    val isError: Boolean = false,
+    val refused: Boolean = false,
+    val runKey: String? = null,
+    val detail: String? = null,
+)
 
-/** A tool's refusal or a bad argument, returned to the model as an error result it can act on. */
-class McpToolError(message: String) : Exception(message)
+/**
+ * A tool's refusal or a bad argument, returned to the model as an error result it can act on.
+ * [refused] is false for a tool that tried and failed, such as a host that did not answer.
+ */
+class McpToolError(message: String, val refused: Boolean = true) : Exception(message)
 
 /**
  * One tool. The hints say what it does to hosts, for clients that ask before calling: a client may
@@ -220,7 +234,7 @@ class McpHandler(
         val result = try {
             tool.call(arguments, caller)
         } catch (e: McpToolError) {
-            McpToolResult(e.message.orEmpty(), isError = true)
+            McpToolResult(e.message.orEmpty(), isError = true, refused = e.refused)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             // Never the exception's own text: it may name an address or a path.

@@ -30,13 +30,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AutomationGrantEntity::class,
         McpCallEntity::class,
         TunnelEntity::class,
+        AutomationUseEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 29,
+    version = 30,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -60,6 +61,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun automationGrantDao(): AutomationGrantDao
     abstract fun mcpCallDao(): McpCallDao
     abstract fun tunnelDao(): TunnelDao
+    abstract fun automationUseDao(): AutomationUseDao
 
     companion object {
         @Volatile
@@ -372,6 +374,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Runs other apps and AI assistants start, as they run: each automation token's
+        // notification choice and use history, and the run each AI assistant call started.
+        private val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `automation_grants` ADD COLUMN `notify` TEXT NOT NULL DEFAULT 'failures'")
+                db.execSQL("ALTER TABLE `mcp_calls` ADD COLUMN `runKey` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `automation_uses` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`grantId` INTEGER NOT NULL, `at` INTEGER NOT NULL, `outcome` TEXT NOT NULL, " +
+                        "`detail` TEXT NOT NULL, `runKey` TEXT)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_automation_uses_grantId_at` ON `automation_uses` (`grantId`, `at`)")
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -448,6 +465,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_26_27,
             MIGRATION_27_28,
             MIGRATION_28_29,
+            MIGRATION_29_30,
         )
 
         fun getDatabase(context: Context): AppDatabase {

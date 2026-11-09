@@ -1,8 +1,5 @@
 package com.jetsetslow.omniterm
 
-import android.app.Notification
-import android.app.NotificationManager
-import android.os.Build
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -11,7 +8,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.AppDatabase
@@ -19,6 +15,7 @@ import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.HostChecks
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
+import com.jetsetslow.omniterm.ui.alertNotificationId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -41,8 +38,7 @@ class E2eHostChecksTest {
     @Test fun hostChecksReadTheFixtureAndAnUnreachableCopyAlerts() {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_host_checks") == "yes")
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         val repository = AppRepository(AppDatabase.getDatabase(context))
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.waitUntil(15_000) { vm.servers.value.any { it.name == HOST } }
@@ -57,14 +53,7 @@ class E2eHostChecksTest {
             repository.insertServer(host.copy(id = 0, name = COPY, host = "127.0.0.1", port = 1)).toInt()
         }
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                instrumentation.uiAutomation.executeShellCommand(
-                    "pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS",
-                ).close()
-            }
+            TestNotifications.allow()
             vm.alertRules.value.filter { it.notes == NOTE }.forEach(vm::deleteAlertRule)
             composeRule.waitUntil(10_000) { vm.alertRules.value.none { it.notes == NOTE } }
             vm.saveAlertsEnabled(true)
@@ -126,12 +115,7 @@ class E2eHostChecksTest {
         }
     }
 
-    private fun notificationText(ruleId: Int, serverId: Int): String? {
-        val manager = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(NotificationManager::class.java)
-        val expectedId = "alert_${ruleId}_$serverId".hashCode()
-        return manager?.activeNotifications?.firstOrNull { it.id == expectedId }
-            ?.notification?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-    }
+    private fun notificationText(ruleId: Int, serverId: Int): String? = TestNotifications.text(alertNotificationId(ruleId, serverId))
 
     private companion object {
         const val HOST = "E2E Foreground Demo"

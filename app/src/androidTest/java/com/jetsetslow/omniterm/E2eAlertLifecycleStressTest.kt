@@ -1,8 +1,6 @@
 package com.jetsetslow.omniterm
 
-import android.app.NotificationManager
 import android.content.pm.ActivityInfo
-import android.os.Build
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -10,10 +8,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
-import androidx.core.content.ContextCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
+import com.jetsetslow.omniterm.ui.alertNotificationId
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -30,7 +28,6 @@ class E2eAlertLifecycleStressTest {
             InstrumentationRegistry.getArguments().getString("omniterm_e2e_alerts") == "yes",
         )
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val targetContext = instrumentation.targetContext
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         val originalInterval = vm.telemetryIntervalMs / 1000L
         val originalAlertsEnabled = vm.alertsEnabled
@@ -43,20 +40,8 @@ class E2eAlertLifecycleStressTest {
         val host = requireNotNull(vm.servers.value.find { it.name == HOST })
 
         try {
-            // This opt-in lab test validates actual notifications, so grant the runtime permission
-            // through the instrumentation shell when the dedicated test device has it denied.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(targetContext, android.Manifest.permission.POST_NOTIFICATIONS) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                instrumentation.uiAutomation.executeShellCommand(
-                    "pm grant ${targetContext.packageName} android.permission.POST_NOTIFICATIONS",
-                ).close()
-                composeRule.waitUntil(5_000) {
-                    ContextCompat.checkSelfPermission(targetContext, android.Manifest.permission.POST_NOTIFICATIONS) ==
-                        android.content.pm.PackageManager.PERMISSION_GRANTED
-                }
-            }
+            // This opt-in lab test validates actual notifications.
+            TestNotifications.allow()
 
             // Make reruns deterministic without disturbing non-E2E rules.
             vm.alertRules.value.filter { it.notes == NOTE }.forEach(vm::deleteAlertRule)
@@ -193,13 +178,8 @@ class E2eAlertLifecycleStressTest {
         }
     }
 
-    private fun hasAlertNotification(ruleId: Int, serverId: Int): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val manager = context.getSystemService(NotificationManager::class.java)
-        val expectedId = "alert_${ruleId}_$serverId".hashCode()
-        return manager?.activeNotifications?.any { it.id == expectedId } == true
-    }
+    private fun hasAlertNotification(ruleId: Int, serverId: Int): Boolean =
+        TestNotifications.posted(alertNotificationId(ruleId, serverId)) != null
 
     private companion object {
         const val HOST = "E2E Foreground Demo"

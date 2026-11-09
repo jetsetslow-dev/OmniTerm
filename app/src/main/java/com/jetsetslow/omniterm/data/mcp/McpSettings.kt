@@ -1,8 +1,9 @@
 package com.jetsetslow.omniterm.data.mcp
 
 /**
- * The MCP server's settings. All of them stay on this phone and never travel in a backup, so
- * restoring one never opens the phone to an assistant the user did not allow here.
+ * The MCP server's settings. They never travel with a backup's other settings: the Automation
+ * section carries them ([com.jetsetslow.omniterm.ui.BackupAccess]) without the switch, so restoring
+ * a backup never opens the phone to an assistant until the user turns the server on here.
  */
 object McpSettings {
     /** Whether the server runs; off unless the user turns it on. */
@@ -19,8 +20,10 @@ object McpSettings {
     const val TUNNEL_HOST = "mcp_tunnel_host"
     /** The port that host listens on, on its own loopback address. */
     const val TUNNEL_PORT = "mcp_tunnel_port"
+    /** Whether a run an assistant starts shows a notification: a [com.jetsetslow.omniterm.data.RunNotify] choice. */
+    const val NOTIFY = "mcp_notify"
 
-    val ALL = setOf(ENABLED, TOKEN_HASH, HOSTS, ANY_COMMAND, PORT, TUNNEL_HOST, TUNNEL_PORT)
+    val ALL = setOf(ENABLED, TOKEN_HASH, HOSTS, ANY_COMMAND, PORT, TUNNEL_HOST, TUNNEL_PORT, NOTIFY)
 
     const val DEFAULT_PORT = 47821
     /** Calls kept in the record. */
