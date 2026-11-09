@@ -21,15 +21,8 @@ object ScriptChecks {
     fun scriptId(rule: AlertRuleEntity): Int? = rule.target.trim().toIntOrNull()?.takeIf { it > 0 }
 
     /** Why [script] cannot be a check, or null when it can. [dangerHits] are what the danger list found in it. */
-    fun problem(script: QuickScriptEntity?, dangerHits: List<String>): String? = when {
-        script == null -> "Pick a saved script"
-        script.command.isBlank() -> "That script has no command"
-        dangerHits.isNotEmpty() ->
-            "A check runs every minute without asking, so it must only read; this script looks destructive (${dangerHits.joinToString(", ")})."
-        ScriptParams.parse(script.command).any { it.default.isEmpty() } ->
-            "Give every {{value}} in the script a default ({{name=value}}): a check has nobody to ask."
-        else -> null
-    }
+    fun problem(script: QuickScriptEntity?, dangerHits: List<String>): String? =
+        UnattendedScripts.problem(script, dangerHits, UnattendedScripts.Runner.CHECK)
 
     /**
      * The reading from what the SSH transport returned for one run: the exit status and the first

@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 26
+        const val CURRENT_VERSION = 27
     }
 
     @get:Rule
@@ -365,6 +365,38 @@ class AppDatabaseMigrationTest {
                 db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('abc', 3, 4, 'df', NULL, 'fleet')")
             }
             assertTrue(duplicate.isFailure)
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToTwentySevenAddsNoAutomationGrants() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-26-automation"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 26).use { db ->
+            db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('abc', 1, 2, 'uptime', NULL, 'fleet')")
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT COUNT(*) FROM fleet_runs").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("the run history is kept", 1, cursor.getInt(0))
+            }
+            db.query("SELECT COUNT(*) FROM automation_grants").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade makes no token", 0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (7, '1,2', 'aa', 'Tasker', 1, NULL)")
+            val duplicate = runCatching {
+                db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (8, '3', 'aa', 'Other', 2, NULL)")
+            }
+            assertTrue("one grant per token", duplicate.isFailure)
         }
         context.deleteDatabase(databaseName)
     }

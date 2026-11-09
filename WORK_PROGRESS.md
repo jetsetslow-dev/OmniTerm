@@ -211,7 +211,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   classes, lint, strict dependency verification, no advisories or outstanding updates, secret scan,
   no new duplicates, the API 35 device matrix, and CodeQL 2.27.4 with no alerts (80,155 lines).
 
-## Checkpoint C5 — Fleet run history (this commit)
+## Checkpoint C5 — Fleet run history (35ec118)
 
 - Schema v26 (`MIGRATION_25_26`): `fleet_runs` (one row per run, unique on the run's own id) and
   `fleet_run_hosts` (one row per host in it). A run keeps its command as written, the saved script
@@ -257,6 +257,64 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   no new duplicates (its first run caught the Share code copied into the history; both now use
   one helper), the API 35 device matrix, and CodeQL 2.27.4 with no alerts (80,960 lines).
 
+## Checkpoint D1 — Tasker and other apps run a saved script (this commit)
+
+- Tools → Automation, off by default (`automation_enabled`). A token runs one saved script on the
+  hosts picked for it: `omt_` plus 128 random bits, shown once, stored only as its SHA-256 in
+  `automation_grants` (schema v27, `MIGRATION_26_27`), revoked from the list. Making one asks for
+  App Lock, else the phone's screen lock, else a plain confirmation (`SensitiveActionDialog`, now
+  shared with sudo; `AppLockAuthDialog` is the one App Lock dialog, also used by Settings' Save).
+  The token is copied as sensitive text and cleared from the clipboard after a minute on the app's
+  scope. The switch joins `DEVICE_LOCAL_SETTINGS` (one list, used by export and restore), so a
+  backup never carries it either way; grants are never in a backup.
+- Ways in, both exported, both deciding only by the token: the Locale/Tasker plug-in
+  (`TaskerEditActivity` for EDIT_SETTING, `TaskerFireReceiver` for FIRE_SETTING) and the
+  `com.jetsetslow.omniterm.action.RUN_SCRIPT` broadcast (`AutomationReceiver`) with an optional
+  reply to one named package and action. The edit screen makes nothing: it checks a pasted token,
+  shows the script, hosts and the calling app, and saves only for an app waiting for a result
+  (with REQUESTED_TIMEOUT and the relevant variables when the host supports them). An unknown
+  token gets no answer; a known one always goes to the job, which answers "automation is off" too.
+  Tasker gets result code 3 (pending), then its completion intent (which must name an app; its
+  selector is dropped) with `%output`, `%exit`, `%failed_hosts` and `%errmsg` on failure.
+- The run is a JobScheduler job (expedited on Android 12+, where a broadcast may not start a
+  foreground service; a plain job when Android refuses that). `AutomationRunner` probes each
+  host's OS, skips hosts whose script names another OS, fills `{{value}}` defaults for the host's
+  shell, runs built-in presets in the app's own form and anything else in the login shell, runs 8
+  hosts at once, gives up after 9 minutes (exit 124; unreachable is 255), and records the run in
+  Fleet's history as `automation`. Unknown host keys are refused (no one to approve them). Shared
+  rather than copied: `HostCredentials` (credentials for screens and jobs), `UnattendedScripts`
+  (Script Check's refusals, worded for each), `builtInPresetCommandFor`, `sshCommandExit` /
+  `sshCommandOutput`, `FleetRunHistory.host`.
+- Protocol facts are from Tasker's plug-in page and the Locale spec (Apache-2.0); Tasker's own
+  TaskerPlugin.java states no licence, so nothing is copied. Departure: Locale says not to put
+  credentials in the bundle; the token is the credential, scoped to one script and revocable, and
+  the README says Tasker's exports contain it. The `<queries>` entry makes Tasker visible so its
+  completion intent is delivered.
+- Credit (README): Termux:Tasker and Home Assistant for Android; Tasker's docs and the Locale spec.
+- Tests: `AutomationRobolectricTest` (11: token shape and hash, ids, OS skip, result, variables,
+  bundle, completion intent, reply, job extras), `AutomationRunnerRobolectricTest` (10: runs and
+  records, switch off, revoked or wrong token, refusals, defaults per shell and login shell, preset
+  form, OS skip, unreachable, timeout, gate), `AutomationBackupRobolectricTest` (2),
+  `ToolsPathTextRobolectricTest` (now 8 strings), `AppDatabaseMigrationTest` 26 → 27. Device:
+  `AutomationBroadcastTest` and `TaskerEditActivityTest` (no host needed, run in the gate's
+  matrix) and `E2eAutomationTest` (`-e omniterm_e2e_automation yes`, lab host).
+- Guards seen failing on unfixed code. Unit (15): the switch ignored; the token hash not compared;
+  the unattended rules skipped; a user script sent to `sh`; a preset not run in its own form; no
+  OS skip; no time limit; the run not recorded; a completion intent naming no app accepted; its
+  selector kept; a reply to any app; `%errmsg` set on success; any token shape accepted; a skipped
+  host failing the run; the switch carried in a backup. Device: answering OK instead of "pending"
+  fails `aKnownTokenIsToldAutomationIsOff`.
+- API 35: `AutomationBroadcastTest` (3) and `TaskerEditActivityTest` (2) passed, and
+  `E2eAutomationTest` against the repository fixture passed; then all six passed five times in a
+  row.
+- Package visibility, checked on API 35: a broadcast from the app reached a manifest receiver of a
+  package `dumpsys package queries` says it cannot see, both by package and by component. So the
+  `<queries>` entry is not what delivers Tasker's result there; it stays, for builds that filter.
+  The manifest comment claims more than that and is reworded in the next commit.
+- `./scripts/local-pr-check.sh --full` passed on the final tree: both unit variants, five repeats of
+  the changed test classes, lint, dependency and SBOM verification, the API 35 device suite (85
+  tests, the automation classes among them), and CodeQL 2.27.4 with no alerts (82,851 lines).
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
@@ -287,8 +345,8 @@ Later on Nov 8 the user settled the rest:
 
 ## Remaining, in order
 
-1. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
-   `ssh://` links, share target, one-tap public-key install.
+1. Automation, the rest: `ssh://` links, share target, one-tap public-key install (D1, the Tasker
+   plug-in and broadcast, is done).
 2. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
    on-phone approval for writes, audit log, `PRIVACY.md` section.
 3. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one

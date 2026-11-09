@@ -44,6 +44,8 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
         </intent>
+        <!-- Tasker, so an automation run's result reaches it (Tools → Automation). -->
+        <package android:name="net.dinglisch.android.taskerm" />
     </queries>
 
     <!-- Android 15+ SystemUI obtains BiometricPrompt branding with
@@ -135,6 +137,44 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/omniterm_widget_info" />
         </receiver>
+
+        <!-- Automation (Tools → Automation): other apps run a saved script with a token the user
+             made. Exported because other apps send these; the token decides what runs, and an
+             unknown token gets no answer. -->
+        <receiver
+            android:name=".automation.AutomationReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.jetsetslow.omniterm.action.RUN_SCRIPT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- The Locale/Tasker plug-in: its fire receiver and its edit screen, as the plug-in spec
+             requires them. The edit screen only checks a pasted token; it makes none. -->
+        <receiver
+            android:name=".automation.TaskerFireReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
+            </intent-filter>
+        </receiver>
+
+        <activity
+            android:name=".automation.TaskerEditActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MyApplication"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.EDIT_SETTING" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".automation.AutomationJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- yubikit-android declares two prompt activities OmniTerm never starts. -->
         <activity android:name="com.yubico.yubikit.android.ui.OtpActivity" tools:node="remove" />

@@ -369,4 +369,36 @@ object FleetRunHistory {
     const val SOURCE_FLEET = "fleet"
     const val SOURCE_RETRY = "retry"
     const val SOURCE_RUNBOOK = "runbook"
+    const val SOURCE_AUTOMATION = "automation"
+
+    /** [output]'s end, at most [OUTPUT_CHARS], as one host's row; [runId] is set when the run is saved. */
+    fun host(serverId: Int, serverName: String, status: String, note: String?, output: String, truncated: Boolean) =
+        FleetRunHostEntity(
+            runId = 0,
+            serverId = serverId,
+            serverName = serverName,
+            status = status,
+            note = note,
+            output = output.takeLast(OUTPUT_CHARS),
+            truncated = truncated || output.length > OUTPUT_CHARS,
+        )
 }
+
+/**
+ * Lets other apps (Tasker and similar) run one saved script on chosen hosts, when they present the
+ * matching token. The token is shown once when the grant is made and never stored: only its
+ * SHA-256 is. Deleting the grant revokes it. Not in backups.
+ */
+@Entity(tableName = "automation_grants", indices = [Index(value = ["tokenHash"], unique = true)])
+data class AutomationGrantEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val scriptId: Int,
+    // The hosts it may run on, as comma-separated server ids.
+    val serverIds: String,
+    // Lower-case hex SHA-256 of the token.
+    val tokenHash: String,
+    // Where it is used: "Tasker", or the name the user gave it.
+    val label: String,
+    val createdAt: Long,
+    val lastUsedAt: Long? = null,
+)

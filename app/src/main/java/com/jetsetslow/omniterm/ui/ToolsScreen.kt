@@ -188,7 +188,7 @@ private val APP_LOCK_TIMEOUT_PRESETS = listOf(
     "5 min" to 300_000L,
 )
 
-private fun copySensitiveClipboard(
+internal fun copySensitiveClipboard(
     context: android.content.Context,
     scope: kotlinx.coroutines.CoroutineScope,
     label: String,
@@ -225,6 +225,7 @@ internal val toolsItems = listOf(
     Triple(Screen.AuthKeys, "Auth & keys", Icons.Filled.Key),
     Triple(Screen.Backup, "App backup", Icons.Filled.Backup),
     Triple(Screen.HealthScoring, "Health scoring", Icons.Filled.MonitorHeart),
+    Triple(Screen.Automation, "Automation", Icons.Filled.SmartToy),
     Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
     Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
 )
@@ -1163,7 +1164,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
  * tapped, with an [error] or a [hint] under it.
  */
 @Composable
-private fun ScriptChoiceField(
+internal fun ScriptChoiceField(
     label: String,
     choice: String,
     tag: String,
@@ -4359,28 +4360,15 @@ private fun SettingsSaveAuthDialog(
     onCancel: () -> Unit,
     onAuthenticated: () -> Unit,
 ) {
-    var pin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    BiometricPromptOnShow(viewModel, R.string.authenticate_to_save_settings, R.string.confirm_it_s_you, onAuthenticated)
-
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.authenticate_to_save)) },
-        text = {
-            Column {
-                Text(stringResource(R.string.enter_your_app_pin_to_apply), fontSize = 14.sp)
-                Spacer(Modifier.height(8.dp))
-                AppPinField(pin, onPinChange = { pin = it; error = null }, error = error)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val err = viewModel.verifyPinForSensitiveAction(pin)
-                if (err == null) onAuthenticated() else error = err
-            }) { Text(stringResource(R.string.confirm)) }
-        },
-        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+    AppLockAuthDialog(
+        viewModel = viewModel,
+        key = Unit,
+        title = R.string.authenticate_to_save,
+        text = stringResource(R.string.enter_your_app_pin_to_apply),
+        biometricTitle = R.string.authenticate_to_save_settings,
+        biometricSubtitle = R.string.confirm_it_s_you,
+        onCancel = onCancel,
+        onAuthenticated = onAuthenticated,
     )
 }
 
@@ -4667,7 +4655,7 @@ private fun CrashHistoryCard() {
  * Behavior") clearly distinct from their sub-settings, which previously shared the same bold style.
  */
 @Composable
-private fun SettingsCardHeader(title: String, subtitle: String, accent: Color, modifier: Modifier = Modifier) {
+internal fun SettingsCardHeader(title: String, subtitle: String, accent: Color, modifier: Modifier = Modifier) {
     Column(modifier) {
         Text(
             title.uppercase(java.util.Locale.US),

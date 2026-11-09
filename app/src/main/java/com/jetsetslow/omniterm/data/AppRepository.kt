@@ -147,7 +147,17 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {
         db.quickScriptDao().deleteScript(script)
         db.alertRuleDao().clearRunbook(script.id)
+        // A grant for a deleted script could never run; it goes with it.
+        db.automationGrantDao().deleteForScript(script.id)
     }
+
+    // Automation grants
+    val automationGrantsFlow: Flow<List<AutomationGrantEntity>> = db.automationGrantDao().grantsFlow()
+    suspend fun automationGrantByTokenHash(tokenHash: String): AutomationGrantEntity? = db.automationGrantDao().byTokenHash(tokenHash)
+    suspend fun automationGrantById(id: Int): AutomationGrantEntity? = db.automationGrantDao().byId(id)
+    suspend fun insertAutomationGrant(grant: AutomationGrantEntity): Int = db.automationGrantDao().insert(grant).toInt()
+    suspend fun deleteAutomationGrant(id: Int) = db.automationGrantDao().delete(id)
+    suspend fun markAutomationGrantUsed(id: Int, at: Long) = db.automationGrantDao().markUsed(id, at)
 
     // Fleet run history
     val fleetRunsFlow: Flow<List<FleetRunSummary>> = db.fleetRunDao().summariesFlow()

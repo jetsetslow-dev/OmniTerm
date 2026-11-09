@@ -446,3 +446,27 @@ interface FleetRunDao {
     @Query("DELETE FROM fleet_runs")
     suspend fun clearRuns()
 }
+
+@Dao
+interface AutomationGrantDao {
+    @Query("SELECT * FROM automation_grants ORDER BY createdAt DESC, id DESC")
+    fun grantsFlow(): Flow<List<AutomationGrantEntity>>
+
+    @Query("SELECT * FROM automation_grants WHERE tokenHash = :tokenHash")
+    suspend fun byTokenHash(tokenHash: String): AutomationGrantEntity?
+
+    @Query("SELECT * FROM automation_grants WHERE id = :id")
+    suspend fun byId(id: Int): AutomationGrantEntity?
+
+    @Insert
+    suspend fun insert(grant: AutomationGrantEntity): Long
+
+    @Query("DELETE FROM automation_grants WHERE id = :id")
+    suspend fun delete(id: Int)
+
+    @Query("DELETE FROM automation_grants WHERE scriptId = :scriptId")
+    suspend fun deleteForScript(scriptId: Int)
+
+    @Query("UPDATE automation_grants SET lastUsedAt = :at WHERE id = :id")
+    suspend fun markUsed(id: Int, at: Long)
+}

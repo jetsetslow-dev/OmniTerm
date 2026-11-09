@@ -45,6 +45,7 @@ import com.jetsetslow.omniterm.data.ssh.SecurityKeySignRequest
 import com.jetsetslow.omniterm.data.ssh.SkKeyType
 import com.jetsetslow.omniterm.data.ssh.SshKeyMaterial
 import com.jetsetslow.omniterm.data.ssh.SshWire
+import com.jetsetslow.omniterm.data.ssh.sshCommandExit
 import com.jetsetslow.omniterm.data.fido.SecurityKeyCtap
 import com.yubico.yubikit.core.application.CommandState
 import com.yubico.yubikit.fido.ctap.Ctap2Session
@@ -520,7 +521,8 @@ enum class Screen {
     Backup,
     HealthScoring,
     Settings,
-    About
+    About,
+    Automation,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -1123,6 +1125,16 @@ internal val retiredPresetScripts: List<QuickScriptEntity> = listOf(
  * hands to `powershell -Command "…"`. That text suits cmd only; a PowerShell login shell rejects its
  * `||` and expands `$_` first. See [AppViewModel.builtInPresetCommand].
  */
+/**
+ * [cmd] as a host with [os] runs it when it is a built-in Fleet preset the user has not edited:
+ * as written on a Unix host, as encoded PowerShell on Windows. Null for any other command.
+ */
+internal fun builtInPresetCommandFor(cmd: String, os: String): String? {
+    val preset = builtInFleetPresets.firstOrNull { it.command == cmd } ?: return null
+    return if (RemoteCommands.hasUnixShell(os)) cmd
+    else fleetPresetWindowsScripts[preset.presetKey]?.let(RemoteCommands::powershell)
+}
+
 internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
     "fleet.cpu" to "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime; Get-CimInstance Win32_OperatingSystem | " +
         "ForEach-Object { 'TotalMB=' + [int](\$_.TotalVisibleMemorySize/1024) + ' FreeMB=' + [int](\$_.FreePhysicalMemory/1024) }",
@@ -1134,6 +1146,17 @@ internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
         "elseif (Get-Command podman -ErrorAction SilentlyContinue) { podman ps --format \$f } else { '${RemoteCommands.NO_CONTAINER_RUNTIME}' }",
     "fleet.ports" to "Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess",
     "fleet.kernel" to "[Environment]::OSVersion.VersionString",
+)
+
+/**
+ * Settings that belong to this phone and never travel in a backup, either way: the PIN, the lock
+ * and biometrics, and the Automation switch, so restoring a backup never lets other apps run
+ * scripts the user did not allow on this phone.
+ */
+internal val DEVICE_LOCAL_SETTINGS = setOf(
+    "app_pin", "app_lock_enabled", "biometrics_enabled",
+    "pin_failed_attempts", "pin_locked_until", "app_lock_grace_ms",
+    Automation.SETTING_ENABLED,
 )
 
 /** The built-in Fleet presets, for tests that keep [fleetPresetWindowsScripts] in step with them. */
@@ -1284,6 +1307,7 @@ class AppViewModel @JvmOverloads constructor(
     val quickScripts = repository.scriptsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     /** Fleet's run history, newest first (see [FleetRunHistory]). */
     val fleetRunHistory = repository.fleetRunsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val automationGrants = repository.automationGrantsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val wolTargets = repository.wolTargetsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val portForwards = repository.portForwardsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val networkShares = repository.networkSharesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -1439,6 +1463,8 @@ class AppViewModel @JvmOverloads constructor(
     /** Settings toggle state for built-in command/rule presets. */
     var homelabPresetsEnabled by mutableStateOf(false); private set
     var alertsEnabled by mutableStateOf(true); private set
+    /** Whether other apps may run scripts with a token (Tools → Automation); off until the user turns it on. */
+    var automationEnabled by mutableStateOf(false); private set
     /** Where alerts also go besides this phone's notifications; off unless the user sets it up. */
     var alertForwarding by mutableStateOf(AlertForwarding.Config()); private set
     /** When the last forwarded alert was sent and how it went, for the Alerts screen. */
@@ -2842,6 +2868,7 @@ class AppViewModel @JvmOverloads constructor(
                 reviewPromptShown = reviewPromptShown || list.find { it.key == "review_prompt_shown" }?.value == "true"
                 homelabPresetsEnabled = list.find { it.key == "homelab_presets" }?.value == "true"
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
+                automationEnabled = list.find { it.key == Automation.SETTING_ENABLED }?.value == "true"
                 alertForwarding = AlertForwarding.Config(
                     kind = list.find { it.key == AlertForwarding.SETTING_KIND }?.value
                         ?.takeIf { it in AlertForwarding.KINDS } ?: AlertForwarding.KIND_OFF,
@@ -5989,43 +6016,10 @@ class AppViewModel @JvmOverloads constructor(
     // ── SSH TERMINAL (interactive PTY shell) ──
 
     /** Resolve a [ServerEntity] (+ referenced key/profile rows) into flat credentials. */
-    private suspend fun buildCredentials(srv: ServerEntity): SshCredentials {
-        // Read keys/profiles straight from the DB. The `keys`/`profiles` StateFlows are
-        // `WhileSubscribed`, so when this runs with no active UI collector (telemetry, a
-        // background exec, the test-connection probe) `.value` is the initial emptyList() and
-        // the private key is silently dropped — which surfaced to the user as "invalid
-        // credentials" for key/profile auth even when the key was correct.
-        val allKeys = repository.getAllKeys()
-        var user = srv.username
-        var pass: String? = srv.authPassword
-        var key: SshKeyEntity? = null
-        when (srv.authType) {
-            "key" -> key = allKeys.find { it.alias == srv.authKeyAlias }
-            "profile" -> repository.getAllProfiles().find { it.id == srv.authProfileId }?.let { p ->
-                user = p.username
-                if (p.authType == "password") pass = p.password
-                else key = allKeys.find { it.alias == p.keyAlias }
-            }
-        }
-        val proxyKey = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
-        return SshCredentials(
-            srv.host, srv.port, user, pass, key?.privateKey,
-            proxyType = srv.proxyType,
-            proxyHost = srv.proxyHost,
-            proxyPort = srv.proxyPort,
-            proxyUser = srv.proxyUser,
-            proxyPassword = srv.proxyPassword,
-            proxyKeyPem = proxyKey?.privateKey,
-            certificate = key?.certificate,
-            proxyCertificate = proxyKey?.certificate,
-            keepAliveSeconds = srv.keepAlive,
-            compression = srv.sshCompression,
-            agentForwarding = srv.agentForwarding,
-            // Known Unix hosts only: the OS probe itself, and anything sent before it answers, go
-            // to the login shell as written.
-            posixShell = osByServer[srv.id]?.let(RemoteCommands::hasUnixShell) == true,
-        )
-    }
+    private suspend fun buildCredentials(srv: ServerEntity): SshCredentials =
+        // Known Unix hosts only: the OS probe itself, and anything sent before it answers, go to
+        // the login shell as written.
+        HostCredentials.build(repository, srv, posixShell = osByServer[srv.id]?.let(RemoteCommands::hasUnixShell) == true)
 
     /** [srv]'s credentials for a command the user wrote, which runs in the user's own login shell. */
     private suspend fun loginShellCredentials(srv: ServerEntity): SshCredentials =
@@ -13423,15 +13417,7 @@ class AppViewModel @JvmOverloads constructor(
         val saves = historyRuns.values.filter { it.dirty }.map { run ->
             run.dirty = false
             val hosts = broadcastResults.filter { broadcastCardRun[it.serverId] == run.runKey }.map { item ->
-                FleetRunHostEntity(
-                    runId = 0,
-                    serverId = item.serverId,
-                    serverName = item.serverName,
-                    status = item.status.name,
-                    note = item.note,
-                    output = item.output.takeLast(FleetRunHistory.OUTPUT_CHARS),
-                    truncated = item.truncated || item.output.length > FleetRunHistory.OUTPUT_CHARS,
-                )
+                FleetRunHistory.host(item.serverId, item.serverName, item.status.name, item.note, item.output, item.truncated)
             }
             FleetRunEntity(
                 runKey = run.runKey,
@@ -13593,9 +13579,8 @@ class AppViewModel @JvmOverloads constructor(
      * shell. Null for anything else, which the user wrote for their own shell.
      */
     private suspend fun builtInPresetCommand(srv: ServerEntity, cmd: String): String? {
-        val preset = builtInFleetPresets.firstOrNull { it.command == cmd } ?: return null
-        return if (RemoteCommands.hasUnixShell(hostOs(srv))) cmd
-        else fleetPresetWindowsScripts[preset.presetKey]?.let(RemoteCommands::powershell)
+        if (builtInFleetPresets.none { it.command == cmd }) return null
+        return builtInPresetCommandFor(cmd, hostOs(srv))
     }
 
     /**
@@ -13724,10 +13709,7 @@ class AppViewModel @JvmOverloads constructor(
      * The exit status a finished broadcast [result] reports: 0 for plain output, the command's for
      * "command failed (N)", null when the connection, not the command, ended it.
      */
-    private fun broadcastExitStatus(result: String): Int? {
-        if (!result.startsWith("SSH Error")) return 0
-        return Regex("""^SSH Error: command failed \((\d+)\)""").find(result)?.groupValues?.get(1)?.toIntOrNull()
-    }
+    private fun broadcastExitStatus(result: String): Int? = sshCommandExit(result)
 
     private suspend fun cleanUpBroadcastTmux(creds: SshCredentials, runId: String) {
         runCatching { withTimeoutOrNull(20_000) { sshTransport.exec(creds, RemoteCommands.broadcastTmuxCleanup(runId)) } }
@@ -14281,6 +14263,39 @@ class AppViewModel @JvmOverloads constructor(
             alertHistoryLimit = next
             repository.pruneAlertHistoryPerServer(next)
         }
+    }
+
+    fun saveAutomationEnabled(enabled: Boolean) {
+        automationEnabled = enabled
+        viewModelScope.launch { repository.insertSetting(Automation.SETTING_ENABLED, enabled.toString()) }
+    }
+
+    /** Why [script] cannot be run by automation, or null when it can: Script Check's own rules. */
+    fun automationProblem(script: QuickScriptEntity?): String? =
+        UnattendedScripts.problem(script, script?.let { commandDangerHits(it.command) }.orEmpty(), UnattendedScripts.Runner.AUTOMATION)
+
+    /**
+     * Makes a token that runs [scriptId] on [serverIds] and hands it to [onCreated], the only time
+     * it is ever shown: only its hash is kept.
+     */
+    fun createAutomationGrant(scriptId: Int, serverIds: List<Int>, label: String, onCreated: (String) -> Unit) {
+        val token = Automation.newToken()
+        viewModelScope.launch {
+            repository.insertAutomationGrant(
+                AutomationGrantEntity(
+                    scriptId = scriptId,
+                    serverIds = Automation.joinServerIds(serverIds),
+                    tokenHash = Automation.hash(token),
+                    label = label.trim(),
+                    createdAt = System.currentTimeMillis(),
+                ),
+            )
+            withContext(Dispatchers.Main) { onCreated(token) }
+        }
+    }
+
+    fun revokeAutomationGrant(id: Int) {
+        viewModelScope.launch { repository.deleteAutomationGrant(id) }
     }
 
     fun saveAlertsEnabled(enabled: Boolean) {
@@ -14948,15 +14963,10 @@ class AppViewModel @JvmOverloads constructor(
             })
         }
         val settingsObj = org.json.JSONObject()
-        // Never back up device-local security settings (PIN, lock, biometrics) — they shouldn't
-        // travel between devices. Everything else (theme, retention, scoring, interval, …) is kept.
-        val securityKeys = setOf(
-            "app_pin", "app_lock_enabled", "biometrics_enabled",
-            "pin_failed_attempts", "pin_locked_until", "app_lock_grace_ms",
-        )
+        // Everything else (theme, retention, scoring, interval, …) is kept.
         if (closedSelection.settings) {
             for (st in settings) {
-                if (st.key in securityKeys || st.key.startsWith("sftp_last_path_")) continue
+                if (st.key in DEVICE_LOCAL_SETTINGS || st.key.startsWith("sftp_last_path_")) continue
                 settingsObj.put(st.key, st.value)
             }
         }
@@ -15894,11 +15904,7 @@ class AppViewModel @JvmOverloads constructor(
                         val settingsObj = root.optJSONObject("settings")
                         var importedSettings = 0
                         if (settingsObj != null && closedSelection.settings) {
-                            // Defensive: never restore device-local security keys even if an old backup carried them.
-                            val securityKeys = setOf(
-                                "app_pin", "app_lock_enabled", "biometrics_enabled",
-                                "pin_failed_attempts", "pin_locked_until",
-                            )
+                            // Defensive: never restore device-local settings even if an old backup carried them.
                             val it = settingsObj.keys()
                             // Per-endpoint settings are keyed by the OLD server/share id; re-point them
                             // to the restored id. If the owning endpoint wasn't restored, skip the
@@ -15907,7 +15913,7 @@ class AppViewModel @JvmOverloads constructor(
                             val perSharePrefixes = listOf("share_bookmarks_")
                             while (it.hasNext()) {
                                 val originalKey = it.next()
-                                if (originalKey in securityKeys) continue
+                                if (originalKey in DEVICE_LOCAL_SETTINGS) continue
                                 var newKey = originalKey
                                 val prefix = perServerPrefixes.firstOrNull { p -> originalKey.startsWith(p) }
                                 if (prefix != null) {

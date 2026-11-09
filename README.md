@@ -13,6 +13,7 @@ OmniTerm is a native Android app for running your homelab and servers from a pho
 - **Live monitoring** — CPU, memory, disk, load, uptime, temperature, per-core usage, network/disk I/O rates, SMART health, a detailed hardware and software spec sheet, and process/service/log/cron views.
 - **Fleet Broadcast** — run a command across many hosts or groups at once with live per-host output.
 - **Scripts, alerts, cron, and Wake-on-LAN** management.
+- **Tasker and automation** — let Tasker or another app run one of your saved scripts on hosts you pick, with a token you make in OmniTerm. Off until you turn it on.
 - **Encrypted, selective backups** (AES-256-GCM) of your app data.
 - **On-device security** — Keystore-backed credential encryption, SSH host-key pinning, FIDO2 security keys (USB or NFC) and SSH certificates, optional app lock and biometrics, and per-host SSH agent forwarding.
 
@@ -47,7 +48,7 @@ Free with a 1-host limit and a single bottom banner. Both purchases are **one-ti
 OmniTerm is built natively for Android in Kotlin and Jetpack Compose.
 
 - **Connection layer** — SSH, SFTP, and port-forward tunnels use JSch (the maintained `com.github.mwiede` fork) directly from the device. Network shares go through a common `RemoteFsClient` abstraction over smbj (SMB2/3), Apache Commons Net (FTP), OkHttp (WebDAV), and JSch (SFTP), so the file browser and the streamed cross-protocol transfer engine behave identically across protocols.
-- **Data storage** — SQLite via Room stores hosts, keys, credential profiles, scripts, alert rules, saved shares, tunnels, and local metric history. Schemas are versioned and migrated (current schema v26).
+- **Data storage** — SQLite via Room stores hosts, keys, credential profiles, scripts, alert rules, saved shares, tunnels, and local metric history. Schemas are versioned and migrated (current schema v27).
 - **Security** — credentials, private keys, sudo passwords, and proxy passwords are encrypted with AES-GCM using a key managed by Android Keystore. Key size and hardware backing depend on the device's Keystore implementation.
 - **Execution model** — Foreground services and WakeLocks keep SSH terminal sessions (`tmux`-backed when available) alive across network drops and app backgrounding. Monitoring parses standard Linux `/proc` and utility output, so **zero agents** run on your servers.
 
@@ -176,6 +177,15 @@ Open **Fleet → Broadcast** to run a command across selected online hosts or ho
 - **Alert forwarding** — off unless you set it up. On the Alerts screen, tap **Set up** next to **Alert forwarding** to send each alert to a phone or desktop of your choice as well: an [ntfy](https://ntfy.sh) topic (on ntfy.sh or your own server, with an optional access token), a [Gotify](https://gotify.net) server (with its application token), or any webhook URL, which receives the alert as JSON (an optional bearer token is sent with it). **Send test** delivers a test alert before you save. Each alert's title and text go out, the same words as the notification, and optionally a second message when it resolves; a muted alert stays quiet everywhere. A delivery that gets no answer or a server error is tried twice more. The screen shows when the last alert went out, or why it did not. Like the notifications, alerts are forwarded only while OmniTerm is running. Anyone who knows a topic on a public ntfy server can read it, so pick a hard-to-guess name; without HTTPS, the alert and the token travel in clear text, and the form says so.
 - **Tools → Network tools → Wake-on-LAN** — save wake targets and send magic packets; scan the LAN from the editor to pick discovered devices.
 
+### Automation (Tasker and other apps)
+Open **Tools → Automation** to let other apps on your phone run your saved scripts, for example from a Tasker profile when you get home, or from a home-automation app.
+- **Off until you turn it on.** While **Let other apps run scripts** is off, every request is refused.
+- **One token per job.** Tap **+**, name it (say, "Tasker"), pick a saved script and the hosts it may run on, and confirm with your App Lock PIN or fingerprint, or your phone's screen lock. OmniTerm shows the token once: copy it then. It keeps only a fingerprint of the token, so it cannot show it again; make a new one if you lose it. A token runs that one script on those hosts and nothing else. **Revoke** stops it working at once.
+- **Only scripts that are safe to run unattended.** Nobody is there to confirm each run, so the same rules as script checks apply: a script that looks destructive is refused, and every `{{value}}` needs a default (`{{name=value}}`). A host the script is not for (another OS) is skipped. Each run is kept in Fleet's **History**, marked as an automation.
+- **In Tasker:** add an action, choose **Plugin**, then **OmniTerm**, and paste the token. The screen shows what the token runs and which app will keep it. Tasker waits for the run to finish (up to 10 minutes) and sets `%output` (what the hosts printed, each under its name when there are several), `%exit` (0 when every host succeeded) and `%failed_hosts`; when the action fails, `%errmsg` says why. A token OmniTerm does not know gets no answer at all, so the action just fails.
+- **From other apps or `adb`:** send a broadcast with the action `com.jetsetslow.omniterm.action.RUN_SCRIPT` to the package `com.jetsetslow.omniterm`, with the token in the extra `com.jetsetslow.omniterm.extra.TOKEN`. To get the result back, add `com.jetsetslow.omniterm.extra.REPLY_PACKAGE` (your app's package) and `com.jetsetslow.omniterm.extra.REPLY_ACTION`: OmniTerm sends a broadcast to that app only, with `com.jetsetslow.omniterm.extra.EXIT`, `.OUTPUT`, `.FAILED_HOSTS`, `.ERROR` and, if you sent one, `.REQUEST_ID`.
+- **Keep tokens private.** Anyone or any app that has a token can run its script on its hosts. Tasker keeps the token in its action, so a Tasker export or backup contains it too. A host whose key OmniTerm has not yet trusted is refused, since nobody is there to approve it; connect to it once from the app first. A run gives up on a host that has not finished after 9 minutes.
+
 ## Settings & customization
 Open **Tools → Settings**:
 - App lock and biometric unlock.
@@ -192,6 +202,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
 - Backups containing sensitive sections are compressed and encrypted with AES-256-GCM using a passphrase-derived key.
 - App backups never copy files from your remote hosts.
 - OmniTerm does not store the backup passphrase — keep it safe.
+- Automation tokens and the **Let other apps run scripts** switch stay on the phone where you made them: they are never in a backup, and restoring one never turns automation on.
 
 ## Security & privacy
 - **No OmniTerm backend, no server agents** — administration traffic goes directly from your device to the hosts you configure. The Play Store flavor separately contacts Google for ads, consent, and billing; the source-available flavor omits those SDKs. If you turn on alert forwarding, alerts also go to the ntfy, Gotify or webhook address you enter, and nowhere else.
@@ -202,6 +213,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
   warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration
   up to 24 hours. Rotation does not start the background timer.
 - **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
+- **Automation is opt-in** — other apps can run your scripts only after you turn on **Tools → Automation** and give them a token, and then only that token's script on its hosts. A request with a token OmniTerm does not know gets no answer at all.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
 - **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The source-available build has no ads SDK and accesses no advertising ID.
 
@@ -226,6 +238,7 @@ bug reports that shaped features here:
 - [ssh-mcp](https://github.com/tufantunc/ssh-mcp) — how multi-line scripts are entered and sent to a host.
 - [Komodo](https://github.com/moghtech/komodo) — rolling Fleet runs, a few hosts at a time (its batch deploys).
 - [Beszel](https://github.com/henrygd/beszel) and [Uptime Kuma](https://github.com/louislam/uptime-kuma) — the host-down, failed-service and container alert kinds; Uptime Kuma also the ping, TCP port and DNS checks. Both also gave the idea of forwarding alerts to ntfy, Gotify and webhooks (their notification settings), and of alerting on a script's exit status (script checks).
+- [Termux:Tasker](https://github.com/termux/termux-tasker) and [Home Assistant for Android](https://github.com/home-assistant/android) — running a saved script from Tasker and other apps, and waiting for its result (Termux:Tasker's plug-in and its bug reports, Home Assistant's broadcast intents). The plug-in follows [Tasker's plug-in documentation](https://tasker.joaoapps.com/plugins.html) and the [Locale plug-in spec](https://github.com/twofortyfouram/android-monorepo).
 - [Haven](https://github.com/GlassHaven/Haven), [ConnectBot](https://github.com/connectbot/connectbot), [ServerBox](https://github.com/lollipopkit/flutter_server_box), [Nexterm](https://github.com/gnmyt/Nexterm), [Beszel](https://github.com/henrygd/beszel), [Uptime Kuma](https://github.com/louislam/uptime-kuma) and [Home Assistant for Android](https://github.com/home-assistant/android) — feature and bug reviews for the homelab and server-admin features OmniTerm covers.
 
 ## Support the project
