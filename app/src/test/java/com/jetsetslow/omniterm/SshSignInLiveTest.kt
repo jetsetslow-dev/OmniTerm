@@ -32,7 +32,8 @@ import org.junit.rules.TemporaryFolder
 /**
  * Certificate and security-key sign-in through the app's own session builder, and SFTP calls over
  * it, against a real OpenSSH server: the fleet's `certauth` host, which has no authorized keys and
- * trusts only the fleet's test certificate authority, so a certificate is the only way in.
+ * trusts only the fleet's test certificate authority, so a certificate is the only way in. Also
+ * key-only sign-in, as Install key checks a key with, against `direct` (password) and `keyauth`.
  *
  * Opt-in, because it needs the fleet running:
  *
@@ -130,20 +131,37 @@ class SshSignInLiveTest {
         }
     }
 
+    /** Signing in by key only never falls back to a password, even one the host would take. */
+    @Test
+    fun aKeyOnlySignInOffersTheKeyAndNothingElse() {
+        val password = File(fleet, ".env").readLines().first { it.startsWith("OMNITERM_TEST_PASSWORD=") }.substringAfter('=')
+        val stranger = sshKeygenKey("ed25519").readText()
+        val direct = SshCredentials("127.0.0.1", DIRECT_PORT, user, password = password, privateKeyPem = stranger)
+        assertThat(signIn(direct)).isEqualTo(user)
+        val refused = assertThrows(JSchException::class.java) { signIn(direct.copy(keyOnly = true)) }
+        assertThat(refused).hasMessageThat().contains("Auth fail")
+        // A key the host does trust signs in by itself.
+        val trusted = SshCredentials("127.0.0.1", KEYAUTH_PORT, user, privateKeyPem = File(keys, "omniterm_test_ed25519").readText(), keyOnly = true)
+        assertThat(signIn(trusted)).isEqualTo(user)
+    }
+
     private fun touch(token: SoftwareSecurityKey) = object : InteractiveAuth {
         override suspend fun answer(request: InteractiveAuthRequest): List<String>? = null
         override suspend fun signWithSecurityKey(request: SecurityKeySignRequest) = token.assert(request)
     }
 
-    private fun session(privateKey: String, certificate: String?, ask: InteractiveAuth?): Session = buildJschSession(
-        SshCredentials("127.0.0.1", CERTAUTH_PORT, user, privateKeyPem = privateKey, certificate = certificate),
-        ask,
-        MemoryHostKeys(),
-    )
+    private fun session(privateKey: String, certificate: String?, ask: InteractiveAuth?): Session =
+        session(SshCredentials("127.0.0.1", CERTAUTH_PORT, user, privateKeyPem = privateKey, certificate = certificate), ask)
 
-    /** Signs in and returns who the server says we are. */
-    private fun signIn(privateKey: String, certificate: String?, ask: InteractiveAuth? = null): String {
-        val session = session(privateKey, certificate, ask)
+    private fun session(creds: SshCredentials, ask: InteractiveAuth?): Session = buildJschSession(creds, ask, MemoryHostKeys())
+
+    /** Signs in to `certauth` and returns who the server says we are. */
+    private fun signIn(privateKey: String, certificate: String?, ask: InteractiveAuth? = null): String =
+        signIn(SshCredentials("127.0.0.1", CERTAUTH_PORT, user, privateKeyPem = privateKey, certificate = certificate), ask)
+
+    /** Signs in with [creds] and returns who the server says we are. */
+    private fun signIn(creds: SshCredentials, ask: InteractiveAuth? = null): String {
+        val session = session(creds, ask)
         session.connect(CONNECT_TIMEOUT_MS)
         try {
             val channel = session.openChannel("exec") as ChannelExec
@@ -192,6 +210,8 @@ class SshSignInLiveTest {
     }
 
     private companion object {
+        const val DIRECT_PORT = 2201
+        const val KEYAUTH_PORT = 2202
         const val CERTAUTH_PORT = 2207
         const val CONNECT_TIMEOUT_MS = 15_000
     }

@@ -34,13 +34,10 @@ class CrossShellCommandsTest {
     private val trickyOutput = "it's \"q\" \\b \\\\ !bang %d %s \$HOME `x` ünï\n[a][b][c]\nfn ok\nnoglob\n"
 
     private val loginShells = listOf("sh", "dash", "bash", "zsh", "ksh", "mksh", "tcsh", "csh", "fish")
-        .mapNotNull { name -> listOf("/bin", "/usr/bin", "/usr/local/bin").map { File(it, name) }.firstOrNull { it.canExecute() } }
+        .mapNotNull { TestShell.find(it) }
 
-    private fun run(shell: File, command: String): Pair<String, Int> {
-        val proc = ProcessBuilder(shell.absolutePath, "-c", command).redirectErrorStream(true).start()
-        val output = proc.inputStream.bufferedReader().readText()
-        return output to proc.waitFor()
-    }
+    private fun run(shell: File, command: String): Pair<String, Int> =
+        TestShell.run(command, shell = shell).let { it.output to it.exit }
 
     @Test
     fun everyLoginShellRunsTheWrappedScriptAsSh() {

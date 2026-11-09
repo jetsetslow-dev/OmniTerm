@@ -11,7 +11,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 class HostChecksTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -130,8 +129,8 @@ class HostChecksTest {
      */
     @Test
     fun theProbeReportsEachToolThatRanAndNothingForToolsThatAreMissing() {
-        val sh = File("/bin/sh")
-        assumeTrue("needs a POSIX shell", sh.canExecute())
+        val sh = TestShell.sh
+        assumeTrue("needs a POSIX shell", sh != null)
         val bin = tmp.newFolder("bin")
         val base = listOf("sed", "awk", "head", "date", "cat", "ls", "sort", "tail", "grep", "timeout")
         for (tool in base) {
@@ -139,10 +138,10 @@ class HostChecksTest {
             assumeTrue("needs $tool", real != null)
             java.nio.file.Files.createSymbolicLink(File(bin, tool).toPath(), real!!.toPath())
         }
-        assumeTrue("needs a date that reads -d", run(sh, bin, "date -d 'Sun Oct 27 00:24:01 2024' +%s").trim() == "1729988641")
+        assumeTrue("needs a date that reads -d", run(sh!!, bin, "date -d 'Sun Oct 27 00:24:01 2024' +%s").trim() == "1729988641")
 
         // Nothing but the base tools: every section is unknown.
-        val bare = HostChecks.parse(run(sh, bin, probeIn(tmp.root)))
+        val bare = HostChecks.parse(run(sh!!, bin, probeIn(tmp.root)))
         assertEquals(HostChecks.Reading(), bare)
 
         fun stub(name: String, body: String) = File(bin, name).apply {
@@ -166,7 +165,7 @@ class HostChecksTest {
         File(tmp.root, "boot").mkdirs()
         listOf("6.8.12-4-pve", "6.8.12-5-pve", "6.9.1-1-generic").forEach { File(tmp.root, "boot/vmlinuz-$it").writeText("") }
 
-        val r = HostChecks.parse(run(sh, bin, probeIn(tmp.root)))
+        val r = HostChecks.parse(run(sh!!, bin, probeIn(tmp.root)))
         assertEquals(listOf("nginx.service"), r.failedServices)
         assertEquals(listOf("web (unhealthy)"), r.containerProblems)
         assertEquals(listOf("backup (degraded)", "md0 (degraded)"), r.arrayProblems)
@@ -176,7 +175,7 @@ class HostChecksTest {
         assertEquals(true, r.rebootRequired)
 
         File(tmp.root, "boot/vmlinuz-6.8.12-5-pve").delete()
-        assertEquals(false, HostChecks.parse(run(sh, bin, probeIn(tmp.root))).rebootRequired)
+        assertEquals(false, HostChecks.parse(run(sh!!, bin, probeIn(tmp.root))).rebootRequired)
     }
 
     /** [HostChecks.PROBE] with every system path it reads moved under [root]. */
@@ -200,13 +199,6 @@ class HostChecksTest {
         return probe
     }
 
-    private fun run(sh: File, bin: File, script: String): String {
-        val proc = ProcessBuilder(sh.path, "-c", script)
-            .redirectErrorStream(true)
-            .apply { environment().apply { clear(); put("PATH", bin.path); put("TZ", "UTC"); put("LC_ALL", "C") } }
-            .start()
-        val out = proc.inputStream.bufferedReader().readText()
-        assertTrue("probe finished", proc.waitFor(30, TimeUnit.SECONDS))
-        return out
-    }
+    private fun run(sh: File, bin: File, script: String): String =
+        TestShell.run(script, env = mapOf("PATH" to bin.path, "TZ" to "UTC", "LC_ALL" to "C"), clean = true, shell = sh).output
 }

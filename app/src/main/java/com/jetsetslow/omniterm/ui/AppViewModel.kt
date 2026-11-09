@@ -4673,6 +4673,103 @@ class AppViewModel @JvmOverloads constructor(
 
     fun takePendingScriptText(): String? = pendingScriptText.also { pendingScriptText = null }
 
+    // ── Install a key on hosts (ssh-copy-id) ──
+
+    /** The open Install key dialog: the key it starts with and the hosts picked, either may be unset. */
+    data class KeyInstallRequest(val keyAlias: String?, val serverIds: Set<Int>)
+
+    /** One host's install: whether it ended well, and what to tell the user. */
+    data class KeyInstallResult(val ok: Boolean, val text: String)
+
+    var keyInstallRequest by mutableStateOf<KeyInstallRequest?>(null); private set
+    val keyInstallResults = mutableStateMapOf<Int, KeyInstallResult>()
+    var keyInstallRunning by mutableStateOf(false); private set
+
+    /** Opens Install key, from a key ([keyAlias]) or a host ([serverId]). */
+    fun openKeyInstall(keyAlias: String? = null, serverId: Int? = null) {
+        if (keyInstallRunning) return
+        keyInstallResults.clear()
+        keyInstallRequest = KeyInstallRequest(keyAlias, setOfNotNull(serverId))
+    }
+
+    fun closeKeyInstall() {
+        if (keyInstallRunning) return
+        keyInstallRequest = null
+        keyInstallResults.clear()
+    }
+
+    /**
+     * Adds [keyAlias]'s public key to each of [serverIds] over its usual sign-in, then signs in with
+     * only the key to show it works. With [useForSignIn], a host where it works signs in with it from
+     * then on; one that uses a credential profile is left as it is.
+     */
+    fun installKey(keyAlias: String, serverIds: List<Int>, useForSignIn: Boolean) {
+        if (keyInstallRunning || serverIds.isEmpty()) return
+        keyInstallRunning = true
+        keyInstallResults.clear()
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val key = repository.getAllKeys().find { it.alias == keyAlias }
+                val line = key?.let(KeyInstall::line)
+                if (key == null || line == null) {
+                    val refused = KeyInstallResult(false, app.getString(R.string.key_install_no_public_key))
+                    serverIds.forEach { keyInstallResults[it] = refused }
+                    return@launch
+                }
+                val gate = Semaphore(KeyInstall.PARALLEL_HOSTS)
+                coroutineScope {
+                    serverIds.map { id ->
+                        async {
+                            gate.withPermit {
+                                val result = try {
+                                    installKeyOn(id, key, line, useForSignIn)
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    KeyInstallResult(false, app.getString(R.string.key_install_not_reached, e.message ?: "unknown error"))
+                                }
+                                withContext(Dispatchers.Main) { keyInstallResults[id] = result }
+                            }
+                        }
+                    }.awaitAll()
+                }
+            } finally {
+                keyInstallRunning = false
+            }
+        }
+    }
+
+    private suspend fun installKeyOn(serverId: Int, key: SshKeyEntity, line: String, useForSignIn: Boolean): KeyInstallResult {
+        val app = getApplication<Application>()
+        val srv = repository.getServerById(serverId) ?: return KeyInstallResult(false, app.getString(R.string.key_install_host_gone))
+        val probe = executeSshCommand(srv, RemoteCommands.OS_PROBE)
+        if (!ranOnHost(probe)) return KeyInstallResult(false, app.getString(R.string.key_install_not_reached, probe.removePrefix("SSH Error:").trim()))
+        if (!RemoteCommands.hasUnixShell(hostOs(srv, probe))) return KeyInstallResult(false, app.getString(R.string.key_install_windows))
+        val installed = when (val outcome = KeyInstall.outcome(executeSshCommand(srv, KeyInstall.COMMAND, stdin = line))) {
+            KeyInstall.Outcome.Added -> true
+            KeyInstall.Outcome.AlreadyThere -> false
+            is KeyInstall.Outcome.Failed -> return KeyInstallResult(false, app.getString(R.string.key_install_failed, outcome.reason))
+            is KeyInstall.Outcome.NotReached -> return KeyInstallResult(false, app.getString(R.string.key_install_not_reached, outcome.reason))
+        }
+        if (KeyInstall.onSecurityKey(key)) {
+            return KeyInstallResult(true, app.getString(if (installed) R.string.key_install_added_security_key else R.string.key_install_present_security_key))
+        }
+        val keyOnly = buildCredentials(srv).copy(password = null, privateKeyPem = key.privateKey, passphrase = null, certificate = null, keyOnly = true)
+        sshTransport.testConnection(keyOnly)?.let {
+            return KeyInstallResult(false, app.getString(if (installed) R.string.key_install_added_refused else R.string.key_install_present_refused))
+        }
+        val done = app.getString(if (installed) R.string.key_install_added_works else R.string.key_install_present_works)
+        if (!useForSignIn || (srv.authType == "key" && srv.authKeyAlias == key.alias)) return KeyInstallResult(true, done)
+        if (srv.authType == "profile") {
+            val profile = repository.getAllProfiles().find { it.id == srv.authProfileId }?.profileName.orEmpty()
+            return KeyInstallResult(true, done + " " + app.getString(R.string.key_install_profile_kept, profile))
+        }
+        val saved = CompletableDeferred<String?>()
+        withContext(Dispatchers.Main) { updateServer(srv.copy(authType = "key", authKeyAlias = key.alias)) { saved.complete(it) } }
+        saved.await()?.let { error -> return KeyInstallResult(false, done + " " + app.getString(R.string.key_install_not_switched, error)) }
+        return KeyInstallResult(true, done + " " + app.getString(R.string.key_install_switched, key.alias))
+    }
+
     /**
      * Set when [openRunbook] has filled in Broadcast; Fleet then asks to run it, with the same
      * confirmation as the Run button, and clears it. Nothing runs without that confirmation.

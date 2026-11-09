@@ -25,7 +25,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 /** Fleet runs follow a saved script's target OS and system, and the built-in scripts are sound. */
 class ScriptTargetsTest {
@@ -103,32 +102,24 @@ class ScriptTargetsTest {
     /** The rewritten fallback chains are valid sh, and each branch is reached by testing for its tool. */
     @Test
     fun rewrittenFallbacksParseInSh() {
-        val sh = File("/bin/sh")
-        assumeTrue("needs /bin/sh", sh.canExecute())
+        assumeTrue("needs sh", TestShell.sh != null)
         listOf(FLEET_SYSLOG_COMMAND, HOMELAB_UPDATES_COMMAND).forEach { command ->
-            val process = ProcessBuilder(sh.path, "-n", "-c", command).redirectErrorStream(true).start()
-            assertTrue(process.waitFor(10, TimeUnit.SECONDS))
-            assertEquals(command + "\n" + process.inputStream.readBytes().toString(Charsets.UTF_8), 0, process.exitValue())
+            val error = TestShell.syntaxError(command)
+            assertTrue(command + "\n" + error, error == null)
         }
     }
 
     /** `dnf check-update` exits 100 when there are updates: that is a result, not a failure. */
     @Test
     fun dnfUpdatesAvailableIsSuccess() {
-        val sh = File("/bin/sh")
-        assumeTrue("needs /bin/sh", sh.canExecute())
+        assumeTrue("needs sh", TestShell.sh != null)
         val dir = kotlin.io.path.createTempDirectory("omniterm-dnf").toFile()
         try {
             // A PATH holding only a fake dnf, so the apt branch is not taken on this machine.
             File(dir, "dnf").apply { writeText("#!/bin/sh\necho 'bash.x86_64 5.2 updates'\nexit 100\n"); setExecutable(true) }
-            val process = ProcessBuilder(sh.path, "-c", HOMELAB_UPDATES_COMMAND)
-                .redirectErrorStream(true)
-                .apply { environment()["PATH"] = dir.path }
-                .start()
-            assertTrue(process.waitFor(10, TimeUnit.SECONDS))
-            val output = process.inputStream.readBytes().toString(Charsets.UTF_8)
+            val (output, exit) = TestShell.run(HOMELAB_UPDATES_COMMAND, env = mapOf("PATH" to dir.path), timeoutSeconds = 10)
             assertTrue(output, output.contains("bash.x86_64"))
-            assertEquals(output, 0, process.exitValue())
+            assertEquals(output, 0, exit)
         } finally {
             dir.deleteRecursively()
         }
@@ -161,8 +152,7 @@ class ScriptTargetsTest {
     /** The Linux probe's platform lines, run in sh against a PATH holding only stand-in tools. */
     @Test
     fun linuxPlatformProbeReportsTheToolsItFinds() {
-        val sh = File("/bin/sh")
-        assumeTrue("needs /bin/sh", sh.canExecute())
+        assumeTrue("needs sh", TestShell.sh != null)
         val start = RemoteCommands.METRICS.indexOf("echo '@PLATFORM'; ")
         val end = RemoteCommands.METRICS.indexOf("echo '@CPU'", start)
         assertTrue(start >= 0 && end > start)
@@ -172,13 +162,9 @@ class ScriptTargetsTest {
             listOf("podman", "k3s", "midclt").forEach { tool ->
                 File(dir, tool).apply { writeText("#!/bin/sh\nexit 0\n"); setExecutable(true) }
             }
-            val process = ProcessBuilder(sh.path, "-c", block)
-                .redirectErrorStream(true)
-                .apply { environment()["PATH"] = dir.path }
-                .start()
-            assertTrue(process.waitFor(10, TimeUnit.SECONDS))
-            val lines = process.inputStream.readBytes().toString(Charsets.UTF_8).lines().map { it.trim() }
-            assertEquals(lines.toString(), 0, process.exitValue())
+            val run = TestShell.run(block, env = mapOf("PATH" to dir.path), timeoutSeconds = 10)
+            val lines = run.output.lines().map { it.trim() }
+            assertEquals(lines.toString(), 0, run.exit)
             assertTrue(lines.toString(), lines.containsAll(listOf("@PLATFORM", "podman", "kubernetes", "truenas")))
             assertFalse("no docker on this PATH", "docker" in lines)
         } finally {

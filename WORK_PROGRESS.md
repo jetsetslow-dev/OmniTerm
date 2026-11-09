@@ -319,7 +319,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   against main for updates checkpoint A already made here, at the same pins. Checked line by line,
   then closed on Nov 9 at the user's request, each pointing to #138.
 
-## Checkpoint D2 — `ssh://` links and sharing to OmniTerm (this commit)
+## Checkpoint D2 — `ssh://` links and sharing to OmniTerm (1d64aa1)
 
 - `incoming/IncomingActivity` (exported, no UI, `noHistory`, empty task affinity) takes `ssh://`
   VIEW links and SEND / SEND_MULTIPLE shares and passes what it can use to `MainActivity` with
@@ -382,6 +382,61 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   missing credits (Termux:Tasker from D1, electerm and Material Files); for that text-only change
   `git diff --check` and both secret scans were run again and passed.
 
+## Checkpoint D3 — install a key on hosts (this commit)
+
+- What it does: puts a key's public half on one host or many, as `ssh-copy-id` does
+  (ConnectBot#428, #666). It is reached from a key's card, from a newly generated key, or from a
+  host's ⋮ menu.
+  - The line goes on stdin and is added once to `~/.ssh/authorized_keys`. A new `.ssh` or file
+    is made private (umask 077), a missing final line break is fixed first, and existing files
+    keep their permissions.
+  - Then a key-only sign-in checks it. `SshCredentials.keyOnly` makes JSch offer only
+    `publickey`, so the password cannot hide a refused key. This field is in the Go engine's
+    contract.
+  - With the switch on, each host where it worked moves to the key. Profile hosts are kept.
+    Security keys are added but not tried. Windows is refused for now (its administrators'
+    keys live in another file).
+  - It goes through `SensitiveActionDialog`.
+- Tests:
+  - `KeyInstallTest`, 12 tests:
+    - the line;
+    - the answer;
+    - `preferredAuthentications`;
+    - the command in sh, dash, bash and busybox, and behind each login shell present;
+    - add once and private;
+    - found with options;
+    - line break;
+    - empty input;
+    - read-only folder.
+  - `KeyInstallRobolectricTest`, 2 tests, eight hosts: works and switches, present but refused,
+    Windows, profile, read-only, unreachable, already using the key, and the switch off; plus a
+    security key and a key with no public half. It uses the new `TestAndroidKeyStore` rule, an
+    in-memory AndroidKeyStore, so passwords are really saved.
+  - `SshSignInLiveTest.aKeyOnlySignInOffersTheKeyAndNothingElse`: against `direct` the password
+    works but key-only is refused; `keyauth` accepts key-only. All 7 live tests pass.
+  - Device `E2eKeyInstallTest` (`-e omniterm_e2e_key_install yes`, lab host) passed: it makes an
+    RSA key in the app, installs it from the key card, signs in, switches, reinstalls from the
+    host ("already there"), and restores the host. Afterwards the host has no `.ssh` folder
+    again. One finding, a test fix and not an app bug: the fixture's home folder is setgid, so a
+    new `.ssh` is 2700, which sshd accepts.
+  - Mutations: 16 of 16 caught (`scratchpad/d3mut`), covering the command, the line, the answer,
+    `keyOnly` (unit and live), and the key-only credentials, switch, profile, security-key,
+    Windows and toggle paths.
+- Write once: 13 shell tests moved onto `TestShell` (one runner; its timeout now holds while
+  output is read). All 110 of their tests pass with none skipped.
+- Flake found by the gate's device suite: `IncomingTest` failed once with "No compose hierarchies
+  found". The logs show the main screen only paused while the forwarding screen handed the link
+  over, which is the design, and `waitUntil` does not retry after an exception. Now
+  `ComposeNodes.showsNode` reads "no screen yet" as not yet, inside waits only; checks that
+  something is absent stay strict. IncomingTest then passed 10 runs in a row (40 of 40), and both
+  end-to-end tests passed. The new "no keys" text also named "Tools → Keys", which the Tools-path
+  guard caught; it now says "Tools → Auth & keys".
+- Gate: `./scripts/local-pr-check.sh --full` passed on the pushed tree: five repeats of the changed test classes, the API 35 device suite (91 tests, 0 failed), and CodeQL with no alerts (84,420 lines).
+- CI: D2's PR Check failed. Room migrations and SBOM both hit a 10 s Gradle wrapper download
+  timeout; Build & Test passed. The failed jobs were rerun once, and the wrapper now waits 60 s
+  with 3 retries. `secrets/internal-docs/tools/ci-watch.sh` watches runs and reruns network
+  flakes once.
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
@@ -429,8 +484,8 @@ On Nov 9 the user added:
 
 ## Remaining, in order
 
-1. Automation, the rest: one-tap public-key install (D3). D1 (the Tasker plug-in and broadcast)
-   and D2 (`ssh://` links, the share target) are done. This PR (#138) ends here; items 2–5 are
+1. Automation: D1 (the Tasker plug-in and broadcast), D2 (`ssh://` links, the share target) and
+   D3 (key install) are done. This PR (#138) ends here; items 2–6 are
    each their own PR.
 2. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
    on-phone approval for writes, audit log, `PRIVACY.md` section.
@@ -440,7 +495,32 @@ On Nov 9 the user added:
    plain host and port.
 4. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
    presets.
-5. Portability, last (user, Nov 9), about 2–3 weeks for the engine:
+5. Fleet enhancements (user, Nov 9: "investigate other enhancements there as well"), its own PR.
+   The candidates and their sources are in the internal audit, under "Fleet uniqueness check".
+   User, Nov 9: "include tags, variables and file pushes, and Automations adds schedules and alert
+   triggers". So these five are in:
+   - multi-tag targets;
+   - per-host variables;
+   - pushing a file to many hosts;
+   - scheduled runs (Android WorkManager; iOS skipped with a notice);
+   - alert-triggered runs. These are opt-in per alert rule and off by default. They get the same
+     refusals as Tasker automation (danger list, placeholders with no default), a notification
+     per run, and a Fleet history entry. Today's runbooks still ask on the phone first.
+
+   Then: "i meant in general as a new PT works as well … i meant pr only". That is, a new PR for
+   this set is fine. No wider scope is meant: these are Fleet features.
+
+   The rest of the candidates:
+   - per-host variables;
+   - identical output grouped;
+   - a failure threshold;
+   - multi-tag targets and saved target sets;
+   - pushing a file to many hosts;
+   - filtering outputs;
+   - sudo in Fleet;
+   - scheduled runs on Android;
+   - broadcast typing, last.
+6. Portability, last (user, Nov 9), about 2–3 weeks for the engine:
    - The Go engine for SSH (commands, sign-in, terminal, port forwarding, agent, certificates,
      security-key signing through Kotlin), SFTP, SMB and FTP, built on the library and toolchain
      the tunnels bring. It goes in behind `SshTransport` and `RemoteFsClient` beside JSch, must pass
@@ -449,7 +529,7 @@ On Nov 9 the user added:
    - `SshCredentials` fields the Go engine must honour beyond today's: `keyOnly` (D3).
    - Swaps for shared code: Room → Room KMP (same schema and migrations), Moshi →
      kotlinx.serialization, OkHttp/Retrofit → Ktor, `R.string` → Compose resources.
-6. On `kotlin-multiplatform` (draft PR #144), iOS-specific work only: the shared-module layout,
+7. On `kotlin-multiplatform` (draft PR #144), iOS-specific work only: the shared-module layout,
    the iOS app, and the iOS adapters (Keychain, Face ID, notifications, file picker, widgets,
    Shortcuts, background limits). Its first step (shared module with pure logic in `commonMain`,
    the iOS app shell, iOS CI on macOS runners) is up and green; it merges main as work lands.

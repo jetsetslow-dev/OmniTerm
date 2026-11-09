@@ -12,7 +12,6 @@ import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
-import java.util.concurrent.TimeUnit
 
 /**
  * A Seagate Expansion drive on USB showed smartctl's errors as its drive details: "Read Device
@@ -77,12 +76,7 @@ class SmartUsbDriveTest {
 
     private fun smartOutput(): String {
         val script = RemoteCommands.OT_HELPER + SystemSpecsCommands.smart("usbblocked usbsat sata")
-        val proc = ProcessBuilder("/bin/sh", "-c", script)
-            .redirectErrorStream(true)
-            .apply { environment()["PATH"] = bin.absolutePath + ":" + System.getenv("PATH") }
-            .start()
-        val output = proc.inputStream.bufferedReader().readText()
-        check(proc.waitFor(30, TimeUnit.SECONDS)) { "script did not finish" }
+        val output = TestShell.run(script, env = mapOf("PATH" to bin.absolutePath + ":" + System.getenv("PATH"))).output
         return output.substringAfter("@SMART\n")
     }
 

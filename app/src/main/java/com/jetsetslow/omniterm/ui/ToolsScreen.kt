@@ -2429,6 +2429,9 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                 }
                             }
                             Row {
+                                IconButton(onClick = { viewModel.openKeyInstall(keyAlias = key.alias) }, modifier = Modifier.testTag("authKeys.install.${key.id}")) {
+                                    Icon(Icons.Filled.Upload, stringResource(R.string.key_install_on_hosts), tint = OmniColors.purple)
+                                }
                                 IconButton(onClick = { editKey = key }) {
                                     Icon(Icons.Filled.Edit, "Edit key", tint = OmniColors.purple)
                                 }
@@ -2879,6 +2882,13 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Button(
+                        onClick = {
+                            generatedKeyResult = null
+                            viewModel.openKeyInstall(keyAlias = alias)
+                        },
+                        modifier = Modifier.testTag("authKeys.generated.install"),
+                    ) { Text(stringResource(R.string.key_install_on_hosts)) }
                 }
             },
             confirmButton = {

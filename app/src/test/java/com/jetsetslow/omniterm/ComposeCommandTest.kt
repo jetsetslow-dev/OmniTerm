@@ -42,12 +42,9 @@ class ComposeCommandTest {
 
     private fun assertValidShell(script: String) {
         // Skip silently if there's no bash on the build machine.
-        val bash = listOf("/bin/bash", "/usr/bin/bash").firstOrNull { File(it).exists() } ?: return
-        val p = ProcessBuilder(bash, "-n").redirectErrorStream(true).start()
-        p.outputStream.bufferedWriter().use { it.write(script) }
-        val out = p.inputStream.bufferedReader().readText()
-        val code = p.waitFor()
-        assertTrue("shell syntax error:\n$out\n--- script ---\n$script", code == 0)
+        val bash = TestShell.find("bash") ?: return
+        val error = TestShell.syntaxError(script, bash)
+        assertTrue("shell syntax error:\n$error\n--- script ---\n$script", error == null)
     }
 
     @Test
@@ -63,8 +60,7 @@ class ComposeCommandTest {
      */
     @Test
     fun deploy_writes_exactly_what_arrives_on_stdin() {
-        val sh = File("/bin/sh")
-        org.junit.Assume.assumeTrue(sh.canExecute())
+        org.junit.Assume.assumeTrue(TestShell.sh != null)
         val dir = java.nio.file.Files.createTempDirectory("omniterm-deploy").toFile()
         try {
             val bin = File(dir, "bin").apply { mkdirs() }
@@ -74,13 +70,11 @@ class ComposeCommandTest {
             }
             val path = "${dir.absolutePath}/stack dir/compose.yml"
             val yaml = "services:\n  web:\n    image: \"nginx:1.27\" # it's ünïcode \$HOME `x` \\ %s\n"
-            val proc = ProcessBuilder(sh.absolutePath, "-c", RemoteCommands.composeDeploy(path, "probe", runtime = "docker"))
-                .redirectErrorStream(true)
-            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
-            val started = proc.start()
-            started.outputStream.use { it.write(yaml.toByteArray()) }
-            val output = started.inputStream.bufferedReader().readText()
-            started.waitFor()
+            val output = TestShell.run(
+                RemoteCommands.composeDeploy(path, "probe", runtime = "docker"),
+                stdin = yaml,
+                env = mapOf("PATH" to "${bin.absolutePath}:/usr/bin:/bin"),
+            ).output
             assertTrue(output, output.contains("OMNITERM_DEPLOY_OK"))
             org.junit.Assert.assertEquals(yaml, File(path).readText())
             assertTrue(File(dir, "calls").readText().contains("up -d"))
@@ -197,21 +191,16 @@ class ComposeCommandTest {
         /** Runs [action] for project `p`, service `w`, as the host's sh would; output and exit code. */
         fun run(action: String, replicas: Int? = null): Pair<String, Int> {
             val command = RemoteCommands.dockerComposeAction("p", dir.absolutePath, "compose.yml", action, "w", replicas, runtime = "podman")
-            val proc = ProcessBuilder("/bin/sh", "-c", command).redirectErrorStream(true)
-            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
-            val started = proc.start()
-            return started.inputStream.bufferedReader().readText() to started.waitFor()
+            return TestShell.run(command, env = path).let { it.output to it.exit }
         }
 
         /** Deploys [yaml] as project `p` through the builder's deploy script; output and exit code. */
         fun deploy(yaml: String, removeOrphans: Boolean): Pair<String, Int> {
             val command = RemoteCommands.composeDeploy("${dir.absolutePath}/compose.yml", "p", runtime = "podman", removeOrphans = removeOrphans)
-            val proc = ProcessBuilder("/bin/sh", "-c", command).redirectErrorStream(true)
-            proc.environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
-            val started = proc.start()
-            started.outputStream.use { it.write(yaml.toByteArray()) }
-            return started.inputStream.bufferedReader().readText() to started.waitFor()
+            return TestShell.run(command, stdin = yaml, env = path).let { it.output to it.exit }
         }
+
+        private val path get() = mapOf("PATH" to "${bin.absolutePath}:/usr/bin:/bin")
 
         override fun close() { dir.deleteRecursively() }
     }

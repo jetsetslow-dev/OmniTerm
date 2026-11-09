@@ -125,12 +125,15 @@ class IncomingTest {
         requireNotNull(repository.getServerById(id)).also(made::add)
     }
 
-    private fun has(matcher: androidx.compose.ui.test.SemanticsMatcher) =
-        composeRule.onAllNodes(matcher, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+    private fun has(matcher: androidx.compose.ui.test.SemanticsMatcher) = composeRule.showsNode(matcher)
 
     private fun awaitTag(tag: String) = composeRule.waitUntil(10_000) { has(hasTestTag(tag)) }
 
-    private fun assertNoText(text: String) = assertTrue("$text is on screen", !has(hasText(text, substring = true)))
+    // Strict: with no screen to look in, this fails rather than passing.
+    private fun assertNoText(text: String) = assertTrue(
+        "$text is on screen",
+        composeRule.onAllNodes(hasText(text, substring = true), useUnmergedTree = true).fetchSemanticsNodes().isEmpty(),
+    )
 
     private companion object {
         const val NEW_HOST = "192.0.2.55"

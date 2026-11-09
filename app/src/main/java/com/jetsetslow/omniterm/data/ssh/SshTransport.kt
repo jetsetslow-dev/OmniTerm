@@ -184,6 +184,12 @@ data class SshCredentials(
      * commands the user typed, which belong to the user's own shell.
      */
     val posixShell: Boolean = false,
+    /**
+     * Sign in with [privateKeyPem] only: no password, keyboard-interactive or other method is
+     * tried, so a sign-in that works proves the host accepts that key. Used to check a key just
+     * installed on a host. Every [SshTransport] must honour it.
+     */
+    val keyOnly: Boolean = false,
 )
 
 /** Connection failed before/while establishing the shell or exec channel. */

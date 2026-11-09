@@ -118,6 +118,16 @@ private fun acceptedAlgorithms(extra: List<String>): String =
     (extra + JSch.getConfig("PubkeyAcceptedAlgorithms").split(",")).distinct().joinToString(",")
 
 /**
+ * The sign-in methods tried for [creds], in order: the key first when there is one. With
+ * [SshCredentials.keyOnly] only the key, so without one nothing else is tried either.
+ */
+internal fun preferredAuthentications(creds: SshCredentials): String = when {
+    creds.keyOnly -> "publickey"
+    creds.privateKeyPem.isNullOrBlank() -> "keyboard-interactive,password"
+    else -> "publickey,keyboard-interactive,password"
+}
+
+/**
  * Shared JSch [Session] factory used by both the shell transport and the SFTP client.
  *
  * [interactiveAuth] answers the host's sign-in questions beyond the saved password (a one-time
@@ -158,14 +168,7 @@ internal fun buildJschSession(
     session.setConfig(Properties().apply {
         put("StrictHostKeyChecking", "yes")
         if (algorithms.isNotEmpty()) put("PubkeyAcceptedAlgorithms", acceptedAlgorithms(algorithms))
-        put(
-            "PreferredAuthentications",
-            if (!creds.privateKeyPem.isNullOrBlank()) {
-                "publickey,keyboard-interactive,password"
-            } else {
-                "keyboard-interactive,password"
-            },
-        )
+        put("PreferredAuthentications", preferredAuthentications(creds))
         put(
             "compression.s2c",
             if (creds.compression) "zlib@openssh.com,zlib,none" else "none",

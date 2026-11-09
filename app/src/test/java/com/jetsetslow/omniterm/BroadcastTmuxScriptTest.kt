@@ -10,7 +10,6 @@ import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
-import java.util.concurrent.TimeUnit
 
 /**
  * Runs Fleet broadcast's "Run in tmux" scripts in a real POSIX shell, with a stand-in `tmux` on
@@ -55,22 +54,11 @@ class BroadcastTmuxScriptTest {
         if (::home.isInitialized) home.deleteRecursively()
     }
 
-    private data class Run(val output: String, val exit: Int)
-
-    private fun sh(script: String, stdin: String = ""): Run {
-        val proc = ProcessBuilder("/bin/sh", "-c", script)
-            .redirectErrorStream(true)
-            .apply {
-                environment()["HOME"] = home.absolutePath
-                environment()["PATH"] = bin.absolutePath + ":" + System.getenv("PATH")
-                environment()["SHELL"] = "/bin/sh"
-            }
-            .start()
-        proc.outputStream.use { it.write(stdin.toByteArray()) }
-        val output = proc.inputStream.bufferedReader().readText()
-        check(proc.waitFor(30, TimeUnit.SECONDS)) { "script did not finish" }
-        return Run(output, proc.exitValue())
-    }
+    private fun sh(script: String, stdin: String = ""): TestShell.Result = TestShell.run(
+        script,
+        stdin = stdin,
+        env = mapOf("HOME" to home.absolutePath, "PATH" to bin.absolutePath + ":" + System.getenv("PATH"), "SHELL" to "/bin/sh"),
+    )
 
     private fun runFiles(runId: String) = File(home, ".cache/omniterm").listFiles().orEmpty()
         .filter { it.name.startsWith("broadcast-$runId") }

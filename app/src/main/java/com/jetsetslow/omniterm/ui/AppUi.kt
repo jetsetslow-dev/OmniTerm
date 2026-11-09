@@ -811,6 +811,7 @@ fun MainAppScreen(viewModel: AppViewModel) {
 
         // An ssh:// link another app opened, over whatever screen is showing.
         SshLinkDialog(viewModel)
+        KeyInstallDialog(viewModel)
 
         // Full-screen SFTP text editor, hosted here at the top of the Activity window rather than
         // inside SftpScreen. SftpScreen lives under AppCoreScaffold's content Box, which calls
@@ -2710,6 +2711,20 @@ fun ServersMainView(viewModel: AppViewModel) {
                                 Icon(Icons.Filled.Terminal, null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(stringResource(R.string.attach_existing_tmux))
+                            }
+                        }
+                        // ssh-copy-id for this host: a Windows host keeps its keys elsewhere, so it is not offered.
+                        if (RemoteCommands.hasUnixShell(viewModel.knownOs(srv))) {
+                            TextButton(
+                                onClick = {
+                                    selectedForActionSheet = null
+                                    viewModel.openKeyInstall(serverId = srv.id)
+                                },
+                                modifier = Modifier.testTag("hosts.install_key"),
+                            ) {
+                                Icon(Icons.Filled.VpnKey, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.key_install_on_this_host))
                             }
                         }
                         TextButton(

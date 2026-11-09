@@ -1551,4 +1551,31 @@
         <item quantity="other">"%d shared files are waiting. Open an online host's folder in the SFTP tab to upload them."</item>
     </plurals>
     <string name="sftp_shared_upload">"Upload here"</string>
+    <string name="key_install_title">"Install a key on hosts"</string>
+    <string name="key_install_explainer">"OmniTerm signs in to each host as it does now, adds the key's public half to ~/.ssh/authorized_keys if it is not there yet, then signs in with only the key to check it works. Nothing else on the host changes."</string>
+    <string name="key_install_key">"Key"</string>
+    <string name="key_install_no_keys">"No keys yet. Make or import one under Tools → Auth &amp; keys."</string>
+    <string name="key_install_hosts">"Hosts"</string>
+    <string name="key_install_use_for_sign_in">"Sign in with this key from now on, on each host where it works"</string>
+    <string name="key_install_run">"Install"</string>
+    <string name="key_install_running">"Installing…"</string>
+    <string name="key_install_authenticate">"Install key"</string>
+    <string name="key_install_question">"Add %1$s to %2$s? This phone can then sign in to them with that key."</string>
+    <string name="key_install_no_screen_lock">"Set a screen lock on this phone, or App Lock in OmniTerm, to install keys on hosts."</string>
+    <string name="key_install_on_hosts">"Install on hosts"</string>
+    <string name="key_install_on_this_host">"Install a key on this host"</string>
+    <string name="key_install_added_works">"Added. Signing in with the key works."</string>
+    <string name="key_install_present_works">"Already there. Signing in with the key works."</string>
+    <string name="key_install_added_refused">"Added, but the host still refuses the key. It may read keys from another file (AuthorizedKeysFile), or refuse a home or .ssh folder that others can write to (StrictModes)."</string>
+    <string name="key_install_present_refused">"Already there, but the host refuses the key. The line may be commented out or limited by options, or the host may read keys from another file (AuthorizedKeysFile)."</string>
+    <string name="key_install_added_security_key">"Added. Signing in with a security key needs a touch, so it was not tried: open a terminal to check."</string>
+    <string name="key_install_present_security_key">"Already there. Signing in with a security key needs a touch, so it was not tried: open a terminal to check."</string>
+    <string name="key_install_failed">"Not added: %1$s"</string>
+    <string name="key_install_not_reached">"Could not sign in: %1$s"</string>
+    <string name="key_install_windows">"Not for Windows hosts yet: OpenSSH on Windows keeps administrators' keys in another file."</string>
+    <string name="key_install_switched">"It now signs in with %1$s."</string>
+    <string name="key_install_not_switched">"Its sign-in was not changed: %1$s"</string>
+    <string name="key_install_profile_kept">"It signs in through the profile %1$s, which was left as it is."</string>
+    <string name="key_install_no_public_key">"This key has no public key OmniTerm can install."</string>
+    <string name="key_install_host_gone">"This host was deleted."</string>
 </resources>

@@ -7,7 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
-import java.io.IOException
 import java.nio.file.Files
 
 /**
@@ -19,14 +18,12 @@ class HostToolInstallTest {
 
     private class Run(val output: String, val exitCode: Int, val log: List<String>)
 
-    private fun shell(): File? = listOf("/bin/sh", "/usr/bin/sh", "/bin/dash").map(::File).firstOrNull { it.canExecute() }
-
     private fun standardTool(name: String): File? =
         listOf("/usr/bin", "/bin").map { File(it, name) }.firstOrNull { it.canExecute() }
 
     /** Runs [script] with [fakes] (name → sh body) on PATH, feeding [stdin]. */
     private fun run(script: String, fakes: Map<String, String>, stdin: String? = null): Run {
-        val sh = shell()
+        val sh = TestShell.sh ?: TestShell.find("dash")
         val needed = listOf("awk", "sed", "head", "chmod", "timeout")
         assumeTrue("POSIX sh and ${needed.joinToString()} are required", sh != null && needed.all { standardTool(it) != null })
         val dir = Files.createTempDirectory("omniterm-tool-install").toFile()
@@ -36,22 +33,13 @@ class HostToolInstallTest {
             needed.forEach { Files.createSymbolicLink(File(tools, it).toPath(), standardTool(it)!!.toPath()) }
             val log = File(dir, "log").apply { writeText("") }
             fakes.forEach { (name, body) -> File(bin, name).apply { writeText("#!${sh!!.absolutePath}\n$body\n"); setExecutable(true) } }
-            val process = ProcessBuilder(sh!!.absolutePath, "-c", script).redirectErrorStream(true)
-            process.environment().apply {
-                clear()
-                put("PATH", "${bin.absolutePath}:${tools.absolutePath}")
-                put("FAKES", bin.absolutePath)
-                put("LOG", log.absolutePath)
-                put("STATE", dir.absolutePath)
-            }
-            val proc = process.start()
-            // A script may finish without reading its input; writing to it then fails, and only
-            // the output and exit code say how it went.
-            try {
-                proc.outputStream.use { out -> stdin?.let { out.write(it.toByteArray()) } }
-            } catch (_: IOException) {}
-            val output = proc.inputStream.bufferedReader().readText()
-            val code = proc.waitFor()
+            val env = mapOf(
+                "PATH" to "${bin.absolutePath}:${tools.absolutePath}",
+                "FAKES" to bin.absolutePath,
+                "LOG" to log.absolutePath,
+                "STATE" to dir.absolutePath,
+            )
+            val (output, code) = TestShell.run(script, stdin = stdin.orEmpty(), env = env, clean = true, shell = sh!!)
             return Run(output, code, log.readLines().filter { it.isNotBlank() })
         } finally {
             dir.deleteRecursively()

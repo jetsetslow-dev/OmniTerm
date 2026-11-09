@@ -28,7 +28,7 @@ class ToolsPathTextRobolectricTest {
             val text = context.getString(field.getInt(null))
             text.substringAfter("Tools ", "").takeIf { it.isNotEmpty() }?.let { field.name to it }
         }
-        assertEquals("strings that name a Tools path", 8, paths.size)
+        assertEquals("strings that name a Tools path", 9, paths.size)
         // A deeper level would name a section inside a tile, which this check cannot see.
         paths.forEach { (name, path) ->
             assertTrue(

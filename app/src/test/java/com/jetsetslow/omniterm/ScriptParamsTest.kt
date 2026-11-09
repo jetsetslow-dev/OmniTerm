@@ -10,8 +10,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
-import java.io.File
-import java.util.concurrent.TimeUnit
 
 /**
  * `{{placeholders}}` in saved scripts. The values come from a form today and from automation
@@ -88,14 +86,11 @@ class ScriptParamsTest {
     /** The quoted value reaches a real sh as exactly the text that was typed. */
     @Test
     fun aRealShellReceivesTheValueUnchanged() {
-        val sh = File("/bin/sh")
-        assumeTrue("needs /bin/sh", sh.canExecute())
+        assumeTrue("needs sh", TestShell.sh != null)
         val tricky = listOf("plain", "two words", "it's", "\$HOME `id` \$(id)", "a;b|c&d>e", "tab\there", "line\nbreak", "ünï", "")
         tricky.forEach { value ->
             val command = ScriptParams.fill("printf '[%s]' {{v}}", mapOf("v" to value), Shell.Posix)
-            val process = ProcessBuilder(sh.path, "-c", command).redirectErrorStream(true).start()
-            assertTrue(process.waitFor(10, TimeUnit.SECONDS))
-            assertEquals(value, "[$value]", process.inputStream.readBytes().toString(Charsets.UTF_8))
+            assertEquals(value, "[$value]", TestShell.run(command, timeoutSeconds = 10).output)
         }
     }
 }

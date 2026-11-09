@@ -51,7 +51,7 @@ class E2eIncomingTest {
         assertEquals("Use the repository fixture endpoint", args.getString("host", "127.0.0.1"), host.host)
         val creds = runBlocking { HostCredentials.build(repository, host, posixShell = true) }
         val transport = JschSshTransport()
-        fun has(tag: String) = composeRule.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        fun has(tag: String) = composeRule.showsNode(hasTestTag(tag))
         val restoreLaunchIntent = composeRule.keepLaunchIntent()
         var rawContactId: String? = null
         var uploaded: String? = null
@@ -110,7 +110,7 @@ class E2eIncomingTest {
             assertEquals("the folder the user opened stays open", REMOTE_DIR, vm.sftpPath)
             composeRule.onNodeWithTag("sftp.shared.upload").performClick()
             val overwrite = hasText(context.getString(R.string.overwrite)) and hasAnyAncestor(isDialog())
-            composeRule.waitUntil(15_000) { composeRule.onAllNodes(overwrite).fetchSemanticsNodes().isNotEmpty() }
+            composeRule.waitUntil(15_000) { composeRule.showsNode(overwrite) }
             composeRule.onNodeWithText(context.getString(R.string.overwrite_existing_file_s)).assertExists()
             assertEquals("nothing uploads before the user answers", 1, uploads().size)
             composeRule.onNode(overwrite).performClick()
