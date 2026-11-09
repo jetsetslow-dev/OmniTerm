@@ -226,6 +226,7 @@ internal val toolsItems = listOf(
     Triple(Screen.Backup, "App backup", Icons.Filled.Backup),
     Triple(Screen.HealthScoring, "Health scoring", Icons.Filled.MonitorHeart),
     Triple(Screen.Automation, "Automation", Icons.Filled.SmartToy),
+    Triple(Screen.Mcp, "AI assistants", Icons.Filled.Hub),
     Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
     Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
 )

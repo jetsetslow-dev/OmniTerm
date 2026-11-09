@@ -382,7 +382,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   missing credits (Termux:Tasker from D1, electerm and Material Files); for that text-only change
   `git diff --check` and both secret scans were run again and passed.
 
-## Checkpoint D3 — install a key on hosts (this commit)
+## Checkpoint D3 — install a key on hosts (a3cf999)
 
 - What it does: puts a key's public half on one host or many, as `ssh-copy-id` does
   (ConnectBot#428, #666). It is reached from a key's card, from a newly generated key, or from a
@@ -437,6 +437,75 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   with 3 retries. `secrets/internal-docs/tools/ci-watch.sh` watches runs and reruns network
   flakes once.
 
+## Checkpoint E — opt-in MCP server for AI assistants (this commit, branch `kotlin-mcp`)
+
+Its own PR, stacked on #138 (base `kotlin-automation` until #138 merges, then main).
+
+- Protocol: `data/mcp/McpProtocol.kt`, pure Kotlin on kotlinx-serialization-json's tree API (the
+  jar was already verified at 1.12.0), so it can move to the shared module as is.
+  - Spec 2026-07-28, read from modelcontextprotocol.io on Nov 9:
+    - stateless, with no handshake;
+    - `params._meta` carries the version and the client's capabilities;
+    - `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` must match the body (-32020);
+    - an unsupported version gets -32022 with the supported list;
+    - `server/discover`; `resultType`, `ttlMs` and `cacheScope` on results;
+    - a notification gets 202; batches are refused.
+  - 2025-11-25, 06-18 and 03-26 clients: `initialize`, then plain requests, with no session id.
+- HTTP: `McpHttpServer`, one POST per connection on 127.0.0.1 only. Checked in this order:
+  - Host must be a loopback name, against DNS rebinding;
+  - Origin, if sent, must be loopback;
+  - the path, then POST only (GET answers 405, electerm#4431);
+  - the bearer token, compared against its SHA-256;
+  - JSON only, at most 256 KiB, chunked bodies accepted.
+  It drains unread input before closing, so a refusal is not reset.
+- Tools (`McpTools`, fixed names and descriptions, ssh-mcp#214; hints, ssh-mcp#36):
+  - `list_hosts`, `host_status` (OmniTerm's own last metrics and alerts), `list_containers` (live,
+    read-only) and `list_scripts` (names and `{{values}}`, never commands);
+  - `run_script`, and `run_command` only while "Allow any command" is on. Each run is approved on
+    the phone (`McpApprovals`: notification → dialog → `SensitiveActionDialog`; deny needs no
+    lock; no answer in 2 min is a no).
+  - Never shared: an address, a user name, passwords, keys or notes.
+  - Runs go through `AutomationRunner.runScript` (extracted so Tasker and MCP share one runner) into
+    Fleet history as "AI assistant". A typed command runs exactly as typed (no `{{}}` filling).
+- App: `McpService` (foreground, connectedDevice) listens while the switch is on and keeps a
+  reverse tunnel (`SshTunnelManager` remote, id -47821) to the picked host, bound to that host's
+  loopback. Tools → AI assistants has:
+  - the switch (lock plus a token shown once) and the privacy warning;
+  - make, replace and revoke the token;
+  - which hosts are shared (none by default);
+  - "Allow any command";
+  - the host and ports to reach it through;
+  - setup lines for Claude Code, Gemini CLI and Codex;
+  - recent calls, which come from the new `mcp_calls` table (DB 28, `MIGRATION_27_28`, newest 200
+    kept, not in backups).
+  All MCP settings are device-local (`DEVICE_LOCAL_SETTINGS`).
+- Found on device: Android's `InetAddress.getLoopbackAddress()` is `::1`, so the server first
+  listened where neither the tunnel nor clients (both name 127.0.0.1) could reach it. On the JVM it
+  is 127.0.0.1, so the unit test passed. It now binds 127.0.0.1 by number, and the unit test
+  asserts that address.
+- Tests:
+  - `McpProtocolTest` (12), `McpHttpServerTest` (10, real loopback socket), `McpToolsTest` (10, a
+    fake app that checks no secret ever leaves) and `AppMcpBackendRobolectricTest` (3): 35, all
+    passing.
+  - The migration test covers 27→28.
+  - Device `E2eMcpTest` (`-e omniterm_e2e_mcp yes`, lab host) passed. The switch, lock and token
+    were done on the screen. Through a real reverse tunnel, curl on the host:
+    - discovered the server and initialized as a 2025 client;
+    - listed hosts, by name only;
+    - got 401 with a wrong token and 403 with a web origin;
+    - asked to run a command: denied on the phone, its marker file was not made; approved, it was.
+    The calls were recorded, and turning the server off closed the host's port.
+  - Mutations: 24 of 24 caught (`scratchpad/mcpmut`). They cover the Host, Origin, token,
+    revoked-token, size, method, bind-address (all and `::1`) and repeated-header checks;
+    `Mcp-Name`, the version, capabilities, leaked exception text and notifications; approval,
+    `run_command`'s gate (listed and stale), typed-command filling, address and command leaks,
+    unknown values and the host cap; the shared-host filter; and the SSH-error leak.
+- Docs: README section, privacy bullet, backup note, feature bullet and credits (Haven, electerm,
+  ssh-mcp, the MCP spec); `PRIVACY.md` "AI Assistants Over MCP (Opt-In)" and the data list;
+  NOTICE.
+- Gate: `local-pr-check.sh --full` passed (exit 0): 93 device tests, 0 failed; CodeQL no alerts (87,053 lines)
+- Go engine contract: remote port forwarding, used by the MCP tunnel, joins `keyOnly` in item 6.
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
@@ -487,8 +556,7 @@ On Nov 9 the user added:
 1. Automation: D1 (the Tasker plug-in and broadcast), D2 (`ssh://` links, the share target) and
    D3 (key install) are done. This PR (#138) ends here; items 2–6 are
    each their own PR.
-2. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,
-   on-phone approval for writes, audit log, `PRIVACY.md` section.
+2. MCP: done in checkpoint E (its own PR).
 3. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
    Go library, built with a repo-local, checksum-verified Go toolchain (approved Nov 8). ZeroTier,
    OpenVPN and Pangolin's Olm are left out for their licences; Pangolin raw TCP resources work as a
@@ -526,7 +594,8 @@ On Nov 9 the user added:
      the tunnels bring. It goes in behind `SshTransport` and `RemoteFsClient` beside JSch, must pass
      every device suite, then becomes the default; JSch, smbj and commons-net are removed. Go's SSH
      library has no compression, so the per-host compression option goes.
-   - `SshCredentials` fields the Go engine must honour beyond today's: `keyOnly` (D3).
+   - `SshCredentials` fields the Go engine must honour beyond today's: `keyOnly` (D3). Remote
+     (`-R`) port forwarding must work too: the MCP tunnel relies on it (E).
    - Swaps for shared code: Room → Room KMP (same schema and migrations), Moshi →
      kotlinx.serialization, OkHttp/Retrofit → Ktor, `R.string` → Compose resources.
 7. On `kotlin-multiplatform` (draft PR #144), iOS-specific work only: the shared-module layout,

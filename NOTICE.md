@@ -30,3 +30,4 @@ code from them is included; see the README's Acknowledgements for what came from
 - Termux:Tasker — https://github.com/termux/termux-tasker
 - electerm — https://github.com/electerm/electerm
 - Material Files — https://github.com/zhanghai/MaterialFiles
+- Model Context Protocol specification — https://modelcontextprotocol.io

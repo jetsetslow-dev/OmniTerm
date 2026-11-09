@@ -60,6 +60,9 @@ interface MetricHistoryDao {
     @Query("SELECT * FROM metric_history WHERE serverId = :serverId ORDER BY timestamp ASC")
     suspend fun getMetricsForServer(serverId: Int): List<MetricHistoryEntity>
 
+    @Query("SELECT * FROM metric_history WHERE serverId = :serverId ORDER BY timestamp DESC LIMIT 1")
+    suspend fun latestForServer(serverId: Int): MetricHistoryEntity?
+
     @Query("SELECT * FROM metric_history WHERE serverId = :serverId AND timestamp >= :since ORDER BY timestamp ASC")
     suspend fun getMetricsSince(serverId: Int, since: Long): List<MetricHistoryEntity>
 
@@ -469,4 +472,19 @@ interface AutomationGrantDao {
 
     @Query("UPDATE automation_grants SET lastUsedAt = :at WHERE id = :id")
     suspend fun markUsed(id: Int, at: Long)
+}
+
+@Dao
+interface McpCallDao {
+    @Query("SELECT * FROM mcp_calls ORDER BY at DESC, id DESC")
+    fun callsFlow(): Flow<List<McpCallEntity>>
+
+    @Insert
+    suspend fun insert(call: McpCallEntity): Long
+
+    @Query("DELETE FROM mcp_calls WHERE id NOT IN (SELECT id FROM mcp_calls ORDER BY at DESC, id DESC LIMIT :keep)")
+    suspend fun prune(keep: Int)
+
+    @Query("DELETE FROM mcp_calls")
+    suspend fun clear()
 }

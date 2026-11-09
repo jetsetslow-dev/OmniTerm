@@ -84,6 +84,7 @@ class AppRepository(private val db: AppDatabase) {
     fun getMetricsForServerFlow(serverId: Int): Flow<List<MetricHistoryEntity>> = db.metricHistoryDao().getMetricsForServerFlow(serverId)
     suspend fun getMetricsForServer(serverId: Int): List<MetricHistoryEntity> = db.metricHistoryDao().getMetricsForServer(serverId)
     suspend fun getMetricsSince(serverId: Int, since: Long): List<MetricHistoryEntity> = db.metricHistoryDao().getMetricsSince(serverId, since)
+    suspend fun latestMetric(serverId: Int): MetricHistoryEntity? = db.metricHistoryDao().latestForServer(serverId)
     suspend fun insertMetric(metric: MetricHistoryEntity) = db.metricHistoryDao().insertMetric(metric)
     suspend fun pruneMetrics(cutoff: Long) = db.metricHistoryDao().pruneMetrics(cutoff)
 
@@ -142,6 +143,13 @@ class AppRepository(private val db: AppDatabase) {
     // Quick Script functions
     val scriptsFlow: Flow<List<QuickScriptEntity>> = db.quickScriptDao().getAllScriptsFlow()
     suspend fun getAllScripts(): List<QuickScriptEntity> = db.quickScriptDao().getAllScripts()
+
+    val mcpCallsFlow: Flow<List<McpCallEntity>> = db.mcpCallDao().callsFlow()
+    suspend fun recordMcpCall(call: McpCallEntity, keep: Int = com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS) = db.withTransaction {
+        db.mcpCallDao().insert(call)
+        db.mcpCallDao().prune(keep)
+    }
+    suspend fun clearMcpCalls() = db.mcpCallDao().clear()
     suspend fun insertScript(script: QuickScriptEntity) = db.quickScriptDao().insertScript(script)
     /** Deletes [script] and takes it off every rule that offered it as a runbook. */
     suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {

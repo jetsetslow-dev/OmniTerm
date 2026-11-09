@@ -812,6 +812,8 @@ fun MainAppScreen(viewModel: AppViewModel) {
         // An ssh:// link another app opened, over whatever screen is showing.
         SshLinkDialog(viewModel)
         KeyInstallDialog(viewModel)
+        // An AI assistant asking to run something, over whatever screen is showing.
+        McpApprovalDialog(viewModel)
 
         // Full-screen SFTP text editor, hosted here at the top of the Activity window rather than
         // inside SftpScreen. SftpScreen lives under AppCoreScaffold's content Box, which calls
@@ -1295,6 +1297,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         Screen.Settings -> SettingsToolView(viewModel)
                         Screen.About -> AboutToolView(viewModel)
                         Screen.Automation -> AutomationToolView(viewModel)
+                        Screen.Mcp -> McpToolView(viewModel)
                     }
 
                     // In a landscape terminal the IME intentionally hides both global bars to preserve
@@ -1973,7 +1976,7 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
 fun isToolSubScreen(screen: Screen): Boolean {
     return screen in listOf(
         Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.Network,
-        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation,
+        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp,
     )
 }
 
