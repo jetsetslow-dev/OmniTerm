@@ -3,7 +3,6 @@ package com.jetsetslow.omniterm.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -11,7 +10,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,25 +50,15 @@ fun AutomationToolView(viewModel: AppViewModel) {
     var revoking by remember { mutableStateOf<AutomationGrantEntity?>(null) }
 
     ToolScaffold(viewModel, "Automation", onAdd = { creating = true }) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp).verticalScrollWithIndicators(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(stringResource(R.string.automation_switch), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text(stringResource(R.string.automation_switch_help), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(
-                            checked = viewModel.automationEnabled,
-                            onCheckedChange = viewModel::saveAutomationEnabled,
-                            modifier = Modifier.testTag("automation.enabled"),
-                        )
-                    }
-                    Text(stringResource(R.string.automation_rules), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+        ToolCardColumn {
+            ToolSwitchCard(
+                title = stringResource(R.string.automation_switch),
+                help = stringResource(R.string.automation_switch_help),
+                checked = viewModel.automationEnabled,
+                onCheckedChange = viewModel::saveAutomationEnabled,
+                switchTag = "automation.enabled",
+            ) {
+                Text(stringResource(R.string.automation_rules), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             SettingsCardHeader(stringResource(R.string.automation_tokens), "", OmniColors.cyan)
@@ -265,7 +253,7 @@ private fun NewTokenDialog(
  * the app's own scope so that happens after this screen has closed too.
  */
 @Composable
-private fun TokenShownOnceDialog(token: String, onDone: () -> Unit) {
+internal fun TokenShownOnceDialog(token: String, onDone: () -> Unit, onceText: String = stringResource(R.string.automation_token_once), tag: String = "automation.token") {
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
     AlertDialog(
@@ -273,9 +261,9 @@ private fun TokenShownOnceDialog(token: String, onDone: () -> Unit) {
         title = { Text(stringResource(R.string.automation_token_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.automation_token_once), fontSize = 13.sp)
+                Text(onceText, fontSize = 13.sp)
                 SelectionContainer {
-                    Text(token, fontFamily = OmniFonts.mono, fontSize = 14.sp, modifier = Modifier.testTag("automation.token"))
+                    Text(token, fontFamily = OmniFonts.mono, fontSize = 14.sp, modifier = Modifier.testTag(tag))
                 }
                 if (copied) {
                     Text(stringResource(R.string.automation_token_copied), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -285,11 +273,11 @@ private fun TokenShownOnceDialog(token: String, onDone: () -> Unit) {
         confirmButton = {
             TextButton(
                 onClick = { copySensitiveClipboard(context.applicationContext, TerminalSessionManager.scope, "OmniTerm token", token); copied = true },
-                modifier = Modifier.testTag("automation.token.copy"),
+                modifier = Modifier.testTag("$tag.copy"),
             ) { Text(stringResource(R.string.copy)) }
         },
         dismissButton = {
-            TextButton(onClick = onDone, modifier = Modifier.testTag("automation.token.done")) { Text(stringResource(R.string.done)) }
+            TextButton(onClick = onDone, modifier = Modifier.testTag("$tag.done")) { Text(stringResource(R.string.done)) }
         },
     )
 }

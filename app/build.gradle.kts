@@ -263,6 +263,9 @@ dependencies {
   // Room's migration test runtime pulls kotlinx-serialization-json 1.8.1. Keep its transitive
   // core module aligned in every variant; mixed 1.8.1/1.7.3 binaries fail with AbstractMethodError.
   implementation(platform(libs.kotlinx.serialization.bom))
+  // The MCP server reads and writes JSON-RPC with its tree API (no compiler plugin), which the
+  // shared Kotlin module can use unchanged.
+  implementation(libs.kotlinx.serialization.json)
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)

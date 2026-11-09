@@ -25,6 +25,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
 import com.jetsetslow.omniterm.data.*
+import com.jetsetslow.omniterm.data.mcp.McpSettings
+import com.jetsetslow.omniterm.mcp.McpApprovals
+import com.jetsetslow.omniterm.mcp.McpConfig
+import com.jetsetslow.omniterm.mcp.McpServerState
+import com.jetsetslow.omniterm.mcp.McpService
 import com.jetsetslow.omniterm.data.serial.SerialParity
 import com.jetsetslow.omniterm.data.serial.SerialSettings
 import com.jetsetslow.omniterm.data.serial.SerialStopBits
@@ -523,6 +528,7 @@ enum class Screen {
     Settings,
     About,
     Automation,
+    Mcp,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -1152,14 +1158,14 @@ internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
 
 /**
  * Settings that belong to this phone and never travel in a backup, either way: the PIN, the lock
- * and biometrics, and the Automation switch, so restoring a backup never lets other apps run
- * scripts the user did not allow on this phone.
+ * and biometrics, the Automation switch, and every MCP setting, so restoring a backup never lets
+ * other apps or AI assistants run scripts the user did not allow on this phone.
  */
 internal val DEVICE_LOCAL_SETTINGS = setOf(
     "app_pin", "app_lock_enabled", "biometrics_enabled",
     "pin_failed_attempts", "pin_locked_until", "app_lock_grace_ms",
     Automation.SETTING_ENABLED,
-)
+) + McpSettings.ALL
 
 /** The built-in Fleet presets, for tests that keep [fleetPresetWindowsScripts] in step with them. */
 internal val builtInFleetPresetCommands: Map<String, String> get() =
@@ -2662,6 +2668,7 @@ class AppViewModel @JvmOverloads constructor(
         private set
 
     init {
+        resumeMcpServer()
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
         SshHostKeyTrust.registerApprovalHandler(hostKeyApprovalOwner) { req ->
@@ -14460,6 +14467,72 @@ class AppViewModel @JvmOverloads constructor(
 
     fun revokeAutomationGrant(id: Int) {
         viewModelScope.launch { repository.deleteAutomationGrant(id) }
+    }
+
+    // ── AI ASSISTANTS (MCP) ──
+    /** The MCP server's settings, live from the settings table. */
+    val mcpConfig: StateFlow<McpConfig> = repository.settingsFlow
+        .map { rows -> McpConfig.from(rows.associate { it.key to it.value }) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, McpConfig())
+    val mcpState: StateFlow<McpServerState> = McpService.state
+    val mcpCalls = repository.mcpCallsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val mcpApprovals: StateFlow<List<McpApprovals.Pending>> = McpApprovals.pending
+
+    /** Turns the server on or off. The screen asks for the lock, and makes a token, before turning it on. */
+    fun saveMcpEnabled(enabled: Boolean) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            repository.insertSetting(McpSettings.ENABLED, enabled.toString())
+            if (enabled) McpService.start(app) else McpService.stop(app)
+        }
+    }
+
+    /** Makes the server's token and hands it to [onCreated], the only time it is shown: only its hash is kept. */
+    fun makeMcpToken(onCreated: (String) -> Unit) {
+        val token = Automation.newToken()
+        viewModelScope.launch {
+            repository.insertSetting(McpSettings.TOKEN_HASH, Automation.hash(token))
+            withContext(Dispatchers.Main) { onCreated(token) }
+        }
+    }
+
+    /** Revokes the token: every assistant is refused until a new one is made. */
+    fun revokeMcpToken() {
+        viewModelScope.launch { repository.deleteSetting(McpSettings.TOKEN_HASH) }
+    }
+
+    fun saveMcpHosts(ids: Collection<Int>) {
+        viewModelScope.launch { repository.insertSetting(McpSettings.HOSTS, Automation.joinServerIds(ids)) }
+    }
+
+    fun saveMcpAnyCommand(allowed: Boolean) {
+        viewModelScope.launch { repository.insertSetting(McpSettings.ANY_COMMAND, allowed.toString()) }
+    }
+
+    fun saveMcpPort(port: Int) {
+        viewModelScope.launch { repository.insertSetting(McpSettings.PORT, port.toString()) }
+    }
+
+    /** The host a computer reaches the server through, and the port on it; null for this phone only. */
+    fun saveMcpTunnel(hostId: Int?, port: Int) {
+        viewModelScope.launch {
+            repository.insertSetting(McpSettings.TUNNEL_HOST, hostId?.toString().orEmpty())
+            repository.insertSetting(McpSettings.TUNNEL_PORT, port.toString())
+        }
+    }
+
+    fun clearMcpCalls() {
+        viewModelScope.launch { repository.clearMcpCalls() }
+    }
+
+    /** The user's answer to an assistant's request; the dialog asks for the lock before approving. */
+    fun answerMcpApproval(id: Int, approved: Boolean) = McpApprovals.answer(id, approved)
+
+    /** The server stays on across restarts of the app while the user has it on. */
+    private fun resumeMcpServer() {
+        viewModelScope.launch {
+            if (repository.getSetting(McpSettings.ENABLED) == "true") McpService.start(getApplication())
+        }
     }
 
     fun saveAlertsEnabled(enabled: Boolean) {

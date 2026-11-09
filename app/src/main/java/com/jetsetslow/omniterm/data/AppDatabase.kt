@@ -28,13 +28,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FleetRunEntity::class,
         FleetRunHostEntity::class,
         AutomationGrantEntity::class,
+        McpCallEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 27,
+    version = 28,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -56,6 +57,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun kubeClusterDao(): KubeClusterDao
     abstract fun fleetRunDao(): FleetRunDao
     abstract fun automationGrantDao(): AutomationGrantDao
+    abstract fun mcpCallDao(): McpCallDao
 
     companion object {
         @Volatile
@@ -345,6 +347,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // The record of calls AI assistants made to the MCP server.
+        private val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `mcp_calls` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`at` INTEGER NOT NULL, `client` TEXT NOT NULL, `tool` TEXT NOT NULL, " +
+                        "`outcome` TEXT NOT NULL, `detail` TEXT NOT NULL)"
+                )
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -419,6 +432,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_24_25,
             MIGRATION_25_26,
             MIGRATION_26_27,
+            MIGRATION_27_28,
         )
 
         fun getDatabase(context: Context): AppDatabase {
