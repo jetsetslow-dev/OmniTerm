@@ -12,11 +12,12 @@ keeping the app features the same.
 
 ## Acknowledgements
 
-OmniTerm credits the open-source projects whose ideas and bug reports shaped its features. No
-code from them is included; see the README's Acknowledgements for what came from each.
+OmniTerm credits the projects, most of them open source, whose ideas and bug reports shaped its
+features. No code from them is included; see the README's Acknowledgements for what came from each.
 
 - Semaphore UI — https://github.com/semaphoreui/semaphore
 - Termix — https://github.com/Termix-SSH/Termix
+- Termius (not open source; ideas only) — https://termius.com
 - ssh-mcp-server — https://github.com/classfang/ssh-mcp-server
 - ssh-mcp — https://github.com/tufantunc/ssh-mcp
 - Komodo — https://github.com/moghtech/komodo

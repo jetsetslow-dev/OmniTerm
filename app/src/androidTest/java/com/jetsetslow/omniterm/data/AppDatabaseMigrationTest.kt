@@ -497,4 +497,38 @@ class AppDatabaseMigrationTest {
         }
         context.deleteDatabase(databaseName)
     }
+
+    @Test
+    fun migrationToThirtyGivesHostsNoTagsAndAddsNoSavedTargets() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-29-host-tags"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 29).use { db ->
+            db.execSQL(
+                "INSERT INTO servers (name, host, port, username, serverColor, authType, sudoPassword, notes, keepAlive, " +
+                    "sshCompression, persistentSession, proxyCommand, proxyType, proxyHost, proxyPort, proxyUser, proxyPassword, " +
+                    "agentForwarding, healthScore, lastLatency, status, authStatus, tunnelHost) VALUES ('nas', '192.168.1.5', 22, 'u', " +
+                    "'Default', 'password', '', '', 30, 0, 0, '', 'none', '', 0, '', '', 0, -1, 0, 'offline', 'unknown', '')"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT tags FROM servers WHERE name = 'nas'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgraded host has no tags", "", cursor.getString(0))
+            }
+            db.query("SELECT COUNT(*) FROM fleet_target_sets").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade saves no targets", 0, cursor.getInt(0))
+            }
+            db.execSQL("UPDATE servers SET tags = 'nas, prod' WHERE name = 'nas'")
+            db.execSQL("INSERT INTO fleet_target_sets (name, mode, serverIds, groups, tags, allTags) VALUES ('Prod', 'Tags', '[]', '[]', '[\"prod\"]', 0)")
+        }
+        context.deleteDatabase(databaseName)
+    }
 }

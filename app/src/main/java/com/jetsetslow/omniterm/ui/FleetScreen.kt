@@ -54,13 +54,14 @@ fun FleetScreen(viewModel: AppViewModel) {
     val srvList by viewModel.servers.collectAsStateWithLifecycle()
     val onlineSrvList = srvList.filter { viewModel.isPickableHost(it) }
     // Broadcast picks survive a host going offline, which is skipped until it is back; dropping it
-    // meant a brief drop silently shrank the next run. Only a removed host or group leaves the picks.
-    LaunchedEffect(srvList.map { it.id to it.groupName }) {
+    // meant a brief drop silently shrank the next run. Only a removed host, group or tag leaves the picks.
+    LaunchedEffect(srvList.map { Triple(it.id, it.groupName, it.tags) }) {
         val ids = srvList.mapTo(HashSet()) { it.id }
         viewModel.broadcastTargetServerIds.removeAll { it !in ids }
         viewModel.broadcastTargetGroups.removeAll { group ->
             srvList.none { it.groupName.orEmpty() == group }
         }
+        viewModel.broadcastTargetTags.removeAll { tag -> srvList.none { HostTags.has(it, tag) } }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -269,17 +270,12 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     // A picked group stays listed while all its hosts are offline, so it can be unpicked.
     val groups = (srvList.mapNotNull { it.groupName?.takeIf { group -> group.isNotBlank() } } + viewModel.broadcastTargetGroups)
         .distinct().sorted()
+    // Likewise a picked tag.
+    val tags = (HostTags.all(srvList) + viewModel.broadcastTargetTags).distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
+    val targets = viewModel.broadcastTargets
     // Picked hosts that are offline right now: they stay picked, and a run skips them.
-    val offlinePicks = allHosts.filter { host ->
-        !viewModel.isPickableHost(host) && when (viewModel.broadcastTargetMode) {
-            FleetTargetMode.Servers -> host.id in viewModel.broadcastTargetServerIds
-            FleetTargetMode.Groups -> host.groupName.orEmpty() in viewModel.broadcastTargetGroups
-        }
-    }
-    val selectedTargetCount = when (viewModel.broadcastTargetMode) {
-        FleetTargetMode.Servers -> srvList.count { it.id in viewModel.broadcastTargetServerIds }
-        FleetTargetMode.Groups -> srvList.count { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
-    }
+    val offlinePicks = allHosts.filter { host -> !viewModel.isPickableHost(host) && targets.matches(host) }
+    val selectedTargetCount = srvList.count { viewModel.isPickableHost(it) && targets.matches(it) }
     // Stop always works; Run needs a command and at least one online target.
     val canRunOrStop = viewModel.isBroadcastExecuting ||
         (viewModel.broadcastCommandText.isNotBlank() && selectedTargetCount > 0)
@@ -396,10 +392,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         val cmd = viewModel.broadcastCommandText.trim()
         if (cmd.isBlank() || viewModel.isBroadcastExecuting) return
         dismissKeyboard()
-        val picked = when (viewModel.broadcastTargetMode) {
-            FleetTargetMode.Servers -> srvList.filter { it.id in viewModel.broadcastTargetServerIds }
-            FleetTargetMode.Groups -> srvList.filter { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
-        }
+        val picked = viewModel.broadcastTargets.let { picks -> srvList.filter { viewModel.isPickableHost(it) && picks.matches(it) } }
         if (picked.isEmpty()) return
         val mismatched = fleetHostsScriptSkips(activePreset, picked, viewModel.hostMetricsById)
         val targets = picked - mismatched.toSet()
@@ -468,7 +461,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         }
     }
     val inputs = @Composable {
-        BroadcastTargetPicker(viewModel, srvList, groups, offlinePicks)
+        BroadcastTargetPicker(viewModel, srvList, groups, tags, offlinePicks)
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -789,8 +782,11 @@ private fun BroadcastTargetPicker(
     viewModel: AppViewModel,
     srvList: List<ServerEntity>,
     groups: List<String>,
+    tags: List<String>,
     offlinePicks: List<ServerEntity>,
 ) {
+    var showSaved by remember { mutableStateOf(false) }
+    val mode = viewModel.broadcastTargetMode
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -803,17 +799,19 @@ private fun BroadcastTargetPicker(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(stringResource(R.string.broadcast_targets), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = viewModel.broadcastTargetMode == FleetTargetMode.Servers,
-                    onClick = { viewModel.broadcastTargetMode = FleetTargetMode.Servers },
-                    label = { Text(stringResource(R.string.servers), fontSize = 11.sp) },
-                )
-                FilterChip(
-                    selected = viewModel.broadcastTargetMode == FleetTargetMode.Groups,
-                    onClick = { viewModel.broadcastTargetMode = FleetTargetMode.Groups },
-                    label = { Text(stringResource(R.string.groups), fontSize = 11.sp) },
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((choice, label) in listOf(
+                    FleetTargetMode.Servers to R.string.servers,
+                    FleetTargetMode.Groups to R.string.groups,
+                    FleetTargetMode.Tags to R.string.tags,
+                )) {
+                    FilterChip(
+                        selected = mode == choice,
+                        onClick = { viewModel.broadcastTargetMode = choice },
+                        label = { Text(stringResource(label), fontSize = 11.sp) },
+                        modifier = Modifier.testTag("broadcast.targets.${choice.name.lowercase()}"),
+                    )
+                }
             }
         }
 
@@ -822,20 +820,30 @@ private fun BroadcastTargetPicker(
             horizontalArrangement = Arrangement.End,
         ) {
             Text(
-                if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) stringResource(R.string.all_online) else stringResource(R.string.all_groups),
+                stringResource(R.string.broadcast_saved_targets),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable {
-                    if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) {
-                        viewModel.broadcastTargetServerIds.clear()
-                        viewModel.broadcastTargetServerIds.addAll(srvList.filter { viewModel.isPickableHost(it) }.map { it.id })
-                    } else {
-                        viewModel.broadcastTargetGroups.clear()
-                        viewModel.broadcastTargetGroups.addAll(groups)
-                    }
-                }
+                modifier = Modifier.clickable { showSaved = true }.testTag("broadcast.targets.saved"),
             )
+            if (mode != FleetTargetMode.Tags) {
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    if (mode == FleetTargetMode.Servers) stringResource(R.string.all_online) else stringResource(R.string.all_groups),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable {
+                        if (mode == FleetTargetMode.Servers) {
+                            viewModel.broadcastTargetServerIds.clear()
+                            viewModel.broadcastTargetServerIds.addAll(srvList.filter { viewModel.isPickableHost(it) }.map { it.id })
+                        } else {
+                            viewModel.broadcastTargetGroups.clear()
+                            viewModel.broadcastTargetGroups.addAll(groups)
+                        }
+                    }
+                )
+            }
             Spacer(Modifier.width(12.dp))
             Text(stringResource(R.string.clear),
                 fontSize = 11.sp,
@@ -844,11 +852,16 @@ private fun BroadcastTargetPicker(
                 modifier = Modifier.clickable {
                     viewModel.broadcastTargetServerIds.clear()
                     viewModel.broadcastTargetGroups.clear()
+                    viewModel.broadcastTargetTags.clear()
                 }
             )
         }
 
-        if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) {
+        if (showSaved) SavedTargetsDialog(viewModel, onDismiss = { showSaved = false })
+
+        if (mode == FleetTargetMode.Tags) {
+            BroadcastTagPicker(viewModel, srvList, tags)
+        } else if (mode == FleetTargetMode.Servers) {
             // A dialog picker instead of a horizontal chip strip: with more than a few hosts the
             // strip hides most of the fleet offscreen, so selection state becomes invisible.
             HostPickerField(
@@ -888,6 +901,131 @@ private fun BroadcastTargetPicker(
             }
         }
     }
+}
+
+/** Tags as chips, each with how many online hosts carry it, and whether a host needs any or all of them. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BroadcastTagPicker(viewModel: AppViewModel, srvList: List<ServerEntity>, tags: List<String>) {
+    if (tags.isEmpty()) {
+        Text(
+            stringResource(R.string.broadcast_no_tags),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp).testTag("broadcast.tags.none"),
+        )
+        return
+    }
+    FlowRow(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        tags.forEach { tag ->
+            val picked = viewModel.broadcastTargetTags.any { it.equals(tag, ignoreCase = true) }
+            ElevatedFilterChip(
+                selected = picked,
+                onClick = {
+                    if (picked) viewModel.broadcastTargetTags.removeAll { it.equals(tag, ignoreCase = true) }
+                    else viewModel.broadcastTargetTags.add(tag)
+                },
+                label = {
+                    Text("$tag (${srvList.count { viewModel.isPickableHost(it) && HostTags.has(it, tag) }})", fontFamily = OmniFonts.mono, fontSize = 11.sp)
+                },
+                modifier = Modifier.testTag("broadcast.tag.$tag"),
+            )
+        }
+    }
+    if (viewModel.broadcastTargetTags.size > 1) {
+        Row(modifier = Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.broadcast_tags_match), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilterChip(
+                selected = !viewModel.broadcastTagsMatchAll,
+                onClick = { viewModel.broadcastTagsMatchAll = false },
+                label = { Text(stringResource(R.string.broadcast_tags_any), fontSize = 11.sp) },
+                modifier = Modifier.testTag("broadcast.tags.any"),
+            )
+            FilterChip(
+                selected = viewModel.broadcastTagsMatchAll,
+                onClick = { viewModel.broadcastTagsMatchAll = true },
+                label = { Text(stringResource(R.string.broadcast_tags_all), fontSize = 11.sp) },
+                modifier = Modifier.testTag("broadcast.tags.all"),
+            )
+        }
+    }
+}
+
+/** Fleet's saved target sets: tap one to pick its targets, save the current ones, or delete one. */
+@Composable
+private fun SavedTargetsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
+    val sets by viewModel.fleetTargetSets.collectAsStateWithLifecycle()
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
+    var name by remember { mutableStateOf("") }
+    val canSave = name.isNotBlank() && !viewModel.broadcastTargets.isEmpty
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.saved_targets_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (sets.isEmpty()) {
+                    Text(stringResource(R.string.saved_targets_empty), fontSize = 12.sp, modifier = Modifier.testTag("saved_targets.empty"))
+                }
+                sets.forEach { set ->
+                    val targets = FleetTargets.of(set)
+                    OmniCard(
+                        modifier = Modifier.fillMaxWidth().testTag("saved_targets.${set.id}"),
+                        onClick = {
+                            viewModel.loadFleetTargetSet(set)
+                            onDismiss()
+                        },
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(set.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(
+                                    savedTargetsSummary(targets, servers),
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            IconButton(onClick = { viewModel.deleteFleetTargetSet(set.id) }, modifier = Modifier.testTag("saved_targets.${set.id}.delete")) {
+                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.saved_targets_delete, set.name))
+                            }
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(FleetTargets.MAX_NAME) },
+                    label = { Text(stringResource(R.string.saved_targets_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("saved_targets.name"),
+                )
+                Text(stringResource(R.string.saved_targets_help), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.saveFleetTargetSet(name)
+                    name = ""
+                },
+                enabled = canSave,
+                modifier = Modifier.testTag("saved_targets.save"),
+            ) { Text(stringResource(R.string.saved_targets_save)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+    )
+}
+
+/** What a saved set picks, in a line: its hosts by name, its groups, or its tags and how they combine. */
+@Composable
+private fun savedTargetsSummary(targets: FleetTargets, servers: List<ServerEntity>): String = when (targets.mode) {
+    FleetTargetMode.Servers -> servers.filter { it.id in targets.serverIds }.joinToString(", ") { it.name }
+        .ifEmpty { stringResource(R.string.saved_targets_no_hosts) }
+    FleetTargetMode.Groups -> stringResource(R.string.saved_targets_groups, targets.groups.sorted().joinToString(", "))
+    FleetTargetMode.Tags -> stringResource(
+        if (targets.allTags) R.string.saved_targets_tags_all else R.string.saved_targets_tags_any,
+        targets.tags.joinToString(", "),
+    )
 }
 
 @Composable

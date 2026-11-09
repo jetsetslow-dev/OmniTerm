@@ -862,7 +862,8 @@ enum class BroadcastStatus(@StringRes val label: Int) {
     NotRun(R.string.broadcast_status_not_run),
 }
 
-enum class FleetTargetMode { Servers, Groups }
+/** How Broadcast picks its hosts: one by one, by group, or by tag ([FleetTargets]). */
+enum class FleetTargetMode { Servers, Groups, Tags }
 
 data class BroadcastResultItem(
     val serverId: Int,
@@ -1634,7 +1635,48 @@ class AppViewModel @JvmOverloads constructor(
     var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast
     val broadcastTargetServerIds = mutableStateListOf<Int>()
     val broadcastTargetGroups = mutableStateListOf<String>()
+    val broadcastTargetTags = mutableStateListOf<String>()
+    /** In tag mode: hosts with every picked tag, rather than any of them. */
+    var broadcastTagsMatchAll by mutableStateOf(false)
     var broadcastTargetMode by mutableStateOf(FleetTargetMode.Servers)
+
+    /** Broadcast's picks as one value, for matching hosts and for saving as a set. */
+    internal val broadcastTargets: FleetTargets
+        get() = FleetTargets(
+            broadcastTargetMode,
+            broadcastTargetServerIds.toSet(),
+            broadcastTargetGroups.toSet(),
+            broadcastTargetTags.toList(),
+            broadcastTagsMatchAll,
+        )
+
+    /** Fleet's saved target sets, by name. */
+    val fleetTargetSets = repository.fleetTargetSetsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Saves Broadcast's current picks as [name], replacing a set of that name. */
+    fun saveFleetTargetSet(name: String) {
+        val targets = broadcastTargets
+        if (name.isBlank() || targets.isEmpty) return
+        viewModelScope.launch { repository.saveFleetTargetSet(targets.toSet(name)) }
+    }
+
+    /** Picks [set]'s targets in Broadcast, in place of the current ones. */
+    fun loadFleetTargetSet(set: FleetTargetSetEntity) {
+        val targets = FleetTargets.of(set)
+        broadcastTargetMode = targets.mode
+        broadcastTargetServerIds.clear()
+        broadcastTargetServerIds.addAll(targets.serverIds)
+        broadcastTargetGroups.clear()
+        broadcastTargetGroups.addAll(targets.groups)
+        broadcastTargetTags.clear()
+        broadcastTargetTags.addAll(targets.tags)
+        broadcastTagsMatchAll = targets.allTags
+    }
+
+    fun deleteFleetTargetSet(id: Int) {
+        viewModelScope.launch { repository.deleteFleetTargetSet(id) }
+    }
+
     var broadcastCommandText by mutableStateOf("")
     /**
      * The saved script Broadcast's command came from, so a run skips hosts its target OS or system
@@ -4949,7 +4991,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     // CRUDS FOR SERVERS
-    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, tunnelId: Int? = null, tunnelHost: String = "", onResult: (String?) -> Unit) {
+    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, tunnelId: Int? = null, tunnelHost: String = "", tags: String = "", onResult: (String?) -> Unit) {
         viewModelScope.launch {
             // Username/password live on the credential profile when authType == "profile", so the
             // form leaves the username field greyed out and empty; only require it for the other
@@ -5020,6 +5062,7 @@ class AppViewModel @JvmOverloads constructor(
                 authError = null,
                 tunnelId = tunnelId,
                 tunnelHost = tunnelHost.trim(),
+                tags = HostTags.format(HostTags.parse(tags)),
             )
             val newId = try {
                 repository.saveUniqueServer(server)
@@ -13825,8 +13868,7 @@ class AppViewModel @JvmOverloads constructor(
         // A retry runs the last command again, whatever the picker shows now.
         val scriptName = if (source == FleetRunHistory.SOURCE_RETRY) lastBroadcastScriptName
         else broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
-        val targetIds = broadcastTargetServerIds.toList()
-        val targetGroups = broadcastTargetGroups.toList()
+        val targets = broadcastTargets
         val inTmux = broadcastInTmux
         val batchSize = broadcastBatchSize
         val stopOnFailure = broadcastStopOnFailure && batchSize > 0
@@ -13852,8 +13894,7 @@ class AppViewModel @JvmOverloads constructor(
                 // the real SSH result for that row.
                 // In the confirmed order, which a rolling run's batches follow.
                 resolvedIds != null -> allServers.associateBy { it.id }.let { byId -> resolvedIds.distinct().mapNotNull(byId::get) }
-                broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.status == "online" && it.id in targetIds }
-                else -> allServers.filter { it.status == "online" && it.groupName.orEmpty() in targetGroups }
+                else -> allServers.filter { it.status == "online" && targets.matches(it) }
             }
             if (selected.isEmpty()) {
                 isBroadcastExecuting = false
@@ -15260,6 +15301,7 @@ class AppViewModel @JvmOverloads constructor(
         kubeClusters: List<KubeClusterEntity> = emptyList(),
         tunnels: List<TunnelEntity> = emptyList(),
         history: BackupHistoryRows = BackupHistoryRows(),
+        fleetTargetSets: List<FleetTargetSetEntity> = emptyList(),
     ): String {
         val closedSelection = selection.withReferentialClosure()
         val serverArr = org.json.JSONArray()
@@ -15287,6 +15329,7 @@ class AppViewModel @JvmOverloads constructor(
                 put("proxyKeyAlias", s.proxyKeyAlias ?: "")
                 s.tunnelId?.let { put("tunnelId", it) }
                 put("tunnelHost", s.tunnelHost)
+                put("tags", s.tags)
             })
         }
         val keyArr = org.json.JSONArray()
@@ -15519,6 +15562,9 @@ class AppViewModel @JvmOverloads constructor(
             history.automationUses,
         )
 
+        // Saved Fleet targets go with the hosts they name.
+        val fleetTargetSetArr = BackupFleetTargets.json(if (closedSelection.servers) fleetTargetSets else emptyList(), exportedServerIds)
+
         return org.json.JSONObject()
             .put("format", "omniterm-backup")
             .put("schema", BACKUP_SCHEMA_VERSION)
@@ -15530,6 +15576,7 @@ class AppViewModel @JvmOverloads constructor(
             .put("assistantCalls", assistantArr)
             .put("automation", automationObj)
             .put("servers", serverArr)
+            .put("fleetTargetSets", fleetTargetSetArr)
             .put("sshKeys", keyArr)
             .put("credentialProfiles", profileArr)
             .put("quickScripts", scriptArr)
@@ -15667,6 +15714,7 @@ class AppViewModel @JvmOverloads constructor(
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
             "crashLogs", "telnetHosts", "kubeClusters", "vpnTunnels",
             "tmuxSessions", "composeStacks", "monitoringHistory", "fleetRuns", "assistantCalls",
+            "fleetTargetSets",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -15856,6 +15904,7 @@ class AppViewModel @JvmOverloads constructor(
                             kubeClusters = repository.getAllKubeClusters(),
                             tunnels = repository.getAllTunnels(),
                             history = history,
+                            fleetTargetSets = repository.fleetTargetSets(),
                         )
                         val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
                         // A file the restore would refuse is no backup: say so instead of writing it.
@@ -16189,12 +16238,23 @@ class AppViewModel @JvmOverloads constructor(
                                     // it fails until the user picks one (or None).
                                     tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
                                     tunnelHost = o.optString("tunnelHost", ""),
+                                    tags = HostTags.format(HostTags.parse(o.optString("tags", ""))),
                                 )
                             ).toInt()
                             if (oldId != 0) serverIdMap[oldId] = newId
                             restoredHosts.add(o.getString("host") to o.optInt("port", 22))
                             imported++
                             availableHostSlots--
+                        }
+
+                        // Saved Fleet targets, on the hosts restored or already here; the phone's
+                        // own set of a name wins over the backup's.
+                        if (closedSelection.servers) {
+                            BackupFleetTargets.restore(
+                                root.optJSONArray("fleetTargetSets"),
+                                serverIdMap,
+                                repository.fleetTargetSets().map { it.name },
+                            ).forEach { repository.saveFleetTargetSet(it) }
                         }
 
                         // Pinned host keys travel with the servers (schema 3+). Only import keys for

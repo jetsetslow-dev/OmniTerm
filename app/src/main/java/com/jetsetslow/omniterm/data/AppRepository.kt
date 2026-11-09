@@ -199,6 +199,19 @@ class AppRepository(private val db: AppDatabase) {
 
     fun automationUsesFlow(grantId: Int): Flow<List<AutomationUseEntity>> = db.automationUseDao().usesFlow(grantId)
 
+    // Fleet's saved target sets. A host deleted since a set was saved is dropped when it is used.
+    val fleetTargetSetsFlow: Flow<List<FleetTargetSetEntity>> get() = db.fleetTargetSetDao().setsFlow()
+
+    suspend fun fleetTargetSets(): List<FleetTargetSetEntity> = db.fleetTargetSetDao().all()
+
+    /** Saves [set], replacing a set with the same name (whatever its case), and returns its id. */
+    suspend fun saveFleetTargetSet(set: FleetTargetSetEntity): Int = db.withTransaction {
+        val same = db.fleetTargetSetDao().byName(set.name)
+        db.fleetTargetSetDao().upsert(set.copy(id = same?.id ?: set.id)).toInt()
+    }
+
+    suspend fun deleteFleetTargetSet(id: Int) = db.fleetTargetSetDao().delete(id)
+
     /** Adds [use] to its token's history, keeping the newest [keep]. */
     suspend fun recordAutomationUse(use: AutomationUseEntity, keep: Int = Automation.KEEP_USES) = db.withTransaction {
         db.automationUseDao().insert(use.copy(detail = use.detail.take(Automation.USE_DETAIL_CHARS)))

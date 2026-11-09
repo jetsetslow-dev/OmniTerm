@@ -103,6 +103,25 @@ data class ServerEntity(
     // The host's address through the tunnel when it differs from [host] (a Tailscale 100.x or
     // MagicDNS name), so [host] can stay the address for direct use; blank means the same address.
     val tunnelHost: String = "",
+    // The user's tags, as HostTags.format writes them ("db, prod"): a host has one group and any
+    // number of tags, and Fleet can target hosts by tag.
+    val tags: String = "",
+)
+
+/**
+ * A saved set of Fleet targets, picked again with one tap: hosts by id ([serverIds]), whole
+ * [groups], or hosts by [tags], all of them when [allTags] or any otherwise. [mode] is the
+ * FleetTargetMode's name; the lists are JSON arrays, since a group name may hold a comma.
+ */
+@Entity(tableName = "fleet_target_sets")
+data class FleetTargetSetEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val mode: String,
+    val serverIds: String = "[]",
+    val groups: String = "[]",
+    val tags: String = "[]",
+    val allTags: Boolean = false,
 )
 
 // Indexed on (serverId, timestamp) because every read path groups or filters by exactly that pair:

@@ -760,6 +760,31 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     AppViewModel so tests use the app's own id. Those three suites (`E2eAlertLifecycleStressTest`,
     `E2eHostChecksTest`, `E2ePhoneChecksTest`) compile but have not run on a device since. They
     are in the bundle's device sweep.
+- Piece 2, Fleet (in progress):
+  - Each host's own details: done (commit "Let a script use each host's own details").
+    `{{host.name}}`, `{{host.address}}`, `{{host.user}}`, `{{host.port}}`, `{{host.group}}` and
+    `{{host.os}}` are filled in per host, in one pass with the asked values, everywhere a saved
+    script runs. A command the assistant types is sent as written. Tests: `ScriptParamsTest` 13,
+    `AutomationRunnerRobolectricTest` 17, `FleetBroadcastOutcomeRobolectricTest` 6; guards seen
+    failing.
+  - Host tags, a Tags target mode and saved target sets: done (commit "Pick Fleet hosts by tag,
+    and save the targets").
+    - A host takes up to 20 tags of up to 32 characters (`servers.tags`, "db, prod"), compared
+      without case. The host editor offers existing tags, cards show three, and host search
+      matches `#tag` or `tag`.
+    - Broadcast picks hosts, groups or tags. With several tags, Any or Every.
+    - Saved sets (`fleet_target_sets`) keep only the current mode's picks. Saving a name again
+      replaces that set.
+    - Backups carry tags and sets with the hosts. A set of picked hosts keeps only the hosts in the
+      backup and is re-pointed to the restored hosts; the phone's own set of a name wins.
+    - Room schema 30 again (still unreleased), so the next device install needs `adb uninstall`.
+    - MCP `list_hosts` does not report tags: nothing asked for it, and it would widen what
+      PRIVACY.md says the assistant sees.
+    - Tests: `HostTagsTest` 8, `FleetTargetBackupRobolectricTest` 3, `VpnTunnelBackupRobolectricTest`
+      1, `BackupSafetyTest` 4, all 0 failed. The migration test gains
+      `migrationToThirtyGivesHostsNoTagsAndAddsNoSavedTargets` (device sweep). Guards seen failing:
+      tags not restored, set hosts not re-pointed, Every read as Any.
+  - Next: file push to many hosts, scheduled runs, alert-triggered runs, then the other five.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,

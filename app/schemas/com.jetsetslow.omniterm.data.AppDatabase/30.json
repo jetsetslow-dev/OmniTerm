@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 30,
-    "identityHash": "694ac4da7b4dfc5c918d194b081c5fe0",
+    "identityHash": "a0c25902635f3c2c727f3600422611f4",
     "entities": [
       {
         "tableName": "servers",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `username` TEXT NOT NULL, `groupName` TEXT, `serverColor` TEXT NOT NULL, `authType` TEXT NOT NULL, `authKeyAlias` TEXT, `authPassword` TEXT, `sudoPassword` TEXT NOT NULL, `authProfileId` INTEGER, `notes` TEXT NOT NULL, `keepAlive` INTEGER NOT NULL, `sshCompression` INTEGER NOT NULL, `persistentSession` INTEGER NOT NULL, `proxyCommand` TEXT NOT NULL, `proxyType` TEXT NOT NULL, `proxyHost` TEXT NOT NULL, `proxyPort` INTEGER NOT NULL, `proxyUser` TEXT NOT NULL, `proxyPassword` TEXT NOT NULL, `proxyKeyAlias` TEXT, `agentForwarding` INTEGER NOT NULL, `healthScore` INTEGER NOT NULL, `lastLatency` INTEGER NOT NULL, `status` TEXT NOT NULL, `authStatus` TEXT NOT NULL, `authError` TEXT, `tunnelId` INTEGER, `tunnelHost` TEXT NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `username` TEXT NOT NULL, `groupName` TEXT, `serverColor` TEXT NOT NULL, `authType` TEXT NOT NULL, `authKeyAlias` TEXT, `authPassword` TEXT, `sudoPassword` TEXT NOT NULL, `authProfileId` INTEGER, `notes` TEXT NOT NULL, `keepAlive` INTEGER NOT NULL, `sshCompression` INTEGER NOT NULL, `persistentSession` INTEGER NOT NULL, `proxyCommand` TEXT NOT NULL, `proxyType` TEXT NOT NULL, `proxyHost` TEXT NOT NULL, `proxyPort` INTEGER NOT NULL, `proxyUser` TEXT NOT NULL, `proxyPassword` TEXT NOT NULL, `proxyKeyAlias` TEXT, `agentForwarding` INTEGER NOT NULL, `healthScore` INTEGER NOT NULL, `lastLatency` INTEGER NOT NULL, `status` TEXT NOT NULL, `authStatus` TEXT NOT NULL, `authError` TEXT, `tunnelId` INTEGER, `tunnelHost` TEXT NOT NULL, `tags` TEXT NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -184,6 +184,12 @@
           {
             "fieldPath": "tunnelHost",
             "columnName": "tunnelHost",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tags",
+            "columnName": "tags",
             "affinity": "TEXT",
             "notNull": true
           }
@@ -1538,11 +1544,65 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_automation_uses_grantId_at` ON `${TABLE_NAME}` (`grantId`, `at`)"
           }
         ]
+      },
+      {
+        "tableName": "fleet_target_sets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, `groups` TEXT NOT NULL, `tags` TEXT NOT NULL, `allTags` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverIds",
+            "columnName": "serverIds",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groups",
+            "columnName": "groups",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tags",
+            "columnName": "tags",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "allTags",
+            "columnName": "allTags",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '694ac4da7b4dfc5c918d194b081c5fe0')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a0c25902635f3c2c727f3600422611f4')"
     ]
   }
 }

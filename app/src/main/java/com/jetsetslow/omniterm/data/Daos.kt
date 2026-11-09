@@ -608,3 +608,21 @@ interface TunnelDao {
     @Query("SELECT name FROM servers WHERE tunnelId = :id ORDER BY name COLLATE NOCASE")
     suspend fun hostsUsing(id: Int): List<String>
 }
+
+@Dao
+interface FleetTargetSetDao {
+    @Query("SELECT * FROM fleet_target_sets ORDER BY name COLLATE NOCASE ASC, id ASC")
+    fun setsFlow(): Flow<List<FleetTargetSetEntity>>
+
+    @Query("SELECT * FROM fleet_target_sets ORDER BY name COLLATE NOCASE ASC, id ASC")
+    suspend fun all(): List<FleetTargetSetEntity>
+
+    @Query("SELECT * FROM fleet_target_sets WHERE name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun byName(name: String): FleetTargetSetEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(set: FleetTargetSetEntity): Long
+
+    @Query("DELETE FROM fleet_target_sets WHERE id = :id")
+    suspend fun delete(id: Int)
+}

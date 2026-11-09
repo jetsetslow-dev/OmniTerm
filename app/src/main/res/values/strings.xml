@@ -152,6 +152,7 @@
     <string name="broadcast_targets">"Broadcast Targets"</string>
     <string name="servers">"Servers"</string>
     <string name="groups">"Groups"</string>
+    <string name="tags">"Tags"</string>
     <string name="host">"Host"</string>
     <string name="running_2">"Running…"</string>
     <string name="copy">"Copy"</string>
@@ -1433,6 +1434,23 @@
     <string name="script_values_title">"Values for %1$s"</string>
     <string name="script_values_explained">"Each value reaches the host as one word, quoted for its shell, so it cannot start a second command."</string>
     <string name="script_params_hint">"{{name}} asks for a value each time the script runs; {{name=default}} fills one in. {{host.name}}, {{host.address}}, {{host.user}}, {{host.port}}, {{host.os}} and {{host.group}} are each host's own. Leave quotes off: values are quoted for you."</string>
+    <string name="host_tags">"Tags (optional)"</string>
+    <string name="host_tags_help">"Separate them with commas, such as db, prod. Fleet can run on every host with a tag."</string>
+    <string name="broadcast_saved_targets">"Saved"</string>
+    <string name="broadcast_no_tags">"No host has a tag yet. Add tags when you edit a host."</string>
+    <string name="broadcast_tags_match">"Hosts with"</string>
+    <string name="broadcast_tags_any">"Any tag"</string>
+    <string name="broadcast_tags_all">"Every tag"</string>
+    <string name="saved_targets_title">"Saved targets"</string>
+    <string name="saved_targets_empty">"None yet. Pick hosts, groups or tags, then save them here to pick them again with one tap."</string>
+    <string name="saved_targets_name">"Name for the current targets"</string>
+    <string name="saved_targets_help">"Saving under a name that is taken replaces that set. A set picks the same hosts, groups or tags each time, so a group or tag still finds hosts added to it later."</string>
+    <string name="saved_targets_save">"Save"</string>
+    <string name="saved_targets_delete">"Delete %1$s"</string>
+    <string name="saved_targets_no_hosts">"Its hosts are gone"</string>
+    <string name="saved_targets_groups">"Groups: %1$s"</string>
+    <string name="saved_targets_tags_any">"Hosts with any of: %1$s"</string>
+    <string name="saved_targets_tags_all">"Hosts with all of: %1$s"</string>
     <string name="broadcast_host_vars">"Each host fills in its own {{host.…}} details."</string>
     <string name="script_params_cannot_run">"Can't run on %1$s"</string>
     <string name="script_target_hint">"Quick Scripts and Fleet runs leave out hosts that run a different OS or system."</string>

@@ -31,6 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         McpCallEntity::class,
         TunnelEntity::class,
         AutomationUseEntity::class,
+        FleetTargetSetEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
@@ -62,6 +63,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun mcpCallDao(): McpCallDao
     abstract fun tunnelDao(): TunnelDao
     abstract fun automationUseDao(): AutomationUseDao
+    abstract fun fleetTargetSetDao(): FleetTargetSetDao
 
     companion object {
         @Volatile
@@ -375,7 +377,8 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // Runs other apps and AI assistants start, as they run: each automation token's
-        // notification choice and use history, and the run each AI assistant call started.
+        // notification choice and use history, and the run each AI assistant call started. Hosts'
+        // tags, and Fleet's saved target sets.
         private val MIGRATION_29_30 = object : Migration(29, 30) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `automation_grants` ADD COLUMN `notify` TEXT NOT NULL DEFAULT 'failures'")
@@ -386,6 +389,12 @@ abstract class AppDatabase : RoomDatabase() {
                         "`detail` TEXT NOT NULL, `runKey` TEXT)"
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_automation_uses_grantId_at` ON `automation_uses` (`grantId`, `at`)")
+                db.execSQL("ALTER TABLE `servers` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `fleet_target_sets` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, `groups` TEXT NOT NULL, " +
+                        "`tags` TEXT NOT NULL, `allTags` INTEGER NOT NULL)"
+                )
             }
         }
 
