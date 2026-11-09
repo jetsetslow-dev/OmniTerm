@@ -99,6 +99,8 @@ class AttachExistingTmuxRobolectricTest {
         onMain { model.forgetSavedSession(a, "main") }
         awaitTrue { repository.getPersistentSessions().size == 1 }
         assertEquals(b, repository.getPersistentSessions().single().serverId)
+        // The row goes first and the list a moment later, on the model's own coroutine.
+        awaitTrue { model.restorablePersistentSessions.none { it.serverId == a } }
         assertEquals(listOf(b), model.restorablePersistentSessions.map { it.serverId })
     }
 
