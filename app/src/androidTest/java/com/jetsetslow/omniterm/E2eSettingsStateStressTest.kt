@@ -136,11 +136,7 @@ class E2eSettingsStateStressTest {
             }
             val authority = "${context.packageName}.slowtransfer"
             val backupUri = Uri.Builder().scheme("content").authority(authority).appendPath("backup").appendPath("settings-backup.json").build()
-            val selection = BackupSelection(
-                servers = false, sshKeys = false, credentialProfiles = false, scripts = false,
-                alertRules = false, activeAlerts = false, alertHistory = false, wolTargets = false,
-                networkShares = false, portForwards = false, settings = true, crashLogs = false,
-            )
+            val selection = BackupSelection.NONE.copy(settings = true)
             val passphrase = "e2e-settings-backup-passphrase"
             val export = CompletableDeferred<Boolean>()
             vm.exportBackup(backupUri, passphrase, context, selection) { ok, _ -> export.complete(ok) }

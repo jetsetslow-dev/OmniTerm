@@ -25,6 +25,18 @@ class ServerIdentityTest {
         }
     }
 
+    @Test fun theSameLoginDirectlyAndThroughEachTunnelAreDifferentHosts() {
+        val direct = serverIdentity(host, emptyList())
+        val viaHome = serverIdentity(host.copy(tunnelId = 1), emptyList())
+        val viaLab = serverIdentity(host.copy(tunnelId = 2), emptyList())
+        val insideHome = serverIdentity(host.copy(tunnelId = 1, tunnelHost = "10.9.0.7"), emptyList())
+        assertEquals(4, setOf(direct, viaHome, viaLab, insideHome).size)
+        assertEquals("the address inside the tunnel is matched as an address", insideHome,
+            serverIdentity(host.copy(tunnelId = 1, tunnelHost = " 10.9.0.7 "), emptyList()))
+        assertEquals("a rotated password over the same route is the same host", viaHome,
+            serverIdentity(host.copy(tunnelId = 1, authPassword = "rotated fixture secret"), emptyList()))
+    }
+
     @Test fun profilesUseTheirEffectiveLoginAndMissingProfilesNeverMatch() {
         val profile = CredentialProfileEntity(id = 9, profileName = "Renamed profile",
             username = "deploy", authType = "password")

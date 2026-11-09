@@ -227,6 +227,7 @@ internal val toolsItems = listOf(
     Triple(Screen.HealthScoring, "Health scoring", Icons.Filled.MonitorHeart),
     Triple(Screen.Automation, "Automation", Icons.Filled.SmartToy),
     Triple(Screen.Mcp, "AI assistants", Icons.Filled.Hub),
+    Triple(Screen.VpnTunnels, "VPN tunnels", Icons.Filled.VpnLock),
     Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
     Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
 )
@@ -3442,8 +3443,23 @@ private fun backupSelectionFromContents(contents: BackupContents): BackupSelecti
         networkShares = contents.networkShares > 0,
         portForwards = contents.portForwards > 0 && hasServers,
         settings = contents.settings > 0,
+        fleetHistory = contents.fleetRuns > 0,
+        monitoringHistory = contents.monitoringPoints > 0 && hasServers,
+        assistantLog = contents.assistantCalls > 0,
+        automation = contents.automationGrants + contents.assistantSettings > 0 && hasServers,
     ).withReferentialClosure()
 }
+
+/** What travels with the servers in [contents], such as "2 VPN tunnels, 1 Telnet connection"; null with none. */
+internal fun backupServerExtras(contents: BackupContents): String? = listOf(
+    contents.vpnTunnels to "VPN tunnel",
+    contents.telnetHosts to "Telnet connection",
+    contents.kubeClusters to "Kubernetes cluster",
+    contents.tmuxSessions to "tmux session",
+    contents.composeStacks to "Compose stack",
+).filter { it.first > 0 }
+    .joinToString(", ") { (count, what) -> "$count $what" + if (count == 1) "" else "s" }
+    .ifEmpty { null }
 
 @Composable
 private fun BackupSelectionList(
@@ -3460,9 +3476,17 @@ private fun BackupSelectionList(
         // keys, credentials, paths, command fragments — so they're all starred. The legend below
         // explains the marker once instead of repeating "(sensitive)" on every row.
         BackupSelectionRow("Servers *", contents?.servers, selection.servers, { onChange(selection.withServersSelected(it)) }, contents == null || contents.servers > 0)
+        val serverExtras = contents?.let(::backupServerExtras)
+        Text(
+            if (serverExtras != null) stringResource(R.string.backup_servers_bring, serverExtras)
+            else stringResource(R.string.backup_servers_include),
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 48.dp),
+        )
         BackupSelectionRow("SSH keys *", contents?.sshKeys, selection.sshKeys, { onChange(selection.copy(sshKeys = it)) }, contents == null || contents.sshKeys > 0)
         BackupSelectionRow("Credential profiles *", contents?.credentialProfiles, selection.credentialProfiles, { onChange(selection.copy(credentialProfiles = it)) }, contents == null || contents.credentialProfiles > 0)
-        BackupSelectionRow("Scripts *", contents?.scripts, selection.scripts, { onChange(selection.copy(scripts = it)) }, contents == null || contents.scripts > 0)
+        BackupSelectionRow("Scripts *", contents?.scripts, selection.scripts, { onChange(selection.withScriptsSelected(it)) }, contents == null || contents.scripts > 0)
         BackupSelectionRow("Alert rules *", contents?.alertRules, selection.alertRules, { onChange(selection.withAlertRulesSelected(it)) }, contents == null || contents.alertRules > 0)
         BackupSelectionRow("Active alerts", contents?.activeAlerts, selection.activeAlerts, { onChange(selection.withActiveAlertsSelected(it)) }, contents == null || (contents.activeAlerts > 0 && contents.alertRules > 0 && contents.servers > 0))
         BackupSelectionRow("Alert history *", contents?.alertHistory, selection.alertHistory, { onChange(selection.withAlertHistorySelected(it)) }, contents == null || contents.alertHistory > 0)
@@ -3470,6 +3494,11 @@ private fun BackupSelectionList(
         BackupSelectionRow("Network shares *", contents?.networkShares, selection.networkShares, { onChange(selection.copy(networkShares = it)) }, contents == null || contents.networkShares > 0)
         BackupSelectionRow("SSH tunnels *", contents?.portForwards, selection.portForwards, { onChange(selection.withPortForwardsSelected(it)) }, contents == null || (contents.portForwards > 0 && contents.servers > 0))
         BackupSelectionRow("Settings & customizations *", contents?.settings, selection.settings, { onChange(selection.copy(settings = it)) }, contents == null || contents.settings > 0)
+        BackupSelectionRow("Fleet history *", contents?.fleetRuns, selection.fleetHistory, { onChange(selection.copy(fleetHistory = it)) }, contents == null || contents.fleetRuns > 0)
+        BackupSelectionRow("Monitoring history *", contents?.monitoringPoints, selection.monitoringHistory, { onChange(selection.withMonitoringHistorySelected(it)) }, contents == null || (contents.monitoringPoints > 0 && contents.servers > 0))
+        BackupSelectionRow("AI assistant log *", contents?.assistantCalls, selection.assistantLog, { onChange(selection.copy(assistantLog = it)) }, contents == null || contents.assistantCalls > 0)
+        val automationCount = contents?.let { it.automationGrants + it.assistantSettings }
+        BackupSelectionRow("Automation & AI assistants *", automationCount, selection.automation, { onChange(selection.withAutomationSelected(it)) }, contents == null || ((automationCount ?: 0) > 0 && contents.servers > 0))
         BackupSelectionRow("Crash logs *", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
         Text(stringResource(R.string.sensitive_selecting_forces_an_encrypted_backup),
             fontSize = 10.sp,

@@ -59,3 +59,16 @@ updates:
     ignore:
       - dependency-name: ossf/scorecard-action
         versions: ["2.4.4"]
+  - package-ecosystem: gomod
+    # The VPN tunnel library (wireguard-go, gVisor, gomobile); the Go toolchain itself is pinned in
+    # scripts/go-toolchain.sh with its checksums.
+    directory: "/tunnel"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 1
+    groups:
+      go-tunnel:
+        patterns: ["*"]

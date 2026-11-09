@@ -7,8 +7,8 @@ import androidx.room.PrimaryKey
 /**
  * A persistent (tmux-backed) terminal session that should be re-offered after an app restart.
  * One row per live tmux session the app created or attached to; the [tmuxName] is how a reconnect
- * re-attaches the exact session. Pure runtime/device state — deliberately NOT included in
- * backup/restore.
+ * re-attaches the exact session. Backups carry it with its host, so a restored phone offers the
+ * same sessions to attach again; nothing connects until the user picks one.
  *
  * Keyed by host and name together: names the app generates are unique, but a session attached
  * from the host's own list is called whatever the user called it, and two hosts can each have a
@@ -96,7 +96,13 @@ data class ServerEntity(
     // (port reachable) yet "failed" auth (wrong key/password). Metrics are only shown
     // when authStatus == "ok".
     val authStatus: String = "unknown", // "unknown", "ok", "failed"
-    val authError: String? = null
+    val authError: String? = null,
+    // The tunnel (tunnels.id) every connection to this host goes through, never falling back to a
+    // direct connection; null connects directly. Switching it off and on uses one host both ways.
+    val tunnelId: Int? = null,
+    // The host's address through the tunnel when it differs from [host] (a Tailscale 100.x or
+    // MagicDNS name), so [host] can stay the address for direct use; blank means the same address.
+    val tunnelHost: String = "",
 )
 
 // Indexed on (serverId, timestamp) because every read path groups or filters by exactly that pair:
@@ -235,6 +241,9 @@ data class QuickScriptEntity(
 /** When metrics were last recorded for a host; a query result, not a table. */
 data class ServerLastSample(val serverId: Int, val lastAt: Long)
 
+/** The first and last time a host's metrics were recorded, null with none; a query result. */
+data class MetricHistorySpan(val firstAt: Long?, val lastAt: Long?)
+
 /** A saved Telnet connection: network gear and other hosts reached by Telnet rather than SSH. */
 @Entity(tableName = "telnet_hosts")
 data class TelnetHostEntity(
@@ -322,8 +331,8 @@ data class AppSettingEntity(
 )
 
 /**
- * One Fleet run, kept in its run history: the newest [FleetRunHistory.KEEP_RUNS] are kept, on this
- * device only (never in a backup). Each host's result is a [FleetRunHostEntity].
+ * One Fleet run, kept in its run history: the newest [FleetRunHistory.KEEP_RUNS] are kept, and
+ * backups carry them (the Fleet history section). Each host's result is a [FleetRunHostEntity].
  */
 @Entity(tableName = "fleet_runs", indices = [Index(value = ["runKey"], unique = true)])
 data class FleetRunEntity(
@@ -406,9 +415,9 @@ data class AutomationGrantEntity(
 
 /**
  * One call an AI assistant made to the MCP server, so the user can see what was asked and what
- * came of it: the newest [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, on
- * this phone only and not in backups. [outcome] is one of [McpCallOutcome]'s values; [detail] is
- * the first line of the answer, short.
+ * came of it: the newest [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, and
+ * backups carry them (the AI assistant log section). [outcome] is one of [McpCallOutcome]'s
+ * values; [detail] is the first line of the answer, short.
  */
 @Entity(tableName = "mcp_calls")
 data class McpCallEntity(
@@ -425,4 +434,21 @@ object McpCallOutcome {
     const val FAILED = "failed"
     /** A request turned away for its token, host name or origin. */
     const val REFUSED = "refused"
+}
+
+/**
+ * A tunnel the user set up once and picks per host. [config] is the tunnel's own configuration
+ * (for WireGuard, the wg-quick file with its private key), encrypted at the repository boundary.
+ */
+@Entity(tableName = "tunnels")
+data class TunnelEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val kind: String = TunnelKinds.WIREGUARD,
+    val config: String,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+object TunnelKinds {
+    const val WIREGUARD = "wireguard"
 }

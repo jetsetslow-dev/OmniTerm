@@ -142,6 +142,21 @@ ksp {
   arg("room.schemaLocation", "$projectDir/schemas")
 }
 
+// The Go tunnel library (tunnel/), built for every Android ABI with the repository's pinned Go
+// toolchain and NDK. It is rebuilt only when its sources or the scripts that build it change.
+val goTunnelAar = rootProject.layout.projectDirectory.file("tunnel/build/omnitunnel.aar")
+val buildGoTunnel by tasks.registering(Exec::class) {
+  description = "Builds tunnel/ into an Android library with gomobile."
+  val root = rootProject.layout.projectDirectory
+  inputs.dir(root.dir("tunnel/omnitunnel"))
+  inputs.files(root.file("tunnel/go.mod"), root.file("tunnel/go.sum"), root.file("scripts/build-tunnel.sh"), root.file("scripts/go-toolchain.sh"))
+  inputs.property("targets", providers.environmentVariable("OMNITUNNEL_TARGETS").orElse("all"))
+  outputs.file(goTunnelAar)
+  val sdk = androidComponents.sdkComponents.sdkDirectory
+  doFirst { environment("ANDROID_HOME", sdk.get().asFile.path) }
+  commandLine(root.file("scripts/build-tunnel.sh").asFile.path, goTunnelAar.asFile.path)
+}
+
 val lowResourceBuild = providers.gradleProperty("omniterm.lowResourceBuild")
   .map { it.toBoolean() }
   .getOrElse(false)
@@ -211,6 +226,7 @@ dependencies {
   // API, but parses modern keys: OpenSSH containers (-----BEGIN OPENSSH PRIVATE KEY-----, the
   // default from recent ssh-keygen) plus ed25519/ecdsa. Also patches the old JSch CVEs.
   implementation(libs.jsch)
+  implementation(files(goTunnelAar).builtBy(buildGoTunnel))
   // ed25519/ed448 signing & key parsing. On Android the platform JCA has no EdDSA provider, so
   // JSch selects its `com.jcraft.jsch.bc.*` EdDSA backend, which needs Bouncy Castle's lightweight
   // crypto API on the classpath. Without this, RSA/ECDSA keys authenticate but every modern

@@ -70,10 +70,21 @@ python3 ./scripts/check-actions-allowlist.py
 ./scripts/test-check-duplicates.sh
 ./scripts/test-repeat-changed-tests.sh
 python3 -B ./scripts/test-check-dependency-updates.py
+python3 -I -B ./scripts/test-check-licenses.py
+# Scorecard's Dockerfile rule: base images pinned by digest, one digest per image. Scorecard only
+# annotates the pull request, so an unpinned image was seen after the push.
+python3 -I -B ./scripts/test-check-pinned-images.py
+python3 -I -B ./scripts/check-pinned-images.py
+# Workflow wiring that only shows on GitHub, such as the CodeQL Go job's step order.
+./scripts/test-workflow-guards.sh
 python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline.json \
   app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
 ./scripts/test-ci-gradle-gate.sh
+# The Go tunnel library: gofmt, vet and its handshake tests (CI's PR Check runs the same).
+./scripts/test-tunnel.sh
+# Dependency review's licence policy on the Go modules, from the same allow-licenses list.
+(eval "$(./scripts/go-toolchain.sh)" && python3 -I ./scripts/check-licenses.py)
 
 GRADLE_ARGS=(
   --no-daemon
@@ -98,8 +109,10 @@ fi
   lintOpenSourceDebug lintPlayStoreDebug \
   "${GRADLE_ARGS[@]}"
 # As PR Check does: the test classes this branch adds or changes, committed or not, five more
-# times, so one that passes only some of the time fails here rather than on main.
-./scripts/repeat-changed-tests.sh --base "${OMNITERM_BASE_REF:-origin/main}" --worktree --runs 5 -- \
+# times, so one that passes only some of the time fails here rather than on main. On one processor:
+# a test racing a thread it starts can win every time on a desktop and lose on a CI runner. PR #147's
+# tunnel test failed 3 of 13 runs on one processor here, and none of 5 on two.
+./scripts/repeat-changed-tests.sh --base "${OMNITERM_BASE_REF:-origin/main}" --worktree --runs 5 --cpus 1 -- \
   "${GRADLE_ARGS[@]}"
 
 if [[ "$MODE" == "--full" ]]; then
@@ -114,6 +127,7 @@ if [[ "$MODE" == "--full" ]]; then
   python3 ./scripts/check-dependency-advisories.py \
     --cyclonedx build/reports/cyclonedx/playStoreReleaseRuntimeClasspath.bom.json \
     --cyclonedx build/reports/cyclonedx/openSourceReleaseRuntimeClasspath.bom.json \
+    --go-mod tunnel/go.mod \
     --actions .github
   # And what Dependabot's weekly run would open a pull request for: newer Gradle dependencies,
   # plugins, wrapper and pinned Actions, under .github/dependabot.yml's holds. Taken here, they

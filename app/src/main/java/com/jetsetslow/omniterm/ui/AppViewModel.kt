@@ -26,6 +26,7 @@ import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.mcp.McpSettings
+import com.jetsetslow.omniterm.data.tunnel.TunnelManager
 import com.jetsetslow.omniterm.mcp.McpApprovals
 import com.jetsetslow.omniterm.mcp.McpConfig
 import com.jetsetslow.omniterm.mcp.McpServerState
@@ -283,6 +284,33 @@ internal fun gunzipBackupBounded(
     return output.toByteArray()
 }
 
+/**
+ * Why a restore would refuse this export, or null when it reads it: the limits
+ * [validateBackupCryptoParameters] and [gunzipBackupBounded] apply, checked before the file is
+ * written. [payload] is what is written: [json] itself, or its encrypted envelope.
+ */
+internal fun backupTooLargeToRestore(
+    json: String,
+    payload: String,
+    encrypted: Boolean,
+    maxInputChars: Int = BACKUP_MAX_INPUT_CHARS,
+    maxPlainBytes: Int = BACKUP_MAX_PLAIN_BYTES,
+    maxCiphertextBytes: Int = BACKUP_MAX_CIPHERTEXT_BYTES,
+): String? {
+    val plainBytes = json.toByteArray(Charsets.UTF_8).size.toLong()
+    // Base64 holds 3 bytes in every 4 characters.
+    val ciphertextBytes = if (encrypted) org.json.JSONObject(payload).getString("data").length / 4 * 3L else 0L
+    val (size, limit) = when {
+        payload.length > maxInputChars -> payload.length.toLong() to maxInputChars.toLong()
+        encrypted && plainBytes > maxPlainBytes -> plainBytes to maxPlainBytes.toLong()
+        encrypted && ciphertextBytes > maxCiphertextBytes -> ciphertextBytes to maxCiphertextBytes.toLong()
+        else -> return null
+    }
+    fun mb(bytes: Long) = String.format(Locale.ROOT, "%.1f MB", bytes / 1_048_576.0)
+    return "This backup would be ${mb(size)}, more than a restore can read (${mb(limit)}), so it was not saved. " +
+        "Untick Monitoring history or Fleet history, then export again."
+}
+
 internal fun validateBackupJsonNesting(text: String, maxDepth: Int = BACKUP_MAX_JSON_DEPTH) {
     var depth = 0
     var inString = false
@@ -514,6 +542,9 @@ internal fun terminalNavigationSessionIds(
     }
 }
 
+/** What a restored host points at when its VPN tunnel was not in the backup: it connects nowhere until fixed. */
+internal const val MISSING_TUNNEL_ID = -1
+
 enum class Screen {
     Servers,
     Fleet,
@@ -532,6 +563,7 @@ enum class Screen {
     About,
     Automation,
     Mcp,
+    VpnTunnels,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -666,9 +698,13 @@ internal fun sshFailureShouldMarkHostOffline(
     hasLiveSshSession: Boolean,
 ): Boolean = !hasLiveSshSession && sshFailureProvesEndpointUnreachable(failure)
 
-/** A target behind any configured proxy/jump host must not be judged by a direct socket probe. */
-internal fun shouldProbeSshPortDirectly(proxyType: String): Boolean =
-    proxyType.equals("none", ignoreCase = true)
+/**
+ * A target behind any configured proxy/jump host must not be judged by a direct socket probe. Nor
+ * may one that goes through a VPN tunnel ([tunnelId]) be probed directly at all: such a host is never
+ * dialled directly, and its address may be private or another machine on the phone's network.
+ */
+internal fun shouldProbeSshPortDirectly(proxyType: String, tunnelId: Int? = null): Boolean =
+    tunnelId == null && proxyType.equals("none", ignoreCase = true)
 
 internal fun classifySshConnectionPhase(raw: String, viaJumpHost: Boolean): SshConnectionPhase = when {
     raw.contains("resolv", ignoreCase = true) -> SshConnectionPhase.Resolving
@@ -851,7 +887,28 @@ data class BackupSelection(
     // sensitive details (hostnames, paths, command fragments), so they're never included unless the
     // user explicitly selects them — and when selected, [hasSensitiveData] forces encryption.
     val crashLogs: Boolean = false,
-)
+    // Fleet's run history, each host's output included.
+    val fleetHistory: Boolean = true,
+    // The hosts' monitoring history, averaged to fit (BackupHistory.monitoringStep).
+    val monitoringHistory: Boolean = true,
+    // The AI assistant's call log.
+    val assistantLog: Boolean = true,
+    // Automation grants and the AI assistant's settings, restored switched off (BackupAccess).
+    val automation: Boolean = true,
+) {
+    companion object {
+        /**
+         * Nothing ticked. A partial selection is built from this with `copy`, so a section added
+         * later starts unticked there instead of ticking itself and the hosts it needs.
+         */
+        val NONE = BackupSelection(
+            servers = false, sshKeys = false, credentialProfiles = false, scripts = false,
+            alertRules = false, activeAlerts = false, alertHistory = false, wolTargets = false,
+            networkShares = false, portForwards = false, settings = false, crashLogs = false,
+            fleetHistory = false, monitoringHistory = false, assistantLog = false, automation = false,
+        )
+    }
+}
 
 /**
  * Add the section-level dependencies required to restore referentially valid rows.
@@ -861,8 +918,10 @@ data class BackupSelection(
  * must not be able to create a backup whose selected child rows can never be restored.
  */
 internal fun BackupSelection.withReferentialClosure(): BackupSelection = copy(
-    servers = servers || portForwards || alertRules || activeAlerts || alertHistory,
+    servers = servers || portForwards || alertRules || activeAlerts || alertHistory || monitoringHistory || automation,
     alertRules = alertRules || activeAlerts,
+    // A grant names its script and hosts.
+    scripts = scripts || automation,
 )
 
 internal fun BackupSelection.withServersSelected(enabled: Boolean): BackupSelection =
@@ -873,7 +932,20 @@ internal fun BackupSelection.withServersSelected(enabled: Boolean): BackupSelect
         activeAlerts = false,
         alertHistory = false,
         portForwards = false,
+        monitoringHistory = false,
+        automation = false,
     )
+
+/** Monitoring history belongs to hosts: ticking it ticks Servers, as unticking Servers unticks it. */
+internal fun BackupSelection.withMonitoringHistorySelected(enabled: Boolean): BackupSelection =
+    copy(monitoringHistory = enabled).withReferentialClosure()
+
+/** Automation names scripts and hosts: ticking it ticks both, as unticking either unticks it. */
+internal fun BackupSelection.withAutomationSelected(enabled: Boolean): BackupSelection =
+    copy(automation = enabled).withReferentialClosure()
+
+internal fun BackupSelection.withScriptsSelected(enabled: Boolean): BackupSelection =
+    if (enabled) copy(scripts = true) else copy(scripts = false, automation = false)
 
 internal fun BackupSelection.withAlertRulesSelected(enabled: Boolean): BackupSelection =
     if (enabled) copy(alertRules = true).withReferentialClosure()
@@ -916,6 +988,18 @@ data class BackupContents(
     val portForwards: Int = 0,
     val settings: Int = 0,
     val crashLogs: Int = 0,
+    // These travel with the servers.
+    val vpnTunnels: Int = 0,
+    val telnetHosts: Int = 0,
+    val kubeClusters: Int = 0,
+    val tmuxSessions: Int = 0,
+    val composeStacks: Int = 0,
+    val fleetRuns: Int = 0,
+    val monitoringPoints: Int = 0,
+    val assistantCalls: Int = 0,
+    val automationGrants: Int = 0,
+    // 1 when the backup has the AI assistant's settings.
+    val assistantSettings: Int = 0,
 )
 
 data class BackupHostOption(
@@ -929,13 +1013,16 @@ fun BackupSelection.hasSensitiveData(): Boolean =
     servers || sshKeys || credentialProfiles || scripts || alertRules || activeAlerts ||
         // Crash traces can carry hostnames, file paths, and command fragments — treat as sensitive
         // so a backup containing them is gated behind passphrase encryption like any other secret.
-        alertHistory || wolTargets || networkShares || portForwards || settings || crashLogs
+        alertHistory || wolTargets || networkShares || portForwards || settings || crashLogs ||
+        // Fleet output and assistant requests carry commands and host details.
+        fleetHistory || monitoringHistory || assistantLog || automation
 
 private const val BACKUP_SELECTION_V2_PREFIX = "v2:"
+private const val BACKUP_SELECTION_V3_PREFIX = "v3:"
 
 fun BackupSelection.encode(): String {
     val closed = withReferentialClosure()
-    return BACKUP_SELECTION_V2_PREFIX + listOf(
+    return BACKUP_SELECTION_V3_PREFIX + listOf(
         "servers" to closed.servers,
         "sshKeys" to closed.sshKeys,
         "credentialProfiles" to closed.credentialProfiles,
@@ -948,14 +1035,22 @@ fun BackupSelection.encode(): String {
         "portForwards" to closed.portForwards,
         "settings" to closed.settings,
         "crashLogs" to closed.crashLogs,
+        "fleetHistory" to closed.fleetHistory,
+        "monitoringHistory" to closed.monitoringHistory,
+        "assistantLog" to closed.assistantLog,
+        "automation" to closed.automation,
     ).filter { it.second }.joinToString(",") { it.first }
 }
 
 fun decodeBackupSelection(value: String?): BackupSelection {
     if (value.isNullOrBlank()) return BackupSelection()
-    val isV2 = value.startsWith(BACKUP_SELECTION_V2_PREFIX)
-    val encodedKeys = if (isV2) value.removePrefix(BACKUP_SELECTION_V2_PREFIX) else value
+    val isV3 = value.startsWith(BACKUP_SELECTION_V3_PREFIX)
+    val isV2 = isV3 || value.startsWith(BACKUP_SELECTION_V2_PREFIX)
+    val encodedKeys = value.removePrefix(BACKUP_SELECTION_V3_PREFIX).removePrefix(BACKUP_SELECTION_V2_PREFIX)
     val keys = encodedKeys.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    // v1 and v2 predate the history sections, which a backup should carry like everything else:
+    // they come with the Servers or Settings section the selection had.
+    fun since3(key: String, legacy: Boolean) = if (isV3) key in keys else legacy
     return BackupSelection(
         servers = "servers" in keys,
         sshKeys = "sshKeys" in keys,
@@ -971,6 +1066,11 @@ fun decodeBackupSelection(value: String?): BackupSelection {
         portForwards = if (isV2) "portForwards" in keys else "servers" in keys,
         settings = "settings" in keys,
         crashLogs = "crashLogs" in keys,
+        fleetHistory = since3("fleetHistory", "servers" in keys),
+        monitoringHistory = since3("monitoringHistory", "servers" in keys),
+        assistantLog = since3("assistantLog", "settings" in keys),
+        // Only where it adds nothing else: its scripts and hosts were in the selection already.
+        automation = since3("automation", "settings" in keys && "scripts" in keys && "servers" in keys),
     ).withReferentialClosure()
 }
 
@@ -1160,13 +1260,14 @@ internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
 )
 
 /**
- * Settings that belong to this phone and never travel in a backup, either way: the PIN, the lock
- * and biometrics, the Automation switch, and every MCP setting, so restoring a backup never lets
- * other apps or AI assistants run scripts the user did not allow on this phone.
+ * Settings never copied through a backup's settings, either way. Biometrics and the PIN's failed
+ * attempts and lockout belong to each phone. The Automation switch and the AI assistant's settings
+ * travel in the Automation section instead ([BackupAccess]), and a restore leaves both switched
+ * off, so it never lets other apps or AI assistants run scripts the user did not allow on this
+ * phone. App Lock travels with the settings but comes back only to turn a lock on.
  */
 internal val DEVICE_LOCAL_SETTINGS = setOf(
-    "app_pin", "app_lock_enabled", "biometrics_enabled",
-    "pin_failed_attempts", "pin_locked_until", "app_lock_grace_ms",
+    "biometrics_enabled", "pin_failed_attempts", "pin_locked_until",
     Automation.SETTING_ENABLED,
 ) + McpSettings.ALL
 
@@ -2689,6 +2790,7 @@ class AppViewModel @JvmOverloads constructor(
 
     init {
         resumeMcpServer()
+        TunnelManager.attach(repository)
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
         SshHostKeyTrust.registerApprovalHandler(hostKeyApprovalOwner) { req ->
@@ -3186,7 +3288,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (srv.status == "offline") {
                     repository.updateReachability(srv.id, "connecting", 0)
                 }
-                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType)) {
+                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType, srv.tunnelId)) {
                     tcpReachable(srv.host, srv.port)
                 } else {
                     -1
@@ -3686,6 +3788,7 @@ class AppViewModel @JvmOverloads constructor(
         val rules = repository.getAllRules().filter { it.enabled && EndpointChecks.isEndpointMetric(it.metricName) }
         if (rules.isEmpty()) return
         val servers = repository.getAllServers()
+        if (servers.any { it.tunnelId != null }) TunnelManager.attach(repository)
         val limit = Semaphore(ENDPOINT_CHECK_PARALLELISM)
         coroutineScope {
             for (rule in rules) {
@@ -3694,7 +3797,11 @@ class AppViewModel @JvmOverloads constructor(
                     if (System.currentTimeMillis() < (endpointChecksDueAt[key] ?: 0L)) continue
                     launch {
                         limit.withPermit {
-                            val result = EndpointChecks.run(rule, srv.host)
+                            val result = EndpointChecks.run(
+                                rule, srv.host,
+                                tunnel = srv.tunnelId?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id) } },
+                                tunnelHost = srv.tunnelHost,
+                            )
                             val now = System.currentTimeMillis()
                             val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
                             endpointChecksDueAt[key] = now + endpointCheckIntervalMs(rule, result, breached)
@@ -4835,7 +4942,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     // CRUDS FOR SERVERS
-    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, onResult: (String?) -> Unit) {
+    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, tunnelId: Int? = null, tunnelHost: String = "", onResult: (String?) -> Unit) {
         viewModelScope.launch {
             // Username/password live on the credential profile when authType == "profile", so the
             // form leaves the username field greyed out and empty; only require it for the other
@@ -4861,9 +4968,10 @@ class AppViewModel @JvmOverloads constructor(
             val matchingServer = repository.findMatchingServer(ServerEntity(
                 name = name, host = host, port = port, username = username,
                 authType = authType, authProfileId = profileId,
+                tunnelId = tunnelId, tunnelHost = tunnelHost.trim(),
             ))
             if (matchingServer != null) {
-                onResult("The same host, port, SSH user and authentication method already exist as \"${matchingServer.name}\". Existing server unchanged.")
+                onResult(duplicateServerMessage(matchingServer.name))
                 return@launch
             }
             if (createProfile && authType == "password" && password != null && password.isNotBlank()) {
@@ -4903,6 +5011,8 @@ class AppViewModel @JvmOverloads constructor(
                 status = "offline",
                 authStatus = "unknown",
                 authError = null,
+                tunnelId = tunnelId,
+                tunnelHost = tunnelHost.trim(),
             )
             val newId = try {
                 repository.saveUniqueServer(server)
@@ -5047,7 +5157,23 @@ class AppViewModel @JvmOverloads constructor(
                     activeProbes[server.id] = viewModelScope.launch(Dispatchers.IO) { probeServer(updated) }
                 }
             }
-            if (creds != previousCreds) {
+            val rerouted = previous != null && (previous.tunnelId != server.tunnelId || previous.tunnelHost != server.tunnelHost)
+            if (rerouted) {
+                // Nothing may keep using the previous route: a host whose tunnel was just selected
+                // must never stay connected directly, and one whose tunnel was taken away must not
+                // keep using it. Its forwards stop; its terminals reconnect over the new route.
+                val forwards = repository.getAllPortForwards().filter { it.serverId == server.id && isTunnelActive(it.id) }
+                forwards.forEach { stopTunnel(it.id) }
+                val shells = activeSessions.filter { it.serverId == server.id && !it.userClosed }
+                shells.forEach { shell ->
+                    runCatching { shell.session.close() }
+                    reconnectSession(shell)
+                }
+                if (forwards.isNotEmpty() || shells.isNotEmpty()) {
+                    hostEditNotice = "The host's VPN tunnel changed: ${shells.size} terminal(s) reconnect through the new " +
+                        "route, and ${forwards.size} SSH tunnel(s) stopped. Start them again to use it."
+                }
+            } else if (creds != previousCreds) {
                 val running = repository.getAllPortForwards().count { it.serverId == server.id && isTunnelActive(it.id) }
                 if (running > 0) {
                     hostEditNotice = if (running == 1) {
@@ -6333,6 +6459,8 @@ class AppViewModel @JvmOverloads constructor(
         proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null,
         // What a sign-in question is titled with; the address until the host is named.
         displayName: String = "",
+        // The VPN tunnel the host goes through: the test goes through it too, never directly.
+        tunnelId: Int? = null, tunnelHost: String = "",
         onResult: (String?) -> Unit,
     ) {
         if (host.isBlank()) { onResult("Host is required."); return }
@@ -6363,7 +6491,9 @@ class AppViewModel @JvmOverloads constructor(
                     proxyKeyPem = proxyKey?.privateKey,
                     certificate = key?.certificate,
                     proxyCertificate = proxyKey?.certificate,
-                ),
+                    tunnelId = tunnelId,
+                    tunnelHost = tunnelHost.trim(),
+                ).also { if (tunnelId != null) TunnelManager.attach(repository) },
                 interactiveAuthFor(displayName.ifBlank { host }),
             )
             isTestingConnection = false
@@ -14554,6 +14684,63 @@ class AppViewModel @JvmOverloads constructor(
     /** The user's answer to an assistant's request; the dialog asks for the lock before approving. */
     fun answerMcpApproval(id: Int, approved: Boolean) = McpApprovals.answer(id, approved)
 
+    // ── TUNNELS ──
+    /** The tunnels hosts can go through, without their configurations. */
+    val tunnels = repository.tunnelsFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val tunnelStatuses = TunnelManager.statuses
+
+    /** What is wrong with a pasted configuration, or null when it can be used. */
+    fun checkTunnelConfig(config: String): String? = TunnelManager.check(TunnelKinds.WIREGUARD, config)
+
+    /**
+     * Saves a new tunnel ([id] null) or renames one, replacing its configuration when [config] is
+     * given. A tunnel whose configuration changed stops at once, so nothing keeps going through the
+     * old one; its connections reconnect through the new one.
+     */
+    fun saveTunnel(id: Int?, name: String, config: String?, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val trimmedName = name.trim()
+            val problem = when {
+                trimmedName.isEmpty() -> "Give the tunnel a name."
+                tunnels.value.any { it.id != id && it.name.equals(trimmedName, ignoreCase = true) } -> "Another tunnel is called \"$trimmedName\"."
+                id == null && config.isNullOrBlank() -> "Paste or import the tunnel's configuration."
+                config != null && config.isNotBlank() -> withContext(Dispatchers.Default) { checkTunnelConfig(config) }
+                else -> null
+            }
+            if (problem != null) {
+                onResult(problem)
+                return@launch
+            }
+            val result = runCatching {
+                if (id == null) {
+                    repository.insertTunnel(TunnelEntity(name = trimmedName, config = config.orEmpty()))
+                } else {
+                    repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() })
+                    if (!config.isNullOrBlank()) withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+                }
+            }
+            onResult(result.exceptionOrNull()?.let { it.message ?: "The tunnel could not be saved." })
+        }
+    }
+
+    /** Deletes tunnel [id], unless a host still goes through it; then says which. */
+    fun deleteTunnel(id: Int, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val users = repository.deleteTunnel(id)
+            if (users.isNotEmpty()) {
+                onResult("Still used by ${users.joinToString(", ")}. Choose another tunnel, or none, for them first.")
+                return@launch
+            }
+            withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+            onResult(null)
+        }
+    }
+
+    /** Takes tunnel [id] down now; it starts again when a host next needs it. */
+    fun stopTunnelNow(id: Int) {
+        viewModelScope.launch(Dispatchers.IO) { TunnelManager.stop(id) }
+    }
+
     /** The server stays on across restarts of the app while the user has it on. */
     private fun resumeMcpServer() {
         viewModelScope.launch {
@@ -15021,6 +15208,8 @@ class AppViewModel @JvmOverloads constructor(
         selection: BackupSelection = BackupSelection(),
         telnetHosts: List<TelnetHostEntity> = emptyList(),
         kubeClusters: List<KubeClusterEntity> = emptyList(),
+        tunnels: List<TunnelEntity> = emptyList(),
+        history: BackupHistoryRows = BackupHistoryRows(),
     ): String {
         val closedSelection = selection.withReferentialClosure()
         val serverArr = org.json.JSONArray()
@@ -15046,6 +15235,8 @@ class AppViewModel @JvmOverloads constructor(
                 put("proxyUser", s.proxyUser)
                 put("proxyPassword", s.proxyPassword)
                 put("proxyKeyAlias", s.proxyKeyAlias ?: "")
+                s.tunnelId?.let { put("tunnelId", it) }
+                put("tunnelHost", s.tunnelHost)
             })
         }
         val keyArr = org.json.JSONArray()
@@ -15171,6 +15362,14 @@ class AppViewModel @JvmOverloads constructor(
                 put("clientKeyPem", c.clientKeyPem); put("token", c.token); put("namespace", c.namespace)
             })
         }
+        // VPN tunnels travel with the hosts that go through them; their configurations hold private
+        // keys, which is one more reason a backup with hosts is encrypted.
+        val tunnelArr = org.json.JSONArray()
+        for (tunnel in if (closedSelection.servers) tunnels else emptyList()) {
+            tunnelArr.put(org.json.JSONObject().apply {
+                put("id", tunnel.id); put("name", tunnel.name); put("kind", tunnel.kind); put("config", tunnel.config)
+            })
+        }
         val networkShareArr = org.json.JSONArray()
         for (share in if (closedSelection.networkShares) networkShares else emptyList()) {
             networkShareArr.put(org.json.JSONObject().apply {
@@ -15250,10 +15449,35 @@ class AppViewModel @JvmOverloads constructor(
             }
         }
 
+        // History and device state. Sessions, stacks and monitoring belong to hosts and go with
+        // them; Fleet runs keep their hosts' names, so they read even without the hosts.
+        val hostRows = { serverId: Int -> closedSelection.servers && serverId in exportedServerIds }
+        val sessionArr = BackupHistory.sessionsJson(history.sessions.filter { hostRows(it.serverId) })
+        val stackArr = BackupHistory.stacksJson(history.stacks.filter { hostRows(it.serverId) })
+        val monitoringArr = BackupHistory.monitoringJson(
+            if (closedSelection.monitoringHistory) history.monitoring.filter { hostRows(it.serverId) } else emptyList(),
+            history.monitoringStepMs,
+        )
+        val fleetArr = BackupHistory.fleetRunsJson(if (closedSelection.fleetHistory) history.fleetRuns else emptyList())
+        val assistantArr = BackupHistory.assistantCallsJson(if (closedSelection.assistantLog) history.assistantCalls else emptyList())
+        // Automation grants and the AI assistant's settings, by script and host; their switches stay out.
+        val automationObj = BackupAccess.automationJson(
+            if (closedSelection.automation) history.automationGrants else emptyList(),
+            if (closedSelection.automation) settings.associate { it.key to it.value } else emptyMap(),
+            { id -> scriptRef(id) },
+            exportedServerIds,
+        )
+
         return org.json.JSONObject()
             .put("format", "omniterm-backup")
             .put("schema", BACKUP_SCHEMA_VERSION)
             .put("knownHosts", knownHostsObj)
+            .put("tmuxSessions", sessionArr)
+            .put("composeStacks", stackArr)
+            .put("monitoringHistory", monitoringArr)
+            .put("fleetRuns", fleetArr)
+            .put("assistantCalls", assistantArr)
+            .put("automation", automationObj)
             .put("servers", serverArr)
             .put("sshKeys", keyArr)
             .put("credentialProfiles", profileArr)
@@ -15264,11 +15488,26 @@ class AppViewModel @JvmOverloads constructor(
             .put("wolTargets", wolArr)
             .put("telnetHosts", telnetArr)
             .put("kubeClusters", kubeArr)
+            .put("vpnTunnels", tunnelArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
             .put("settings", settingsObj)
             .put("crashLogs", crashArr)
             .toString()
+    }
+
+    /** The history and device state an export reads, only the sections [selection] includes. */
+    private suspend fun backupHistoryRows(selection: BackupSelection): BackupHistoryRows {
+        val stepMs = if (selection.monitoringHistory) BackupHistory.monitoringStep(repository::metricHistoryPointsForBackup) else 0L
+        return BackupHistoryRows(
+            sessions = if (selection.servers) repository.getPersistentSessions() else emptyList(),
+            stacks = if (selection.servers) repository.getAllStacks() else emptyList(),
+            monitoring = if (selection.monitoringHistory) repository.metricHistoryForBackup(stepMs) else emptyList(),
+            monitoringStepMs = stepMs,
+            fleetRuns = if (selection.fleetHistory) repository.fleetRunsForBackup() else emptyList(),
+            assistantCalls = if (selection.assistantLog) repository.getMcpCalls() else emptyList(),
+            automationGrants = if (selection.automation) repository.getAutomationGrants() else emptyList(),
+        )
     }
 
     private fun backupSettingsSnapshot(existing: List<AppSettingEntity>): List<AppSettingEntity> {
@@ -15374,7 +15613,8 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs", "telnetHosts", "kubeClusters",
+            "crashLogs", "telnetHosts", "kubeClusters", "vpnTunnels",
+            "tmuxSessions", "composeStacks", "monitoringHistory", "fleetRuns", "assistantCalls",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -15389,6 +15629,12 @@ class AppViewModel @JvmOverloads constructor(
         }
         require((root.optJSONObject("settings")?.length() ?: 0) <= BACKUP_MAX_COLLECTION_ITEMS) {
             "Backup contains too many settings."
+        }
+        require(!root.has("automation") || root.opt("automation") is org.json.JSONObject) {
+            "Backup contains an invalid automation section."
+        }
+        require(BackupAccess.grantCount(root.optJSONObject("automation")) <= BACKUP_MAX_COLLECTION_ITEMS) {
+            "Backup contains too many automation entries."
         }
         validateBackupJsonValues(root)
     }
@@ -15430,6 +15676,16 @@ class AppViewModel @JvmOverloads constructor(
             portForwards = root.optJSONArray("portForwards")?.length() ?: 0,
             settings = settingsObj?.length() ?: 0,
             crashLogs = root.optJSONArray("crashLogs")?.length() ?: 0,
+            vpnTunnels = root.optJSONArray("vpnTunnels")?.length() ?: 0,
+            telnetHosts = root.optJSONArray("telnetHosts")?.length() ?: 0,
+            kubeClusters = root.optJSONArray("kubeClusters")?.length() ?: 0,
+            tmuxSessions = root.optJSONArray("tmuxSessions")?.length() ?: 0,
+            composeStacks = root.optJSONArray("composeStacks")?.length() ?: 0,
+            fleetRuns = root.optJSONArray("fleetRuns")?.length() ?: 0,
+            monitoringPoints = BackupHistory.monitoringPointCount(root.optJSONArray("monitoringHistory")),
+            assistantCalls = root.optJSONArray("assistantCalls")?.length() ?: 0,
+            automationGrants = BackupAccess.grantCount(root.optJSONObject("automation")),
+            assistantSettings = if (BackupAccess.hasAssistant(root.optJSONObject("automation"))) 1 else 0,
         )
     }
 
@@ -15537,6 +15793,8 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 val portForwardsForCount = portForwards.count { it.serverId in serverIdsForCount }
                 val encrypted = closedSelection.hasSensitiveData()
+                val history = backupHistoryRows(closedSelection)
+                var tooLarge: String? = null
                 val ok = withContext(Dispatchers.IO) {
                     try {
                         val json = buildBackupJson(
@@ -15544,8 +15802,13 @@ class AppViewModel @JvmOverloads constructor(
                             networkShares, portForwards, activeAlerts, settings, closedSelection,
                             telnetHosts = repository.getAllTelnetHosts(),
                             kubeClusters = repository.getAllKubeClusters(),
+                            tunnels = repository.getAllTunnels(),
+                            history = history,
                         )
                         val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
+                        // A file the restore would refuse is no backup: say so instead of writing it.
+                        tooLarge = backupTooLargeToRestore(json, payload, encrypted)
+                        if (tooLarge != null) return@withContext false
                         context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
                             ?: return@withContext false
                         true
@@ -15569,7 +15832,12 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
                 operationSucceeded = ok
-                outcome = ok to if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings.$timestampWarning" else "Export failed."
+                val historyCounts = listOfNotNull(
+                    history.fleetRuns.size.takeIf { it > 0 }?.let { "$it Fleet run(s)" },
+                    history.monitoring.count { it.serverId in serverIdsForCount }.takeIf { it > 0 }?.let { "$it monitoring point(s)" },
+                    history.assistantCalls.size.takeIf { it > 0 }?.let { "$it AI assistant call(s)" },
+                ).joinToString("") { ", $it" }
+                outcome = ok to if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings$historyCounts.$timestampWarning" else tooLarge ?: "Export failed."
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 outcome = false to "Could not export backup: ${e.message ?: "The saved configuration could not be read."}"
@@ -15633,6 +15901,23 @@ class AppViewModel @JvmOverloads constructor(
                                 )
                             }
                         } ?: emptyList()
+                        // A backup's tunnel is this phone's own when one here has the same name and
+                        // configuration; restoring reuses it. Any other one the restore adds.
+                        val localTunnelsAtStart = repository.getAllTunnels()
+                        val backupTunnelArr = root.optJSONArray("vpnTunnels") ?: org.json.JSONArray()
+                        val backupTunnels = (0 until backupTunnelArr.length()).map { backupTunnelArr.getJSONObject(it) }
+                            .associateBy { it.optInt("id", 0) }
+                        fun localTunnelLike(backupTunnel: org.json.JSONObject): TunnelEntity? = localTunnelsAtStart.firstOrNull {
+                            it.name.equals(backupTunnel.optString("name").trim(), ignoreCase = true) && it.config == backupTunnel.optString("config")
+                        }
+                        // A backup host's route in this phone's terms, so a host saved here directly is
+                        // not mistaken for the backup's copy that goes through a tunnel, or the reverse.
+                        fun backupRoute(backup: org.json.JSONObject): String {
+                            val oldTunnelId = backup.optInt("tunnelId", 0).takeIf { it != 0 } ?: return serverRoute(null, "")
+                            val local = backupTunnels[oldTunnelId]?.let(::localTunnelLike)
+                            return if (local != null) serverRoute(local.id, backup.optString("tunnelHost")) else "restored-tunnel:$oldTunnelId"
+                        }
+
                         suspend fun sameServerEndpoint(existing: ServerEntity, backup: org.json.JSONObject): Boolean {
                             val candidate = ServerEntity(
                                 name = backup.optString("name"), host = backup.optString("host"),
@@ -15640,7 +15925,7 @@ class AppViewModel @JvmOverloads constructor(
                                 authType = backup.optString("authType", "password"),
                                 authProfileId = backup.optInt("authProfileId", 0),
                             )
-                            val incoming = com.jetsetslow.omniterm.data.serverIdentity(candidate, backupProfiles)
+                            val incoming = com.jetsetslow.omniterm.data.serverIdentity(candidate, backupProfiles)?.copy(route = backupRoute(backup))
                             return incoming != null && incoming == com.jetsetslow.omniterm.data.serverIdentity(existing, repository.getAllProfiles())
                         }
 
@@ -15770,6 +16055,26 @@ class AppViewModel @JvmOverloads constructor(
                             availableCredSlots--
                         }
 
+                        // VPN tunnels first, so restored hosts point at them. One already here with the
+                        // same name and configuration is reused; any other is added.
+                        val tunnelIdMap = mutableMapOf<Int, Int>()
+                        if (closedSelection.servers) {
+                            val takenNames = localTunnelsAtStart.map { it.name.lowercase() }.toMutableSet()
+                            for ((oldTunnelId, o) in backupTunnels) {
+                                val tunnelName = o.optString("name").trim()
+                                val tunnelConfig = o.optString("config")
+                                val kind = o.optString("kind", TunnelKinds.WIREGUARD)
+                                if (oldTunnelId == 0 || tunnelName.isEmpty() || tunnelConfig.isBlank() || kind != TunnelKinds.WIREGUARD) continue
+                                tunnelIdMap[oldTunnelId] = localTunnelLike(o)?.id ?: run {
+                                    val freeName = generateSequence(1) { it + 1 }
+                                        .map { n -> if (n == 1) tunnelName else "$tunnelName ($n)" }
+                                        .first { it.lowercase() !in takenNames }
+                                    takenNames += freeName.lowercase()
+                                    repository.insertTunnel(TunnelEntity(name = freeName, kind = kind, config = tunnelConfig))
+                                }
+                            }
+                        }
+
                         val arr = root.optJSONArray("servers") ?: org.json.JSONArray()
                         // Maps backup server ids to restored ids so server-scoped records (alert rules,
                         // backup jobs) can be re-pointed even when the local ids differ.
@@ -15796,8 +16101,7 @@ class AppViewModel @JvmOverloads constructor(
                                 if (oldId != 0) serverIdMap[oldId] = existing.id
                                 restoredHosts.add(existing.host to existing.port)
                                 skippedExistingServers.add(
-                                    "Skipped \"$nm\": the same host, port, SSH user and authentication method " +
-                                        "already exist as \"${existing.name}\". Existing server unchanged."
+                                    "Skipped \"$nm\": " + duplicateServerMessage(existing.name).replaceFirstChar { it.lowercase() }
                                 )
                                 continue
                             }
@@ -15828,6 +16132,11 @@ class AppViewModel @JvmOverloads constructor(
                                     proxyPassword = o.optString("proxyPassword", ""),
                                     proxyKeyAlias = o.optString("proxyKeyAlias", "").takeIf { it.isNotBlank() },
                                     status = "offline",
+                                    // A host that went through a tunnel never goes direct after a
+                                    // restore: without its tunnel it keeps a reference to none, so
+                                    // it fails until the user picks one (or None).
+                                    tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
+                                    tunnelHost = o.optString("tunnelHost", ""),
                                 )
                             ).toInt()
                             if (oldId != 0) serverIdMap[oldId] = newId
@@ -16176,7 +16485,7 @@ class AppViewModel @JvmOverloads constructor(
                             val perSharePrefixes = listOf("share_bookmarks_")
                             while (it.hasNext()) {
                                 val originalKey = it.next()
-                                if (originalKey in DEVICE_LOCAL_SETTINGS) continue
+                                if (originalKey in DEVICE_LOCAL_SETTINGS || originalKey in BackupAccess.APP_LOCK_SETTINGS) continue
                                 var newKey = originalKey
                                 val prefix = perServerPrefixes.firstOrNull { p -> originalKey.startsWith(p) }
                                 if (prefix != null) {
@@ -16196,6 +16505,10 @@ class AppViewModel @JvmOverloads constructor(
                                 importedSettings++
                             }
                         }
+                        // App Lock comes back only to lock: a backup without one leaves this phone's lock.
+                        val restoredLock = if (closedSelection.settings) BackupAccess.appLockToRestore(settingsObj) else emptyMap()
+                        restoredLock.forEach { (key, value) -> repository.insertSetting(key, value) }
+                        importedSettings += restoredLock.size
 
                         // Backups strip pristine default alert rules, so a restored alert_presets=true
                         // needs its preset rows recreated or the toggle shows ON with no rules behind it.
@@ -16213,6 +16526,64 @@ class AppViewModel @JvmOverloads constructor(
                                 CrashLog.Entry(o.optLong("t"), o.optString("r"))
                             }
                             importedCrashLogs = CrashLog.merge(getApplication(), restored)
+                        }
+
+                        // History and device state. Sessions, stacks and monitoring follow their
+                        // hosts. A Fleet run keeps a host that is not on this phone by its name,
+                        // under an id no host here has, so "Use again" never picks another host.
+                        var importedSessions = 0
+                        var importedStacks = 0
+                        if (closedSelection.servers) {
+                            val namesById = repository.getAllServers().associate { it.id to it.name }
+                            importedSessions = repository.restorePersistentSessions(
+                                BackupHistory.sessionsFrom(root.optJSONArray("tmuxSessions")).mapNotNull { s ->
+                                    val id = serverIdMap[s.serverId] ?: return@mapNotNull null
+                                    s.copy(serverId = id, serverName = namesById[id] ?: s.serverName)
+                                },
+                            )
+                            importedStacks = repository.restoreStacks(
+                                BackupHistory.stacksFrom(root.optJSONArray("composeStacks"))
+                                    .mapNotNull { s -> serverIdMap[s.serverId]?.let { s.copy(serverId = it) } },
+                            )
+                        }
+                        var importedMonitoring = 0
+                        if (closedSelection.monitoringHistory) {
+                            // Points this phone would prune at once are not worth adding.
+                            val retentionDays = repository.getSetting("metrics_retention")?.toIntOrNull() ?: metricsRetentionDays
+                            val cutoff = System.currentTimeMillis() - retentionDays * 24L * 60 * 60 * 1000
+                            for ((oldId, points) in BackupHistory.monitoringFrom(root.optJSONArray("monitoringHistory"))) {
+                                val id = serverIdMap[oldId] ?: continue
+                                importedMonitoring += repository.restoreMetricHistory(id, points.filter { it.timestamp >= cutoff })
+                            }
+                        }
+                        val importedFleetRuns = if (!closedSelection.fleetHistory) 0 else repository.restoreFleetRuns(
+                            BackupHistory.fleetRunsFrom(root.optJSONArray("fleetRuns")).map { (run, hosts) ->
+                                var elsewhere = 0
+                                run to hosts.map { h -> h.copy(serverId = serverIdMap[h.serverId] ?: --elsewhere) }.distinctBy { it.serverId }
+                            },
+                        )
+                        val importedAssistantCalls = if (!closedSelection.assistantLog) 0 else {
+                            repository.restoreMcpCalls(BackupHistory.assistantCallsFrom(root.optJSONArray("assistantCalls")))
+                        }
+
+                        // Automation grants and the AI assistant's settings, pointed at this phone's
+                        // scripts and hosts. Both come back switched off (user, Nov 9), so no other
+                        // app or assistant gets in until the user turns them on here.
+                        val automationObj = root.optJSONObject("automation")
+                        var importedGrants = 0
+                        var assistantRestored = false
+                        if (closedSelection.automation && automationObj != null) {
+                            importedGrants = repository.restoreAutomationGrants(
+                                BackupAccess.grantsFrom(automationObj, ::restoredScriptId) { serverIdMap[it] },
+                            )
+                            if (importedGrants > 0) repository.insertSetting(Automation.SETTING_ENABLED, "false")
+                            BackupAccess.assistantFrom(automationObj) { serverIdMap[it] }?.let { assistant ->
+                                // An old token or tunnel of this phone's that the backup lacks goes too.
+                                repository.deleteSetting(McpSettings.TOKEN_HASH)
+                                repository.deleteSetting(McpSettings.TUNNEL_PORT)
+                                assistant.forEach { (key, value) -> repository.insertSetting(key, value) }
+                                assistantRestored = true
+                            }
                         }
 
                         // Report any partial restore explicitly with its reason, so a backup that
@@ -16236,7 +16607,22 @@ class AppViewModel @JvmOverloads constructor(
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
                                 (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
                                 (if (importedKube > 0) "$importedKube Kubernetes cluster(s), " else "") +
-                                "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix +
+                                (if (importedSessions > 0) "$importedSessions tmux session(s), " else "") +
+                                (if (importedStacks > 0) "$importedStacks Compose stack(s), " else "") +
+                                (if (importedFleetRuns > 0) "$importedFleetRuns Fleet run(s), " else "") +
+                                (if (importedMonitoring > 0) "$importedMonitoring monitoring point(s), " else "") +
+                                (if (importedAssistantCalls > 0) "$importedAssistantCalls AI assistant call(s), " else "") +
+                                (if (importedGrants > 0) "$importedGrants automation token(s), " else "") +
+                                (if (assistantRestored) "the AI assistant's settings, " else "") +
+                                "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." +
+                                when {
+                                    importedGrants > 0 && assistantRestored -> " Automation and the AI assistant are off until you turn them on in Tools."
+                                    importedGrants > 0 -> " Automation is off until you turn it on in Tools."
+                                    assistantRestored -> " The AI assistant is off until you turn it on in Tools."
+                                    else -> ""
+                                } +
+                                (if (restoredLock.isNotEmpty()) " App Lock now asks for the backup's PIN." else "") +
+                                skippedSuffix +
                                 skippedExistingServers.joinToString(separator = "\n", prefix = if (skippedExistingServers.isEmpty()) "" else "\n"),
                         )
                         }
@@ -16257,6 +16643,12 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
                 reconcileHostLimit("Restored data exceeds the free Play Store host limit. Choose the one host to keep.")
+                // Restored tmux sessions are offered to attach again, as after a restart.
+                if (result.first) restorablePersistentSessions = withContext(Dispatchers.IO) { repository.getPersistentSessions() }
+                // A restore that brought the assistant's settings left it off; stop a server still running.
+                if (result.first && withContext(Dispatchers.IO) { repository.getSetting(McpSettings.ENABLED) } != "true") {
+                    McpService.stop(getApplication())
+                }
                 operationSucceeded = result.first
                 onResult(result.first, result.second)
             } finally {

@@ -74,7 +74,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           match=0
-          grep -qE '^(app/|gradle/|scripts/|\.github/actions/|\.github/workflows/codeql\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)' "$changed_list" || match=$?
+          grep -qE '^(app/|tunnel/|gradle/|scripts/|\.github/actions/|\.github/workflows/codeql\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)' "$changed_list" || match=$?
           rm -f "$changed_list"
           if [ "$match" -eq 0 ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -91,6 +91,11 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # The build fetches the Go tunnel library's modules into .go-toolchain/ (ignored by git);
+      # gomobile's example apps there are not ours to analyse. The extractor indexes XML by these
+      # filters; scripts/local-codeql.sh sets the same.
+      LGTM_INDEX_FILTERS: "exclude:.go-toolchain/**"
     permissions:
       actions: read
       contents: read
@@ -181,6 +186,51 @@ jobs:
       - name: Delete debug keystore
         if: always()
         run: rm -f debug.keystore
+
+  # The Go tunnel library (tunnel/) is built into the app and parses WireGuard configurations the
+  # user pastes, so it is analysed too. Not a required check: it runs whenever code changed, beside
+  # the Java/Kotlin job, with the repository's pinned Go toolchain.
+  analyze-go:
+    name: Analyze Go tunnel library
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Before init: CodeQL wraps the go on PATH when it starts, so the pinned toolchain has to be
+      # there already. Putting it in front afterwards hid the build from CodeQL ("could not process
+      # any code written in Go", PR #147); scripts/test-workflow-guards.sh keeps this order.
+      - name: Set up the pinned Go toolchain
+        run: ./scripts/go-toolchain.sh --github
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: go
+          build-mode: manual
+          dependency-caching: false
+          queries: security-extended
+          # Only the library is ours; the module cache under .go-toolchain/ is not analysed.
+          source-root: tunnel
+
+      - name: Build the tunnel library
+        working-directory: tunnel
+        run: go build ./...
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: "/language:go"
 
   analyze-skip:
     # Companion no-op: satisfies the required "Analyze Java/Kotlin" check on PRs that change no code.

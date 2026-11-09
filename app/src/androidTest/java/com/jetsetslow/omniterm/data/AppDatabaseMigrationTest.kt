@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 28
+        const val CURRENT_VERSION = 29
     }
 
     @get:Rule
@@ -425,6 +425,41 @@ class AppDatabaseMigrationTest {
                 assertEquals("an upgrade records no call", 0, cursor.getInt(0))
             }
             db.execSQL("INSERT INTO mcp_calls (at, client, tool, outcome, detail) VALUES (1, 'Claude Code', 'list_hosts', 'ok', '')")
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToTwentyNineLeavesEveryHostDirectAndAddsNoTunnel() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-28-tunnels"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 28).use { db ->
+            db.execSQL(
+                "INSERT INTO servers (name, host, port, username, serverColor, authType, sudoPassword, notes, keepAlive, " +
+                    "sshCompression, persistentSession, proxyCommand, proxyType, proxyHost, proxyPort, proxyUser, proxyPassword, " +
+                    "agentForwarding, healthScore, lastLatency, status, authStatus) VALUES ('nas', '192.168.1.5', 22, 'u', " +
+                    "'Default', 'password', '', '', 30, 0, 0, '', 'none', '', 0, '', '', 0, -1, 0, 'offline', 'unknown')"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT tunnelId, tunnelHost FROM servers WHERE name = 'nas'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue("an upgraded host still connects directly", cursor.isNull(0))
+                assertEquals("", cursor.getString(1))
+            }
+            db.query("SELECT COUNT(*) FROM tunnels").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO tunnels (name, kind, config, createdAt) VALUES ('Home', 'wireguard', 'enc:v1:x', 1)")
+            db.execSQL("UPDATE servers SET tunnelId = 1, tunnelHost = '100.64.0.5' WHERE name = 'nas'")
         }
         context.deleteDatabase(databaseName)
     }

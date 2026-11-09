@@ -404,7 +404,9 @@
     <string name="restore_backup">"Restore backup"</string>
     <string name="choose_what_to_restore_from_this">"Choose what to restore from this backup."</string>
     <string name="sensitive_selecting_forces_an_encrypted_backup">"* Sensitive — selecting forces an encrypted backup."</string>
-    <string name="alert_rules_and_history_include_servers">"Alert rules and history include Servers. Active alerts also include Alert rules. SSH tunnels include Servers."</string>
+    <string name="alert_rules_and_history_include_servers">"Alert rules and history include Servers. Active alerts also include Alert rules. SSH tunnels and Monitoring history include Servers. Automation &amp; AI assistants include Servers and Scripts, and restore switched off."</string>
+    <string name="backup_servers_include">"With their VPN tunnels, Telnet connections, Kubernetes clusters, tmux sessions and Compose stacks."</string>
+    <string name="backup_servers_bring">"With %1$s."</string>
     <string name="hosts_to_restore">"Hosts to restore"</string>
     <string name="require_pin_to_unlock">"Require PIN to unlock"</string>
     <string name="unlock_with_biometrics">"Unlock with biometrics"</string>
@@ -1639,4 +1641,44 @@
     <string name="mcp_approval_more">"%1$d more waiting"</string>
     <string name="mcp_approval_authenticate">"Authenticate to approve"</string>
     <string name="mcp_approval_question">"Run %1$s on %2$s?"</string>
+    <!-- VPN tunnels (Tools → VPN tunnels, and the host editor) -->
+    <string name="vpn_title">"VPN tunnels"</string>
+    <string name="vpn_intro">"Reach hosts through WireGuard without using the phone's VPN. A tunnel runs inside OmniTerm only: just the connections to the hosts you pick go through it, and it starts when one of them needs it."</string>
+    <string name="vpn_never_direct">"A host with a tunnel always goes through it and never connects directly, even when the tunnel is down."</string>
+    <string name="vpn_add_wireguard">"Add WireGuard tunnel"</string>
+    <string name="vpn_none_yet">"No VPN tunnels yet."</string>
+    <string name="vpn_kind_wireguard">"WireGuard"</string>
+    <string name="vpn_status_down">"Not running. It starts when a host needs it."</string>
+    <string name="vpn_status_no_handshake">"Running, waiting for the peer to answer · %1$s"</string>
+    <string name="vpn_status_up">"Connected · %1$s · last handshake %2$s ago"</string>
+    <plurals name="vpn_connections">
+        <item quantity="one">"%d connection"</item>
+        <item quantity="other">"%d connections"</item>
+    </plurals>
+    <string name="vpn_used_by_none">"No host uses it yet. Pick it in a host's settings."</string>
+    <string name="vpn_used_by">"Used by %1$s"</string>
+    <string name="vpn_edit">"Edit"</string>
+    <string name="vpn_stop">"Stop"</string>
+    <string name="vpn_delete">"Delete"</string>
+    <string name="vpn_cancel">"Cancel"</string>
+    <string name="vpn_save">"Save"</string>
+    <string name="vpn_delete_title">"Delete %1$s?"</string>
+    <string name="vpn_delete_body">"Its configuration, with its private key, is removed from this phone."</string>
+    <string name="vpn_add_title">"New WireGuard tunnel"</string>
+    <string name="vpn_edit_title">"Edit tunnel"</string>
+    <string name="vpn_name">"Name"</string>
+    <string name="vpn_config">"Configuration (.conf)"</string>
+    <string name="vpn_config_hint">"Paste the [Interface] and [Peer] sections your router or VPN server gave you"</string>
+    <string name="vpn_config_keep">"Leave empty to keep the current configuration"</string>
+    <string name="vpn_import">"Import .conf file"</string>
+    <string name="vpn_import_failed">"That file could not be read as a WireGuard configuration."</string>
+    <string name="vpn_privacy">"The configuration, with its private key, is stored encrypted on this phone and goes into encrypted backups with your hosts. OmniTerm talks only to the peer it names. Commands such as PostUp are never run."</string>
+    <string name="vpn_host_header">"VPN tunnel"</string>
+    <string name="vpn_host_none_set_up">"Connects directly. Add a WireGuard tunnel under Tools → VPN tunnels to reach this host through one."</string>
+    <string name="vpn_host_direct">"None (direct)"</string>
+    <string name="vpn_host_direct_help">"Connects directly. To reach the host through a tunnel instead, pick one; switch back to None to connect directly again."</string>
+    <string name="vpn_host_never_direct">"Every connection to this host goes through this tunnel and never directly, even when the tunnel is down."</string>
+    <string name="vpn_host_tunnel_gone">"This tunnel no longer exists. Pick another, or None."</string>
+    <string name="vpn_host_address">"Address through the tunnel (optional)"</string>
+    <string name="vpn_host_address_help">"When the host has another address inside the tunnel. Empty uses the host's address above."</string>
 </resources>

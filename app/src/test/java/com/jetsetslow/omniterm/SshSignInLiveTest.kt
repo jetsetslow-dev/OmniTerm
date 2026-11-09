@@ -187,7 +187,9 @@ class SshSignInLiveTest {
     }
 
     private fun sshKeygen(vararg args: String) {
-        val process = ProcessBuilder("ssh-keygen", *args).redirectErrorStream(true).start()
+        // By absolute path, not whichever ssh-keygen the PATH finds first (CodeQL alert 39).
+        val keygen = requireNotNull(TestShell.find("ssh-keygen")) { "No ssh-keygen in /bin, /usr/bin or /usr/local/bin." }
+        val process = ProcessBuilder(keygen.absolutePath, *args).redirectErrorStream(true).start()
         val output = process.inputStream.readBytes().toString(Charsets.UTF_8)
         check(process.waitFor() == 0) { "ssh-keygen ${args.joinToString(" ")} failed: $output" }
     }

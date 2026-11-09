@@ -33,6 +33,7 @@ object HostCredentials {
             }
         }
         val proxyKey = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
+        if (srv.tunnelId != null) com.jetsetslow.omniterm.data.tunnel.TunnelManager.attach(repository)
         return SshCredentials(
             srv.host, srv.port, user, pass, key?.privateKey,
             proxyType = srv.proxyType,
@@ -47,6 +48,8 @@ object HostCredentials {
             compression = srv.sshCompression,
             agentForwarding = srv.agentForwarding,
             posixShell = posixShell,
+            tunnelId = srv.tunnelId,
+            tunnelHost = srv.tunnelHost,
         )
     }
 }

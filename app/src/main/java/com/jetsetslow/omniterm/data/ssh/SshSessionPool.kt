@@ -62,12 +62,14 @@ internal class SshSessionPool(
     /** What each of [needsUserUntil]'s hosts wants: a question answered, or a security key touched. */
     private val needsUserBecause = ConcurrentHashMap<String, String>()
 
-    private fun key(c: SshCredentials): String =
+    /** Which pooled session [c] may share: one per route too, so a host never reuses another route's. */
+    internal fun key(c: SshCredentials): String =
         "${c.username}@${c.host}:${c.port}" +
             "|pw=${fingerprint(c.password)}|pk=${fingerprint(c.privateKeyPem)}|pp=${fingerprint(c.passphrase)}" +
             "|cert=${fingerprint(c.certificate)}" +
             "|proxy=${c.proxyType}:${c.proxyUser}@${c.proxyHost}:${c.proxyPort}:${fingerprint(c.proxyPassword)}" +
-            ":${fingerprint(c.proxyKeyPem)}:${fingerprint(c.proxyCertificate)}|ka=${c.keepAliveSeconds}|z=${c.compression}"
+            ":${fingerprint(c.proxyKeyPem)}:${fingerprint(c.proxyCertificate)}|ka=${c.keepAliveSeconds}|z=${c.compression}" +
+            "|tun=${c.tunnelId}:${c.tunnelHost}"
 
     private fun fingerprint(secret: String?): String {
         if (secret.isNullOrEmpty()) return "empty"

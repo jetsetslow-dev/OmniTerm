@@ -437,9 +437,9 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   with 3 retries. `secrets/internal-docs/tools/ci-watch.sh` watches runs and reruns network
   flakes once.
 
-## Checkpoint E — opt-in MCP server for AI assistants (this commit, branch `kotlin-mcp`)
+## Checkpoint E — opt-in MCP server for AI assistants (#145, merged Nov 9 as 179c0b6)
 
-Its own PR, stacked on #138 (base `kotlin-automation` until #138 merges, then main).
+Its own PR, after #138.
 
 - Protocol: `data/mcp/McpProtocol.kt`, pure Kotlin on kotlinx-serialization-json's tree API (the
   jar was already verified at 1.12.0), so it can move to the shared module as is.
@@ -506,6 +506,162 @@ Its own PR, stacked on #138 (base `kotlin-automation` until #138 merges, then ma
 - Gate: `local-pr-check.sh --full` passed (exit 0): 93 device tests, 0 failed; CodeQL no alerts (87,053 lines)
 - Go engine contract: remote port forwarding, used by the MCP tunnel, joins `keyOnly` in item 6.
 
+## Checkpoint T1 — per-host WireGuard tunnels (this commit, branch `kotlin-tunnels`)
+
+Its own PR against main, after #145.
+
+- Go library `tunnel/omnitunnel` (module `github.com/jetsetslow-dev/omniterm/tunnel`):
+  - wireguard-go plus gVisor's netstack, in userspace: no VpnService, no system VPN slot, no root,
+    and other apps never see the tunnel.
+  - A wg-quick configuration parser that says which line is wrong and never repeats a key.
+  - `DialFd` connects inside the tunnel and hands Kotlin one end of a socketpair, so no port is ever
+    listened on. Names go to the tunnel's DNS first; addresses outside AllowedIPs are refused.
+  - Built with gomobile into an AAR by `scripts/build-tunnel.sh` (Gradle task `buildGoTunnel`),
+    with the repo-local, checksum-verified Go 1.27.3 from `scripts/go-toolchain.sh` (approved
+    Nov 8). About 6.5 MB per ABI.
+  - Go tests (`scripts/test-tunnel.sh`: gofmt, vet, tests): real handshakes over loopback against an
+    in-process peer; a 3 MiB echo; refusals; closing; a wrong peer key; an unknown endpoint.
+- Routing (user, Nov 9: "if tunnel is confirmed and selected for a host it should never go
+  direct"):
+  - A host has an optional tunnel and an optional address inside it (`tunnelHost`); the same machine
+    can be saved twice, once direct and once through a tunnel.
+  - With a tunnel, every first hop goes through it: SSH (`HostRoute` → `TunnelSocketFactory`, the
+    only JSch-specific piece), the jump host or proxy, the connection test, and TCP and certificate
+    checks. There is no fallback: a tunnel that is down, refused or deleted fails closed.
+  - The direct reachability probe is skipped; ping, DNS and web checks of the host's own address
+    are not run ("Not checked: … through its VPN tunnel"), because they would go direct.
+  - Changing a host's route closes its terminals (they reconnect over the new route) and stops its
+    SSH tunnels (port forwards); the pool keys on the route, so no old session is reused.
+  - A tunnel that hosts use cannot be deleted. A restored host whose tunnel is not in the backup
+    points at a missing one and fails until the user picks one.
+- Data: `tunnels` table (config encrypted), `servers.tunnelId` and `servers.tunnelHost` (DB 29,
+  `MIGRATION_28_29`). Backups carry tunnels with their hosts; restore reuses an identical one.
+- `TunnelManager` starts a tunnel on first use, restarts it when its configuration changes, and
+  stops it after 5 idle minutes.
+- UI: Tools → VPN tunnels (named so because "SSH Tunnels" already means port forwards), with paste
+  or import, a live check, status (handshake, connections, traffic), stop and delete; the host
+  editor's VPN tunnel picker and its never-direct note.
+- Fixture: `wireguard` service in `scripts/test-hosts` (wireguard-go, a forward to internal-a's SSH,
+  dnsmasq for `lab.vpn`); its keys are generated into `.env`.
+- CI: `tunnel/` counts as code in both change detectors (tested), Go tests in PR Check and the
+  gate, a CodeQL Go job, Dependabot `gomod`, and the gate's update check covers Go modules and the
+  Go toolchain's patch releases. CI installs the pinned NDK when it is missing.
+- Credits: wireguard-go (MIT), gVisor (Apache-2.0), gomobile and x/* (BSD-3), Haven (reference
+  only, AGPL, no code).
+- Later (T2+): SMB/FTP/WebDAV/Kubernetes through tunnels, ping and DNS through netstack,
+  Tailscale/Headscale, NetBird, Nebula, Cloudflare Access, QR import.
+- Results (Nov 9):
+  - Go: `scripts/test-tunnel.sh` passes (gofmt, `go mod verify`, vet, tests).
+  - Mutations, each seen failing a test:
+    - a factory that ignores the tunnel;
+    - the tunnel address ignored;
+    - no restart on a new configuration;
+    - an idle stop with connections open;
+    - endpoint checks that skip the tunnel;
+    - a probe that goes direct;
+    - terminals kept over a changed route;
+    - a missing tunnel restored as direct;
+    - an identical tunnel not reused;
+    - the tunnel address left out of backups;
+    - an in-use tunnel deleted;
+    - pooled sessions shared across routes.
+  - Device (API 35, repo `wireguard` fixture): `E2eVpnTunnelTest` reaches `internal-a.lab.vpn`
+    through the tunnel. With the tunnel route bypassed it fails, unable to resolve the name directly.
+  - The device run found a real bug. The same machine through a different tunnel was refused as a
+    duplicate. A host's identity is now address + port + login + route (user, Nov 9: "the dup ip
+    should be in combination with cred and tunnel"), in the editor, in `addServer` and on restore.
+  - `./scripts/local-pr-check.sh --full` passed: unit tests for both variants, lint, dependency
+    verification, no advisories or updates (Gradle, Actions, Go), the secret scan, the API 35
+    device tests, and local CodeQL with no alerts (88,639 lines). Go's module cache is kept out
+    of the Java/XML extraction with `LGTM_INDEX_FILTERS`, locally and in CI.
+- PR #147's first CI run failed three ways the local gate could not see (user, Nov 9: "why are so
+  many pr runs failing, we should catch those before"). Each is fixed, and the gate now catches it:
+  - Dependency review rejected the `PATENTS` file of Go's x/ libraries
+    (`LicenseRef-scancode-google-patent-license-golang`, Google's extra patent grant). It is now
+    allowed, with a note, and `scripts/check-licenses.py` checks every Go module's licence files
+    against the same `allow-licenses` list in every gate. With main's list it fails on the same 8
+    modules. Go modules also go to the advisory check (an old `x/net` fails it).
+  - CodeQL Go "could not process any code written in Go": the build step put the pinned go in
+    front of CodeQL's wrapper after init. `go-toolchain.sh --github` now sets it up before init,
+    with `source-root: tunnel`. `scripts/test-workflow-guards.sh` keeps that order and fails on
+    #147's workflow. `scripts/local-codeql.sh` analyses Go too, as the workflow does, with the
+    checksum-pinned Go bundle fetched into `.go-toolchain/`.
+  - `TunnelRoutingTest` read the direct echo server's accept count before its thread had run. The
+    test now waits for the count, and the no-connection checks wait 300 ms so a queued one is counted.
+    The gate repeats changed tests on one processor (`repeat-changed-tests.sh --cpus 1`). #147's
+    version of the test failed 3 of 13 runs on one processor ("expected: 1 but was: 0", as in CI),
+    and none of 5 on two, so two would not have caught it. The fixed
+    test passed 13 of 13 runs on one processor, and still passes with the server's accept slowed by
+    200 ms (#147's version fails that every time).
+- Two security findings the gate could not see (user, Nov 9: "there's a security comment from git
+  hub bot"):
+  - Scorecard alert 40 on #147: the WireGuard fixture's `FROM alpine:3.22` had no digest. It now
+    uses the digest the other fixtures already pin. `scripts/check-pinned-images.py` applies
+    Scorecard's Dockerfile rule in the gate and PR Check, and also requires one digest per image
+    and tag. It fails on #147's fixture, and on the digest Scorecard suggested, which differs from
+    the other fixtures'.
+  - CodeQL alert 39, open on main since Nov 3 (#136): `SshSignInLiveTest` ran `ssh-keygen` by
+    relative path. Pull request runs compile no tests, so only main's run saw it. The test now uses
+    `TestShell.find`'s absolute path. `scripts/local-codeql.sh` also compiles the unit and device
+    test sources, as main's run does. On the old test it reports the same alert, at
+    `SshSignInLiveTest.kt:190`.
+  - Checked: the live sign-in test passes 7 of 7 against the repo's fixtures, and with the rebuilt
+    fixture `E2eVpnTunnelTest` passes on the API 35 emulator.
+
+## Checkpoint B1 — backups carry everything (in PR #147, after T1)
+
+User, Nov 9: "but shouldn't a back up be everything not excluding things". Built on T1 (backups
+changed there). The user then asked for it in the same PR: "merge that into the same 147 pr B1".
+
+- New backup sections, ticked by default and each one sensitive (an encrypted backup):
+  - **Fleet history**: the 50 runs with each host's output. A host not on the restoring phone keeps
+    its name under a negative id, so "Use again" never picks another host.
+  - **Monitoring history**: one point a minute per host, coarser (5, 15, 60 minutes) when a minute
+    would pass about 160,000 points. Averaged in SQL, saved per host and day, so no array reaches
+    the 50,000 items an older app refuses. A host with history on the phone keeps its span.
+  - **AI assistant log**: the last 200 calls.
+- With the hosts: tmux sessions (offered to attach again, never connected) and Compose stacks.
+- The restore preview counts VPN tunnels, Telnet hosts, Kubernetes clusters, tmux sessions,
+  Compose stacks and the new sections. Every restore adds only what the phone lacks (run key,
+  session, stack, call, time span), so restoring twice changes nothing.
+- An export a restore could not read (input, plain or compressed limit) is refused with the size
+  and what to untick; before, it was written and failed only at restore.
+- Selection v3. A saved v1/v2 selection gains Fleet and Monitoring history with Servers, and the
+  assistant log with Settings. Monitoring history ticks Servers, as unticking Servers unticks it.
+- `sftp_last_path_*` is a leftover: nothing writes it, so nothing is lost there.
+- Access, decided by the user on Nov 9 (both as proposed):
+  - **Automation & AI assistants** (new section, ticked, sensitive; brings Scripts and Servers):
+    each grant with its script by category and name and its hosts, and the assistant's settings
+    and token fingerprint, with hosts and tunnel host remapped. A restore sets the Automation
+    switch and the assistant off, stops a running assistant server after the restore commits,
+    replaces the phone's assistant token, and says what is off. Grants dedupe by token.
+  - **App Lock** with Settings: the PIN (PBKDF2, salted, portable), the lock and its re-lock time.
+    It comes back only to lock: a backup made with the lock off leaves the phone's lock. Biometric
+    unlock and failed attempts stay per phone. The restore says the backup's PIN is now asked for.
+  - README and PRIVACY.md say so; `DEVICE_LOCAL_SETTINGS` keeps biometrics, lockout, the switches
+    and the assistant's settings out of the settings object (older apps skip the PIN too).
+- `BackupSelection.NONE` is the one "nothing ticked" selection. Tests built their own, and each new
+  section defaulted to ticked there: it ticked Servers, so a "nothing" export needed a password.
+- Results:
+  - 10 backup, automation, assistant and App Lock test classes pass (57 tests).
+  - 11 mutations, each caught:
+    - the Automation switch or the assistant left on;
+    - grants on the old host ids;
+    - biometrics restored;
+    - App Lock never restored, or a lock-off backup bringing its PIN;
+    - the settings loop restoring App Lock as stored;
+    - a missing host given id 0;
+    - the phone's own monitoring span overwritten;
+    - a Fleet run restored twice;
+    - an export too large to restore written anyway.
+    The App Lock test's "lock off" backup first had no PIN at all, so two of these mutations
+    passed. It now keeps a PIN with the lock off, as the switch leaves it.
+  - Device (API 35): `BackupCompatibilityInstrumentedTest`, `E2eBackupSelectionFeedbackTest` and
+    the settings-backup case of `E2eSettingsStateStressTest` pass.
+  - Unrelated and already broken: that class's opt-in battery-saver case fails without B1 too. It
+    waits for the saver without accepting the prompt that #98 added, and it needs a lab host
+    ("E2E Foreground Demo") that the fixtures do not have. Left for later.
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
@@ -557,7 +713,7 @@ On Nov 9 the user added:
    D3 (key install) are done. This PR (#138) ends here; items 2–6 are
    each their own PR.
 2. MCP: done in checkpoint E (its own PR).
-3. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
+3. Per-host tunnels: WireGuard is checkpoint T1 (its own PR); then Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
    Go library, built with a repo-local, checksum-verified Go toolchain (approved Nov 8). ZeroTier,
    OpenVPN and Pangolin's Olm are left out for their licences; Pangolin raw TCP resources work as a
    plain host and port.

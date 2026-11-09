@@ -61,11 +61,7 @@ class ScriptRefsBackupRobolectricTest {
                     triggerWindow = "2m", target = check.id.toString(), runbookScriptId = runbook.id,
                 ),
             )
-            val selection = BackupSelection(
-                servers = false, sshKeys = false, credentialProfiles = false, scripts = true,
-                alertRules = true, activeAlerts = false, alertHistory = false, wolTargets = false,
-                networkShares = false, portForwards = false, settings = false,
-            )
+            val selection = BackupSelection.NONE.copy(scripts = true, alertRules = true)
 
             val uri = Uri.parse("content://backup-fixture/scripts.json")
             val bytes = ByteArrayOutputStream()

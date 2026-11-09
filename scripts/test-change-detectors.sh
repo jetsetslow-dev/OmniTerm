@@ -241,6 +241,21 @@ for entry in "${DETECTORS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# The Go tunnel library is built into the app: a change to it alone must build, test and analyse.
+# ---------------------------------------------------------------------------
+echo
+echo "== Go tunnel library =="
+for entry in ".github/workflows/codeql.yml|decide" ".github/workflows/android-pr-check.yml|filter"; do
+  IFS='|' read -r workflow step_id <<< "$entry"
+  name="$(basename "$workflow")"
+  script="$(extract_run "$REPO_ROOT/$workflow" "$step_id")" || { fail "$name: could not extract $step_id"; continue; }
+  for path in tunnel/omnitunnel/tunnel.go tunnel/go.sum; do
+    { filler 20 docs; echo "$path"; } > "$WORK/go-$name"
+    expect "$name: $path alone" true "$(run_detector "$script" "$WORK/go-$name")"
+  done
+done
+
+# ---------------------------------------------------------------------------
 # CodeQL only: push and schedule are the prerelease gate and must never skip.
 # ---------------------------------------------------------------------------
 echo

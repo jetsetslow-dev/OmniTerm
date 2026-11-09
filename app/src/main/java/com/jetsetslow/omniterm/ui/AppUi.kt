@@ -1298,6 +1298,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         Screen.About -> AboutToolView(viewModel)
                         Screen.Automation -> AutomationToolView(viewModel)
                         Screen.Mcp -> McpToolView(viewModel)
+                        Screen.VpnTunnels -> VpnTunnelsToolView(viewModel)
                     }
 
                     // In a landscape terminal the IME intentionally hides both global bars to preserve
@@ -1976,7 +1977,7 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
 fun isToolSubScreen(screen: Screen): Boolean {
     return screen in listOf(
         Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.Network,
-        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp,
+        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp, Screen.VpnTunnels,
     )
 }
 
@@ -2992,6 +2993,8 @@ fun AddServerSheet(
     var forgetProxyPassword by remember { mutableStateOf(false) }
     val hasStoredProxyPassword = !serverToEdit?.proxyPassword.isNullOrEmpty()
     var proxyKeyAlias by remember { mutableStateOf(src?.proxyKeyAlias ?: "") }
+    var tunnelId by remember { mutableStateOf(src?.tunnelId) }
+    var tunnelHost by remember { mutableStateOf(src?.tunnelHost ?: "") }
 
     var errorText by remember { mutableStateOf<String?>(null) }
     var savingServer by remember { mutableStateOf(false) }
@@ -3038,7 +3041,7 @@ fun AddServerSheet(
     fun connectionSignature() = listOf(
         host.trim(), port, user, authType, effectivePassword(), selectedKey,
         selectedProfileId?.toString() ?: "", proxyType, proxyHost.trim(), proxyPort, proxyUser,
-        effectiveProxyPassword(), proxyKeyAlias,
+        effectiveProxyPassword(), proxyKeyAlias, tunnelId?.toString() ?: "", tunnelHost.trim(),
     ).joinToString("\u0000")
     var testedOkSignature by remember {
         mutableStateOf(if (serverToEdit != null) connectionSignature() else null)
@@ -3072,7 +3075,9 @@ fun AddServerSheet(
                     proxyPort = proxyPort.toIntOrNull() ?: 0,
                     proxyUser = proxyUser,
                     proxyPassword = effectiveProxyPassword(),
-                    proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" }
+                    proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" },
+                    tunnelId = tunnelId,
+                    tunnelHost = tunnelHost.trim().takeIf { tunnelId != null }.orEmpty(),
                 )
             ) { error ->
                 savingServer = false
@@ -3109,6 +3114,8 @@ fun AddServerSheet(
                 proxyUser = proxyUser,
                 proxyPassword = proxyPassword,
                 proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" },
+                tunnelId = tunnelId,
+                tunnelHost = tunnelHost.trim().takeIf { tunnelId != null }.orEmpty(),
             ) { err ->
                 savingServer = false
                 if (err != null) {
@@ -3315,6 +3322,8 @@ fun AddServerSheet(
                                     proxyPort = proxyPort.toIntOrNull() ?: 0,
                                     proxyUser = proxyUser, proxyPassword = effectiveProxyPassword(),
                                     proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" },
+                                    tunnelId = tunnelId,
+                                    tunnelHost = tunnelHost.takeIf { tunnelId != null }.orEmpty(),
                                 ) { err ->
                                     testingConnection = false
                                     testResultText = err?.let { "Connection failed: $it" } ?: "Connection OK"
@@ -3383,6 +3392,15 @@ fun AddServerSheet(
                             forgetStored = forgetSudoPassword,
                             onForgetStoredChange = { forgetSudoPassword = it },
                             modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+                        HostVpnTunnelPicker(
+                            tunnels = viewModel.tunnels.collectAsStateWithLifecycle().value,
+                            selected = tunnelId,
+                            onSelect = { tunnelId = it },
+                            tunnelHost = tunnelHost,
+                            onTunnelHostChange = { tunnelHost = it },
                         )
 
                         Spacer(Modifier.height(12.dp))
@@ -3478,13 +3496,14 @@ fun AddServerSheet(
                             id = serverToEdit?.id ?: 0, name = name, host = host,
                             port = port.toIntOrNull() ?: 22, username = user,
                             authType = authType, authProfileId = selectedProfileId,
+                            tunnelId = tunnelId, tunnelHost = tunnelHost.trim().takeIf { tunnelId != null }.orEmpty(),
                         )
                         val identity = com.jetsetslow.omniterm.data.serverIdentity(candidate, savedProfiles)
                         val sameLogin = if (identity == null) null else allServers.firstOrNull {
                             it.id != candidate.id && com.jetsetslow.omniterm.data.serverIdentity(it, savedProfiles) == identity
                         }
                         if (sameLogin != null) {
-                            errorText = "The same host, port, SSH user and authentication method already exist as \"${sameLogin.name}\". Existing server unchanged."
+                            errorText = com.jetsetslow.omniterm.data.duplicateServerMessage(sameLogin.name)
                             return@Button
                         }
                         errorText = null
