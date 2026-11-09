@@ -109,6 +109,9 @@ internal fun parseSerialSettings(stored: String): SerialSettings? {
 /** TLS and URL checks that may run at once; each can wait up to its timeout. */
 private const val ENDPOINT_CHECK_PARALLELISM = 4
 
+/** How long a failed terminal or tmux check waits for a running probe of the same host to finish. */
+private const val PROBE_ORDER_WAIT_MS = 5_000L
+
 /** Waits before the second and third try of a forwarded alert the server did not take. */
 private val ALERT_FORWARD_RETRY_DELAYS_MS = listOf(5_000L, 30_000L)
 
@@ -2521,6 +2524,23 @@ class AppViewModel @JvmOverloads constructor(
         sshEvidenceRevision.computeIfAbsent(serverId) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
     }
 
+    /**
+     * [markServerOfflineUnlessConnected] for a verdict reached outside a probe, such as a terminal
+     * or tmux check that failed. It lands after a probe already running for [srv]: that probe's
+     * evidence is older, and its "online" written afterwards kept a host that had just been found
+     * unreachable showing online until the next poll (main's CodeQL run, Nov 9). It waits at most
+     * [PROBE_ORDER_WAIT_MS] for the probe, then writes anyway.
+     */
+    private suspend fun markServerOfflineAfterProbe(srv: ServerEntity, revisionAtStart: Long) {
+        val probeLock = telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }
+        val locked = withTimeoutOrNull(PROBE_ORDER_WAIT_MS) { probeLock.lock() } != null
+        try {
+            markServerOfflineUnlessConnected(srv, revisionAtStart)
+        } finally {
+            if (locked) probeLock.unlock()
+        }
+    }
+
     private suspend fun markServerOfflineUnlessConnected(srv: ServerEntity, revisionAtStart: Long) {
         if (sshRevision(srv.id) != revisionAtStart) {
             repository.updateReachability(srv.id, "online", srv.lastLatency.coerceAtLeast(0))
@@ -3752,16 +3772,14 @@ class AppViewModel @JvmOverloads constructor(
     /** What each (rule, host) TLS or URL check last saw, for the rule list. */
     val endpointCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
 
-    private var endpointCheckJob: Job? = null
+    private val endpointCheckRounds = LatestRun(viewModelScope, Dispatchers.IO)
 
     /**
      * Runs every TLS and URL check that is due, from this phone. Called each telemetry cycle, so
-     * the checks pause with polling (battery saver) and never overlap a previous round.
+     * the checks pause with polling (battery saver) and never overlap a previous round. Asked
+     * during a round (a rule just added), it runs another round right after that one.
      */
-    private fun startEndpointChecks() {
-        if (endpointCheckJob?.isActive == true) return
-        endpointCheckJob = viewModelScope.launch(Dispatchers.IO) { runEndpointChecks() }
-    }
+    private fun startEndpointChecks() = endpointCheckRounds.request { runEndpointChecks() }
 
     private suspend fun runEndpointChecks() {
         if (!alertsEnabled) return
@@ -3847,7 +3865,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** When each host's [HostChecks.PROBE] is next due, by host id. */
     private val hostChecksDueAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
-    private val hostCheckJobs = java.util.concurrent.ConcurrentHashMap<Int, Job>()
+    private val hostCheckRuns = java.util.concurrent.ConcurrentHashMap<Int, LatestRun>()
 
     /** What each (rule, host) host check last read, for the rule list; value null when unknown. */
     val hostCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
@@ -3858,19 +3876,27 @@ class AppViewModel @JvmOverloads constructor(
     /**
      * Runs the host-check probe on [srv] when one of its rules needs it and it is due. Its own job,
      * so the extra command never holds the host's metrics probe or the fleet-wide probe limit.
+     * Asked during a run (a rule just added), it runs again right after, if that is due.
      */
     private fun startHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
         if (!alertsEnabled) return
-        if (hostCheckJobs[srv.id]?.isActive == true) return
-        if (System.currentTimeMillis() < (hostChecksDueAt[srv.id] ?: 0L)) return
-        hostCheckJobs[srv.id] = viewModelScope.launch(Dispatchers.IO) { runHostChecks(srv, disks) }
+        hostCheckRuns.computeIfAbsent(srv.id) { LatestRun(viewModelScope, Dispatchers.IO) }.request {
+            if (System.currentTimeMillis() >= (hostChecksDueAt[srv.id] ?: 0L)) runHostChecks(srv, disks)
+        }
     }
 
     private suspend fun runHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
+        // Due again before the rules are read: a rule added meanwhile clears this, so the run
+        // queued behind this one checks it now rather than a minute later.
+        val dueAt = System.currentTimeMillis() + hostCheckIntervalMs()
+        hostChecksDueAt[srv.id] = dueAt
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
             .filter { it.enabled && HostChecks.runsOnHost(it.metricName) }
-        if (rules.isEmpty()) return
-        hostChecksDueAt[srv.id] = System.currentTimeMillis() + hostCheckIntervalMs()
+        if (rules.isEmpty()) {
+            // Nothing to check: look again next poll, as before.
+            hostChecksDueAt.remove(srv.id, dueAt)
+            return
+        }
         val (probed, scripted) = rules.partition { HostChecks.needsProbe(it.metricName) }
         if (probed.isNotEmpty()) runHostProbe(srv, probed, disks)
         for (rule in scripted) runScriptCheck(srv, rule)
@@ -7607,7 +7633,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (attemptGeneration == terminalConnectGeneration) {
                     invalidateCurrentHealth(srv.id, "Connection failed. Retry when the host is available.")
                     if (sshFailureProvesEndpointUnreachable(classifySshConnectionFailure(e.message.orEmpty()))) {
-                        markServerOfflineUnlessConnected(srv, revisionAtStart)
+                        markServerOfflineAfterProbe(srv, revisionAtStart)
                     }
                     val msg = e.message ?: "Connection failed."
                     if (msg.contains("reject HostKey", ignoreCase = true) ||
@@ -8926,7 +8952,7 @@ class AppViewModel @JvmOverloads constructor(
                     _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                     invalidateCurrentHealth(srv.id, terminalConnectError!!)
                     if (sshFailureProvesEndpointUnreachable(failure)) {
-                        markServerOfflineUnlessConnected(srv, revisionAtStart)
+                        markServerOfflineAfterProbe(srv, revisionAtStart)
                         if (sshRevision(srv.id) == revisionAtStart) {
                             session.isConnected = false
                             session.disconnectError = failure.userMessage
