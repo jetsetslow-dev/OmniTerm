@@ -74,11 +74,7 @@ class BackupExportOutcomeRobolectricTest {
             shadowOf(application.contentResolver).registerOutputStream(uri, output)
             val result = CompletableDeferred<Pair<Boolean, String>>()
             val calls = AtomicInteger()
-            val selection = BackupSelection(
-                servers = false, sshKeys = false, credentialProfiles = false, scripts = false,
-                alertRules = false, activeAlerts = false, alertHistory = false, wolTargets = false,
-                networkShares = false, portForwards = false, settings = false,
-            )
+            val selection = BackupSelection.NONE
             withContext(main) {
                 model.exportBackup(uri, "", application, selection) { ok, message ->
                     calls.incrementAndGet()

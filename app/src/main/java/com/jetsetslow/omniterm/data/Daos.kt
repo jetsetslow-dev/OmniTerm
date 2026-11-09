@@ -91,6 +91,31 @@ interface MetricHistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMetric(metric: MetricHistoryEntity)
 
+    @Insert
+    suspend fun insertMetrics(metrics: List<MetricHistoryEntity>)
+
+    /**
+     * Every host's history averaged into one point per [bucketMs], for a backup. The point's time
+     * is its bucket's start; its id is 0, so a restore adds it as a new row.
+     */
+    @Query(
+        """
+        SELECT 0 AS id, serverId, (timestamp / :bucketMs) * :bucketMs AS timestamp,
+            AVG(cpuUsage) AS cpuUsage, AVG(ramUsage) AS ramUsage, AVG(diskUsage) AS diskUsage,
+            CAST(AVG(latency) AS INTEGER) AS latency, AVG(networkIn) AS networkIn,
+            AVG(networkOut) AS networkOut, AVG(cpuTemperatureC) AS cpuTemperatureC
+        FROM metric_history GROUP BY serverId, timestamp / :bucketMs ORDER BY serverId, timestamp
+        """
+    )
+    suspend fun averagedHistory(bucketMs: Long): List<MetricHistoryEntity>
+
+    /** How many points [averagedHistory] would return for [bucketMs]. */
+    @Query("SELECT COUNT(*) FROM (SELECT 1 FROM metric_history GROUP BY serverId, timestamp / :bucketMs)")
+    suspend fun averagedHistorySize(bucketMs: Long): Int
+
+    @Query("SELECT MIN(timestamp) AS firstAt, MAX(timestamp) AS lastAt FROM metric_history WHERE serverId = :serverId")
+    suspend fun historySpan(serverId: Int): MetricHistorySpan
+
     @Query("DELETE FROM metric_history WHERE timestamp < :cutoffTimestamp")
     suspend fun pruneMetrics(cutoffTimestamp: Long)
 
@@ -295,6 +320,13 @@ interface StackRegistryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(stacks: List<StackRegistryEntity>)
 
+    @Query("SELECT * FROM stack_registry ORDER BY serverId, project")
+    suspend fun getAll(): List<StackRegistryEntity>
+
+    /** Adds the stacks this phone has not recorded; one it has keeps what it saw. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAllIfAbsent(stacks: List<StackRegistryEntity>): List<Long>
+
     @Query("DELETE FROM stack_registry WHERE serverId = :serverId AND runtime = :runtime AND project = :project")
     suspend fun delete(serverId: Int, runtime: String, project: String)
 
@@ -400,6 +432,10 @@ interface PersistentSessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(session: PersistentSessionEntity)
 
+    /** Adds the sessions this phone does not know; one it knows keeps its own times. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAllIfAbsent(sessions: List<PersistentSessionEntity>): List<Long>
+
     @Query("DELETE FROM persistent_sessions WHERE serverId = :serverId AND tmuxName = :tmuxName")
     suspend fun delete(serverId: Int, tmuxName: String)
 
@@ -426,6 +462,12 @@ interface FleetRunDao {
 
     @Query("SELECT * FROM fleet_runs WHERE runKey = :runKey")
     suspend fun byKey(runKey: String): FleetRunEntity?
+
+    @Query("SELECT * FROM fleet_runs ORDER BY startedAt DESC, id DESC")
+    suspend fun allRuns(): List<FleetRunEntity>
+
+    @Query("SELECT * FROM fleet_run_hosts ORDER BY runId, serverName COLLATE NOCASE")
+    suspend fun allHosts(): List<FleetRunHostEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRun(run: FleetRunEntity): Long
@@ -458,6 +500,9 @@ interface AutomationGrantDao {
     @Query("SELECT * FROM automation_grants WHERE tokenHash = :tokenHash")
     suspend fun byTokenHash(tokenHash: String): AutomationGrantEntity?
 
+    @Query("SELECT * FROM automation_grants ORDER BY createdAt, id")
+    suspend fun all(): List<AutomationGrantEntity>
+
     @Query("SELECT * FROM automation_grants WHERE id = :id")
     suspend fun byId(id: Int): AutomationGrantEntity?
 
@@ -481,6 +526,9 @@ interface McpCallDao {
 
     @Insert
     suspend fun insert(call: McpCallEntity): Long
+
+    @Query("SELECT * FROM mcp_calls ORDER BY at DESC, id DESC")
+    suspend fun all(): List<McpCallEntity>
 
     @Query("DELETE FROM mcp_calls WHERE id NOT IN (SELECT id FROM mcp_calls ORDER BY at DESC, id DESC LIMIT :keep)")
     suspend fun prune(keep: Int)

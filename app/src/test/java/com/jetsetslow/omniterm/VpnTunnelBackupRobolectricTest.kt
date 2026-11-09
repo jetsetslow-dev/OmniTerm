@@ -125,10 +125,6 @@ class VpnTunnelBackupRobolectricTest {
         const val PASSPHRASE = "vpn-tunnel-passphrase"
         const val HOME = "[Interface]\nPrivateKey = home-private-key-for-the-test\n"
         const val LAB = "[Interface]\nPrivateKey = lab-private-key-for-the-test\n"
-        val SELECTION = BackupSelection(
-            servers = true, sshKeys = false, credentialProfiles = false, scripts = false,
-            alertRules = false, activeAlerts = false, alertHistory = false, wolTargets = false,
-            networkShares = false, portForwards = false, settings = false,
-        )
+        val SELECTION = BackupSelection.NONE.copy(servers = true)
     }
 }

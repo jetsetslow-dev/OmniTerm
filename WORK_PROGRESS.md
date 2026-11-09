@@ -608,6 +608,60 @@ Its own PR against main, after #145.
   - Checked: the live sign-in test passes 7 of 7 against the repo's fixtures, and with the rebuilt
     fixture `E2eVpnTunnelTest` passes on the API 35 emulator.
 
+## Checkpoint B1 — backups carry everything (in PR #147, after T1)
+
+User, Nov 9: "but shouldn't a back up be everything not excluding things". Built on T1 (backups
+changed there). The user then asked for it in the same PR: "merge that into the same 147 pr B1".
+
+- New backup sections, ticked by default and each one sensitive (an encrypted backup):
+  - **Fleet history**: the 50 runs with each host's output. A host not on the restoring phone keeps
+    its name under a negative id, so "Use again" never picks another host.
+  - **Monitoring history**: one point a minute per host, coarser (5, 15, 60 minutes) when a minute
+    would pass about 160,000 points. Averaged in SQL, saved per host and day, so no array reaches
+    the 50,000 items an older app refuses. A host with history on the phone keeps its span.
+  - **AI assistant log**: the last 200 calls.
+- With the hosts: tmux sessions (offered to attach again, never connected) and Compose stacks.
+- The restore preview counts VPN tunnels, Telnet hosts, Kubernetes clusters, tmux sessions,
+  Compose stacks and the new sections. Every restore adds only what the phone lacks (run key,
+  session, stack, call, time span), so restoring twice changes nothing.
+- An export a restore could not read (input, plain or compressed limit) is refused with the size
+  and what to untick; before, it was written and failed only at restore.
+- Selection v3. A saved v1/v2 selection gains Fleet and Monitoring history with Servers, and the
+  assistant log with Settings. Monitoring history ticks Servers, as unticking Servers unticks it.
+- `sftp_last_path_*` is a leftover: nothing writes it, so nothing is lost there.
+- Access, decided by the user on Nov 9 (both as proposed):
+  - **Automation & AI assistants** (new section, ticked, sensitive; brings Scripts and Servers):
+    each grant with its script by category and name and its hosts, and the assistant's settings
+    and token fingerprint, with hosts and tunnel host remapped. A restore sets the Automation
+    switch and the assistant off, stops a running assistant server after the restore commits,
+    replaces the phone's assistant token, and says what is off. Grants dedupe by token.
+  - **App Lock** with Settings: the PIN (PBKDF2, salted, portable), the lock and its re-lock time.
+    It comes back only to lock: a backup made with the lock off leaves the phone's lock. Biometric
+    unlock and failed attempts stay per phone. The restore says the backup's PIN is now asked for.
+  - README and PRIVACY.md say so; `DEVICE_LOCAL_SETTINGS` keeps biometrics, lockout, the switches
+    and the assistant's settings out of the settings object (older apps skip the PIN too).
+- `BackupSelection.NONE` is the one "nothing ticked" selection. Tests built their own, and each new
+  section defaulted to ticked there: it ticked Servers, so a "nothing" export needed a password.
+- Results:
+  - 10 backup, automation, assistant and App Lock test classes pass (57 tests).
+  - 11 mutations, each caught:
+    - the Automation switch or the assistant left on;
+    - grants on the old host ids;
+    - biometrics restored;
+    - App Lock never restored, or a lock-off backup bringing its PIN;
+    - the settings loop restoring App Lock as stored;
+    - a missing host given id 0;
+    - the phone's own monitoring span overwritten;
+    - a Fleet run restored twice;
+    - an export too large to restore written anyway.
+    The App Lock test's "lock off" backup first had no PIN at all, so two of these mutations
+    passed. It now keeps a PIN with the lock off, as the switch leaves it.
+  - Device (API 35): `BackupCompatibilityInstrumentedTest`, `E2eBackupSelectionFeedbackTest` and
+    the settings-backup case of `E2eSettingsStateStressTest` pass.
+  - Unrelated and already broken: that class's opt-in battery-saver case fails without B1 too. It
+    waits for the saver without accepting the prompt that #98 added, and it needs a lab host
+    ("E2E Foreground Demo") that the fixtures do not have. Left for later.
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the

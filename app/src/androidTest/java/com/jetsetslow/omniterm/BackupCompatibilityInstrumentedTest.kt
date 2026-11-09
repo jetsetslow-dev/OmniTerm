@@ -151,11 +151,7 @@ class BackupCompatibilityInstrumentedTest {
     fun bothDocumentFormatsInspectAndRestoreScriptsOnAndroid() = runBlocking {
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         val dao = AppDatabase.getDatabase(composeRule.activity).quickScriptDao()
-        val selection = BackupSelection(
-            servers = false, sshKeys = false, credentialProfiles = false,
-            scripts = true, alertRules = false, activeAlerts = false, alertHistory = false,
-            wolTargets = false, networkShares = false, portForwards = false, settings = false,
-        )
+        val selection = BackupSelection.NONE.copy(scripts = true)
         // Unique fixture name: never delete an existing row as part of test cleanup.
         val name = "Compatibility instrumented fixture"
         check(dao.getAllScripts().none { it.name == name })

@@ -9,6 +9,7 @@ import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.Automation
 import com.jetsetslow.omniterm.data.AutomationGrantEntity
 import com.jetsetslow.omniterm.data.QuickScriptEntity
+import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupSelection
 import kotlinx.coroutines.CompletableDeferred
@@ -26,6 +27,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -35,20 +37,25 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 /**
- * A backup never carries automation: not its tokens, and not its switch, either way. Restoring a
- * backup on another phone must not let other apps run scripts there.
+ * A backup carries automation's tokens (user, Nov 9) but never its switch, either way: restoring a
+ * backup on another phone leaves automation off, so no other app runs scripts there until the user
+ * turns it on.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 @OptIn(ExperimentalCoroutinesApi::class)
 class AutomationBackupRobolectricTest {
+    // The test host has a password, which the repository encrypts with the Keystore.
+    @get:Rule val keyStore = TestAndroidKeyStore()
 
     @Test
-    fun aBackupLeavesAutomationBehind() = withModel { model, main, repo ->
+    fun aBackupBringsTheTokensBackWithAutomationOff() = withModel { model, main, repo ->
+        val host = repo.insertServer(ServerEntity(name = "web", host = "web.lan", port = 22, username = "admin", authType = "password", authPassword = "pw")).toInt()
         repo.insertScript(QuickScriptEntity(emoji = "", name = "Uptime", command = "uptime", color = "cyan"))
         val script = repo.getAllScripts().single { it.name == "Uptime" }
+        val token = Automation.hash(Automation.newToken())
         repo.insertAutomationGrant(
-            AutomationGrantEntity(scriptId = script.id, serverIds = "1", tokenHash = Automation.hash(Automation.newToken()), label = "Tasker", createdAt = 1L),
+            AutomationGrantEntity(scriptId = script.id, serverIds = host.toString(), tokenHash = token, label = "Tasker", createdAt = 1L),
         )
         repo.insertSetting(Automation.SETTING_ENABLED, "true")
         repo.insertSetting(OTHER_SETTING, "kept")
@@ -66,8 +73,8 @@ class AutomationBackupRobolectricTest {
         restore(model, main, bytes.toString(Charsets.UTF_8))
 
         assertEquals("other settings are restored", "kept", repo.getSetting(OTHER_SETTING))
-        assertNull("the switch stays on the phone it was turned on", repo.getSetting(Automation.SETTING_ENABLED))
-        assertTrue("tokens are never in a backup", repo.automationGrantsFlow.first().isEmpty())
+        assertEquals("a restore leaves automation off", "false", repo.getSetting(Automation.SETTING_ENABLED))
+        assertEquals("the token comes back", listOf(token), repo.automationGrantsFlow.first().map { it.tokenHash })
         assertEquals("the script itself is", listOf("Uptime"), repo.getAllScripts().map { it.name }.filter { it == "Uptime" })
     }
 

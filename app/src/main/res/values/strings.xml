@@ -404,7 +404,9 @@
     <string name="restore_backup">"Restore backup"</string>
     <string name="choose_what_to_restore_from_this">"Choose what to restore from this backup."</string>
     <string name="sensitive_selecting_forces_an_encrypted_backup">"* Sensitive — selecting forces an encrypted backup."</string>
-    <string name="alert_rules_and_history_include_servers">"Alert rules and history include Servers. Active alerts also include Alert rules. SSH tunnels include Servers."</string>
+    <string name="alert_rules_and_history_include_servers">"Alert rules and history include Servers. Active alerts also include Alert rules. SSH tunnels and Monitoring history include Servers. Automation &amp; AI assistants include Servers and Scripts, and restore switched off."</string>
+    <string name="backup_servers_include">"With their VPN tunnels, Telnet connections, Kubernetes clusters, tmux sessions and Compose stacks."</string>
+    <string name="backup_servers_bring">"With %1$s."</string>
     <string name="hosts_to_restore">"Hosts to restore"</string>
     <string name="require_pin_to_unlock">"Require PIN to unlock"</string>
     <string name="unlock_with_biometrics">"Unlock with biometrics"</string>

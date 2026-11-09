@@ -7,8 +7,8 @@ import androidx.room.PrimaryKey
 /**
  * A persistent (tmux-backed) terminal session that should be re-offered after an app restart.
  * One row per live tmux session the app created or attached to; the [tmuxName] is how a reconnect
- * re-attaches the exact session. Pure runtime/device state — deliberately NOT included in
- * backup/restore.
+ * re-attaches the exact session. Backups carry it with its host, so a restored phone offers the
+ * same sessions to attach again; nothing connects until the user picks one.
  *
  * Keyed by host and name together: names the app generates are unique, but a session attached
  * from the host's own list is called whatever the user called it, and two hosts can each have a
@@ -241,6 +241,9 @@ data class QuickScriptEntity(
 /** When metrics were last recorded for a host; a query result, not a table. */
 data class ServerLastSample(val serverId: Int, val lastAt: Long)
 
+/** The first and last time a host's metrics were recorded, null with none; a query result. */
+data class MetricHistorySpan(val firstAt: Long?, val lastAt: Long?)
+
 /** A saved Telnet connection: network gear and other hosts reached by Telnet rather than SSH. */
 @Entity(tableName = "telnet_hosts")
 data class TelnetHostEntity(
@@ -328,8 +331,8 @@ data class AppSettingEntity(
 )
 
 /**
- * One Fleet run, kept in its run history: the newest [FleetRunHistory.KEEP_RUNS] are kept, on this
- * device only (never in a backup). Each host's result is a [FleetRunHostEntity].
+ * One Fleet run, kept in its run history: the newest [FleetRunHistory.KEEP_RUNS] are kept, and
+ * backups carry them (the Fleet history section). Each host's result is a [FleetRunHostEntity].
  */
 @Entity(tableName = "fleet_runs", indices = [Index(value = ["runKey"], unique = true)])
 data class FleetRunEntity(
@@ -412,9 +415,9 @@ data class AutomationGrantEntity(
 
 /**
  * One call an AI assistant made to the MCP server, so the user can see what was asked and what
- * came of it: the newest [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, on
- * this phone only and not in backups. [outcome] is one of [McpCallOutcome]'s values; [detail] is
- * the first line of the answer, short.
+ * came of it: the newest [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, and
+ * backups carry them (the AI assistant log section). [outcome] is one of [McpCallOutcome]'s
+ * values; [detail] is the first line of the answer, short.
  */
 @Entity(tableName = "mcp_calls")
 data class McpCallEntity(

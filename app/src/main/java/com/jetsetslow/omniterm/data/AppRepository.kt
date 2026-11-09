@@ -189,6 +189,15 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun insertAutomationGrant(grant: AutomationGrantEntity): Int = db.automationGrantDao().insert(grant).toInt()
     suspend fun deleteAutomationGrant(id: Int) = db.automationGrantDao().delete(id)
     suspend fun markAutomationGrantUsed(id: Int, at: Long) = db.automationGrantDao().markUsed(id, at)
+    suspend fun getAutomationGrants(): List<AutomationGrantEntity> = db.automationGrantDao().all()
+
+    /** Adds the grants whose token this phone does not know yet; returns how many. */
+    suspend fun restoreAutomationGrants(grants: List<AutomationGrantEntity>): Int = db.withTransaction {
+        val dao = db.automationGrantDao()
+        grants.count { grant ->
+            if (dao.byTokenHash(grant.tokenHash) != null) false else { dao.insert(grant.copy(id = 0)); true }
+        }
+    }
 
     // Fleet run history
     val fleetRunsFlow: Flow<List<FleetRunSummary>> = db.fleetRunDao().summariesFlow()
@@ -220,6 +229,78 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun clearFleetRuns() = db.withTransaction {
         db.fleetRunDao().clearHosts()
         db.fleetRunDao().clearRuns()
+    }
+
+    // History and device state a backup carries. A restore adds only what this phone does not have
+    // yet, so restoring one backup twice changes nothing the second time.
+
+    suspend fun fleetRunsForBackup(): List<Pair<FleetRunEntity, List<FleetRunHostEntity>>> {
+        val hosts = db.fleetRunDao().allHosts().groupBy { it.runId }
+        return db.fleetRunDao().allRuns().map { it to hosts[it.id].orEmpty() }
+    }
+
+    /**
+     * Adds the runs this phone has not saved (by runKey), then keeps the newest [keep] as a run
+     * does. Returns how many restored runs are kept.
+     */
+    suspend fun restoreFleetRuns(
+        runs: List<Pair<FleetRunEntity, List<FleetRunHostEntity>>>,
+        keep: Int = FleetRunHistory.KEEP_RUNS,
+    ): Int = db.withTransaction {
+        val dao = db.fleetRunDao()
+        val added = mutableSetOf<Int>()
+        for ((run, hosts) in runs) {
+            if (dao.byKey(run.runKey) != null) continue
+            val id = dao.insertRun(run.copy(id = 0)).toInt()
+            dao.insertHosts(hosts.map { it.copy(runId = id) })
+            added += id
+        }
+        for (old in dao.idsBeyond(keep)) {
+            dao.deleteHostsOf(old)
+            dao.deleteRunRow(old)
+            added -= old
+        }
+        added.size
+    }
+
+    suspend fun metricHistoryForBackup(stepMs: Long): List<MetricHistoryEntity> = db.metricHistoryDao().averagedHistory(stepMs)
+    suspend fun metricHistoryPointsForBackup(stepMs: Long): Int = db.metricHistoryDao().averagedHistorySize(stepMs)
+
+    /**
+     * Adds a host's restored history except where this phone has its own: between its first and
+     * last sample the phone's points stay, and the backup fills in before and after them.
+     */
+    suspend fun restoreMetricHistory(serverId: Int, points: List<MetricHistoryEntity>): Int {
+        val span = db.metricHistoryDao().historySpan(serverId)
+        val first = span.firstAt
+        val last = span.lastAt
+        val added = points
+            .filter { first == null || last == null || it.timestamp < first || it.timestamp > last }
+            .map { it.copy(id = 0, serverId = serverId) }
+        added.chunked(500).forEach { db.metricHistoryDao().insertMetrics(it) }
+        return added.size
+    }
+
+    suspend fun getAllStacks(): List<StackRegistryEntity> = db.stackRegistryDao().getAll()
+    suspend fun restoreStacks(stacks: List<StackRegistryEntity>): Int =
+        db.stackRegistryDao().insertAllIfAbsent(stacks.map { it.copy(id = 0) }).count { it != -1L }
+
+    suspend fun restorePersistentSessions(sessions: List<PersistentSessionEntity>): Int =
+        db.persistentSessionDao().insertAllIfAbsent(sessions).count { it != -1L }
+
+    suspend fun getMcpCalls(): List<McpCallEntity> = db.mcpCallDao().all()
+
+    /** Adds the calls this phone has not logged, then keeps the newest [keep] as the log does. */
+    suspend fun restoreMcpCalls(
+        calls: List<McpCallEntity>,
+        keep: Int = com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS,
+    ): Int = db.withTransaction {
+        val dao = db.mcpCallDao()
+        val logged = dao.all().mapTo(mutableSetOf()) { it.copy(id = 0) }
+        val added = calls.map { it.copy(id = 0) }.filter(logged::add).map { dao.insert(it).toInt() }.toMutableSet()
+        dao.prune(keep)
+        added.retainAll(dao.all().mapTo(mutableSetOf()) { it.id })
+        added.size
     }
 
     // WOL Target functions

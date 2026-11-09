@@ -15,7 +15,10 @@ import com.jetsetslow.omniterm.ui.verifyStoredPin
 import com.jetsetslow.omniterm.ui.withActiveAlertsSelected
 import com.jetsetslow.omniterm.ui.withAlertRulesSelected
 import com.jetsetslow.omniterm.ui.withAlertHistorySelected
+import com.jetsetslow.omniterm.ui.withAutomationSelected
+import com.jetsetslow.omniterm.ui.withMonitoringHistorySelected
 import com.jetsetslow.omniterm.ui.withPortForwardsSelected
+import com.jetsetslow.omniterm.ui.withScriptsSelected
 import com.jetsetslow.omniterm.ui.withServersSelected
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -73,11 +76,7 @@ class SecuritySafeguardsTest {
 
     // ── Backup sensitivity classification ──
 
-    private val emptySelection = BackupSelection(
-        servers = false, sshKeys = false, credentialProfiles = false, scripts = false,
-        alertRules = false, activeAlerts = false, alertHistory = false, wolTargets = false,
-        networkShares = false, portForwards = false, settings = false,
-    )
+    private val emptySelection = BackupSelection.NONE
 
     @Test
     fun default_backup_selection_is_sensitive() {
@@ -105,6 +104,10 @@ class SecuritySafeguardsTest {
             "networkShares" to emptySelection.copy(networkShares = true),
             "portForwards" to emptySelection.copy(portForwards = true),
             "settings" to emptySelection.copy(settings = true),
+            "fleetHistory" to emptySelection.copy(fleetHistory = true),
+            "monitoringHistory" to emptySelection.copy(monitoringHistory = true),
+            "assistantLog" to emptySelection.copy(assistantLog = true),
+            "automation" to emptySelection.copy(automation = true),
         )
         for ((name, selection) in variants) {
             assertTrue("$name alone must be classified sensitive", selection.hasSensitiveData())
@@ -119,6 +122,48 @@ class SecuritySafeguardsTest {
         assertTrue(decoded.sshKeys)
         assertTrue("legacy selections inherit newly added tunnel backup", decoded.portForwards)
         assertFalse(decoded.settings)
+        assertTrue("and the history sections that came with hosts", decoded.fleetHistory && decoded.monitoringHistory)
+        assertFalse("the assistant log comes with settings", decoded.assistantLog)
+    }
+
+    @Test
+    fun a_v2_selection_gains_the_history_sections_with_their_parents() {
+        val decoded = decodeBackupSelection("v2:settings,crashLogs")
+
+        assertTrue(decoded.assistantLog)
+        assertFalse("no hosts, so no host history", decoded.fleetHistory || decoded.monitoringHistory)
+        assertFalse(decoded.servers)
+    }
+
+    @Test
+    fun a_v3_selection_keeps_history_sections_unticked() {
+        val selection = BackupSelection(fleetHistory = false, monitoringHistory = false, assistantLog = false)
+        assertEquals(selection, decodeBackupSelection(selection.encode()))
+    }
+
+    @Test
+    fun monitoring_history_brings_its_servers_and_goes_with_them() {
+        val selected = emptySelection.withMonitoringHistorySelected(true)
+        assertTrue(selected.servers)
+        assertEquals(selected, decodeBackupSelection(selected.encode()))
+        assertFalse(selected.withServersSelected(false).monitoringHistory)
+    }
+
+    @Test
+    fun automation_brings_its_scripts_and_hosts_and_goes_with_either() {
+        val selected = emptySelection.withAutomationSelected(true)
+        assertTrue(selected.scripts && selected.servers)
+        assertEquals(selected, decodeBackupSelection(selected.encode()))
+        assertFalse(selected.withScriptsSelected(false).automation)
+        assertFalse(selected.withServersSelected(false).automation)
+    }
+
+    @Test
+    fun a_legacy_selection_gains_automation_only_where_it_adds_nothing_else() {
+        assertTrue(decodeBackupSelection("v2:servers,scripts,settings").automation)
+        val withoutScripts = decodeBackupSelection("v2:servers,settings")
+        assertFalse(withoutScripts.automation)
+        assertFalse("no script ticked by the upgrade", withoutScripts.scripts)
     }
 
     @Test
