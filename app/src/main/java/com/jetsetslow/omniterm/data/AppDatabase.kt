@@ -25,13 +25,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StackRegistryEntity::class,
         TelnetHostEntity::class,
         KubeClusterEntity::class,
+        FleetRunEntity::class,
+        FleetRunHostEntity::class,
+        AutomationGrantEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 24,
+    version = 27,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -51,6 +54,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun stackRegistryDao(): StackRegistryDao
     abstract fun telnetHostDao(): TelnetHostDao
     abstract fun kubeClusterDao(): KubeClusterDao
+    abstract fun fleetRunDao(): FleetRunDao
+    abstract fun automationGrantDao(): AutomationGrantDao
 
     companion object {
         @Volatile
@@ -304,6 +309,42 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // A rule's runbook: the saved script its notification offers to run (null: none).
+        private val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE alert_rules ADD COLUMN runbookScriptId INTEGER DEFAULT NULL")
+            }
+        }
+
+        // Fleet run history: one row per run and one per host in it.
+        private val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `fleet_runs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`runKey` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER NOT NULL, " +
+                        "`command` TEXT NOT NULL, `scriptName` TEXT, `source` TEXT NOT NULL)"
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_fleet_runs_runKey` ON `fleet_runs` (`runKey`)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `fleet_run_hosts` (`runId` INTEGER NOT NULL, `serverId` INTEGER NOT NULL, " +
+                        "`serverName` TEXT NOT NULL, `status` TEXT NOT NULL, `note` TEXT, `output` TEXT NOT NULL, " +
+                        "`truncated` INTEGER NOT NULL, PRIMARY KEY(`runId`, `serverId`))"
+                )
+            }
+        }
+
+        // Automation grants: which saved script other apps may run, where, by token hash.
+        private val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `automation_grants` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`scriptId` INTEGER NOT NULL, `serverIds` TEXT NOT NULL, `tokenHash` TEXT NOT NULL, " +
+                        "`label` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `lastUsedAt` INTEGER)"
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_automation_grants_tokenHash` ON `automation_grants` (`tokenHash`)")
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -375,6 +416,9 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_21_22,
             MIGRATION_22_23,
             MIGRATION_23_24,
+            MIGRATION_24_25,
+            MIGRATION_25_26,
+            MIGRATION_26_27,
         )
 
         fun getDatabase(context: Context): AppDatabase {

@@ -21,6 +21,8 @@ data class SimContainer(
     val restartCount: Int = 0,
     val createdAt: String = "",
     val runtime: String = "docker",
+    /** The exit status of an exited container, from "Exited (137) 2 hours ago"; null otherwise. */
+    val exitCode: Int? = null,
 )
 
 data class SimDockerImage(
@@ -214,7 +216,8 @@ data class HostMetrics(
     // Remote OS family detected by the probe: "Linux" | "FreeBSD" | "Darwin" | "Windows" | "".
     val os: String = "",
     // Detected platform capabilities (e.g. "linux", "proxmox", "casaos", "homeassistant",
-    // "raspberry", "docker", "freebsd", "darwin", "windows"). Used to filter platform-specific
+    // "raspberry", "docker", "podman", "kubernetes", "synology", "truenas", "unraid", "openwrt",
+    // "pfsense", "opnsense", "freebsd", "darwin", "windows"). Used to filter platform-specific
     // quick scripts to relevant hosts. In-memory only (not persisted).
     val platforms: Set<String> = emptySet(),
 ) {

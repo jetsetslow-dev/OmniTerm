@@ -9,6 +9,28 @@ import kotlinx.coroutines.flow.StateFlow
  */
 const val SSH_CONNECTION_LOST = "connection lost before the command finished"
 
+private val COMMAND_FAILED = Regex("""^SSH Error: command failed \((\d+)\): ?""")
+
+/**
+ * The exit status in what [SshTransport.exec] or [SshTransport.execStream] returned: 0 when the
+ * command succeeded, its status when it "command failed (N)", null when the connection, not the
+ * command, ended it.
+ */
+fun sshCommandExit(result: String): Int? {
+    if (!result.startsWith("SSH Error")) return 0
+    return COMMAND_FAILED.find(result)?.groupValues?.get(1)?.toIntOrNull()
+}
+
+/**
+ * What the command printed, from such a result: all of it on success, the text after the status on
+ * failure without the transport's own "exited with status" filler, nothing when it never ran.
+ */
+fun sshCommandOutput(result: String): String {
+    if (!result.startsWith("SSH Error")) return result
+    val failed = COMMAND_FAILED.find(result) ?: return ""
+    return result.substring(failed.range.last + 1).takeUnless { it.startsWith("Command exited with status ") }.orEmpty()
+}
+
 /**
  * Platform-agnostic SSH abstraction.
  *
@@ -162,6 +184,12 @@ data class SshCredentials(
      * commands the user typed, which belong to the user's own shell.
      */
     val posixShell: Boolean = false,
+    /**
+     * Sign in with [privateKeyPem] only: no password, keyboard-interactive or other method is
+     * tried, so a sign-in that works proves the host accepts that key. Used to check a key just
+     * installed on a host. Every [SshTransport] must honour it.
+     */
+    val keyOnly: Boolean = false,
 )
 
 /** Connection failed before/while establishing the shell or exec channel. */

@@ -24,23 +24,17 @@ import java.io.File
  */
 class RemoteCommandShellSyntaxTest {
 
-    private fun shell(): File? =
-        listOf("/bin/sh", "/usr/bin/sh", "/bin/dash").map(::File).firstOrNull { it.canExecute() }
+    private val shell: File? = TestShell.sh ?: TestShell.find("dash")
 
     private fun assertParses(label: String, script: String) {
-        val sh = shell() ?: return
-        val proc = ProcessBuilder(sh.absolutePath, "-n")
-            .redirectErrorStream(true)
-            .start()
-        proc.outputStream.use { it.write(script.toByteArray()) }
-        val output = proc.inputStream.bufferedReader().readText().trim()
-        val code = proc.waitFor()
-        check(code == 0) { "$label is not valid POSIX sh (sh -n exit $code):\n$output\n\n--- script ---\n$script" }
+        val sh = shell ?: return
+        val error = TestShell.syntaxError(script, sh)
+        check(error == null) { "$label is not valid POSIX sh (sh -n):\n${error?.trim()}\n\n--- script ---\n$script" }
     }
 
     @Test
     fun everyGeneratedRemoteCommandIsValidPosixShell() {
-        assumeTrue("POSIX sh is required to parse the generated commands", shell() != null)
+        assumeTrue("POSIX sh is required to parse the generated commands", shell != null)
 
         val commands = linkedMapOf(
             "METRICS" to RemoteCommands.METRICS,

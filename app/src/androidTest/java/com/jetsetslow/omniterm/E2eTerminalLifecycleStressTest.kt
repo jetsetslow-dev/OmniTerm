@@ -3,7 +3,6 @@ package com.jetsetslow.omniterm
 import android.app.NotificationManager
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -155,8 +154,8 @@ class E2eTerminalLifecycleStressTest {
                 "pm grant ${instrumentation.targetContext.packageName} android.permission.POST_NOTIFICATIONS",
             ).close()
         }
-        val originalAutoRotation = shellOutput("settings get system accelerometer_rotation").trim()
-        val originalUserRotation = shellOutput("settings get system user_rotation").trim()
+        val originalAutoRotation = DeviceShell.run("settings get system accelerometer_rotation").trim()
+        val originalUserRotation = DeviceShell.run("settings get system user_rotation").trim()
         instrumentation.uiAutomation.executeShellCommand("settings put system accelerometer_rotation 0").close()
         instrumentation.uiAutomation.executeShellCommand("settings put system user_rotation 0").close()
         delay(1_000)
@@ -330,7 +329,7 @@ class E2eTerminalLifecycleStressTest {
     }
 
     private fun physicalDisplaySize(): Pair<Int, Int> {
-        val output = shellOutput("wm size")
+        val output = DeviceShell.run("wm size")
         val match = requireNotNull(Regex("Physical size: (\\d+)x(\\d+)").find(output)) {
             "Could not parse physical display size: $output"
         }
@@ -348,11 +347,6 @@ class E2eTerminalLifecycleStressTest {
             return false
         }
         return containsCard(root)
-    }
-
-    private fun shellOutput(command: String): String {
-        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
-        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
     }
 
     private suspend fun await(label: String, timeoutMs: Long, predicate: () -> Boolean) {

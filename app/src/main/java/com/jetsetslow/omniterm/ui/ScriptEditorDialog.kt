@@ -26,6 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.MaterialTheme
 import com.jetsetslow.omniterm.data.QuickScriptEntity
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
@@ -120,6 +122,7 @@ fun SharedScriptEditorDialog(
                     value = cmdInput,
                     onValueChange = { cmdInput = it },
                     label = { Text(stringResource(R.string.command)) },
+                    supportingText = { Text(stringResource(R.string.script_params_hint)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                 )
@@ -157,10 +160,10 @@ fun SharedScriptEditorDialog(
                             value = targetOs,
                             onValueChange = { targetOs = it },
                             label = { Text(stringResource(R.string.quick_os)) },
-                            enabled = availableForQuick,
+                            enabled = availableForQuick || availableForFleet,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {
-                                IconButton(onClick = { osMenuExpanded = true }, enabled = availableForQuick) {
+                                IconButton(onClick = { osMenuExpanded = true }, enabled = availableForQuick || availableForFleet) {
                                     Icon(Icons.Filled.ArrowDropDown, "Pick OS")
                                 }
                             },
@@ -176,10 +179,10 @@ fun SharedScriptEditorDialog(
                             value = targetSystem,
                             onValueChange = { targetSystem = it },
                             label = { Text(stringResource(R.string.quick_system)) },
-                            enabled = availableForQuick,
+                            enabled = availableForQuick || availableForFleet,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {
-                                IconButton(onClick = { systemMenuExpanded = true }, enabled = availableForQuick) {
+                                IconButton(onClick = { systemMenuExpanded = true }, enabled = availableForQuick || availableForFleet) {
                                     Icon(Icons.Filled.ArrowDropDown, "Pick system")
                                 }
                             },
@@ -191,6 +194,11 @@ fun SharedScriptEditorDialog(
                         }
                     }
                 }
+                Text(
+                    stringResource(R.string.script_target_hint),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 OutlinedTextField(
                     value = notesInput,
                     onValueChange = { notesInput = it },

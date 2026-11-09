@@ -2,7 +2,6 @@ package com.jetsetslow.omniterm
 
 import android.app.Notification
 import android.app.NotificationManager
-import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -59,8 +58,8 @@ class E2eForegroundServiceProofTest {
             composeRule.runOnUiThread { vm.saveFlagSecureToggle(false) }
             await("recording-safe About window", 5_000) { !vm.isFlagSecureEnabled }
             composeRule.waitForIdle()
-            shell("input keyevent KEYCODE_WAKEUP")
-            shell("wm dismiss-keyguard")
+            DeviceShell.run("input keyevent KEYCODE_WAKEUP")
+            DeviceShell.run("wm dismiss-keyguard")
             await("foreground-service disclosure", 10_000) {
                 device.hasText("Keep sessions active in background?")
             }
@@ -74,7 +73,7 @@ class E2eForegroundServiceProofTest {
             // immediately; the recording pipeline removes this transition so other app names are
             // never included in the uploadable proof.
             delay(1_000)
-            shell("input keyevent KEYCODE_BACK")
+            DeviceShell.run("input keyevent KEYCODE_BACK")
             delay(3_000)
             val notificationManager = composeRule.activity.getSystemService(NotificationManager::class.java)
             await("foreground service notification post", 10_000) {
@@ -83,15 +82,15 @@ class E2eForegroundServiceProofTest {
                     title == "OmniTerm Service" || title.startsWith("Terminal: $SAFE_HOST_LABEL")
                 }
             }
-            shell("input keyevent KEYCODE_HOME")
+            DeviceShell.run("input keyevent KEYCODE_HOME")
             delay(2_000)
-            shell("cmd statusbar expand-notifications")
+            DeviceShell.run("cmd statusbar expand-notifications")
             await("foreground service notification", 10_000) {
                 device.hasText("OmniTerm Service") || device.hasText("Background SSH session", contains = true)
             }
             delay(5_000)
         } finally {
-            shell("cmd statusbar collapse")
+            DeviceShell.run("cmd statusbar collapse")
             composeRule.runOnUiThread {
                 vm.closeAllSessions()
                 vm.saveBackgroundKeepAliveToggle(previousKeepAlive)
@@ -198,8 +197,8 @@ class E2eForegroundServiceProofTest {
             composeRule.runOnUiThread { vm.saveFlagSecureToggle(false) }
             await("recording-safe About window", 5_000) { !vm.isFlagSecureEnabled }
             composeRule.waitForIdle()
-            shell("input keyevent KEYCODE_WAKEUP")
-            shell("wm dismiss-keyguard")
+            DeviceShell.run("input keyevent KEYCODE_WAKEUP")
+            DeviceShell.run("wm dismiss-keyguard")
             await("foreground-service disclosure", 10_000) { device.hasText("Keep sessions active in background?") }
             delay(4_000)
             device.clickText("Grant Permissions")
@@ -207,7 +206,7 @@ class E2eForegroundServiceProofTest {
             delay(4_000)
             device.clickText("Allow")
             delay(1_000)
-            shell("input keyevent KEYCODE_BACK")
+            DeviceShell.run("input keyevent KEYCODE_BACK")
             delay(3_000)
             val notificationManager = composeRule.activity.getSystemService(NotificationManager::class.java)
             await("foreground service notification post", 10_000) {
@@ -226,19 +225,19 @@ class E2eForegroundServiceProofTest {
                 vm.currentSession?.id == sessionId && vm.terminalBufferTextFor(session, full = true).contains("session heartbeat 00")
             }
             delay(3_000)
-            shell("input keyevent KEYCODE_HOME")
+            DeviceShell.run("input keyevent KEYCODE_HOME")
             delay(3_000)
-            shell("cmd statusbar expand-notifications")
+            DeviceShell.run("cmd statusbar expand-notifications")
             await("shade shows service", 10_000) {
                 device.hasText("OmniTerm Service") || device.hasText("atlas-prod", contains = true)
             }
             delay(4_000)
-            shell("cmd statusbar collapse")
+            DeviceShell.run("cmd statusbar collapse")
             delay(1_000)
             // Return to the SAME task (resume, not a fresh Activity) via the launcher intent, so the
             // compose rule's Activity handle stays valid for teardown. A bare component `am start`
             // could start a new task instance and null out the rule's handle at close().
-            shell(
+            DeviceShell.run(
                 "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
                     "-n ${context.packageName}/com.jetsetslow.omniterm.MainActivity " +
                     "-f 0x10200000", // FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
@@ -252,7 +251,7 @@ class E2eForegroundServiceProofTest {
             assertTrue("heartbeat did not keep advancing ($countBefore -> $countAfter)", countAfter > countBefore)
             delay(3_000)
         } finally {
-            shell("cmd statusbar collapse")
+            DeviceShell.run("cmd statusbar collapse")
             // Teardown runs on the main-thread executor directly (not composeRule.runOnUiThread),
             // because the on-camera Home+return may have left the rule's Activity handle stale — a
             // runOnUiThread against it can NPE. The ViewModel and repository work regardless.
@@ -289,12 +288,6 @@ class E2eForegroundServiceProofTest {
 
     private fun latestHeartbeat(buffer: String): Int =
         Regex("session heartbeat (\\d{4})").findAll(buffer).lastOrNull()?.groupValues?.get(1)?.toIntOrNull() ?: -1
-
-    private fun shell(command: String) {
-        ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
-        ).use { it.readBytes() }
-    }
 
     private suspend fun await(label: String, timeoutMs: Long, predicate: () -> Boolean) {
         try {

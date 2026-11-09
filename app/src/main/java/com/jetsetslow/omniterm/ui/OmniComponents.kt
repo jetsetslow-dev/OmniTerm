@@ -639,6 +639,12 @@ fun formatBytes(bytes: Long): String {
     return String.format(java.util.Locale.US, "%.1f %s", value, units[unitIndex])
 }
 
+/** How long something took: "42s" under a minute, else as [formatUptime] words it ("3m", "1h 4m"). */
+fun formatTook(ms: Long): String {
+    val seconds = (ms / 1000L).coerceAtLeast(0L)
+    return if (seconds < 60L) "${seconds}s" else formatUptime(seconds)
+}
+
 fun formatUptime(seconds: Long): String {
     if (seconds <= 0) return "—"
     val d = seconds / 86400

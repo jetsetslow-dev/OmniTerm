@@ -1,5 +1,7 @@
 package com.jetsetslow.omniterm
 
+import com.jetsetslow.omniterm.data.ANDROID_PING_BINARY
+import com.jetsetslow.omniterm.data.serializeDnsQuery
 import com.jetsetslow.omniterm.ui.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -65,7 +67,7 @@ class NetworkToolsTest {
 
     @Test
     fun testSerializeDnsQuery() {
-        val query = serializeDnsQuery("google.com", 1) // A record
+        val query = serializeDnsQuery("google.com", 1, 0x1234) // A record
 
         // Check transaction ID (0x1234)
         assertEquals(0x12.toByte(), query[0])

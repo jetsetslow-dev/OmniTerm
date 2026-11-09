@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 24
+        const val CURRENT_VERSION = 27
     }
 
     @get:Rule
@@ -284,6 +284,119 @@ class AppDatabaseMigrationTest {
                 assertEquals("https://10.0.0.5:6443", cursor.getString(1))
                 assertEquals("shop", cursor.getString(2))
             }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /** Rules from before runbooks keep everything and have none; a runbook id then saves and reads back. */
+    @Test
+    fun migrationToTwentyFiveGivesExistingRulesNoRunbook() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-24-runbook"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 24).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey, target) " +
+                    "VALUES (5, 3, 'TCP Port', '/', 1000.0, 'CRITICAL', '2m', 1, 'db', NULL, 'db.lan:5432')"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT serverId, metricName, triggerWindow, notes, target, runbookScriptId FROM alert_rules WHERE id = 5").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(3, cursor.getInt(0))
+                assertEquals("TCP Port", cursor.getString(1))
+                assertEquals("2m", cursor.getString(2))
+                assertEquals("db", cursor.getString(3))
+                assertEquals("db.lan:5432", cursor.getString(4))
+                assertTrue(cursor.isNull(5))
+            }
+            db.execSQL("UPDATE alert_rules SET runbookScriptId = 9 WHERE id = 5")
+            db.query("SELECT runbookScriptId FROM alert_rules WHERE id = 5").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(9, cursor.getInt(0))
+            }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /** The run history starts empty, keeps the hosts and the rules it migrated alongside, and holds one row per run id. */
+    @Test
+    fun migrationToTwentySixAddsAnEmptyRunHistory() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-25-run-history"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 25).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey, target, runbookScriptId) " +
+                    "VALUES (5, 3, 'Script Check', '/', 0.0, 'CRITICAL', '2m', 1, '', NULL, '7', 8)"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT target, runbookScriptId FROM alert_rules WHERE id = 5").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("7", cursor.getString(0))
+                assertEquals(8, cursor.getInt(1))
+            }
+            db.query("SELECT COUNT(*) FROM fleet_runs").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('abc', 1, 2, 'uptime', NULL, 'fleet')")
+            db.execSQL("INSERT INTO fleet_run_hosts (runId, serverId, serverName, status, note, output, truncated) VALUES (1, 3, 'nas', 'Success', NULL, 'up', 0)")
+            db.query("SELECT r.command, h.serverName, h.output FROM fleet_runs r JOIN fleet_run_hosts h ON h.runId = r.id").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("uptime", cursor.getString(0))
+                assertEquals("nas", cursor.getString(1))
+                assertEquals("up", cursor.getString(2))
+            }
+            val duplicate = runCatching {
+                db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('abc', 3, 4, 'df', NULL, 'fleet')")
+            }
+            assertTrue(duplicate.isFailure)
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToTwentySevenAddsNoAutomationGrants() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-26-automation"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 26).use { db ->
+            db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('abc', 1, 2, 'uptime', NULL, 'fleet')")
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT COUNT(*) FROM fleet_runs").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("the run history is kept", 1, cursor.getInt(0))
+            }
+            db.query("SELECT COUNT(*) FROM automation_grants").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade makes no token", 0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (7, '1,2', 'aa', 'Tasker', 1, NULL)")
+            val duplicate = runCatching {
+                db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (8, '3', 'aa', 'Other', 2, NULL)")
+            }
+            assertTrue("one grant per token", duplicate.isFailure)
         }
         context.deleteDatabase(databaseName)
     }

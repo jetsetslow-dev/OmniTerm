@@ -591,59 +591,104 @@ internal fun AppPinField(pin: String, onPinChange: (String) -> Unit, error: Stri
 
 /**
  * The check before every privileged (sudo) action staged in `viewModel.pendingSudoAction`, then
- * runs or cancels it. App Lock's biometrics or PIN while App Lock is on; otherwise the phone's own
- * fingerprint, face or screen lock; and on a phone with no screen lock, a plain question. It never
- * runs the action unasked, and never refuses one outright.
+ * runs or cancels it (see [SensitiveActionDialog]).
  */
 @Composable
 fun SudoAuthDialog(viewModel: AppViewModel) {
     val pending = viewModel.pendingSudoAction ?: return
+    SensitiveActionDialog(
+        viewModel = viewModel,
+        key = pending,
+        title = R.string.authenticate_for_sudo,
+        question = stringResource(R.string.run_this_with_sudo_on, pending.hostName),
+        biometricSubtitle = R.string.confirm_to_run_the_privileged_action,
+        noScreenLockText = R.string.sudo_asks_without_a_screen_lock,
+        onCancel = { viewModel.cancelPendingSudoAction() },
+        onAuthenticated = { viewModel.confirmPendingSudoAction() },
+        confirmTag = "sudo.confirm.continue",
+    )
+}
+
+/**
+ * App Lock's own check: its biometrics when they are on, or its PIN, with the PIN's attempt limits.
+ * [text] says what the check is for.
+ */
+@Composable
+internal fun AppLockAuthDialog(
+    viewModel: AppViewModel,
+    key: Any,
+    @StringRes title: Int,
+    text: String,
+    @StringRes biometricTitle: Int,
+    @StringRes biometricSubtitle: Int,
+    onCancel: () -> Unit,
+    onAuthenticated: () -> Unit,
+) {
+    var pin by remember(key) { mutableStateOf("") }
+    var error by remember(key) { mutableStateOf<String?>(null) }
+    BiometricPromptOnShow(viewModel, biometricTitle, biometricSubtitle, onAuthenticated)
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(title)) },
+        text = {
+            Column {
+                Text(text, fontSize = 14.sp)
+                Spacer(Modifier.height(8.dp))
+                AppPinField(pin, onPinChange = { pin = it; error = null }, error = error)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val err = viewModel.verifyPinForSensitiveAction(pin)
+                if (err == null) onAuthenticated() else error = err
+            }) { Text(stringResource(R.string.confirm)) }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+/**
+ * The check before a sensitive action, asked afresh for each one ([key] identifies it): App Lock's
+ * biometrics or PIN while App Lock is on; otherwise the phone's own fingerprint, face or screen
+ * lock; and on a phone with no screen lock, a plain question ([question], with [noScreenLockText]).
+ * [onAuthenticated] runs only after one of them, never unasked; nothing is refused outright.
+ */
+@Composable
+internal fun SensitiveActionDialog(
+    viewModel: AppViewModel,
+    key: Any,
+    @StringRes title: Int,
+    question: String,
+    @StringRes biometricSubtitle: Int,
+    @StringRes noScreenLockText: Int,
+    onCancel: () -> Unit,
+    onAuthenticated: () -> Unit,
+    confirmTag: String = "sensitive.confirm.continue",
+    @StringRes biometricTitle: Int = title,
+) {
     val context = LocalContext.current
-    val question = stringResource(R.string.run_this_with_sudo_on, pending.hostName)
-    val cancel = @Composable { TextButton(onClick = { viewModel.cancelPendingSudoAction() }) { Text(stringResource(R.string.cancel)) } }
+    val cancel = @Composable { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } }
 
     if (viewModel.sudoAuthUsesAppLock) {
-        var pin by remember(pending) { mutableStateOf("") }
-        var error by remember(pending) { mutableStateOf<String?>(null) }
-        BiometricPromptOnShow(viewModel, R.string.authenticate_for_sudo, R.string.confirm_to_run_the_privileged_action) {
-            viewModel.confirmPendingSudoAction()
-        }
-        AlertDialog(
-            onDismissRequest = { viewModel.cancelPendingSudoAction() },
-            title = { Text(stringResource(R.string.authenticate_for_sudo)) },
-            text = {
-                Column {
-                    Text(question, fontSize = 14.sp)
-                    Spacer(Modifier.height(8.dp))
-                    AppPinField(pin, onPinChange = { pin = it; error = null }, error = error)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val err = viewModel.verifyPinForSensitiveAction(pin)
-                    if (err == null) viewModel.confirmPendingSudoAction() else error = err
-                }) { Text(stringResource(R.string.confirm)) }
-            },
-            dismissButton = cancel,
-        )
+        AppLockAuthDialog(viewModel, key, title, question, biometricTitle, biometricSubtitle, onCancel, onAuthenticated)
         return
     }
 
-    val deviceLock = remember(pending) { DeviceCredentialGate.isAvailable(context) }
+    val deviceLock = remember(key) { DeviceCredentialGate.isAvailable(context) }
     if (deviceLock) {
         val askDevice = {
             context.getActivity()?.let { activity ->
                 DeviceCredentialGate.authenticate(
                     activity,
-                    activity.getString(R.string.authenticate_for_sudo),
+                    activity.getString(biometricTitle),
                     question,
-                ) { viewModel.confirmPendingSudoAction() }
+                ) { onAuthenticated() }
             }
         }
-        LaunchedEffect(pending) { askDevice() }
+        LaunchedEffect(key) { askDevice() }
         AlertDialog(
-            onDismissRequest = { viewModel.cancelPendingSudoAction() },
-            title = { Text(stringResource(R.string.authenticate_for_sudo)) },
+            onDismissRequest = onCancel,
+            title = { Text(stringResource(title)) },
             text = {
                 Column {
                     Text(question, fontSize = 14.sp)
@@ -656,11 +701,11 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
         )
     } else {
         AlertDialog(
-            onDismissRequest = { viewModel.cancelPendingSudoAction() },
+            onDismissRequest = onCancel,
             title = { Text(question) },
-            text = { Text(stringResource(R.string.sudo_asks_without_a_screen_lock), fontSize = 14.sp) },
+            text = { Text(stringResource(noScreenLockText), fontSize = 14.sp) },
             confirmButton = {
-                TextButton(onClick = { viewModel.confirmPendingSudoAction() }, modifier = Modifier.testTag("sudo.confirm.continue")) {
+                TextButton(onClick = onAuthenticated, modifier = Modifier.testTag(confirmTag)) {
                     Text(stringResource(R.string.continue_label))
                 }
             },
@@ -763,6 +808,10 @@ fun MainAppScreen(viewModel: AppViewModel) {
         // Warn (but allow) when connecting to a host whose last probe found it offline. Hosted here
         // so it overlays both the terminal screen and the server-list connect action.
         OfflineConnectDialog(viewModel)
+
+        // An ssh:// link another app opened, over whatever screen is showing.
+        SshLinkDialog(viewModel)
+        KeyInstallDialog(viewModel)
 
         // Full-screen SFTP text editor, hosted here at the top of the Activity window rather than
         // inside SftpScreen. SftpScreen lives under AppCoreScaffold's content Box, which calls
@@ -1245,6 +1294,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         Screen.HealthScoring -> HealthScoringToolView(viewModel)
                         Screen.Settings -> SettingsToolView(viewModel)
                         Screen.About -> AboutToolView(viewModel)
+                        Screen.Automation -> AutomationToolView(viewModel)
                     }
 
                     // In a landscape terminal the IME intentionally hides both global bars to preserve
@@ -1923,7 +1973,7 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
 fun isToolSubScreen(screen: Screen): Boolean {
     return screen in listOf(
         Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.Network,
-        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About
+        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation,
     )
 }
 
@@ -2663,6 +2713,20 @@ fun ServersMainView(viewModel: AppViewModel) {
                                 Text(stringResource(R.string.attach_existing_tmux))
                             }
                         }
+                        // ssh-copy-id for this host: a Windows host keeps its keys elsewhere, so it is not offered.
+                        if (RemoteCommands.hasUnixShell(viewModel.knownOs(srv))) {
+                            TextButton(
+                                onClick = {
+                                    selectedForActionSheet = null
+                                    viewModel.openKeyInstall(serverId = srv.id)
+                                },
+                                modifier = Modifier.testTag("hosts.install_key"),
+                            ) {
+                                Icon(Icons.Filled.VpnKey, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.key_install_on_this_host))
+                            }
+                        }
                         TextButton(
                             onClick = {
                                 selectedForActionSheet = null
@@ -2885,7 +2949,7 @@ fun AddServerSheet(
     }
     var host by remember { mutableStateOf(src?.host ?: prefillAddress?.host ?: "") }
     var port by remember { mutableStateOf((src?.port ?: prefillAddress?.port ?: 22).toString()) }
-    var user by remember { mutableStateOf(src?.username ?: "") }
+    var user by remember { mutableStateOf(src?.username ?: prefillAddress?.username ?: "") }
     var group by remember { mutableStateOf(src?.groupName ?: "Default") }
     var serverColor by remember { mutableStateOf(OmniColors.hostColorName(src?.serverColor ?: "Default")) }
 

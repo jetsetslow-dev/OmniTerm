@@ -152,7 +152,8 @@ data class AlertRuleEntity(
     val serverId: Int,
     // "CPU Usage", "Memory Usage", "Disk Usage", "Network In", "Network Out", "Latency",
     // "Temperature" (only evaluates on hosts that expose a thermal sensor), and the checks the
-    // phone runs itself, "TLS Expiry" and "URL Check" (see EndpointChecks)
+    // phone runs itself, "TLS Expiry", "URL Check", "Ping", "TCP Port" and "DNS" (see EndpointChecks),
+    // and the host checks (see HostChecks)
     val metricName: String,
     val mountPoint: String = "/",
     val thresholdValue: Float,
@@ -166,8 +167,12 @@ data class AlertRuleEntity(
     // delete exactly what it seeded instead of matching on mutable content.
     val presetKey: String? = null,
     // What a TLS or URL check connects to: a URL, or host[:port] for TLS. Blank on a TLS rule
-    // means each host's own address on port 443. Unused by the other metrics.
+    // means each host's own address on port 443. A Script Check holds its script's id here.
+    // Unused by the other metrics.
     val target: String = "",
+    // The saved script this rule's notification and incident offer to run, after the usual
+    // confirmation, or null for none. Cleared when that script is deleted.
+    val runbookScriptId: Int? = null,
 )
 
 @Entity(
@@ -314,4 +319,86 @@ data class NetworkShareEntity(
 data class AppSettingEntity(
     @PrimaryKey val key: String,
     val value: String
+)
+
+/**
+ * One Fleet run, kept in its run history: the newest [FleetRunHistory.KEEP_RUNS] are kept, on this
+ * device only (never in a backup). Each host's result is a [FleetRunHostEntity].
+ */
+@Entity(tableName = "fleet_runs", indices = [Index(value = ["runKey"], unique = true)])
+data class FleetRunEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    // The run's own id, so a host that finishes after the run (a tmux run followed again, a
+    // reconnect) updates this row instead of adding another.
+    val runKey: String,
+    val startedAt: Long,
+    val finishedAt: Long,
+    // The command as written, `{{placeholders}}` unfilled: the values typed for them are not kept.
+    val command: String,
+    // The saved script the command came from, if it still matched one.
+    val scriptName: String? = null,
+    // FleetRunHistory.SOURCE_*: a run from Broadcast, a retry of failed hosts, or an alert's runbook.
+    val source: String = FleetRunHistory.SOURCE_FLEET,
+)
+
+/** One host's result in a [FleetRunEntity]. */
+@Entity(tableName = "fleet_run_hosts", primaryKeys = ["runId", "serverId"])
+data class FleetRunHostEntity(
+    val runId: Int,
+    val serverId: Int,
+    // As named when it ran, so the history still reads after the host is renamed or deleted.
+    val serverName: String,
+    // A BroadcastStatus name.
+    val status: String,
+    val note: String? = null,
+    // The end of the host's output, at most FleetRunHistory.OUTPUT_CHARS.
+    val output: String = "",
+    val truncated: Boolean = false,
+)
+
+/** A [FleetRunEntity] with how many of its hosts succeeded, for the history list. */
+data class FleetRunSummary(
+    @androidx.room.Embedded val run: FleetRunEntity,
+    val hosts: Int,
+    val succeeded: Int,
+)
+
+object FleetRunHistory {
+    const val KEEP_RUNS = 50
+    const val OUTPUT_CHARS = 16_000
+    const val SOURCE_FLEET = "fleet"
+    const val SOURCE_RETRY = "retry"
+    const val SOURCE_RUNBOOK = "runbook"
+    const val SOURCE_AUTOMATION = "automation"
+
+    /** [output]'s end, at most [OUTPUT_CHARS], as one host's row; [runId] is set when the run is saved. */
+    fun host(serverId: Int, serverName: String, status: String, note: String?, output: String, truncated: Boolean) =
+        FleetRunHostEntity(
+            runId = 0,
+            serverId = serverId,
+            serverName = serverName,
+            status = status,
+            note = note,
+            output = output.takeLast(OUTPUT_CHARS),
+            truncated = truncated || output.length > OUTPUT_CHARS,
+        )
+}
+
+/**
+ * Lets other apps (Tasker and similar) run one saved script on chosen hosts, when they present the
+ * matching token. The token is shown once when the grant is made and never stored: only its
+ * SHA-256 is. Deleting the grant revokes it. Not in backups.
+ */
+@Entity(tableName = "automation_grants", indices = [Index(value = ["tokenHash"], unique = true)])
+data class AutomationGrantEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val scriptId: Int,
+    // The hosts it may run on, as comma-separated server ids.
+    val serverIds: String,
+    // Lower-case hex SHA-256 of the token.
+    val tokenHash: String,
+    // Where it is used: "Tasker", or the name the user gave it.
+    val label: String,
+    val createdAt: Long,
+    val lastUsedAt: Long? = null,
 )

@@ -1,6 +1,5 @@
 package com.jetsetslow.omniterm
 
-import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.isDisplayed
@@ -34,9 +33,6 @@ class E2eBackupCancellationFeedbackTest {
         val originalScreen = vm.currentScreen
         val exportCancelled = "Backup cancelled. Nothing was written."
         val restoreCancelled = "Restore cancelled. Nothing was changed."
-        fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
-            instrumentation.uiAutomation.executeShellCommand(command),
-        ).bufferedReader().use { it.readText() }
         fun pickerFocused(): Boolean = instrumentation.uiAutomation.rootInActiveWindow
             ?.packageName?.toString()?.endsWith(".documentsui") == true
         suspend fun cancelPicker() {
@@ -51,7 +47,7 @@ class E2eBackupCancellationFeedbackTest {
             }
             repeat(3) {
                 if (!pickerFocused()) return
-                shell("input keyevent KEYCODE_BACK")
+                DeviceShell.run("input keyevent KEYCODE_BACK")
                 delay(150)
             }
             assertTrue("The real document picker must close", !pickerFocused())

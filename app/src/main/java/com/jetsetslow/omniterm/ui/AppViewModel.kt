@@ -7,8 +7,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
+import androidx.annotation.StringRes
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.jetsetslow.omniterm.MainActivity
@@ -43,6 +45,7 @@ import com.jetsetslow.omniterm.data.ssh.SecurityKeySignRequest
 import com.jetsetslow.omniterm.data.ssh.SkKeyType
 import com.jetsetslow.omniterm.data.ssh.SshKeyMaterial
 import com.jetsetslow.omniterm.data.ssh.SshWire
+import com.jetsetslow.omniterm.data.ssh.sshCommandExit
 import com.jetsetslow.omniterm.data.fido.SecurityKeyCtap
 import com.yubico.yubikit.core.application.CommandState
 import com.yubico.yubikit.fido.ctap.Ctap2Session
@@ -64,9 +67,7 @@ import com.jetsetslow.omniterm.ui.theme.OmniColors
 import androidx.compose.runtime.mutableStateMapOf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
-import java.net.InetSocketAddress
 import java.net.NetworkInterface
-import java.net.Socket
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.trySendBlocking
@@ -102,6 +103,9 @@ internal fun parseSerialSettings(stored: String): SerialSettings? {
 /** TLS and URL checks that may run at once; each can wait up to its timeout. */
 private const val ENDPOINT_CHECK_PARALLELISM = 4
 
+/** Waits before the second and third try of a forwarded alert the server did not take. */
+private val ALERT_FORWARD_RETRY_DELAYS_MS = listOf(5_000L, 30_000L)
+
 /** Notification channel for the low-battery saver engaging. */
 private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
 
@@ -129,7 +133,20 @@ private const val IMAGE_PREVIEW_MAX_DIMENSION = 4096
 private const val PANE_ALT_CACHE_MS = 2_500L
 
 /** Cap per host for Fleet Broadcast output; long-running commands keep the latest tail only. */
-private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
+internal const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
+
+/** Hosts a broadcast talks to at once, whatever the batch size. */
+private const val BROADCAST_PARALLEL = 6
+
+/** Rolling-run batch sizes Fleet offers; 0 runs every host at once. */
+internal val BROADCAST_BATCH_SIZES = listOf(0, 1, 2, 5, 10)
+
+/**
+ * [hosts] in the batches a rolling run starts one after another, in the order given; one batch
+ * when [batchSize] is 0 or covers them all.
+ */
+internal fun <T> broadcastBatches(hosts: List<T>, batchSize: Int): List<List<T>> =
+    if (batchSize <= 0 || batchSize >= hosts.size) listOf(hosts) else hosts.chunked(batchSize)
 
 /** Default hard stop for one Fleet Broadcast run. */
 private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
@@ -185,7 +202,6 @@ internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRu
         previous.target != next.target
 
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
-internal const val ANDROID_PING_BINARY = "/system/bin/ping"
 internal val ANDROID_TRACEROUTE_BINARIES = listOf(
     "/system/bin/traceroute",
     "/system/xbin/traceroute",
@@ -505,7 +521,8 @@ enum class Screen {
     Backup,
     HealthScoring,
     Settings,
-    About
+    About,
+    Automation,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -521,6 +538,10 @@ sealed interface ExternalLaunchRequest {
     data object OpenFleet : ExternalLaunchRequest
     data object OpenInfra : ExternalLaunchRequest
     data object OpenBackup : ExternalLaunchRequest
+    /** An alert's "Run" action: its rule's runbook on that host, after the usual confirmation. */
+    data class OpenRunbook(val ruleId: Int, val serverId: Int) : ExternalLaunchRequest
+    /** An `ssh://` link, text or files another app handed over; each opens a screen and waits. */
+    data class FromApp(val incoming: com.jetsetslow.omniterm.incoming.Incoming) : ExternalLaunchRequest
 }
 
 /** [request], a host's sign-in questions, waiting in [AppViewModel.pendingInteractiveAuth] for the user's answers. */
@@ -775,10 +796,21 @@ data class RemoteFileRef(
 )
 
 /**
- * A broadcast host's state. Reconnecting and Detached are tmux runs whose connection dropped (still
- * trying, and stopped trying); NeedsTmux is a host without tmux, waiting for the user.
+ * A broadcast host's state, with the word its card shows. Reconnecting and Detached are tmux runs
+ * whose connection dropped (still trying, and stopped trying); NeedsTmux is a host without tmux,
+ * waiting for the user. Waiting is a rolling run's host whose batch has not started; NotRun is one
+ * that never started because an earlier host failed, or the run was stopped or timed out.
  */
-enum class BroadcastStatus { Running, Success, Failure, Reconnecting, Detached, NeedsTmux }
+enum class BroadcastStatus(@StringRes val label: Int) {
+    Running(R.string.broadcast_status_running),
+    Success(R.string.broadcast_status_success),
+    Failure(R.string.broadcast_status_failure),
+    Reconnecting(R.string.broadcast_status_reconnecting),
+    Detached(R.string.broadcast_status_detached),
+    NeedsTmux(R.string.broadcast_status_needs_tmux),
+    Waiting(R.string.broadcast_status_waiting),
+    NotRun(R.string.broadcast_status_not_run),
+}
 
 enum class FleetTargetMode { Servers, Groups }
 
@@ -1021,10 +1053,73 @@ private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
     QuickScriptEntity(0, "DSK", "Disk", "df -h 2>/dev/null | head -6 || powershell -NoProfile -Command \"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,Size,FreeSpace\"", "cyan", false, "Fleet", 1, availableForQuick = false, availableForFleet = true, presetKey = "fleet.disk"),
     QuickScriptEntity(0, "PRC", "Processes", "ps aux 2>/dev/null | sort -k3 -nr | head -8 || ps -axo pid,user,pcpu,pmem,comm 2>/dev/null | sort -k3 -nr | head -8 || powershell -NoProfile -Command \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet\"", "cyan", false, "Fleet", 2, availableForQuick = false, availableForFleet = true, presetKey = "fleet.processes"),
     QuickScriptEntity(0, "SVC", "Failed services", "systemctl --failed 2>/dev/null || rc-status -c 2>/dev/null || powershell -NoProfile -Command \"Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status\"", "cyan", false, "Fleet", 3, availableForQuick = false, availableForFleet = true, presetKey = "fleet.services"),
-    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8 2>/dev/null || logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || powershell -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message\"", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true, presetKey = "fleet.syslog"),
+    QuickScriptEntity(0, "LOG", "Syslog errors", FLEET_SYSLOG_COMMAND, "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true, presetKey = "fleet.syslog"),
     QuickScriptEntity(0, "CTR", "Containers", "docker ps --format \"table {{.Names}}\t{{.Status}}\" 2>/dev/null || podman ps --format \"table {{.Names}}\t{{.Status}}\"", "cyan", false, "Fleet", 5, availableForQuick = false, availableForFleet = true, presetKey = "fleet.containers"),
     QuickScriptEntity(0, "NET", "Listening ports", "ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || netstat -an 2>/dev/null | grep LISTEN || powershell -NoProfile -Command \"Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess\"", "cyan", false, "Fleet", 6, availableForQuick = false, availableForFleet = true, presetKey = "fleet.ports"),
     QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true, presetKey = "fleet.kernel"),
+)
+
+/**
+ * Recent errors from whichever log the host keeps: the journal, OpenWrt's logread, or the classic
+ * files (FreeBSD and Alpine write /var/log/messages, macOS /var/log/system.log). Each source is
+ * picked by testing for it, because a pipeline's status is its last command's, so a `||` after
+ * `logread | … | tail` never reached the files.
+ */
+internal const val FLEET_SYSLOG_COMMAND =
+    "if command -v journalctl >/dev/null 2>&1; then journalctl -p err -n 8 --no-pager; " +
+        "elif command -v logread >/dev/null 2>&1; then logread | grep -iE 'error|fail|critical' | tail -8; " +
+        "else grep -hiE 'error|fail|critical' /var/log/syslog /var/log/messages /var/log/system.log 2>/dev/null | tail -8; fi"
+
+/**
+ * Pending package updates from whichever package manager the host has. `dnf`/`yum check-update`
+ * exit 100 when updates exist, which is success here, not a failed script.
+ */
+internal const val HOMELAB_UPDATES_COMMAND =
+    "if command -v apt >/dev/null 2>&1; then apt list --upgradable 2>/dev/null | tail -n +2; " +
+        "elif command -v dnf >/dev/null 2>&1; then dnf -q check-update; r=\$?; [ \"\$r\" -eq 0 ] || [ \"\$r\" -eq 100 ]; " +
+        "elif command -v yum >/dev/null 2>&1; then yum -q check-update; r=\$?; [ \"\$r\" -eq 0 ] || [ \"\$r\" -eq 100 ]; " +
+        "elif command -v zypper >/dev/null 2>&1; then zypper -q list-updates; " +
+        "elif command -v pacman >/dev/null 2>&1; then checkupdates 2>/dev/null || pacman -Qu 2>/dev/null || true; " +
+        "elif command -v apk >/dev/null 2>&1; then apk version -l '<'; " +
+        "elif command -v pkg >/dev/null 2>&1; then pkg version -vRL=; " +
+        "else echo 'No supported package manager found.'; fi"
+
+/**
+ * Curated read-mostly command snippets popular in the homelab community (Proxmox VE, CasaOS,
+ * Home Assistant, Linux, plus general ops). Toggled on/off from Scripts.
+ */
+internal val homelabPresetScripts: List<QuickScriptEntity> = listOf(
+    QuickScriptEntity(0, "PVE", "PVE: list VMs", "qm list", "orange", false, "Proxmox", presetKey = "homelab.pve_vms"),
+    QuickScriptEntity(0, "PCT", "PVE: list containers", "pct list", "orange", false, "Proxmox", presetKey = "homelab.pve_containers"),
+    QuickScriptEntity(0, "CLS", "PVE: cluster status", "pvecm status 2>/dev/null || echo 'standalone node'", "orange", false, "Proxmox", presetKey = "homelab.pve_cluster"),
+    QuickScriptEntity(0, "STO", "PVE: storage status", "pvesm status", "orange", false, "Proxmox", presetKey = "homelab.pve_storage"),
+    QuickScriptEntity(0, "RUN", "PVE: start VM", "qm start {{vmid}}", "orange", false, "Proxmox", notes = "Asks for the VM ID, as qm list shows it.", presetKey = "homelab.pve_start_vm"),
+    QuickScriptEntity(0, "STP", "PVE: shut down VM", "qm shutdown {{vmid}}", "orange", false, "Proxmox", notes = "Asks for the VM ID. A clean ACPI shutdown; qm stop would cut power.", presetKey = "homelab.pve_stop_vm"),
+    QuickScriptEntity(0, "CAS", "CasaOS: status", "systemctl status 'casaos*' --no-pager 2>&1 | head -40", "green", false, "CasaOS", presetKey = "homelab.casaos_status"),
+    QuickScriptEntity(0, "RST", "CasaOS: restart", "sudo systemctl restart 'casaos*'", "green", false, "CasaOS", presetKey = "homelab.casaos_restart"),
+    QuickScriptEntity(0, "VER", "CasaOS: version", "casaos -v 2>/dev/null || cat /etc/casaos/* 2>/dev/null | head", "green", false, "CasaOS", presetKey = "homelab.casaos_version"),
+    QuickScriptEntity(0, "HA", "HA: info", "ha info 2>/dev/null || docker ps --filter name=homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_info"),
+    QuickScriptEntity(0, "LOG", "HA: core logs", "ha core logs 2>/dev/null || docker logs --tail 100 homeassistant 2>&1", "cyan", false, "Home Assistant", presetKey = "homelab.ha_core_logs"),
+    QuickScriptEntity(0, "RST", "HA: restart core", "ha core restart 2>/dev/null || docker restart homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_restart_core"),
+    QuickScriptEntity(0, "SUP", "HA: supervisor logs", "ha supervisor logs 2>/dev/null | tail -100", "cyan", false, "Home Assistant", presetKey = "homelab.ha_supervisor_logs"),
+    QuickScriptEntity(0, "TMP", "Temperature", "if [ \"\$(uname -s 2>/dev/null)\" = Linux ]; then max=\"\"; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r \"\$f\" ] || continue; v=\$(cat \"\$f\" 2>/dev/null); case \"\$v\" in ''|*[!0-9]*) continue;; esac; [ -z \"\$max\" ] || [ \"\$v\" -gt \"\$max\" ] && max=\"\$v\"; done; if [ -n \"\$max\" ]; then awk -v t=\"\$max\" 'BEGIN { printf \"CPU %.1f°C\\n\", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo \"No thermal sensor exposed\"; fi; else echo \"Temperature preset supports Linux hosts\"; fi", "red", false, "Linux", presetKey = "homelab.temperature"),
+    QuickScriptEntity(0, "UPD", "Updates available", HOMELAB_UPDATES_COMMAND, "amber", false, "Homelab", presetKey = "homelab.updates"),
+    QuickScriptEntity(0, "RBT", "Reboot required?", "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'", "amber", false, "Homelab", presetKey = "homelab.reboot_required"),
+    QuickScriptEntity(0, "CPU", "Top 10 by CPU", "ps aux --sort=-%cpu | head -11", "purple", false, "Homelab", presetKey = "homelab.top_cpu"),
+    QuickScriptEntity(0, "CTR", "Docker stats", "docker stats --no-stream 2>/dev/null || podman stats --no-stream", "purple", false, "Homelab", presetKey = "homelab.docker_stats"),
+    QuickScriptEntity(0, "DSK", "Disk usage", "df -h | grep -vE 'tmpfs|udev'", "purple", false, "Homelab", presetKey = "homelab.disk_usage"),
+)
+
+/**
+ * Earlier canonical rows of built-in presets that a release replaced. A stored row still equal to
+ * one of these was never edited, so startup moves it to the current preset; an edited row is the
+ * user's and stays as it is.
+ */
+internal val retiredPresetScripts: List<QuickScriptEntity> = listOf(
+    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8 2>/dev/null || logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || powershell -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message\"", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true, presetKey = "fleet.syslog"),
+    QuickScriptEntity(0, "RUN", "PVE: start VM <id>", "qm start 100", "orange", false, "Proxmox", presetKey = "homelab.pve_start_vm"),
+    QuickScriptEntity(0, "STP", "PVE: stop VM <id>", "qm stop 100", "orange", false, "Proxmox", presetKey = "homelab.pve_stop_vm"),
+    QuickScriptEntity(0, "UPD", "Updates available", "apt list --upgradable 2>/dev/null | tail -n +2 || (command -v dnf >/dev/null && dnf check-update)", "amber", false, "Homelab", presetKey = "homelab.updates"),
 )
 
 /**
@@ -1032,6 +1127,16 @@ private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
  * hands to `powershell -Command "…"`. That text suits cmd only; a PowerShell login shell rejects its
  * `||` and expands `$_` first. See [AppViewModel.builtInPresetCommand].
  */
+/**
+ * [cmd] as a host with [os] runs it when it is a built-in Fleet preset the user has not edited:
+ * as written on a Unix host, as encoded PowerShell on Windows. Null for any other command.
+ */
+internal fun builtInPresetCommandFor(cmd: String, os: String): String? {
+    val preset = builtInFleetPresets.firstOrNull { it.command == cmd } ?: return null
+    return if (RemoteCommands.hasUnixShell(os)) cmd
+    else fleetPresetWindowsScripts[preset.presetKey]?.let(RemoteCommands::powershell)
+}
+
 internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
     "fleet.cpu" to "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime; Get-CimInstance Win32_OperatingSystem | " +
         "ForEach-Object { 'TotalMB=' + [int](\$_.TotalVisibleMemorySize/1024) + ' FreeMB=' + [int](\$_.FreePhysicalMemory/1024) }",
@@ -1043,6 +1148,17 @@ internal val fleetPresetWindowsScripts: Map<String, String> = mapOf(
         "elseif (Get-Command podman -ErrorAction SilentlyContinue) { podman ps --format \$f } else { '${RemoteCommands.NO_CONTAINER_RUNTIME}' }",
     "fleet.ports" to "Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess",
     "fleet.kernel" to "[Environment]::OSVersion.VersionString",
+)
+
+/**
+ * Settings that belong to this phone and never travel in a backup, either way: the PIN, the lock
+ * and biometrics, and the Automation switch, so restoring a backup never lets other apps run
+ * scripts the user did not allow on this phone.
+ */
+internal val DEVICE_LOCAL_SETTINGS = setOf(
+    "app_pin", "app_lock_enabled", "biometrics_enabled",
+    "pin_failed_attempts", "pin_locked_until", "app_lock_grace_ms",
+    Automation.SETTING_ENABLED,
 )
 
 /** The built-in Fleet presets, for tests that keep [fleetPresetWindowsScripts] in step with them. */
@@ -1191,6 +1307,9 @@ class AppViewModel @JvmOverloads constructor(
     val activeAlerts = repository.activeAlertsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val alertHistory = repository.alertHistoryFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val quickScripts = repository.scriptsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    /** Fleet's run history, newest first (see [FleetRunHistory]). */
+    val fleetRunHistory = repository.fleetRunsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val automationGrants = repository.automationGrantsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val wolTargets = repository.wolTargetsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val portForwards = repository.portForwardsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val networkShares = repository.networkSharesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -1346,6 +1465,12 @@ class AppViewModel @JvmOverloads constructor(
     /** Settings toggle state for built-in command/rule presets. */
     var homelabPresetsEnabled by mutableStateOf(false); private set
     var alertsEnabled by mutableStateOf(true); private set
+    /** Whether other apps may run scripts with a token (Tools → Automation); off until the user turns it on. */
+    var automationEnabled by mutableStateOf(false); private set
+    /** Where alerts also go besides this phone's notifications; off unless the user sets it up. */
+    var alertForwarding by mutableStateOf(AlertForwarding.Config()); private set
+    /** When the last forwarded alert was sent and how it went, for the Alerts screen. */
+    var alertForwardStatus by mutableStateOf<Pair<Long, AlertForwarding.Outcome>?>(null); private set
     var alertPresetsEnabled by mutableStateOf(false); private set
     var fleetPresetsEnabled by mutableStateOf(false); private set
     var backupExportSelection by mutableStateOf(BackupSelection()); private set
@@ -1396,6 +1521,11 @@ class AppViewModel @JvmOverloads constructor(
     val broadcastTargetGroups = mutableStateListOf<String>()
     var broadcastTargetMode by mutableStateOf(FleetTargetMode.Servers)
     var broadcastCommandText by mutableStateOf("")
+    /**
+     * The saved script Broadcast's command came from, so a run skips hosts its target OS or system
+     * rules out. It stops applying once the command text no longer matches the script.
+     */
+    var broadcastPreset by mutableStateOf<QuickScriptEntity?>(null)
     var isBroadcastExecuting by mutableStateOf(false)
     val broadcastResults = mutableStateListOf<BroadcastResultItem>()
     private var broadcastJob: Job? = null
@@ -2525,6 +2655,11 @@ class AppViewModel @JvmOverloads constructor(
     // Above init for the same reason: whether Fleet Broadcast runs each command in its own tmux session.
     var broadcastInTmux by mutableStateOf(false)
         private set
+    // Above init for the same reason: rolling runs (see [updateBroadcastBatchSize]).
+    var broadcastBatchSize by mutableStateOf(0)
+        private set
+    var broadcastStopOnFailure by mutableStateOf(true)
+        private set
 
     init {
         TerminalSessionManager.init(application)
@@ -2631,6 +2766,7 @@ class AppViewModel @JvmOverloads constructor(
             if (initial.find { it.key == "alert_presets" }?.value == "true") {
                 seedMissingDefaultAlertRules()
             }
+            upgradeRetiredPresetScripts()
             val pinVal = initial.find { it.key == "app_pin" }?.value
             val hasPinLock =
                 !pinVal.isNullOrBlank() &&
@@ -2734,6 +2870,15 @@ class AppViewModel @JvmOverloads constructor(
                 reviewPromptShown = reviewPromptShown || list.find { it.key == "review_prompt_shown" }?.value == "true"
                 homelabPresetsEnabled = list.find { it.key == "homelab_presets" }?.value == "true"
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
+                automationEnabled = list.find { it.key == Automation.SETTING_ENABLED }?.value == "true"
+                alertForwarding = AlertForwarding.Config(
+                    kind = list.find { it.key == AlertForwarding.SETTING_KIND }?.value
+                        ?.takeIf { it in AlertForwarding.KINDS } ?: AlertForwarding.KIND_OFF,
+                    url = list.find { it.key == AlertForwarding.SETTING_URL }?.value.orEmpty(),
+                    topic = list.find { it.key == AlertForwarding.SETTING_TOPIC }?.value.orEmpty(),
+                    token = list.find { it.key == AlertForwarding.SETTING_TOKEN }?.value.orEmpty(),
+                    includeResolved = list.find { it.key == AlertForwarding.SETTING_RESOLVED }?.value != "false",
+                )
                 alertPresetsEnabled = list.find { it.key == "alert_presets" }?.value == "true"
                 fleetPresetsEnabled = list.find { it.key == "fleet_presets" }?.value == "true"
                 val storedBackupSelection = decodeBackupSelection(list.find { it.key == "backup_export_selection" }?.value)
@@ -2767,6 +2912,9 @@ class AppViewModel @JvmOverloads constructor(
                 )
                 hostSort = HostSort.fromSetting(list.find { it.key == "host_sort" }?.value)
                 broadcastInTmux = list.find { it.key == "broadcast_in_tmux" }?.value?.toBooleanStrictOrNull() ?: false
+                broadcastBatchSize = list.find { it.key == "broadcast_batch_size" }?.value?.toIntOrNull()
+                    ?.takeIf { it in BROADCAST_BATCH_SIZES } ?: 0
+                broadcastStopOnFailure = list.find { it.key == "broadcast_stop_on_failure" }?.value?.toBooleanStrictOrNull() ?: true
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
                     isKeepScreenOnEnabled = keepScreenOn
@@ -2848,15 +2996,8 @@ class AppViewModel @JvmOverloads constructor(
     private val prevDiskByServer = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, Map<String, DiskIo>>>()
 
     /** TCP reachability probe; returns round-trip ms, or -1 if the host:port is unreachable. */
-    private fun tcpReachable(host: String, port: Int, timeoutMs: Int = 4000): Int {
-        return try {
-            val t0 = System.currentTimeMillis()
-            Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
-            (System.currentTimeMillis() - t0).toInt()
-        } catch (e: Exception) {
-            -1
-        }
-    }
+    private fun tcpReachable(host: String, port: Int, timeoutMs: Int = 4000): Int =
+        EndpointChecks.connect(host, port, timeoutMs).first.let { if (it < 0f) -1 else it.toInt() }
 
     /** Trim JSch/exec noise into a short, user-facing auth error. */
     /**
@@ -3081,6 +3222,8 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
             }
+            // Only a verdict counts: a cancelled probe rethrew above and never gets here.
+            if (completed) evaluateHostOffline(srv)
         }
     }
 
@@ -3236,6 +3379,7 @@ class AppViewModel @JvmOverloads constructor(
             metrics.disks,
             metrics.cpuTempC,
         )
+        startHostChecks(srv, metrics.disks)
     }
 
     /**
@@ -3382,10 +3526,11 @@ class AppViewModel @JvmOverloads constructor(
         cpuTempC: Float? = null,
     ) = alertStateMutex.withLock {
         if (!alertsEnabled) return@withLock
-        // TLS and URL checks are not host metrics: they run on their own pace (runEndpointChecks),
-        // and here they would read as "not breaching" and close their incidents every poll.
+        // TLS and URL checks and host checks are not metrics: they run on their own pace
+        // (runEndpointChecks, runHostChecks, evaluateHostOffline), and here they would read as
+        // "not breaching" and close their incidents every poll.
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
-            .filter { it.enabled && !EndpointChecks.isEndpointMetric(it.metricName) }
+            .filter { it.enabled && !EndpointChecks.isEndpointMetric(it.metricName) && !HostChecks.isHostCheck(it.metricName) }
         val activeAlerts = repository.getActiveAlerts()
         val now = System.currentTimeMillis()
         // A sampling gap longer than a few poll intervals means we observed nothing —
@@ -3423,6 +3568,7 @@ class AppViewModel @JvmOverloads constructor(
         now: Long,
         staleGapMs: Long,
         notificationTarget: String = srv.host,
+        notificationText: String? = null,
     ) {
         val breachKey = r.id to srv.id
         val triggered = alertBreachTracker.onSample(
@@ -3460,7 +3606,15 @@ class AppViewModel @JvmOverloads constructor(
                     triggeredTime = now
                 )
                 repository.insertAlert(alert)
-                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget)
+                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget, notificationText)
+                forwardAlert(
+                    AlertForwarding.Event(
+                        resolved = false, severity = r.severity, host = srv.name, rule = r.metricName,
+                        title = alertNotificationTitle(r, srv),
+                        text = alertNotificationText(srv, r, currentValue ?: 0f, notificationTarget, notificationText),
+                        value = currentValue ?: 0f, threshold = r.thresholdValue, timeMs = now,
+                    ),
+                )
             }
         } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
             // Recovered — but only after enough consecutive clean samples (hysteresis),
@@ -3469,6 +3623,16 @@ class AppViewModel @JvmOverloads constructor(
                 recordAlertHistory(currentAlert, "resolved", srv.name)
                 repository.deleteAlert(currentAlert.id)
                 clearAlertNotification(r.id, srv.id)
+                // A muted incident stays quiet everywhere, its recovery included.
+                if (currentAlert.mutedUntil <= now) {
+                    forwardAlert(
+                        AlertForwarding.Event(
+                            resolved = true, severity = r.severity, host = srv.name, rule = r.metricName,
+                            title = "Resolved: ${srv.name}", text = "${r.metricName} on ${srv.name} is back to normal",
+                            value = currentValue ?: currentAlert.currentValue, threshold = r.thresholdValue, timeMs = now,
+                        ),
+                    )
+                }
             }
         }
     }
@@ -3492,6 +3656,8 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun runEndpointChecks() {
         if (!alertsEnabled) return
+        // From a phone with no network every check fails, which says nothing about the endpoints.
+        if (!phoneHasNetwork()) return
         val rules = repository.getAllRules().filter { it.enabled && EndpointChecks.isEndpointMetric(it.metricName) }
         if (rules.isEmpty()) return
         val servers = repository.getAllServers()
@@ -3517,12 +3683,12 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * URL checks run every poll, but at most once a minute. A certificate changes rarely, so TLS
-     * checks run every six hours: hourly while one is close to expiry (so a renewal is seen soon),
-     * and every quarter hour after one could not connect.
+     * URL, ping, TCP and DNS checks run every poll, but at most once a minute. A certificate changes
+     * rarely, so TLS checks run every six hours: hourly while one is close to expiry (so a renewal
+     * is seen soon), and every quarter hour after one could not connect.
      */
     private fun endpointCheckIntervalMs(rule: AlertRuleEntity, result: EndpointChecks.Result, breached: Boolean): Long = when {
-        rule.metricName == EndpointChecks.URL_CHECK -> telemetryIntervalMs.coerceAtLeast(60_000L)
+        EndpointChecks.isTimed(rule.metricName) -> telemetryIntervalMs.coerceAtLeast(60_000L)
         result.value == null -> 15 * 60_000L
         breached -> 60 * 60_000L
         else -> 6 * 60 * 60_000L
@@ -3547,8 +3713,175 @@ class AppViewModel @JvmOverloads constructor(
     /** Forget a rule's check pace and results, so an edited or new rule is checked at once. */
     private fun resetEndpointChecks(ruleId: Int) {
         endpointChecksDueAt.keys.removeIf { it.first == ruleId }
+        // Host checks share one probe per host, so any rule change makes every host due again.
+        hostChecksDueAt.clear()
         viewModelScope.launch(Dispatchers.Main) {
             endpointCheckResults.keys.filter { it.first == ruleId }.forEach(endpointCheckResults::remove)
+            hostCheckResults.keys.filter { it.first == ruleId }.forEach(hostCheckResults::remove)
+        }
+    }
+
+    /**
+     * Whether the phone has a network at all. Without one every host and endpoint looks down, so
+     * Host Offline and the phone-side checks record nothing rather than alert about all of them.
+     * Unknown counts as yes, so a platform quirk cannot silence alerts.
+     */
+    private fun phoneHasNetwork(): Boolean = runCatching {
+        val cm = getApplication<Application>().getSystemService(ConnectivityManager::class.java) ?: return@runCatching true
+        cm.activeNetwork != null
+    }.getOrDefault(true)
+
+    /** When each host's [HostChecks.PROBE] is next due, by host id. */
+    private val hostChecksDueAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    private val hostCheckJobs = java.util.concurrent.ConcurrentHashMap<Int, Job>()
+
+    /** What each (rule, host) host check last read, for the rule list; value null when unknown. */
+    val hostCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
+
+    /** At most once a minute, and never more often than the host is polled. */
+    private fun hostCheckIntervalMs() = telemetryIntervalMs.coerceAtLeast(60_000L)
+
+    /**
+     * Runs the host-check probe on [srv] when one of its rules needs it and it is due. Its own job,
+     * so the extra command never holds the host's metrics probe or the fleet-wide probe limit.
+     */
+    private fun startHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
+        if (!alertsEnabled) return
+        if (hostCheckJobs[srv.id]?.isActive == true) return
+        if (System.currentTimeMillis() < (hostChecksDueAt[srv.id] ?: 0L)) return
+        hostCheckJobs[srv.id] = viewModelScope.launch(Dispatchers.IO) { runHostChecks(srv, disks) }
+    }
+
+    private suspend fun runHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
+        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
+            .filter { it.enabled && HostChecks.runsOnHost(it.metricName) }
+        if (rules.isEmpty()) return
+        hostChecksDueAt[srv.id] = System.currentTimeMillis() + hostCheckIntervalMs()
+        val (probed, scripted) = rules.partition { HostChecks.needsProbe(it.metricName) }
+        if (probed.isNotEmpty()) runHostProbe(srv, probed, disks)
+        for (rule in scripted) runScriptCheck(srv, rule)
+    }
+
+    /** Reads every [HostChecks.PROBE] check in [rules] on [srv] with one command. */
+    private suspend fun runHostProbe(srv: ServerEntity, rules: List<AlertRuleEntity>, disks: List<DiskUsage>) {
+        // The probe is POSIX sh; Windows has none of these tools, so its checks stay unknown.
+        val reading = if (hostOs(srv) == "Windows") {
+            null
+        } else {
+            val raw = executeSshCommand(srv, HostChecks.PROBE)
+            // A probe that never ran says nothing; leave every incident as it is.
+            if (!ranOnHost(raw)) return
+            HostChecks.parse(raw)
+        }
+        val now = System.currentTimeMillis()
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            val activeAlerts = repository.getActiveAlerts()
+            for (rule in rules) {
+                val key = rule.id to srv.id
+                val sample = reading?.let { HostChecks.valueOf(rule.metricName, it, disks, now / 1000) }
+                val result = if (sample == null) {
+                    EndpointChecks.Result(null, getApplication<Application>().getString(R.string.host_check_unknown), "")
+                } else {
+                    EndpointChecks.Result(sample.first, HostChecks.summary(rule.metricName, sample.first, sample.second), "")
+                }
+                withContext(Dispatchers.Main) { hostCheckResults[key] = result }
+                if (sample == null) continue
+                applyAlertSample(
+                    rule, srv, sample.first, sample.first > rule.thresholdValue, activeAlerts, now,
+                    staleGapMs = hostCheckIntervalMs() * 3,
+                    notificationText = HostChecks.alertText(rule.metricName, sample.first, rule.thresholdValue, sample.second),
+                )
+            }
+        }
+    }
+
+    /**
+     * Runs a [HostChecks.SCRIPT_CHECK] rule's script on [srv] and feeds its exit status to the
+     * rule. A script that cannot be a check, or does not target this host, reads as unknown with
+     * the reason; one that never ran (no connection) leaves the incident as it is.
+     */
+    private suspend fun runScriptCheck(srv: ServerEntity, rule: AlertRuleEntity) {
+        val app = getApplication<Application>()
+        val key = rule.id to srv.id
+        suspend fun unknown(reason: String) = withContext(Dispatchers.Main) {
+            hostCheckResults[key] = EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, reason), "")
+        }
+        val script = ScriptChecks.scriptId(rule)?.let { id -> repository.getAllScripts().find { it.id == id } }
+        ScriptChecks.problem(script, script?.let { commandDangerHits(it.command) }.orEmpty())?.let { return unknown(it) }
+        script!!
+        if (fleetHostsScriptSkips(script, listOf(srv), hostMetricsById).isNotEmpty()) {
+            return unknown(app.getString(R.string.script_check_wrong_target, scriptTargetLabel(script)))
+        }
+        val raw = try {
+            withTimeoutOrNull(ScriptChecks.TIMEOUT_MS) {
+                val (creds, command) = savedScriptRun(srv, ScriptParams.fill(script.command, emptyMap(), ScriptParams.shellFor(hostOs(srv))))
+                sshTransport.exec(creds, command)
+            } ?: "SSH Error: command failed (${ScriptChecks.TIMED_OUT.toInt()}): " +
+                app.getString(R.string.script_check_timed_out, ScriptChecks.TIMEOUT_MS / 1000)
+        } catch (e: ScriptParams.UnsafeValueException) {
+            return unknown(e.message ?: "unsafe value")
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            "SSH Error: ${e.message ?: "unknown error"}"
+        }
+        // Never ran: says nothing about the check, so any incident stays as it is.
+        val (status, line) = ScriptChecks.outcome(raw) ?: return
+        val names = listOf(script.name, line)
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            // The rule may have been edited or deleted while the script ran.
+            if (repository.getAllRules().find { it.id == rule.id } != rule) return@withLock
+            withContext(Dispatchers.Main) {
+                hostCheckResults[key] = EndpointChecks.Result(status, HostChecks.summary(HostChecks.SCRIPT_CHECK, status, names), "")
+            }
+            applyAlertSample(
+                rule, srv, status, status > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
+                staleGapMs = hostCheckIntervalMs() * 3,
+                notificationText = HostChecks.alertText(HostChecks.SCRIPT_CHECK, status, rule.thresholdValue, names),
+            )
+        }
+    }
+
+    /**
+     * How [srv] runs a saved script's [command], placeholders already filled: a built-in preset
+     * in the app's own form for that host, anything else in the user's login shell, as Fleet runs it.
+     */
+    private suspend fun savedScriptRun(srv: ServerEntity, command: String): Pair<SshCredentials, String> {
+        val preset = builtInPresetCommand(srv, command)
+        return (if (preset != null) buildCredentials(srv) else loginShellCredentials(srv)) to (preset ?: command)
+    }
+
+    /**
+     * Feeds [srv]'s Host Offline rules the verdict of the probe that just finished: 1 when it could
+     * not be reached, 0 when it answered. Skipped while the phone has no network, and for a probe
+     * that left the host still being checked.
+     */
+    private suspend fun evaluateHostOffline(srv: ServerEntity) {
+        if (!alertsEnabled) return
+        val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
+            .filter { it.enabled && it.metricName == HostChecks.HOST_OFFLINE }
+        if (rules.isEmpty()) return
+        val value = when (repository.getServerById(srv.id)?.status) {
+            "offline" -> 1f
+            "online" -> 0f
+            else -> return
+        }
+        if (value > 0f && !phoneHasNetwork()) return
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            val activeAlerts = repository.getActiveAlerts()
+            val now = System.currentTimeMillis()
+            for (rule in rules) {
+                withContext(Dispatchers.Main) {
+                    hostCheckResults[rule.id to srv.id] = EndpointChecks.Result(value, HostChecks.describe(HostChecks.HOST_OFFLINE, value), "")
+                }
+                applyAlertSample(
+                    rule, srv, value, value > rule.thresholdValue, activeAlerts, now,
+                    staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L),
+                    notificationText = HostChecks.alertText(HostChecks.HOST_OFFLINE, value, rule.thresholdValue, emptyList()),
+                )
+            }
         }
     }
 
@@ -3571,18 +3904,16 @@ class AppViewModel @JvmOverloads constructor(
 
     private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
-    /** Surfaces a fired alert as a system notification so it's seen without the app open. */
-    private fun postAlertNotification(srv: ServerEntity, rule: AlertRuleEntity, value: Float, target: String = srv.host) {
-        val app = getApplication<Application>()
-        val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
-        val openAppIntent = Intent(app, MainActivity::class.java)
-        openAppIntent.setClass(app, MainActivity::class.java)
-        openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
-        openAppIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        val contentIntent = PendingIntent.getActivity(
-            app, alertNotificationId(rule.id, srv.id), openAppIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+    private fun alertNotificationTitle(rule: AlertRuleEntity, srv: ServerEntity) = "${rule.severity}: ${srv.name}"
+
+    /** An alert's notification line; forwarded alerts carry the same words. */
+    private fun alertNotificationText(
+        srv: ServerEntity,
+        rule: AlertRuleEntity,
+        value: Float,
+        target: String = srv.host,
+        detail: String? = null,
+    ): String {
         val mountSuffix = if (rule.metricName == "Disk Usage" && rule.mountPoint.isNotBlank()) " on ${rule.mountPoint}" else ""
         val unit = when (rule.metricName) {
             "Latency" -> "ms"
@@ -3597,21 +3928,110 @@ class AppViewModel @JvmOverloads constructor(
             } else {
                 rule.thresholdValue
             }
-        val text = if (EndpointChecks.isEndpointMetric(rule.metricName)) {
-            EndpointChecks.alertText(rule, target, value)
-        } else {
-            "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
+        return when {
+            detail != null -> detail
+            EndpointChecks.isEndpointMetric(rule.metricName) -> EndpointChecks.alertText(rule, target, value)
+            // Re-posted later (after a mute ends) without the names the probe found.
+            HostChecks.isHostCheck(rule.metricName) -> HostChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
+            else -> "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
         }
-        val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
-            .setContentTitle("${rule.severity}: ${srv.name}")
-            .setContentText(text)
+    }
+
+    /**
+     * Sends [event] to the user's forwarding service, if one is set up, off the main thread. A
+     * failure with no answer or a server error is tried twice more; a refusal is not.
+     */
+    private fun forwardAlert(event: AlertForwarding.Event) {
+        val request = AlertForwarding.request(alertForwarding, event) ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            var outcome = AlertForwarding.send(request)
+            for (wait in ALERT_FORWARD_RETRY_DELAYS_MS) {
+                if (!AlertForwarding.isRetryable(outcome)) break
+                delay(wait)
+                outcome = AlertForwarding.send(request)
+            }
+            withContext(Dispatchers.Main) { alertForwardStatus = System.currentTimeMillis() to outcome }
+        }
+    }
+
+    fun saveAlertForwarding(config: AlertForwarding.Config) {
+        val saved = config.copy(url = config.url.trim(), topic = config.topic.trim(), token = config.token.trim())
+        alertForwarding = saved
+        alertForwardStatus = null
+        viewModelScope.launch {
+            repository.insertSetting(AlertForwarding.SETTING_KIND, saved.kind)
+            repository.insertSetting(AlertForwarding.SETTING_URL, saved.url)
+            repository.insertSetting(AlertForwarding.SETTING_TOPIC, saved.topic)
+            if (saved.token.isEmpty()) {
+                repository.deleteSetting(AlertForwarding.SETTING_TOKEN)
+            } else {
+                repository.insertSetting(AlertForwarding.SETTING_TOKEN, saved.token)
+            }
+            repository.insertSetting(AlertForwarding.SETTING_RESOLVED, saved.includeResolved.toString())
+        }
+    }
+
+    /** Sends one test alert through [config], which need not be saved yet, and reports how it went. */
+    fun testAlertForwarding(config: AlertForwarding.Config, onResult: (AlertForwarding.Outcome) -> Unit) {
+        viewModelScope.launch {
+            val event = AlertForwarding.Event(
+                resolved = false, severity = "WARNING", host = "OmniTerm", rule = "Test",
+                title = "OmniTerm test alert", text = "Alert forwarding from OmniTerm works.",
+                value = 0f, threshold = 0f, timeMs = System.currentTimeMillis(),
+            )
+            val request = AlertForwarding.request(config, event)
+            val outcome = if (request == null) {
+                AlertForwarding.Outcome(false, AlertForwarding.configError(config) ?: "Forwarding is off")
+            } else {
+                withContext(Dispatchers.IO) { AlertForwarding.send(request) }
+            }
+            onResult(outcome)
+        }
+    }
+
+    /** Surfaces a fired alert as a system notification so it's seen without the app open. */
+    private suspend fun postAlertNotification(
+        srv: ServerEntity,
+        rule: AlertRuleEntity,
+        value: Float,
+        target: String = srv.host,
+        detail: String? = null,
+    ) {
+        val app = getApplication<Application>()
+        val runbook = rule.runbookScriptId?.let { id -> repository.getAllScripts().find { it.id == id } }
+        val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
+        val openAppIntent = Intent(app, MainActivity::class.java)
+        openAppIntent.setClass(app, MainActivity::class.java)
+        openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
+        openAppIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        val contentIntent = PendingIntent.getActivity(
+            app, alertNotificationId(rule.id, srv.id), openAppIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val builder = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
+            .setContentTitle(alertNotificationTitle(rule, srv))
+            .setContentText(alertNotificationText(srv, rule, value, target, detail))
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
-            .build()
-        nm.notify(alertNotificationId(rule.id, srv.id), n)
+        // The runbook opens Fleet with it ready to run on this host; the user still confirms there.
+        if (runbook != null) {
+            val runIntent = Intent(app, MainActivity::class.java)
+                .setData(Uri.parse(NotificationLinks.runbook(rule.id, srv.id)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            builder.addAction(
+                0,
+                app.getString(R.string.alert_runbook_run, runbook.name),
+                // Same request code as the tap: a different URI makes it a different PendingIntent.
+                PendingIntent.getActivity(
+                    app, alertNotificationId(rule.id, srv.id), runIntent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ),
+            )
+        }
+        nm.notify(alertNotificationId(rule.id, srv.id), builder.build())
     }
 
     /**
@@ -4183,7 +4603,201 @@ class AppViewModel @JvmOverloads constructor(
                 ExternalLaunchRequest.OpenFleet -> navigateTo(Screen.Fleet)
                 ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
                 ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
+                is ExternalLaunchRequest.OpenRunbook -> openRunbook(request.ruleId, request.serverId)
+                is ExternalLaunchRequest.FromApp -> openIncoming(request.incoming)
             }
+        }
+    }
+
+    // LINKS AND SHARES FROM OTHER APPS (incoming/Incoming.kt). Each opens a screen; nothing
+    // connects, saves or uploads until the user taps.
+
+    /** An `ssh://` link another app opened, waiting in [SshLinkDialog] for the user's choice. */
+    var pendingSshLink by mutableStateOf<SshLink?>(null)
+        private set
+
+    /** The saved hosts [pendingSshLink] names: its address and port, and its user when it has one. */
+    var sshLinkMatches by mutableStateOf<List<ServerEntity>>(emptyList())
+        private set
+
+    /** Files another app shared, waiting for Upload here in Files → SFTP. */
+    var sharedUploads by mutableStateOf<List<android.net.Uri>>(emptyList())
+        private set
+
+    /** Text another app shared, for a new script; the Scripts screen takes it when it opens. */
+    var pendingScriptText by mutableStateOf<String?>(null)
+        private set
+
+    private fun openIncoming(incoming: com.jetsetslow.omniterm.incoming.Incoming) {
+        when (incoming) {
+            is com.jetsetslow.omniterm.incoming.Incoming.Link -> viewModelScope.launch {
+                val profiles = repository.getAllProfiles()
+                sshLinkMatches = repository.getAllServers().filter { srv ->
+                    incoming.link.matches(srv, HostCredentials.loginName(srv, profiles.find { it.id == srv.authProfileId }))
+                }
+                pendingSshLink = incoming.link
+            }
+            is com.jetsetslow.omniterm.incoming.Incoming.Text -> {
+                pendingScriptText = incoming.text
+                navigateTo(Screen.QuickScripts)
+            }
+            is com.jetsetslow.omniterm.incoming.Incoming.Files -> {
+                sharedUploads = incoming.uris
+                activeSftpTab = 1
+                navigateTo(Screen.SFTP)
+            }
+            is com.jetsetslow.omniterm.incoming.Incoming.Unusable -> Unit
+        }
+    }
+
+    fun connectSshLinkHost(serverId: Int) {
+        dismissSshLink()
+        connectTerminalByServerId(serverId)
+    }
+
+    /** Opens Add host with the link's address, port and user filled in; nothing is saved yet. */
+    fun addSshLinkHost() {
+        val link = pendingSshLink ?: return
+        dismissSshLink()
+        pendingNewServerPrefill = NewServerPrefill(host = link.host, suggestedName = link.host, port = link.port, username = link.user)
+        requestAddServerFromShortcut()
+    }
+
+    fun dismissSshLink() {
+        pendingSshLink = null
+        sshLinkMatches = emptyList()
+    }
+
+    /** The shared files, which stop waiting. */
+    fun takeSharedUploads(): List<android.net.Uri> = sharedUploads.also { sharedUploads = emptyList() }
+
+    fun takePendingScriptText(): String? = pendingScriptText.also { pendingScriptText = null }
+
+    // ── Install a key on hosts (ssh-copy-id) ──
+
+    /** The open Install key dialog: the key it starts with and the hosts picked, either may be unset. */
+    data class KeyInstallRequest(val keyAlias: String?, val serverIds: Set<Int>)
+
+    /** One host's install: whether it ended well, and what to tell the user. */
+    data class KeyInstallResult(val ok: Boolean, val text: String)
+
+    var keyInstallRequest by mutableStateOf<KeyInstallRequest?>(null); private set
+    val keyInstallResults = mutableStateMapOf<Int, KeyInstallResult>()
+    var keyInstallRunning by mutableStateOf(false); private set
+
+    /** Opens Install key, from a key ([keyAlias]) or a host ([serverId]). */
+    fun openKeyInstall(keyAlias: String? = null, serverId: Int? = null) {
+        if (keyInstallRunning) return
+        keyInstallResults.clear()
+        keyInstallRequest = KeyInstallRequest(keyAlias, setOfNotNull(serverId))
+    }
+
+    fun closeKeyInstall() {
+        if (keyInstallRunning) return
+        keyInstallRequest = null
+        keyInstallResults.clear()
+    }
+
+    /**
+     * Adds [keyAlias]'s public key to each of [serverIds] over its usual sign-in, then signs in with
+     * only the key to show it works. With [useForSignIn], a host where it works signs in with it from
+     * then on; one that uses a credential profile is left as it is.
+     */
+    fun installKey(keyAlias: String, serverIds: List<Int>, useForSignIn: Boolean) {
+        if (keyInstallRunning || serverIds.isEmpty()) return
+        keyInstallRunning = true
+        keyInstallResults.clear()
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val key = repository.getAllKeys().find { it.alias == keyAlias }
+                val line = key?.let(KeyInstall::line)
+                if (key == null || line == null) {
+                    val refused = KeyInstallResult(false, app.getString(R.string.key_install_no_public_key))
+                    serverIds.forEach { keyInstallResults[it] = refused }
+                    return@launch
+                }
+                val gate = Semaphore(KeyInstall.PARALLEL_HOSTS)
+                coroutineScope {
+                    serverIds.map { id ->
+                        async {
+                            gate.withPermit {
+                                val result = try {
+                                    installKeyOn(id, key, line, useForSignIn)
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    KeyInstallResult(false, app.getString(R.string.key_install_not_reached, e.message ?: "unknown error"))
+                                }
+                                withContext(Dispatchers.Main) { keyInstallResults[id] = result }
+                            }
+                        }
+                    }.awaitAll()
+                }
+            } finally {
+                keyInstallRunning = false
+            }
+        }
+    }
+
+    private suspend fun installKeyOn(serverId: Int, key: SshKeyEntity, line: String, useForSignIn: Boolean): KeyInstallResult {
+        val app = getApplication<Application>()
+        val srv = repository.getServerById(serverId) ?: return KeyInstallResult(false, app.getString(R.string.key_install_host_gone))
+        val probe = executeSshCommand(srv, RemoteCommands.OS_PROBE)
+        if (!ranOnHost(probe)) return KeyInstallResult(false, app.getString(R.string.key_install_not_reached, probe.removePrefix("SSH Error:").trim()))
+        if (!RemoteCommands.hasUnixShell(hostOs(srv, probe))) return KeyInstallResult(false, app.getString(R.string.key_install_windows))
+        val installed = when (val outcome = KeyInstall.outcome(executeSshCommand(srv, KeyInstall.COMMAND, stdin = line))) {
+            KeyInstall.Outcome.Added -> true
+            KeyInstall.Outcome.AlreadyThere -> false
+            is KeyInstall.Outcome.Failed -> return KeyInstallResult(false, app.getString(R.string.key_install_failed, outcome.reason))
+            is KeyInstall.Outcome.NotReached -> return KeyInstallResult(false, app.getString(R.string.key_install_not_reached, outcome.reason))
+        }
+        if (KeyInstall.onSecurityKey(key)) {
+            return KeyInstallResult(true, app.getString(if (installed) R.string.key_install_added_security_key else R.string.key_install_present_security_key))
+        }
+        val keyOnly = buildCredentials(srv).copy(password = null, privateKeyPem = key.privateKey, passphrase = null, certificate = null, keyOnly = true)
+        sshTransport.testConnection(keyOnly)?.let {
+            return KeyInstallResult(false, app.getString(if (installed) R.string.key_install_added_refused else R.string.key_install_present_refused))
+        }
+        val done = app.getString(if (installed) R.string.key_install_added_works else R.string.key_install_present_works)
+        if (!useForSignIn || (srv.authType == "key" && srv.authKeyAlias == key.alias)) return KeyInstallResult(true, done)
+        if (srv.authType == "profile") {
+            val profile = repository.getAllProfiles().find { it.id == srv.authProfileId }?.profileName.orEmpty()
+            return KeyInstallResult(true, done + " " + app.getString(R.string.key_install_profile_kept, profile))
+        }
+        val saved = CompletableDeferred<String?>()
+        withContext(Dispatchers.Main) { updateServer(srv.copy(authType = "key", authKeyAlias = key.alias)) { saved.complete(it) } }
+        saved.await()?.let { error -> return KeyInstallResult(false, done + " " + app.getString(R.string.key_install_not_switched, error)) }
+        return KeyInstallResult(true, done + " " + app.getString(R.string.key_install_switched, key.alias))
+    }
+
+    /**
+     * Set when [openRunbook] has filled in Broadcast; Fleet then asks to run it, with the same
+     * confirmation as the Run button, and clears it. Nothing runs without that confirmation.
+     */
+    var pendingRunbookConfirm by mutableStateOf(false)
+
+    /**
+     * Opens Fleet → Broadcast with [ruleId]'s runbook as the command and [serverId] as the only
+     * target, then asks to run it. While another broadcast runs, it only shows that one, which it
+     * leaves alone. Does nothing when the rule has no runbook (any more).
+     */
+    fun openRunbook(ruleId: Int, serverId: Int) {
+        viewModelScope.launch {
+            val rule = repository.getAllRules().find { it.id == ruleId } ?: return@launch
+            val script = rule.runbookScriptId?.let { id -> repository.getAllScripts().find { it.id == id } } ?: return@launch
+            if (repository.getServerById(serverId) == null) return@launch
+            fleetTabIndex = 1
+            if (isBroadcastExecuting) {
+                navigateTo(Screen.Fleet)
+                return@launch
+            }
+            broadcastTargetMode = FleetTargetMode.Servers
+            broadcastTargetServerIds.clear()
+            broadcastTargetServerIds.add(serverId)
+            broadcastCommandText = script.command
+            broadcastPreset = script
+            navigateTo(Screen.Fleet)
+            pendingRunbookConfirm = true
         }
     }
 
@@ -4930,6 +5544,7 @@ class AppViewModel @JvmOverloads constructor(
         triggerWindow: String,
         notes: String = "",
         target: String = "",
+        runbookScriptId: Int? = null,
     ) {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
@@ -4941,11 +5556,15 @@ class AppViewModel @JvmOverloads constructor(
                 triggerWindow = triggerWindow,
                 notes = notes,
                 target = target,
+                runbookScriptId = runbookScriptId,
             )
             repository.insertRule(rule)
             if (EndpointChecks.isEndpointMetric(metricName)) {
                 // Check it now rather than at the next poll, so the rule list shows a result.
                 startEndpointChecks()
+            } else if (HostChecks.isHostCheck(metricName)) {
+                hostChecksDueAt.clear()
+                evaluateCachedAlertTargets(serverId)
             } else {
                 // Start the sustained window from the current observed value when available. Without
                 // this, a newly created five-minute rule waits for the next poll before its clock starts.
@@ -4957,7 +5576,9 @@ class AppViewModel @JvmOverloads constructor(
     private suspend fun evaluateCachedAlertTargets(serverId: Int) {
         val targets = repository.getAllServers().filter { serverId == 0 || it.id == serverId }
         for (server in targets) {
+            if (probedServerIds[server.id] == true) evaluateHostOffline(server)
             val metrics = hostMetricsById[server.id] ?: continue
+            startHostChecks(server, metrics.disks)
             evaluateAlertRules(
                 server,
                 metrics.cpuPercent,
@@ -5032,6 +5653,19 @@ class AppViewModel @JvmOverloads constructor(
         for (preset in presets) repository.insertScript(preset)
     }
 
+    /**
+     * Moves every stored preset row that still equals a [retiredPresetScripts] entry to the current
+     * preset with the same key, keeping its id and place. Edited rows are left alone.
+     */
+    private suspend fun upgradeRetiredPresetScripts() {
+        val current = (builtInFleetPresets + homelabPresetScripts).associateBy { it.presetKey }
+        repository.getAllScripts().forEach { stored ->
+            val retired = retiredPresetScripts.any { it.presetKey == stored.presetKey && it == stored.copy(id = 0) }
+            val replacement = current[stored.presetKey]
+            if (retired && replacement != null) repository.insertScript(replacement.copy(id = stored.id))
+        }
+    }
+
     /** Remove the seeded rows for one preset family, keeping the user's own scripts. */
     private suspend fun removePresetScripts(presets: List<QuickScriptEntity>) {
         val keys = presets.mapNotNull { it.presetKey }.toSet()
@@ -5062,32 +5696,6 @@ class AppViewModel @JvmOverloads constructor(
     fun deleteFleetPreset(preset: QuickScriptEntity) {
         deleteQuickScript(preset)
     }
-
-    /**
-     * Curated read-mostly command snippets popular in the homelab community (Proxmox VE, CasaOS,
-     * Home Assistant, Linux, plus general ops). Toggled on/off from Scripts.
-     */
-    private val homelabPresetScripts: List<QuickScriptEntity> = listOf(
-        QuickScriptEntity(0, "PVE", "PVE: list VMs", "qm list", "orange", false, "Proxmox", presetKey = "homelab.pve_vms"),
-        QuickScriptEntity(0, "PCT", "PVE: list containers", "pct list", "orange", false, "Proxmox", presetKey = "homelab.pve_containers"),
-        QuickScriptEntity(0, "CLS", "PVE: cluster status", "pvecm status 2>/dev/null || echo 'standalone node'", "orange", false, "Proxmox", presetKey = "homelab.pve_cluster"),
-        QuickScriptEntity(0, "STO", "PVE: storage status", "pvesm status", "orange", false, "Proxmox", presetKey = "homelab.pve_storage"),
-        QuickScriptEntity(0, "RUN", "PVE: start VM <id>", "qm start 100", "orange", false, "Proxmox", presetKey = "homelab.pve_start_vm"),
-        QuickScriptEntity(0, "STP", "PVE: stop VM <id>", "qm stop 100", "orange", false, "Proxmox", presetKey = "homelab.pve_stop_vm"),
-        QuickScriptEntity(0, "CAS", "CasaOS: status", "systemctl status 'casaos*' --no-pager 2>&1 | head -40", "green", false, "CasaOS", presetKey = "homelab.casaos_status"),
-        QuickScriptEntity(0, "RST", "CasaOS: restart", "sudo systemctl restart 'casaos*'", "green", false, "CasaOS", presetKey = "homelab.casaos_restart"),
-        QuickScriptEntity(0, "VER", "CasaOS: version", "casaos -v 2>/dev/null || cat /etc/casaos/* 2>/dev/null | head", "green", false, "CasaOS", presetKey = "homelab.casaos_version"),
-        QuickScriptEntity(0, "HA", "HA: info", "ha info 2>/dev/null || docker ps --filter name=homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_info"),
-        QuickScriptEntity(0, "LOG", "HA: core logs", "ha core logs 2>/dev/null || docker logs --tail 100 homeassistant 2>&1", "cyan", false, "Home Assistant", presetKey = "homelab.ha_core_logs"),
-        QuickScriptEntity(0, "RST", "HA: restart core", "ha core restart 2>/dev/null || docker restart homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_restart_core"),
-        QuickScriptEntity(0, "SUP", "HA: supervisor logs", "ha supervisor logs 2>/dev/null | tail -100", "cyan", false, "Home Assistant", presetKey = "homelab.ha_supervisor_logs"),
-        QuickScriptEntity(0, "TMP", "Temperature", "if [ \"\$(uname -s 2>/dev/null)\" = Linux ]; then max=\"\"; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r \"\$f\" ] || continue; v=\$(cat \"\$f\" 2>/dev/null); case \"\$v\" in ''|*[!0-9]*) continue;; esac; [ -z \"\$max\" ] || [ \"\$v\" -gt \"\$max\" ] && max=\"\$v\"; done; if [ -n \"\$max\" ]; then awk -v t=\"\$max\" 'BEGIN { printf \"CPU %.1f°C\\n\", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo \"No thermal sensor exposed\"; fi; else echo \"Temperature preset supports Linux hosts\"; fi", "red", false, "Linux", presetKey = "homelab.temperature"),
-        QuickScriptEntity(0, "UPD", "Updates available", "apt list --upgradable 2>/dev/null | tail -n +2 || (command -v dnf >/dev/null && dnf check-update)", "amber", false, "Homelab", presetKey = "homelab.updates"),
-        QuickScriptEntity(0, "RBT", "Reboot required?", "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'", "amber", false, "Homelab", presetKey = "homelab.reboot_required"),
-        QuickScriptEntity(0, "CPU", "Top 10 by CPU", "ps aux --sort=-%cpu | head -11", "purple", false, "Homelab", presetKey = "homelab.top_cpu"),
-        QuickScriptEntity(0, "CTR", "Docker stats", "docker stats --no-stream 2>/dev/null || podman stats --no-stream", "purple", false, "Homelab", presetKey = "homelab.docker_stats"),
-        QuickScriptEntity(0, "DSK", "Disk usage", "df -h | grep -vE 'tmpfs|udev'", "purple", false, "Homelab", presetKey = "homelab.disk_usage"),
-    )
 
     /** Enable/disable the homelab preset scripts. Disabling removes the (default) presets. */
     fun toggleHomelabPresets(enabled: Boolean) {
@@ -5313,11 +5921,12 @@ class AppViewModel @JvmOverloads constructor(
 
     /**
      * One-shot prefill for the Add-server sheet, set when saving a discovered host as a real
-     * OmniTerm host. Only the address and a suggested name — the sheet stays a normal empty add
-     * form for everything else (credentials, port, group), so nothing is written until the user
-     * saves and the first-connect host-key trust gate applies exactly as for any new host.
+     * OmniTerm host, or adding an `ssh://` link's host. Only the address, a suggested name and, from
+     * a link, its port and user — the sheet stays a normal empty add form for everything else
+     * (credentials, group), so nothing is written until the user saves and the first-connect
+     * host-key trust gate applies exactly as for any new host.
      */
-    data class NewServerPrefill(val host: String, val suggestedName: String, val port: Int = 22)
+    data class NewServerPrefill(val host: String, val suggestedName: String, val port: Int = 22, val username: String? = null)
 
     var pendingNewServerPrefill by mutableStateOf<NewServerPrefill?>(null)
         private set
@@ -5458,13 +6067,7 @@ class AppViewModel @JvmOverloads constructor(
                 async {
                     limiter.withPermit {
                         val hostname = resolveLanHostname(host)
-                        val open = hostScanPorts.filter { port ->
-                            try {
-                                java.net.Socket().use { s ->
-                                    s.connect(java.net.InetSocketAddress(host, port), 250); true
-                                }
-                            } catch (_: Exception) { false }
-                        }
+                        val open = hostScanPorts.filter { port -> canConnect(host, port, 250) }
                         host to (hostname to open)
                     }
                 }
@@ -5578,43 +6181,10 @@ class AppViewModel @JvmOverloads constructor(
     // ── SSH TERMINAL (interactive PTY shell) ──
 
     /** Resolve a [ServerEntity] (+ referenced key/profile rows) into flat credentials. */
-    private suspend fun buildCredentials(srv: ServerEntity): SshCredentials {
-        // Read keys/profiles straight from the DB. The `keys`/`profiles` StateFlows are
-        // `WhileSubscribed`, so when this runs with no active UI collector (telemetry, a
-        // background exec, the test-connection probe) `.value` is the initial emptyList() and
-        // the private key is silently dropped — which surfaced to the user as "invalid
-        // credentials" for key/profile auth even when the key was correct.
-        val allKeys = repository.getAllKeys()
-        var user = srv.username
-        var pass: String? = srv.authPassword
-        var key: SshKeyEntity? = null
-        when (srv.authType) {
-            "key" -> key = allKeys.find { it.alias == srv.authKeyAlias }
-            "profile" -> repository.getAllProfiles().find { it.id == srv.authProfileId }?.let { p ->
-                user = p.username
-                if (p.authType == "password") pass = p.password
-                else key = allKeys.find { it.alias == p.keyAlias }
-            }
-        }
-        val proxyKey = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
-        return SshCredentials(
-            srv.host, srv.port, user, pass, key?.privateKey,
-            proxyType = srv.proxyType,
-            proxyHost = srv.proxyHost,
-            proxyPort = srv.proxyPort,
-            proxyUser = srv.proxyUser,
-            proxyPassword = srv.proxyPassword,
-            proxyKeyPem = proxyKey?.privateKey,
-            certificate = key?.certificate,
-            proxyCertificate = proxyKey?.certificate,
-            keepAliveSeconds = srv.keepAlive,
-            compression = srv.sshCompression,
-            agentForwarding = srv.agentForwarding,
-            // Known Unix hosts only: the OS probe itself, and anything sent before it answers, go
-            // to the login shell as written.
-            posixShell = osByServer[srv.id]?.let(RemoteCommands::hasUnixShell) == true,
-        )
-    }
+    private suspend fun buildCredentials(srv: ServerEntity): SshCredentials =
+        // Known Unix hosts only: the OS probe itself, and anything sent before it answers, go to
+        // the login shell as written.
+        HostCredentials.build(repository, srv, posixShell = osByServer[srv.id]?.let(RemoteCommands::hasUnixShell) == true)
 
     /** [srv]'s credentials for a command the user wrote, which runs in the user's own login shell. */
     private suspend fun loginShellCredentials(srv: ServerEntity): SshCredentials =
@@ -9561,8 +10131,8 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun startPing(host: String, count: Int) {
         if (pingRunning) return
-        val target = host.trim()
-        if (target.isEmpty() || !target.all { it.isLetterOrDigit() || it in ".-:%_[]" }) {
+        val target = EndpointChecks.pingHost(host)
+        if (target == null) {
             pingLines = listOf("Enter a valid hostname or IP address.")
             return
         }
@@ -9706,8 +10276,9 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun startTraceroute(host: String) {
         if (tracerouteRunning) return
-        val target = host.trim()
-        if (target.isEmpty() || !target.all { it.isLetterOrDigit() || it in ".-:%_[]" }) {
+        // The same rule as ping: one name or address, never an option.
+        val target = EndpointChecks.pingHost(host)
+        if (target == null) {
             tracerouteLines = listOf("Enter a valid hostname or IP address.")
             return
         }
@@ -10172,12 +10743,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     private fun canConnect(host: String, port: Int, timeoutMs: Int): Boolean =
-        runCatching {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(host, port), timeoutMs)
-                true
-            }
-        }.getOrDefault(false)
+        EndpointChecks.connect(host, port, timeoutMs).first >= 0f
 
     private fun expandScanTargets(input: String): List<String> {
         val trimmed = input.trim()
@@ -12763,8 +13329,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** A picked device file's name for its remote copy; [index] keeps unnamed picks in one batch apart. */
     private fun pickedUploadName(context: android.content.Context, uri: android.net.Uri, index: Int): String =
-        contentDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
-            ?: "upload_${System.currentTimeMillis()}_${index + 1}"
+        deviceUploadName(context, uri) ?: "upload_${System.currentTimeMillis()}_${index + 1}"
 
     /**
      * Uploads the device file [uri] to [stagedPath] and returns its size, 0 when the device does
@@ -12878,9 +13443,121 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.insertSetting("broadcast_in_tmux", on.toString()) }
     }
 
+    /** Rolling runs: how many hosts start at a time (one of [BROADCAST_BATCH_SIZES]); 0 is all at once. */
+    fun updateBroadcastBatchSize(size: Int) {
+        broadcastBatchSize = size.takeIf { it in BROADCAST_BATCH_SIZES } ?: 0
+        viewModelScope.launch { repository.insertSetting("broadcast_batch_size", broadcastBatchSize.toString()) }
+    }
+
+    /** In a rolling run, leave the remaining hosts alone once a host in a batch fails. */
+    fun updateBroadcastStopOnFailure(on: Boolean) {
+        broadcastStopOnFailure = on
+        viewModelScope.launch { repository.insertSetting("broadcast_stop_on_failure", on.toString()) }
+    }
+
+    /** Hosts on the cards that did not succeed: failed, or not run after a failure or a stop. */
+    val broadcastRetryableIds: List<Int>
+        get() = broadcastResults.filter { it.status == BroadcastStatus.Failure || it.status == BroadcastStatus.NotRun }.map { it.serverId }
+
+    /**
+     * Runs the last command again, with the same values, on [ids] (the hosts that did not succeed,
+     * as the confirmation listed them); the other cards keep their results.
+     */
+    fun retryFailedBroadcastHosts(ids: List<Int> = broadcastRetryableIds) {
+        if (ids.isEmpty() || isBroadcastExecuting || lastBroadcastCommand.isBlank()) return
+        runFleetBroadcast(lastBroadcastCommand, ids, lastBroadcastParams, keepOtherResults = true, source = FleetRunHistory.SOURCE_RETRY)
+    }
+
+    /** The last run as plain text, one section per host, for Share. */
+    fun broadcastReport(): String =
+        fleetReport(ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams), broadcastResults, BROADCAST_OUTPUT_MAX_CHARS)
+
+    /** A run from the history as plain text, as [broadcastReport] words the last run. */
+    fun fleetRunReport(run: FleetRunEntity, hosts: List<BroadcastResultItem>): String =
+        fleetReport(run.command, hosts, FleetRunHistory.OUTPUT_CHARS)
+
+    private fun fleetReport(command: String, hosts: List<BroadcastResultItem>, keptChars: Int): String {
+        val app = getApplication<Application>()
+        return buildString {
+            appendLine("$ $command")
+            hosts.forEach { item ->
+                appendLine()
+                appendLine("== ${item.serverName} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
+                if (item.truncated) appendLine(app.getString(R.string.broadcast_output_truncated, keptChars))
+                if (item.output.isNotBlank()) appendLine(item.output.trimEnd())
+            }
+        }.trimEnd() + "\n"
+    }
+
+    /** The visible cards go; the history keeps the runs. */
+    fun clearBroadcastOutputs() {
+        if (isBroadcastExecuting) return
+        broadcastResults.clear()
+        broadcastCardRun.clear()
+        historyRuns.clear()
+    }
+
+    /** One run's hosts from the history, as cards. */
+    suspend fun fleetRunResults(runId: Int): List<BroadcastResultItem> =
+        repository.fleetRunHosts(runId).map { host ->
+            BroadcastResultItem(
+                serverId = host.serverId,
+                serverName = host.serverName,
+                output = host.output,
+                status = BroadcastStatus.entries.firstOrNull { it.name == host.status } ?: BroadcastStatus.Failure,
+                truncated = host.truncated,
+                note = host.note,
+            )
+        }
+
+    fun deleteFleetRun(runId: Int) {
+        viewModelScope.launch { repository.deleteFleetRun(runId) }
+    }
+
+    fun clearFleetRunHistory() {
+        viewModelScope.launch { repository.clearFleetRuns() }
+    }
+
+    /**
+     * Puts [run]'s command back into Broadcast, with the saved script it came from when that still
+     * has the same command, and its hosts that still exist as the targets. It does not run it: Run
+     * asks first, and for the `{{placeholder}}` values again, which the history does not keep.
+     */
+    fun loadFleetRunIntoBroadcast(run: FleetRunEntity, serverIds: List<Int>) {
+        if (isBroadcastExecuting) return
+        viewModelScope.launch {
+            val known = repository.getAllServers().map { it.id }.toSet()
+            val script = run.scriptName?.let { name -> repository.getAllScripts().firstOrNull { it.name == name && it.command.trim() == run.command } }
+            broadcastCommandText = run.command
+            broadcastPreset = script
+            broadcastTargetMode = FleetTargetMode.Servers
+            broadcastTargetServerIds.clear()
+            broadcastTargetServerIds.addAll(serverIds.filter { it in known })
+        }
+    }
+
     /** The last run's command and tmux run id, for a host that installs tmux or reconnects later. */
-    private var lastBroadcastCommand = ""
+    var lastBroadcastCommand = ""
+        private set
+    /** The last run's values for the command's `{{placeholders}}` (see [ScriptParams]). */
+    var lastBroadcastParams: Map<String, String> = emptyMap()
+        private set
     private var lastBroadcastRunId = ""
+    private var lastBroadcastScriptName: String? = null
+
+    /** A run on the cards, for the history: saved when it ends, and again when a host in it finishes later. */
+    private class PendingFleetRun(
+        val runKey: String,
+        val startedAt: Long,
+        val command: String,
+        val scriptName: String?,
+        val source: String,
+        var dirty: Boolean = true,
+    )
+    /** The runs whose cards are on screen, by run id. */
+    private val historyRuns = linkedMapOf<String, PendingFleetRun>()
+    /** The run each card belongs to: a retry takes over the cards it runs again. */
+    private val broadcastCardRun = mutableMapOf<Int, String>()
     /** Hosts the app runs or follows again on their own, after the broadcast itself ended. */
     private val broadcastHostJobs = mutableMapOf<Int, Job>()
     /** Set by Stop, so cancelling ends the tmux runs on the hosts; leaving the app does not. */
@@ -12889,27 +13566,85 @@ class AppViewModel @JvmOverloads constructor(
     private val broadcastReconnectNow = java.util.concurrent.ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
 
     private fun updateBroadcastExecuting() {
+        val was = isBroadcastExecuting
         isBroadcastExecuting = broadcastJob?.isActive == true || broadcastHostJobs.values.any { it.isActive }
+        if (was && !isBroadcastExecuting) saveFleetRunHistory()
+    }
+
+    /**
+     * Saves the runs on the cards that changed since they were last saved, now that nothing runs:
+     * each with the hosts whose cards it still has. Leaving the app ends a plain run, so a save
+     * then goes to the process scope, which outlives this model.
+     */
+    private fun saveFleetRunHistory() {
+        val now = System.currentTimeMillis()
+        val saves = historyRuns.values.filter { it.dirty }.map { run ->
+            run.dirty = false
+            val hosts = broadcastResults.filter { broadcastCardRun[it.serverId] == run.runKey }.map { item ->
+                FleetRunHistory.host(item.serverId, item.serverName, item.status.name, item.note, item.output, item.truncated)
+            }
+            FleetRunEntity(
+                runKey = run.runKey,
+                startedAt = run.startedAt,
+                finishedAt = now,
+                command = run.command,
+                scriptName = run.scriptName,
+                source = run.source,
+            ) to hosts
+        }
+        // A run a retry took every card from is saved already and is done with.
+        historyRuns.values.removeAll { run -> run.runKey !in broadcastCardRun.values }
+        if (saves.isEmpty()) return
+        val scope = if (viewModelScope.isActive) viewModelScope else TerminalSessionManager.scope
+        scope.launch {
+            for ((run, hosts) in saves) {
+                try {
+                    repository.recordFleetRun(run, hosts)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    android.util.Log.w("OmniTermFleet", "Saving a run to the history failed", e)
+                }
+            }
+        }
     }
 
     /**
      * Executes [command] on the broadcast targets. When [resolvedIds] is given (the list the user
      * just confirmed in the dialog), exactly those hosts are hit — group/online membership is NOT
-     * re-evaluated here, so the set can't drift between confirmation and execution.
+     * re-evaluated here, so the set can't drift between confirmation and execution. [paramValues]
+     * fill the command's `{{placeholders}}`, quoted for each host's own shell.
      */
-    fun runFleetBroadcast(command: String, resolvedIds: List<Int>? = null) {
+    fun runFleetBroadcast(
+        command: String,
+        resolvedIds: List<Int>? = null,
+        paramValues: Map<String, String> = emptyMap(),
+        keepOtherResults: Boolean = false,
+        // FleetRunHistory.SOURCE_*, for the run history.
+        source: String = FleetRunHistory.SOURCE_FLEET,
+    ) {
         if (command.isBlank()) return
         if (isBroadcastExecuting) return
         val cmd = command.trim()
+        // A retry runs the last command again, whatever the picker shows now.
+        val scriptName = if (source == FleetRunHistory.SOURCE_RETRY) lastBroadcastScriptName
+        else broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
         val targetIds = broadcastTargetServerIds.toList()
         val targetGroups = broadcastTargetGroups.toList()
         val inTmux = broadcastInTmux
+        val batchSize = broadcastBatchSize
+        val stopOnFailure = broadcastStopOnFailure && batchSize > 0
         val runId = UUID.randomUUID().toString().replace("-", "").take(10)
         lastBroadcastCommand = cmd
+        lastBroadcastParams = paramValues
         lastBroadcastRunId = runId
+        lastBroadcastScriptName = scriptName
         broadcastStopRequested = false
         isBroadcastExecuting = true
-        broadcastResults.clear()
+        if (!keepOtherResults) {
+            broadcastResults.clear()
+            broadcastCardRun.clear()
+            historyRuns.clear()
+        }
 
         broadcastJob = viewModelScope.launch {
             val allServers = repository.getAllServers()
@@ -12918,7 +13653,8 @@ class AppViewModel @JvmOverloads constructor(
                 // can change between confirmation and execution (or simply be stale after resume),
                 // so do not silently drop an explicitly confirmed host here; attempt it and surface
                 // the real SSH result for that row.
-                resolvedIds != null -> allServers.filter { it.id in resolvedIds }
+                // In the confirmed order, which a rolling run's batches follow.
+                resolvedIds != null -> allServers.associateBy { it.id }.let { byId -> resolvedIds.distinct().mapNotNull(byId::get) }
                 broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.status == "online" && it.id in targetIds }
                 else -> allServers.filter { it.status == "online" && it.groupName.orEmpty() in targetGroups }
             }
@@ -12926,6 +13662,8 @@ class AppViewModel @JvmOverloads constructor(
                 isBroadcastExecuting = false
                 return@launch
             }
+            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source)
+            selected.forEach { broadcastCardRun[it.id] = runId }
             val operationId = "fleet-broadcast-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
@@ -12935,28 +13673,51 @@ class AppViewModel @JvmOverloads constructor(
             )
             var succeeded = false
             var cancelled = false
-            broadcastResults.addAll(selected.map { BroadcastResultItem(serverId = it.id, serverName = it.name) })
-            val limiter = Semaphore(6)
-            suspend fun runAll() = coroutineScope {
-                selected.map { srv ->
+            // A rolling run's later hosts wait their turn; the rest start at once.
+            val batches = broadcastBatches(selected, batchSize)
+            val waiting = if (batches.size > 1) BroadcastStatus.Waiting else BroadcastStatus.Running
+            val fresh = selected.map { BroadcastResultItem(serverId = it.id, serverName = it.name, status = waiting) }
+            if (keepOtherResults) {
+                fresh.forEach { item ->
+                    val index = broadcastResults.indexOfFirst { it.serverId == item.serverId }
+                    if (index >= 0) broadcastResults[index] = item else broadcastResults.add(item)
+                }
+            } else {
+                broadcastResults.addAll(fresh)
+            }
+            val app = getApplication<Application>()
+            val limiter = Semaphore(BROADCAST_PARALLEL)
+            suspend fun runBatch(batch: List<ServerEntity>) = coroutineScope {
+                batch.map { srv ->
                     async {
                         limiter.withPermit {
+                            updateBroadcastResult(srv.id) { it.copy(status = BroadcastStatus.Running) }
                             if (inTmux) broadcastHostInTmux(srv, cmd, runId) else broadcastHostPlain(srv, cmd)
                         }
                     }
                 }.awaitAll()
             }
             try {
-                // A tmux run outlives a dropped connection, so it is not cut off at the plain
-                // broadcast's limit; Stop ends it.
-                if (inTmux) runAll() else withTimeout(BROADCAST_TIMEOUT_MS) { runAll() }
-                succeeded = broadcastResults.all { it.status == BroadcastStatus.Success }
+                for ((index, batch) in batches.withIndex()) {
+                    // A tmux run outlives a dropped connection, so it is not cut off at the plain
+                    // broadcast's limit; Stop ends it. The limit is per batch, so a long rolling run
+                    // is not cut off at the total.
+                    if (inTmux) runBatch(batch) else withTimeout(BROADCAST_TIMEOUT_MS) { runBatch(batch) }
+                    val failed = batch.firstOrNull { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status != BroadcastStatus.Success }
+                    if (stopOnFailure && failed != null && index < batches.lastIndex) {
+                        markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_after_failure, failed.name))
+                        break
+                    }
+                }
+                succeeded = selected.all { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status == BroadcastStatus.Success }
             } catch (e: TimeoutCancellationException) {
-                markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_timed_out, BROADCAST_TIMEOUT_MS / 60_000))
+                markRunningBroadcastsFailed(app.getString(R.string.broadcast_timed_out, BROADCAST_TIMEOUT_MS / 60_000))
+                markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_timed_out))
             } catch (e: CancellationException) {
                 cancelled = true
                 if (inTmux && broadcastStopRequested) stopBroadcastTmuxRuns(selected.map { it.id })
-                markRunningBroadcastsFailed(getApplication<Application>().getString(R.string.broadcast_stopped))
+                markRunningBroadcastsFailed(app.getString(R.string.broadcast_stopped))
+                markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_stopped))
             } finally {
                 broadcastJob = null
                 updateBroadcastExecuting()
@@ -12982,16 +13743,22 @@ class AppViewModel @JvmOverloads constructor(
      * shell. Null for anything else, which the user wrote for their own shell.
      */
     private suspend fun builtInPresetCommand(srv: ServerEntity, cmd: String): String? {
-        val preset = builtInFleetPresets.firstOrNull { it.command == cmd } ?: return null
-        return if (RemoteCommands.hasUnixShell(hostOs(srv))) cmd
-        else fleetPresetWindowsScripts[preset.presetKey]?.let(RemoteCommands::powershell)
+        if (builtInFleetPresets.none { it.command == cmd }) return null
+        return builtInPresetCommandFor(cmd, hostOs(srv))
     }
 
-    private suspend fun broadcastHostPlain(srv: ServerEntity, cmd: String) {
+    /**
+     * [template] as [srv] runs it: the last run's placeholder values quoted for its shell. Throws
+     * [ScriptParams.UnsafeValueException] when a value cannot be passed to that shell safely.
+     */
+    private suspend fun broadcastCommandFor(srv: ServerEntity, template: String): String =
+        if (!ScriptParams.hasParams(template)) template
+        else ScriptParams.fill(template, lastBroadcastParams, ScriptParams.shellFor(hostOs(srv)))
+
+    private suspend fun broadcastHostPlain(srv: ServerEntity, template: String) {
         val result = try {
-            val preset = builtInPresetCommand(srv, cmd)
-            val creds = if (preset != null) buildCredentials(srv) else loginShellCredentials(srv)
-            sshTransport.execStream(creds, preset ?: cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            val (creds, command) = savedScriptRun(srv, broadcastCommandFor(srv, template))
+            sshTransport.execStream(creds, command) { chunk -> appendBroadcastChunk(srv.id, chunk) }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             "SSH Error: ${e.message ?: "unknown error"}"
@@ -13000,13 +13767,14 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Starts [cmd] on [srv] in the run's own tmux session (see [RemoteCommands.broadcastTmuxStart])
+     * Starts [template] on [srv] in the run's own tmux session (see [RemoteCommands.broadcastTmuxStart])
      * and follows its output. A host without tmux waits for the user to install it or to run the
      * command without tmux.
      */
-    private suspend fun broadcastHostInTmux(srv: ServerEntity, cmd: String, runId: String) {
+    private suspend fun broadcastHostInTmux(srv: ServerEntity, template: String, runId: String) {
         val app = getApplication<Application>()
         val started = try {
+            val cmd = broadcastCommandFor(srv, template)
             sshTransport.exec(
                 buildCredentials(srv),
                 RemoteCommands.broadcastTmuxStart(runId),
@@ -13105,10 +13873,7 @@ class AppViewModel @JvmOverloads constructor(
      * The exit status a finished broadcast [result] reports: 0 for plain output, the command's for
      * "command failed (N)", null when the connection, not the command, ended it.
      */
-    private fun broadcastExitStatus(result: String): Int? {
-        if (!result.startsWith("SSH Error")) return 0
-        return Regex("""^SSH Error: command failed \((\d+)\)""").find(result)?.groupValues?.get(1)?.toIntOrNull()
-    }
+    private fun broadcastExitStatus(result: String): Int? = sshCommandExit(result)
 
     private suspend fun cleanUpBroadcastTmux(creds: SshCredentials, runId: String) {
         runCatching { withTimeoutOrNull(20_000) { sshTransport.exec(creds, RemoteCommands.broadcastTmuxCleanup(runId)) } }
@@ -13155,6 +13920,7 @@ class AppViewModel @JvmOverloads constructor(
         if (broadcastHostJobs[serverId]?.isActive == true) return
         if (broadcastResults.none { it.serverId == serverId }) return
         broadcastStopRequested = false
+        broadcastCardRun[serverId]?.let { historyRuns[it]?.dirty = true }
         updateBroadcastResult(serverId) { it.copy(output = "", truncated = false, status = BroadcastStatus.Running, note = null) }
         val job = viewModelScope.launch {
             try {
@@ -13231,6 +13997,14 @@ class AppViewModel @JvmOverloads constructor(
                 status = if (exit == 0) BroadcastStatus.Success else BroadcastStatus.Failure,
                 note = note?.takeUnless { current.output.trimEnd().endsWith(it) },
             )
+        }
+    }
+
+    /** Hosts of a rolling run still waiting for their batch: they will not run now. */
+    private fun markWaitingBroadcastsNotRun(message: String) {
+        for (i in broadcastResults.indices) {
+            val current = broadcastResults[i]
+            if (current.status == BroadcastStatus.Waiting) broadcastResults[i] = current.copy(status = BroadcastStatus.NotRun, note = message)
         }
     }
 
@@ -13312,7 +14086,7 @@ class AppViewModel @JvmOverloads constructor(
                     "AAAA" -> 28
                     else -> 1
                 }
-                val queryBytes = serializeDnsQuery(target, type)
+                val queryBytes = serializeDnsQuery(target, type, java.security.SecureRandom().nextInt(0x10000))
                 val response = resolveDnsRaw(queryBytes)
                 val results = parseDnsResponse(response, response.size)
                 dnsLookupResults.addAll(results)
@@ -13653,6 +14427,39 @@ class AppViewModel @JvmOverloads constructor(
             alertHistoryLimit = next
             repository.pruneAlertHistoryPerServer(next)
         }
+    }
+
+    fun saveAutomationEnabled(enabled: Boolean) {
+        automationEnabled = enabled
+        viewModelScope.launch { repository.insertSetting(Automation.SETTING_ENABLED, enabled.toString()) }
+    }
+
+    /** Why [script] cannot be run by automation, or null when it can: Script Check's own rules. */
+    fun automationProblem(script: QuickScriptEntity?): String? =
+        UnattendedScripts.problem(script, script?.let { commandDangerHits(it.command) }.orEmpty(), UnattendedScripts.Runner.AUTOMATION)
+
+    /**
+     * Makes a token that runs [scriptId] on [serverIds] and hands it to [onCreated], the only time
+     * it is ever shown: only its hash is kept.
+     */
+    fun createAutomationGrant(scriptId: Int, serverIds: List<Int>, label: String, onCreated: (String) -> Unit) {
+        val token = Automation.newToken()
+        viewModelScope.launch {
+            repository.insertAutomationGrant(
+                AutomationGrantEntity(
+                    scriptId = scriptId,
+                    serverIds = Automation.joinServerIds(serverIds),
+                    tokenHash = Automation.hash(token),
+                    label = label.trim(),
+                    createdAt = System.currentTimeMillis(),
+                ),
+            )
+            withContext(Dispatchers.Main) { onCreated(token) }
+        }
+    }
+
+    fun revokeAutomationGrant(id: Int) {
+        viewModelScope.launch { repository.deleteAutomationGrant(id) }
     }
 
     fun saveAlertsEnabled(enabled: Boolean) {
@@ -14202,6 +15009,12 @@ class AppViewModel @JvmOverloads constructor(
             it.id in ruleIdsForBackup && (it.serverId == 0 || it.serverId in exportedServerIds)
         }
         val exportedRuleIds = rulesForBackup.mapTo(mutableSetOf()) { it.id }
+        // Script ids differ from device to device, so a rule names its scripts by category and
+        // name, the key a restore matches scripts by.
+        val scriptsById = scripts.associateBy { it.id }
+        fun scriptRef(id: Int?) = id?.let(scriptsById::get)?.let {
+            org.json.JSONObject().put("category", it.category).put("name", it.name)
+        }
         for (r in rulesForBackup) {
             ruleArr.put(org.json.JSONObject().apply {
                 put("id", r.id); put("serverId", r.serverId); put("metricName", r.metricName)
@@ -14209,7 +15022,12 @@ class AppViewModel @JvmOverloads constructor(
                 put("severity", r.severity); put("triggerWindow", r.triggerWindow); put("enabled", r.enabled)
                 put("notes", r.notes)
                 r.presetKey?.let { put("presetKey", it) }
-                if (r.target.isNotEmpty()) put("target", r.target)
+                if (r.metricName == HostChecks.SCRIPT_CHECK) {
+                    scriptRef(ScriptChecks.scriptId(r))?.let { put("targetScript", it) }
+                } else if (r.target.isNotEmpty()) {
+                    put("target", r.target)
+                }
+                scriptRef(r.runbookScriptId)?.let { put("runbookScript", it) }
             })
         }
         val historyArr = org.json.JSONArray()
@@ -14309,15 +15127,10 @@ class AppViewModel @JvmOverloads constructor(
             })
         }
         val settingsObj = org.json.JSONObject()
-        // Never back up device-local security settings (PIN, lock, biometrics) — they shouldn't
-        // travel between devices. Everything else (theme, retention, scoring, interval, …) is kept.
-        val securityKeys = setOf(
-            "app_pin", "app_lock_enabled", "biometrics_enabled",
-            "pin_failed_attempts", "pin_locked_until", "app_lock_grace_ms",
-        )
+        // Everything else (theme, retention, scoring, interval, …) is kept.
         if (closedSelection.settings) {
             for (st in settings) {
-                if (st.key in securityKeys || st.key.startsWith("sftp_last_path_")) continue
+                if (st.key in DEVICE_LOCAL_SETTINGS || st.key.startsWith("sftp_last_path_")) continue
                 settingsObj.put(st.key, st.value)
             }
         }
@@ -14976,6 +15789,13 @@ class AppViewModel @JvmOverloads constructor(
                             .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}|${it.target}" }.toMutableSet()
                         val ruleArr = root.optJSONArray("alertRules") ?: org.json.JSONArray()
                         val ruleIdMap = mutableMapOf<Int, Int>()
+                        // A rule names its scripts by category and name (see buildBackupJson); the
+                        // scripts above are restored first, so look them up on this device now.
+                        val scriptIdsByKey = repository.getAllScripts()
+                            .groupBy { it.category to it.name }.mapValues { (_, same) -> same.minOf { it.id } }
+                        fun restoredScriptId(ref: org.json.JSONObject?): Int? = ref?.let {
+                            scriptIdsByKey[it.optString("category", "General").ifBlank { "General" } to it.optString("name")]
+                        }
                         var importedRules = 0
                         for (i in 0 until if (closedSelection.alertRules) ruleArr.length() else 0) {
                             val o = ruleArr.getJSONObject(i)
@@ -14985,7 +15805,11 @@ class AppViewModel @JvmOverloads constructor(
                             val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
                             val window = o.optString("triggerWindow", "5m")
                             val metric = o.optString("metricName")
-                            val target = o.optString("target", "")
+                            val target = if (metric == HostChecks.SCRIPT_CHECK) {
+                                restoredScriptId(o.optJSONObject("targetScript"))?.toString().orEmpty()
+                            } else {
+                                o.optString("target", "")
+                            }
                             val key = "$mappedServerId|$metric|$threshold|$window|$target"
                             if (key in existingRuleKeys) {
                                 if (oldRuleId != 0) {
@@ -15003,6 +15827,7 @@ class AppViewModel @JvmOverloads constructor(
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
                                     target = target,
+                                    runbookScriptId = restoredScriptId(o.optJSONObject("runbookScript")),
                                 )
                             )
                             repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }?.let { restoredRule ->
@@ -15243,11 +16068,7 @@ class AppViewModel @JvmOverloads constructor(
                         val settingsObj = root.optJSONObject("settings")
                         var importedSettings = 0
                         if (settingsObj != null && closedSelection.settings) {
-                            // Defensive: never restore device-local security keys even if an old backup carried them.
-                            val securityKeys = setOf(
-                                "app_pin", "app_lock_enabled", "biometrics_enabled",
-                                "pin_failed_attempts", "pin_locked_until",
-                            )
+                            // Defensive: never restore device-local settings even if an old backup carried them.
                             val it = settingsObj.keys()
                             // Per-endpoint settings are keyed by the OLD server/share id; re-point them
                             // to the restored id. If the owning endpoint wasn't restored, skip the
@@ -15256,7 +16077,7 @@ class AppViewModel @JvmOverloads constructor(
                             val perSharePrefixes = listOf("share_bookmarks_")
                             while (it.hasNext()) {
                                 val originalKey = it.next()
-                                if (originalKey in securityKeys) continue
+                                if (originalKey in DEVICE_LOCAL_SETTINGS) continue
                                 var newKey = originalKey
                                 val prefix = perServerPrefixes.firstOrNull { p -> originalKey.startsWith(p) }
                                 if (prefix != null) {
@@ -15485,26 +16306,6 @@ internal fun parseTracerouteHop(ttl: Int, pingOutput: String, elapsedMs: Double)
     } else {
         TracerouteHop("%2d  *".format(ttl), false)
     }
-}
-
-internal fun serializeDnsQuery(target: String, type: Int): ByteArray {
-    val baos = java.io.ByteArrayOutputStream()
-    val dos = java.io.DataOutputStream(baos)
-    dos.writeShort(0x1234)
-    dos.writeShort(0x0100)
-    dos.writeShort(1)
-    dos.writeShort(0)
-    dos.writeShort(0)
-    dos.writeShort(0)
-    for (part in target.trim().trimEnd('.').split(".")) {
-        require(part.length <= 63) { "DNS label too long" }
-        dos.writeByte(part.length)
-        dos.write(part.toByteArray(Charsets.US_ASCII))
-    }
-    dos.writeByte(0)
-    dos.writeShort(type)
-    dos.writeShort(1)
-    return baos.toByteArray()
 }
 
 internal fun readName(data: ByteArray, startOffset: Int, packetLength: Int = data.size): Pair<String, Int> {

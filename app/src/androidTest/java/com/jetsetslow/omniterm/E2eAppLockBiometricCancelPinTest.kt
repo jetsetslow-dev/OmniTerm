@@ -1,6 +1,5 @@
 package com.jetsetslow.omniterm
 
-import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -199,7 +198,7 @@ class E2eAppLockBiometricCancelPinTest {
             await("final PIN unlock", 10_000) { !vm2.isAppLocked }
         } finally {
             // Dismiss any prompt left showing, then restore every touched setting.
-            shell("input keyevent 4")
+            DeviceShell.run("input keyevent 4")
             runCatching { awaitBiometricIdle() }
             for (key in touchedKeys) {
                 val original = before[key]
@@ -257,14 +256,14 @@ class E2eAppLockBiometricCancelPinTest {
     private suspend fun awaitBiometricSessionActive(pkg: String, phase: String, timeoutMs: Long = 15_000) {
         await(
             {
-                val session = shell("dumpsys biometric").lineSequence()
+                val session = DeviceShell.run("dumpsys biometric").lineSequence()
                     .firstOrNull { it.contains("CurrentSession") }?.trim()
                 "biometric session active [$phase] (inFlight=${BiometricCryptoGate.isAuthenticationInFlight}, " +
                     "ops=${activeAuthOperationCount(pkg)}, $session)"
             },
             timeoutMs,
         ) {
-            val bio = shell("dumpsys biometric")
+            val bio = DeviceShell.run("dumpsys biometric")
             bio.contains("CurrentSession") && !bio.contains("CurrentSession: null") &&
                 bio.contains("isCrypto: true") && activeAuthOperationCount(pkg) == 1
         }
@@ -294,7 +293,7 @@ class E2eAppLockBiometricCancelPinTest {
     }
 
     private suspend fun cancelPromptAndAwaitIdle() {
-        shell("input keyevent 4")
+        DeviceShell.run("input keyevent 4")
         awaitBiometricIdle()
         // The framework idles before androidx dispatches AuthenticationError to the client
         // executor. Later phases (recreation, re-prompt) require the single-flight release to
@@ -307,14 +306,14 @@ class E2eAppLockBiometricCancelPinTest {
     }
 
     private fun biometricSessionIdle(): Boolean =
-        shell("dumpsys biometric").contains("CurrentSession: null")
+        DeviceShell.run("dumpsys biometric").contains("CurrentSession: null")
 
     private fun currentBiometricRequestId(): String =
-        Regex("requestId: (\\d+)").find(shell("dumpsys biometric"))?.groupValues?.get(1) ?: ""
+        Regex("requestId: (\\d+)").find(DeviceShell.run("dumpsys biometric"))?.groupValues?.get(1) ?: ""
 
     /** Count of live fingerprint authentication operations owned by [pkg]. */
     private fun activeAuthOperationCount(pkg: String): Int =
-        shell("dumpsys fingerprint").lineSequence().count {
+        DeviceShell.run("dumpsys fingerprint").lineSequence().count {
             it.contains("Current operation") && it.contains("AuthenticationClient") && it.contains("owner=$pkg")
         }
 
@@ -325,11 +324,6 @@ class E2eAppLockBiometricCancelPinTest {
             focused
         }
     }
-
-    private fun shell(command: String): String =
-        ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
-        ).use { String(it.readBytes()) }
 
     private suspend fun await(label: String, timeoutMs: Long, predicate: suspend () -> Boolean) =
         await({ label }, timeoutMs, predicate)

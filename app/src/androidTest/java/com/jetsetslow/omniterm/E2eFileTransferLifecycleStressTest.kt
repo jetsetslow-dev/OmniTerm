@@ -1,7 +1,6 @@
 package com.jetsetslow.omniterm
 
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -165,10 +164,10 @@ class E2eFileTransferLifecycleStressTest {
             await("Wi-Fi upload progress", 20_000) {
                 vm.sftpTransfers.find { it.id == wifiRow.id }?.bytesTransferred ?: 0L >= 512 * 1024
             }
-            shell("svc wifi disable")
+            DeviceShell.run("svc wifi disable")
             delay(2_000)
             vm.cancelSftpTransfer(wifiRow.id)
-            shell("svc wifi enable")
+            DeviceShell.run("svc wifi enable")
             await("Wi-Fi-loss cancellation", 15_000) {
                 vm.sftpTransfers.find { it.id == wifiRow.id }?.status == SftpTransferStatus.Failure
             }
@@ -224,7 +223,7 @@ class E2eFileTransferLifecycleStressTest {
                 await("secondary navigate up", 25_000) { !vm.paneBLoading && vm.paneBPath == primaryPath }
             }
         } finally {
-            shell("svc wifi enable")
+            DeviceShell.run("svc wifi enable")
             composeRule.runOnUiThread {
                 vm.cancelAllRunningTransfers()
                 vm.closeShareBrowser()
@@ -282,15 +281,9 @@ class E2eFileTransferLifecycleStressTest {
         fs.delete(path, true)
     }
 
-    private fun shell(command: String) {
-        ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
-        ).use { it.readBytes() }
-    }
-
     private fun ensureDeviceAwake() {
-        shell("input keyevent KEYCODE_WAKEUP")
-        shell("wm dismiss-keyguard")
+        DeviceShell.run("input keyevent KEYCODE_WAKEUP")
+        DeviceShell.run("wm dismiss-keyguard")
     }
 
     private suspend fun await(label: String, timeoutMs: Long, predicate: suspend () -> Boolean) {

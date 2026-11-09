@@ -438,6 +438,8 @@ class JschSshTransport : SshTransport {
                 newSession(creds, interactiveAuth)
             }
             onPhaseChange?.invoke("Authenticating target…")
+            // Only a sign-in made here has a banner to show: a pooled one showed it when it signed in.
+            val signedInHere = shared == null
             if (!session.isConnected) session.connect(CONNECT_TIMEOUT_MS)
             channel = (session.openChannel("shell") as ChannelShell).apply {
                 setPtyType("xterm-256color")
@@ -454,7 +456,9 @@ class JschSshTransport : SshTransport {
             if (shared == null && jumped == null && (session.userInfo as? KeyboardInteractiveUserInfo)?.answeredByUser == true) {
                 shared = pool.adopt(creds, session)
             }
-            JschTerminalSession(session, channel, input, output, jumped, release = shared?.let { lease -> lease::close }).also {
+            val banner = (session.userInfo as? KeyboardInteractiveUserInfo)?.banner
+                ?.takeIf { signedInHere }?.let(::bannerForTerminal)
+            JschTerminalSession(session, channel, input, output, jumped, release = shared?.let { lease -> lease::close }, banner = banner).also {
                 cancellationHandle?.dispose()
             }
         } catch (e: CancellationException) {
@@ -542,6 +546,8 @@ private class JschTerminalSession(
     private val jumped: JumpedSession? = null,
     // Non-null when the session is the pool's (a sign-in the user answered): released, never closed.
     private val release: (() -> Unit)? = null,
+    // The host's pre-sign-in banner, already made safe for the terminal: shown before the shell's output.
+    private val banner: ByteArray? = null,
 ) : TerminalSession {
 
     private val outChannel = Channel<ByteArray>(OUTPUT_BUFFER_CHUNKS)
@@ -563,6 +569,7 @@ private class JschTerminalSession(
     private val reader = thread(start = true, isDaemon = true, name = "ssh-shell-reader") {
         val buf = ByteArray(8192)
         try {
+            banner?.let { outChannel.trySendBlocking(it) }
             while (true) {
                 val n = shellIn.read(buf)
                 if (n < 0) { remoteEof = true; break }

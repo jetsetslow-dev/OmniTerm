@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Host Offline and phone-side checks record nothing while the phone has no network. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- USB serial consoles and plugged-in security keys work on phones that can host USB devices;
          the app installs on any. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
@@ -42,6 +44,10 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
         </intent>
+        <!-- Tasker, which an automation run answers (Tools → Automation). On API 35 a broadcast
+             reached a package the app could not see anyway; this keeps it visible where a build
+             filters. -->
+        <package android:name="net.dinglisch.android.taskerm" />
     </queries>
 
     <!-- Android 15+ SystemUI obtains BiometricPrompt branding with
@@ -78,6 +84,31 @@
             <meta-data
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- ssh:// links and shares from other apps. It shows nothing and passes what it can use
+             to MainActivity in OmniTerm's own task (incoming/Incoming.kt). -->
+        <activity
+            android:name=".incoming.IncomingActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ssh" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
 
         <service
@@ -133,6 +164,44 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/omniterm_widget_info" />
         </receiver>
+
+        <!-- Automation (Tools → Automation): other apps run a saved script with a token the user
+             made. Exported because other apps send these; the token decides what runs, and an
+             unknown token gets no answer. -->
+        <receiver
+            android:name=".automation.AutomationReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.jetsetslow.omniterm.action.RUN_SCRIPT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- The Locale/Tasker plug-in: its fire receiver and its edit screen, as the plug-in spec
+             requires them. The edit screen only checks a pasted token; it makes none. -->
+        <receiver
+            android:name=".automation.TaskerFireReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
+            </intent-filter>
+        </receiver>
+
+        <activity
+            android:name=".automation.TaskerEditActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.MyApplication"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.EDIT_SETTING" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".automation.AutomationJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- yubikit-android declares two prompt activities OmniTerm never starts. -->
         <activity android:name="com.yubico.yubikit.android.ui.OtpActivity" tools:node="remove" />

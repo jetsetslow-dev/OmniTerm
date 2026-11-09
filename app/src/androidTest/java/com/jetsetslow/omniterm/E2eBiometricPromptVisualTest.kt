@@ -5,7 +5,6 @@ import android.graphics.Canvas
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.InsetDrawable
-import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
@@ -133,13 +132,8 @@ class E2eBiometricPromptVisualTest {
             )
         }
         delay(12_000)
-        if (!dismissed.isCompleted) shell("input keyevent KEYCODE_BACK")
+        if (!dismissed.isCompleted) DeviceShell.run("input keyevent KEYCODE_BACK")
         withTimeout(5_000) { dismissed.await() }
     }
 
-    private fun shell(command: String) {
-        ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
-        ).use { it.readBytes() }
-    }
 }

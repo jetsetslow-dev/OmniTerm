@@ -165,8 +165,6 @@ class KubeTest {
         )
     }
 
-    private fun shell(): File? = listOf("/bin/sh", "/usr/bin/sh").map(::File).firstOrNull { it.canExecute() }
-
     /** Runs [script] in sh with a kubectl that prints each argument it gets, and KUBECONFIG, a line each. */
     private fun runWithFakeKubectl(script: String, home: File): List<String> {
         val bin = temp.newFolder()
@@ -174,19 +172,14 @@ class KubeTest {
             writeText("#!/bin/sh\nprintf 'KUBECONFIG=%s\\n' \"\${KUBECONFIG:-}\"\nfor a in \"\$@\"; do printf '%s\\n' \"\$a\"; done\n")
             setExecutable(true)
         }
-        val process = ProcessBuilder(shell()!!.absolutePath, "-c", script).redirectErrorStream(true).apply {
-            environment().clear()
-            environment()["PATH"] = "${bin.absolutePath}:/usr/bin:/bin"
-            environment()["HOME"] = home.absolutePath
-        }.start()
-        val output = process.inputStream.bufferedReader().readText()
-        check(process.waitFor() == 0) { output }
-        return output.lines().filter { it.isNotEmpty() }
+        val run = TestShell.run(script, env = mapOf("PATH" to "${bin.absolutePath}:/usr/bin:/bin", "HOME" to home.absolutePath), clean = true)
+        check(run.exit == 0) { run.output }
+        return run.output.lines().filter { it.isNotEmpty() }
     }
 
     @Test
     fun generatedCommandsReachKubectlWithEveryArgumentIntact() {
-        assumeTrue("POSIX sh is required to run the generated commands", shell() != null)
+        assumeTrue("POSIX sh is required to run the generated commands", TestShell.sh != null)
         val home = temp.newFolder()
         val pod = KubePod("shop", "web-1", "Running", 1, 1, 0, "n", "", null, listOf("web"))
 

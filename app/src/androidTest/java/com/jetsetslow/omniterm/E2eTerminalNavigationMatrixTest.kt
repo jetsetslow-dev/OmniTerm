@@ -1,6 +1,5 @@
 package com.jetsetslow.omniterm
 
-import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -217,9 +216,9 @@ class E2eTerminalNavigationMatrixTest {
             }
 
             // System Back uses the same transaction and a dismissed dialog remains retryable.
-            shell("input keyevent KEYCODE_BACK")
+            DeviceShell.run("input keyevent KEYCODE_BACK")
             awaitPrompt("2 active SSH sessions")
-            shell("input keyevent KEYCODE_BACK")
+            DeviceShell.run("input keyevent KEYCODE_BACK")
             await("system dismiss", 5_000) { !vm.showDisconnectTerminalDialog }
             assertSplitAttached(vm, split)
             clickText("Monitor")
@@ -423,12 +422,6 @@ class E2eTerminalNavigationMatrixTest {
         assertEquals(sessions[1].id, vm.multiSshSessionId2)
         assertEquals(sessions.map { it.id }, vm.activeSessions.map { it.id })
         assertFalse(sessions.any { it.session.closed.value })
-    }
-
-    private fun shell(command: String) {
-        ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
-        ).use { it.readBytes() }
     }
 
     private suspend fun await(label: String, timeoutMs: Long, predicate: () -> Boolean) {

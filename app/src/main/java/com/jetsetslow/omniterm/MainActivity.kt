@@ -14,6 +14,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import com.jetsetslow.omniterm.incoming.Incoming
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.ExternalLaunchRequest
 import com.jetsetslow.omniterm.ui.MainAppScreen
@@ -153,6 +154,10 @@ class MainActivity : AppCompatActivity() {
         "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> add(ExternalLaunchRequest.OpenNetworkTools)
       }
       if (intent.data?.scheme == "omniterm" && intent.data?.host == "notification") {
+        // An alert's "Run" action (NotificationLinks.runbook).
+        intent.data?.pathSegments?.let(com.jetsetslow.omniterm.ui.NotificationLinks::parseRunbook)?.let { (ruleId, serverId) ->
+          add(ExternalLaunchRequest.OpenRunbook(ruleId, serverId))
+        }
         when (intent.data?.lastPathSegment) {
           "transfers" -> add(ExternalLaunchRequest.OpenTransfers)
           "network" -> add(ExternalLaunchRequest.OpenNetworkTools)
@@ -180,6 +185,14 @@ class MainActivity : AppCompatActivity() {
       intent.getIntExtra("shortcut_share_id", 0)
         .takeIf { intent.hasExtra("shortcut_share_id") && it > 0 }
         ?.let { add(ExternalLaunchRequest.OpenShare(it)) }
+
+      // A link or share, usually passed on by IncomingActivity. This activity is exported, so it
+      // applies the same rules again rather than trusting whoever started it.
+      when (val incoming = Incoming.read(this@MainActivity, intent)) {
+        null -> Unit
+        is Incoming.Unusable -> android.widget.Toast.makeText(this@MainActivity, incoming.reason, android.widget.Toast.LENGTH_LONG).show()
+        else -> add(ExternalLaunchRequest.FromApp(incoming))
+      }
     }
 
     // Notification disconnect actions are handled by the non-exported SessionService. The exported
@@ -197,6 +210,7 @@ class MainActivity : AppCompatActivity() {
     if (intent.action?.startsWith("com.jetsetslow.omniterm.action.") == true) {
       intent.action = Intent.ACTION_MAIN
     }
+    Incoming.consume(intent)
 
     val vm = appViewModel ?: return
     requests.forEach(vm::handleExternalLaunch)
@@ -317,37 +331,9 @@ class MainActivity : AppCompatActivity() {
    * the app's own FileProvider (see file_paths.xml).
    */
   private fun shareFullReport(report: String) {
-    // The full report (env header + thread + stack trace). `report` already begins with
-    // crashEnvironment() (see installCrashRecorder), so don't prepend it again.
-    val full = "OmniTerm crash report\n\n$report"
-    try {
-      val dir = java.io.File(cacheDir, "crash-reports").apply { mkdirs() }
-      val file = java.io.File(dir, "omniterm-crash-report.txt")
-      file.writeText(full)
-      val uri = androidx.core.content.FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
-      val send = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        putExtra(Intent.EXTRA_SUBJECT, "OmniTerm crash report")
-        // Put the FULL report in EXTRA_TEXT, not just the env header: many targets (Gmail,
-        // messaging, notes) show/keep EXTRA_TEXT and ignore the attached file, so a 2-line env was
-        // all that survived. The file attachment stays for targets that prefer attachments.
-        putExtra(Intent.EXTRA_TEXT, full)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-      startActivity(Intent.createChooser(send, "Share crash report"))
-    } catch (e: Exception) {
-      // Even if the file/provider failed, still let the user share the text itself.
-      runCatching {
-        val send = Intent(Intent.ACTION_SEND).apply {
-          type = "text/plain"
-          putExtra(Intent.EXTRA_SUBJECT, "OmniTerm crash report")
-          putExtra(Intent.EXTRA_TEXT, full)
-        }
-        startActivity(Intent.createChooser(send, "Share crash report"))
-      }.onFailure {
-        android.widget.Toast.makeText(this, this.getString(R.string.couldn_t_share_the_report, e.message), android.widget.Toast.LENGTH_LONG).show()
-      }
+    // `report` already begins with crashEnvironment() (see installCrashRecorder).
+    runCatching { com.jetsetslow.omniterm.data.CrashLog.shareReport(this, report) }.onFailure { e ->
+      android.widget.Toast.makeText(this, this.getString(R.string.couldn_t_share_the_report, e.message), android.widget.Toast.LENGTH_LONG).show()
     }
   }
 

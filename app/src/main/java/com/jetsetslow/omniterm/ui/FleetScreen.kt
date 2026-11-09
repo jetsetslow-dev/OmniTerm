@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -255,18 +257,12 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     ConfirmHost(confirm)
     val quickScripts by viewModel.quickScripts.collectAsStateWithLifecycle()
     var confirmClearOutputs by remember { mutableStateOf(false) }
+    var showRunHistory by remember { mutableStateOf(false) }
     var showPresetPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
-    var presetSearch by remember { mutableStateOf("") }
     val commandPresets = quickScripts
         .filter { it.availableForFleet }
         .sortedWith(compareBy<QuickScriptEntity> { it.sortOrder }.thenBy { it.name.lowercase() })
-    val filteredPresets = commandPresets.filter { preset ->
-        val query = presetSearch.trim()
-        query.isBlank() ||
-            preset.name.contains(query, ignoreCase = true) ||
-            preset.command.contains(query, ignoreCase = true)
-    }
     // A picked group stays listed while all its hosts are offline, so it can be unpicked.
     val groups = (srvList.mapNotNull { it.groupName?.takeIf { group -> group.isNotBlank() } } + viewModel.broadcastTargetGroups)
         .distinct().sorted()
@@ -311,28 +307,59 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         showPresetEditor = true
     }
 
-    // Snapshot the targets at tap time, show exactly what will run where, and execute that exact
-    // list on confirm — group membership/online status is not re-resolved after the dialog.
-    fun confirmAndRunBroadcast() {
-        val cmd = viewModel.broadcastCommandText.trim()
-        if (cmd.isBlank() || viewModel.isBroadcastExecuting) return
-        dismissKeyboard()
-        val targets = when (viewModel.broadcastTargetMode) {
-            FleetTargetMode.Servers -> srvList.filter { it.id in viewModel.broadcastTargetServerIds }
-            FleetTargetMode.Groups -> srvList.filter { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
-        }
-        if (targets.isEmpty()) return
-        val skipped = offlinePicks
-        val danger = fleetCommandDangerWarning(cmd)
+    // The saved script the command came from, while the command still is that script.
+    val activePreset = viewModel.broadcastPreset?.takeIf { it.command == viewModel.broadcastCommandText }
+    // A command with {{placeholders}} asks for its values before the confirmation: the hosts it will
+    // run on, and the picked hosts the script's target leaves out.
+    var paramsRequest by remember { mutableStateOf<BroadcastParamsRequest?>(null) }
+
+    // Shows exactly what will run where, and runs that exact list on confirm. A retry runs the last
+    // command again on the hosts that did not succeed and keeps the other cards.
+    fun confirmBroadcast(
+        cmd: String,
+        targets: List<ServerEntity>,
+        mismatched: List<ServerEntity>,
+        values: Map<String, String>,
+        retry: Boolean = false,
+        source: String = FleetRunHistory.SOURCE_FLEET,
+    ) {
+        val skipped = if (retry) emptyList() else offlinePicks
+        val shown = if (values.isEmpty()) cmd else ScriptParams.preview(cmd, values)
+        val danger = fleetCommandDangerWarning(shown)
+        val batchSize = viewModel.broadcastBatchSize.takeIf { it in 1 until targets.size }
+        val plural = if (targets.size == 1) "" else "s"
         confirm.ask(
-            title = confirm.str(R.string.run_on_host, targets.size, if (targets.size == 1) "" else "s"),
+            title = confirm.str(if (retry) R.string.broadcast_retry_title else R.string.run_on_host, targets.size, plural),
             message = buildString {
-                appendLine("$ $cmd")
+                appendLine("$ $shown")
                 appendLine()
                 targets.forEach { appendLine("• ${HostDisplay.name(it)} (${HostDisplay.userAtHost(it)})") }
+                if (retry) {
+                    appendLine()
+                    appendLine(confirm.str(R.string.broadcast_retry_keeps_others))
+                }
+                if (batchSize != null) {
+                    appendLine()
+                    appendLine(
+                        confirm.str(
+                            if (viewModel.broadcastStopOnFailure) R.string.broadcast_rolling_stop_confirm else R.string.broadcast_rolling_confirm,
+                            batchSize,
+                        ),
+                    )
+                }
                 if (skipped.isNotEmpty()) {
                     appendLine()
                     appendLine(confirm.str(R.string.broadcast_skipped_offline, skipped.joinToString(", ") { HostDisplay.name(it) }))
+                }
+                if (mismatched.isNotEmpty() && activePreset != null) {
+                    appendLine()
+                    appendLine(
+                        confirm.str(
+                            R.string.broadcast_skipped_target,
+                            scriptTargetLabel(activePreset),
+                            mismatched.joinToString(", ") { HostDisplay.name(it) },
+                        ),
+                    )
                 }
                 appendLine()
                 appendLine(confirm.str(if (viewModel.broadcastInTmux) R.string.broadcast_tmux_confirm else R.string.broadcast_drop_warning))
@@ -344,8 +371,68 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             confirmLabel = confirm.str(R.string.run),
             destructive = danger != null,
         ) {
-            viewModel.runFleetBroadcast(cmd, targets.map { it.id })
+            if (retry) viewModel.retryFailedBroadcastHosts(targets.map { it.id })
+            else viewModel.runFleetBroadcast(cmd, targets.map { it.id }, values, source = source)
         }
+    }
+
+    fun confirmRetryFailed() {
+        if (viewModel.isBroadcastExecuting) return
+        val ids = viewModel.broadcastRetryableIds
+        val byId = srvList.associateBy { it.id }
+        val targets = ids.mapNotNull(byId::get)
+        if (targets.isEmpty() || viewModel.lastBroadcastCommand.isBlank()) return
+        confirmBroadcast(viewModel.lastBroadcastCommand, targets, emptyList(), viewModel.lastBroadcastParams, retry = true)
+    }
+
+    // Snapshot the targets at tap time; group membership/online status is not re-resolved after the
+    // dialog.
+    // [source] names where the run came from in the run history: Run, or an alert's runbook.
+    fun confirmAndRunBroadcast(source: String = FleetRunHistory.SOURCE_FLEET) {
+        val cmd = viewModel.broadcastCommandText.trim()
+        if (cmd.isBlank() || viewModel.isBroadcastExecuting) return
+        dismissKeyboard()
+        val picked = when (viewModel.broadcastTargetMode) {
+            FleetTargetMode.Servers -> srvList.filter { it.id in viewModel.broadcastTargetServerIds }
+            FleetTargetMode.Groups -> srvList.filter { viewModel.isPickableHost(it) && it.groupName.orEmpty() in viewModel.broadcastTargetGroups }
+        }
+        if (picked.isEmpty()) return
+        val mismatched = fleetHostsScriptSkips(activePreset, picked, viewModel.hostMetricsById)
+        val targets = picked - mismatched.toSet()
+        if (targets.isEmpty()) {
+            confirm.ask(
+                title = confirm.str(R.string.broadcast_no_matching_hosts_title),
+                message = confirm.str(
+                    R.string.broadcast_no_matching_hosts,
+                    activePreset?.name.orEmpty(),
+                    activePreset?.let(::scriptTargetLabel).orEmpty(),
+                ),
+                confirmLabel = confirm.str(R.string.close),
+                destructive = false,
+            ) {}
+            return
+        }
+        if (ScriptParams.hasParams(cmd)) paramsRequest = BroadcastParamsRequest(targets, mismatched, source)
+        else confirmBroadcast(cmd, targets, mismatched, emptyMap(), source = source)
+    }
+
+    paramsRequest?.let { (targets, mismatched, source) ->
+        val cmd = viewModel.broadcastCommandText.trim()
+        // An unprobed host could still be Windows, so its values must suit both shells.
+        val shells = targets.flatMap { host ->
+            viewModel.knownOs(host).takeIf { it.isNotBlank() }
+                ?.let { listOf(ScriptParams.shellFor(it)) } ?: ScriptParams.Shell.entries
+        }.toSet()
+        ScriptParamsDialog(
+            title = activePreset?.name ?: stringResource(R.string.command),
+            command = cmd,
+            shells = shells,
+            onDismiss = { paramsRequest = null },
+            onSubmit = { values ->
+                paramsRequest = null
+                confirmBroadcast(cmd, targets, mismatched, values, source = source)
+            },
+        )
     }
 
     // The inputs stay above an output list that scrolls on its own, and scroll themselves within the
@@ -388,8 +475,10 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
             prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
             textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("fleet.broadcast.command"),
+            // Multi-line scripts run as written; a single-line field flattened them.
+            minLines = 1,
+            maxLines = 6,
             shape = RoundedCornerShape(8.dp),
             colors = omniTextFieldColors()
         )
@@ -412,6 +501,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 modifier = Modifier.testTag("fleet.broadcast.tmux"),
             )
         }
+        BroadcastRollingControls(viewModel)
         Spacer(modifier = Modifier.height(8.dp))
         Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
         Row(
@@ -420,10 +510,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedButton(
-                onClick = {
-                    presetSearch = ""
-                    showPresetPicker = true
-                },
+                onClick = { showPresetPicker = true },
                 modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -461,16 +548,46 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             )
         }
     }
+    val context = LocalContext.current
     val outputsHeader = @Composable {
-        // Terminal text nodes feed displaying returned parallel response packages
-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+        // Once a run ends: retry the hosts that did not succeed, share every card as text, or clear.
+        Row(
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text(stringResource(R.string.execution_outputs), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (viewModel.broadcastResults.isNotEmpty() && !viewModel.isBroadcastExecuting) {
-                Text(stringResource(R.string.clear_outputs),
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.fleet_history),
                     fontSize = 11.sp,
-                    color = Color.Red,
-                    modifier = Modifier.clickable { confirmClearOutputs = true }
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { showRunHistory = true }.padding(vertical = 4.dp).testTag("fleet.history"),
                 )
+            if (viewModel.broadcastResults.isNotEmpty() && !viewModel.isBroadcastExecuting) {
+                    val retryable = viewModel.broadcastRetryableIds.size
+                    if (retryable > 0) {
+                        Text(
+                            stringResource(R.string.broadcast_retry_failed, retryable),
+                            fontSize = 11.sp,
+                            color = OmniColors.amber,
+                            modifier = Modifier.clickable { confirmRetryFailed() }.padding(vertical = 4.dp).testTag("fleet.broadcast.retry"),
+                        )
+                    }
+                    Text(
+                        stringResource(R.string.broadcast_share_output),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { shareFleetReport(context, viewModel.broadcastReport()) }
+                            .padding(vertical = 4.dp).testTag("fleet.broadcast.share"),
+                    )
+                    Text(
+                        stringResource(R.string.clear_outputs),
+                        fontSize = 11.sp,
+                        color = Color.Red,
+                        modifier = Modifier.clickable { confirmClearOutputs = true }.padding(vertical = 4.dp),
+                    )
+            }
             }
         }
     }
@@ -480,66 +597,13 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(viewModel.broadcastResults, key = { it.serverId }) { item ->
-                val accent = when (item.status) {
-                    BroadcastStatus.Running -> OmniColors.cyan
-                    BroadcastStatus.Success -> OmniColors.green
-                    BroadcastStatus.Failure -> OmniColors.red
-                    BroadcastStatus.Reconnecting, BroadcastStatus.Detached, BroadcastStatus.NeedsTmux -> OmniColors.amber
-                }
-                val expanded = expandedOutputs[item.serverId] == true
-                OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = hostAccent(allHosts, item.serverId)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                                .clickable { expandedOutputs[item.serverId] = !expanded },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                Icon(
-                                    if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = if (expanded) stringResource(R.string.collapse_output) else stringResource(R.string.expand_output),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                                Text(item.serverName, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.primary)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                if (item.status == BroadcastStatus.Running || item.status == BroadcastStatus.Reconnecting) {
-                                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = accent)
-                                }
-                                Text(
-                                    when (item.status) {
-                                        BroadcastStatus.Running -> "streaming"
-                                        BroadcastStatus.Success -> "complete"
-                                        BroadcastStatus.Failure -> "failed"
-                                        BroadcastStatus.Reconnecting -> "reconnecting"
-                                        BroadcastStatus.Detached -> "disconnected"
-                                        BroadcastStatus.NeedsTmux -> "needs tmux"
-                                    },
-                                    fontSize = 10.sp,
-                                    color = accent,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
-                        }
-                        if (expanded) {
-                            StreamOutputBox(
-                                buildString {
-                                    if (item.truncated) append("[Output truncated; showing latest ${120_000} characters]\n")
-                                    append(item.output.ifBlank {
-                                        when (item.status) {
-                                            BroadcastStatus.Running, BroadcastStatus.Reconnecting -> "Waiting for output..."
-                                            BroadcastStatus.Success -> "Done (no output)"
-                                            else -> "No output"
-                                        }
-                                    })
-                                },
-                                modifier = Modifier.heightIn(min = 72.dp, max = 260.dp),
-                                look = StreamOutputLook.Terminal,
-                                fontSize = 12.sp,
-                            )
-                        }
-                        BroadcastHostFooter(viewModel, item, accent)
-                }
+                BroadcastResultCard(
+                    item = item,
+                    leftAccent = hostAccent(allHosts, item.serverId),
+                    expanded = expandedOutputs[item.serverId] == true,
+                    onToggle = { expandedOutputs[item.serverId] = expandedOutputs[item.serverId] != true },
+                    keptChars = BROADCAST_OUTPUT_MAX_CHARS,
+                ) { accent -> BroadcastHostFooter(viewModel, item, accent) }
             }
         }
     }
@@ -578,62 +642,29 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         }
     }
 
+    // An alert's runbook (AppViewModel.openRunbook) asks to run through the Run button's own
+    // confirmation once the hosts have loaded. A host that is offline stays picked with the
+    // command filled in, for Run once it is back, rather than asking later out of the blue.
+    LaunchedEffect(viewModel.pendingRunbookConfirm, allHosts, srvList) {
+        if (!viewModel.pendingRunbookConfirm) return@LaunchedEffect
+        if (allHosts.none { it.id in viewModel.broadcastTargetServerIds }) return@LaunchedEffect
+        viewModel.pendingRunbookConfirm = false
+        if (srvList.any { it.id in viewModel.broadcastTargetServerIds }) confirmAndRunBroadcast(FleetRunHistory.SOURCE_RUNBOOK)
+    }
+
     if (showPresetPicker) {
-        AlertDialog(
-            onDismissRequest = { showPresetPicker = false },
-            title = {
-                Text(stringResource(R.string.choose_fleet_script))
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = presetSearch,
-                        onValueChange = { presetSearch = it },
-                        label = { Text(stringResource(R.string.search_presets)) },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (filteredPresets.isEmpty()) {
-                        Text(
-                            if (commandPresets.isEmpty()) stringResource(R.string.no_fleet_presets_saved_yet) else stringResource(R.string.no_presets_match_your_search),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        OverflowLazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            items(filteredPresets, key = { it.id }) { preset ->
-                                ListItem(
-                                    headlineContent = {
-                                        Text("${preset.emoji} ${preset.name}", fontWeight = FontWeight.Bold)
-                                    },
-                                    supportingContent = {
-                                        Text(
-                                            preset.command,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                            fontFamily = OmniFonts.mono,
-                                            fontSize = 11.sp,
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            viewModel.broadcastCommandText = preset.command
-                                            showPresetPicker = false
-                                        },
-                                )
-                            }
-                        }
-                    }
+        ScriptPickerDialog(
+            title = stringResource(R.string.choose_fleet_script),
+            scripts = commandPresets,
+            emptyText = stringResource(R.string.no_fleet_presets_saved_yet),
+            onPick = { preset ->
+                if (preset != null) {
+                    viewModel.broadcastCommandText = preset.command
+                    viewModel.broadcastPreset = preset
                 }
+                showPresetPicker = false
             },
-            confirmButton = {
-                TextButton(onClick = { showPresetPicker = false }) { Text(stringResource(R.string.close)) }
-            },
+            onDismiss = { showPresetPicker = false },
         )
     }
 
@@ -665,6 +696,10 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         )
     }
 
+    if (showRunHistory) {
+        FleetRunHistoryDialog(viewModel, allHosts, onDismiss = { showRunHistory = false })
+    }
+
     if (confirmClearOutputs) {
         AlertDialog(
             onDismissRequest = { confirmClearOutputs = false },
@@ -673,7 +708,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.broadcastResults.clear()
+                        viewModel.clearBroadcastOutputs()
                         confirmClearOutputs = false
                     }
                 ) { Text(stringResource(R.string.clear), color = Color.Red) }
@@ -682,6 +717,66 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 TextButton(onClick = { confirmClearOutputs = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+/** A Run waiting for its `{{placeholder}}` values: the hosts it runs on, those it leaves out, and its history source. */
+private data class BroadcastParamsRequest(
+    val targets: List<ServerEntity>,
+    val mismatched: List<ServerEntity>,
+    val source: String,
+)
+
+/**
+ * Rolling runs: how many hosts start at a time, and whether a batch with a failure stops the run.
+ * Credit: Komodo's batch deploys (moghtech/komodo#1080).
+ */
+@Composable
+private fun BroadcastRollingControls(viewModel: AppViewModel) {
+    val idle = !viewModel.isBroadcastExecuting
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text(stringResource(R.string.broadcast_rolling), fontWeight = FontWeight.Bold)
+        Text(
+            stringResource(R.string.broadcast_rolling_explained),
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Wraps at large text sizes instead of pushing the last sizes off the screen.
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.broadcast_batch_size_label), fontSize = 12.sp, modifier = Modifier.padding(end = 2.dp))
+            BROADCAST_BATCH_SIZES.forEach { size ->
+                FilterChip(
+                    selected = viewModel.broadcastBatchSize == size,
+                    onClick = { viewModel.updateBroadcastBatchSize(size) },
+                    enabled = idle,
+                    label = { Text(if (size == 0) stringResource(R.string.broadcast_batch_all) else size.toString(), fontSize = 12.sp) },
+                    modifier = Modifier.testTag("fleet.broadcast.batch.$size"),
+                )
+            }
+        }
+        if (viewModel.broadcastBatchSize > 0) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.broadcast_stop_on_failure), fontSize = 13.sp)
+                    Text(
+                        stringResource(R.string.broadcast_stop_on_failure_explained),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = viewModel.broadcastStopOnFailure,
+                    onCheckedChange = viewModel::updateBroadcastStopOnFailure,
+                    enabled = idle,
+                    modifier = Modifier.testTag("fleet.broadcast.stop_on_failure"),
+                )
+            }
+        }
     }
 }
 
@@ -892,13 +987,312 @@ private fun BroadcastHostFooter(viewModel: AppViewModel, item: BroadcastResultIt
                 add(stringResource(R.string.install_tool, "tmux") to { viewModel.installTmuxForBroadcast(item.serverId) })
                 add(stringResource(R.string.run_without_tmux) to { viewModel.runBroadcastHostWithoutTmux(item.serverId) })
             }
-            BroadcastStatus.Success, BroadcastStatus.Failure -> Unit
+            BroadcastStatus.Success, BroadcastStatus.Failure, BroadcastStatus.Waiting, BroadcastStatus.NotRun -> Unit
         }
     }
     if (actions.isNotEmpty()) {
         Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             actions.forEach { (label, onClick) -> OmniButton(label = label, onClick = onClick, color = accent, small = true) }
         }
+    }
+}
+
+/** Shares a Fleet run's [report] (the live run's or one from the history) as text and a file. */
+private fun shareFleetReport(context: android.content.Context, report: String) {
+    val resources = context.resources
+    runCatching {
+        TextShare.share(
+            context,
+            report,
+            subject = resources.getString(R.string.broadcast_share_subject),
+            fileName = "omniterm-fleet-run.txt",
+            chooserTitle = resources.getString(R.string.broadcast_share_chooser),
+            cacheFolder = "shared-text",
+        )
+    }.onFailure {
+        Toast.makeText(context, resources.getString(R.string.broadcast_share_failed, it.message.orEmpty()), Toast.LENGTH_LONG).show()
+    }
+}
+
+/** A host's status colour on its result card. */
+@Composable
+private fun broadcastAccent(status: BroadcastStatus): Color = when (status) {
+    BroadcastStatus.Running -> OmniColors.cyan
+    BroadcastStatus.Success -> OmniColors.green
+    BroadcastStatus.Failure -> OmniColors.red
+    BroadcastStatus.Reconnecting, BroadcastStatus.Detached, BroadcastStatus.NeedsTmux, BroadcastStatus.NotRun -> OmniColors.amber
+    BroadcastStatus.Waiting -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+/**
+ * One host's result, in Broadcast and in the run history: its name and status, its output when
+ * [expanded] (at most [keptChars] of it kept), and [footer] in its status colour below.
+ */
+@Composable
+private fun BroadcastResultCard(
+    item: BroadcastResultItem,
+    leftAccent: Color,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    keptChars: Int,
+    footer: @Composable (accent: Color) -> Unit,
+) {
+    val accent = broadcastAccent(item.status)
+    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = leftAccent) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).clickable(onClick = onToggle),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Icon(
+                    if (expanded) Icons.Filled.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = if (expanded) stringResource(R.string.collapse_output) else stringResource(R.string.expand_output),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(item.serverName, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.primary)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (item.status == BroadcastStatus.Running || item.status == BroadcastStatus.Reconnecting) {
+                    CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = accent)
+                }
+                Text(
+                    stringResource(item.status.label),
+                    fontSize = 10.sp,
+                    color = accent,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        if (expanded) {
+            val placeholder = stringResource(
+                when (item.status) {
+                    BroadcastStatus.Running, BroadcastStatus.Reconnecting -> R.string.broadcast_waiting_for_output
+                    BroadcastStatus.Waiting -> R.string.broadcast_waiting_for_batch
+                    BroadcastStatus.Success -> R.string.broadcast_done_no_output
+                    else -> R.string.broadcast_no_output
+                },
+            )
+            val truncatedLine = stringResource(R.string.broadcast_output_truncated, keptChars)
+            StreamOutputBox(
+                buildString {
+                    if (item.truncated) appendLine(truncatedLine)
+                    append(item.output.ifBlank { placeholder })
+                },
+                modifier = Modifier.heightIn(min = 72.dp, max = 260.dp),
+                look = StreamOutputLook.Terminal,
+                fontSize = 12.sp,
+            )
+        }
+        footer(accent)
+    }
+}
+
+/** A run's result as the history list words it: "3 of 4 succeeded". */
+@Composable
+private fun fleetRunOutcome(summary: FleetRunSummary): String =
+    stringResource(R.string.fleet_history_succeeded, summary.succeeded, summary.hosts)
+
+@Composable
+private fun fleetRunSourceLabel(source: String): String? = when (source) {
+    FleetRunHistory.SOURCE_RETRY -> stringResource(R.string.fleet_history_source_retry)
+    FleetRunHistory.SOURCE_RUNBOOK -> stringResource(R.string.fleet_history_source_runbook)
+    else -> null
+}
+
+/**
+ * Fleet's run history: the newest [FleetRunHistory.KEEP_RUNS] runs, kept on this device only.
+ * A run opens to its hosts' results, to share, delete, or put back into Broadcast.
+ */
+@Composable
+private fun FleetRunHistoryDialog(viewModel: AppViewModel, allHosts: List<ServerEntity>, onDismiss: () -> Unit) {
+    val runs by viewModel.fleetRunHistory.collectAsStateWithLifecycle()
+    var openRunId by remember { mutableStateOf<Int?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
+    val open = openRunId?.let { id -> runs.firstOrNull { it.run.id == id } }
+    if (open != null) {
+        FleetRunDetailsDialog(viewModel, open, allHosts, onBack = { openRunId = null }, onDone = onDismiss)
+        return
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.fleet_history_title)) },
+        text = {
+            if (runs.isEmpty()) {
+                Text(stringResource(R.string.fleet_history_empty), modifier = Modifier.testTag("fleet.history.empty"))
+            } else {
+                OverflowLazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).testTag("fleet.history.list"),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(runs, key = { it.run.id }) { summary ->
+                        val accent = when {
+                            summary.hosts > 0 && summary.succeeded == summary.hosts -> OmniColors.green
+                            summary.succeeded == 0 -> OmniColors.red
+                            else -> OmniColors.amber
+                        }
+                        OmniCard(
+                            modifier = Modifier.fillMaxWidth().testTag("fleet.history.run.${summary.run.id}"),
+                            leftAccent = accent,
+                            onClick = { openRunId = summary.run.id },
+                        ) {
+                            Text(
+                                summary.run.scriptName ?: summary.run.command.lineSequence().first(),
+                                fontFamily = if (summary.run.scriptName == null) OmniFonts.mono else null,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                listOfNotNull(
+                                    formatShortDateTime(summary.run.startedAt),
+                                    fleetRunOutcome(summary),
+                                    fleetRunSourceLabel(summary.run.source),
+                                ).joinToString(" · "),
+                                fontSize = 11.sp,
+                                color = accent,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        dismissButton = {
+            if (runs.isNotEmpty()) {
+                TextButton(onClick = { confirmClear = true }, modifier = Modifier.testTag("fleet.history.clear")) {
+                    Text(stringResource(R.string.fleet_history_clear), color = Color.Red)
+                }
+            }
+        },
+    )
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text(stringResource(R.string.fleet_history_clear_title)) },
+            text = { Text(stringResource(R.string.fleet_history_clear_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.clearFleetRunHistory()
+                        confirmClear = false
+                    },
+                    modifier = Modifier.testTag("fleet.history.clear.confirm"),
+                ) { Text(stringResource(R.string.clear), color = Color.Red) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+}
+
+/** One run from the history: its command, when it ran, and each host's result. */
+@Composable
+private fun FleetRunDetailsDialog(
+    viewModel: AppViewModel,
+    summary: FleetRunSummary,
+    allHosts: List<ServerEntity>,
+    onBack: () -> Unit,
+    onDone: () -> Unit,
+) {
+    val run = summary.run
+    val context = LocalContext.current
+    val hosts by produceState<List<BroadcastResultItem>?>(null, run.id, run.finishedAt) { value = viewModel.fleetRunResults(run.id) }
+    val expanded = remember(run.id) { mutableStateMapOf<Int, Boolean>() }
+    var confirmDelete by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onBack,
+        title = { Text(run.scriptName ?: stringResource(R.string.fleet_history_run_title)) },
+        text = {
+            OverflowLazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp).testTag("fleet.history.details"),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    Text("$ ${run.command}", fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                    Text(
+                        listOfNotNull(
+                            stringResource(
+                                R.string.fleet_history_ran_at,
+                                formatDateTime(run.startedAt),
+                                formatTook(run.finishedAt - run.startedAt),
+                            ),
+                            fleetRunSourceLabel(run.source),
+                        ).joinToString(" · "),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    if (ScriptParams.hasParams(run.command)) {
+                        Text(
+                            stringResource(R.string.fleet_history_values_not_kept),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+                val loaded = hosts
+                if (loaded == null) {
+                    item { CircularProgressIndicator(modifier = Modifier.size(20.dp)) }
+                } else {
+                    items(loaded, key = { it.serverId }) { item ->
+                        BroadcastResultCard(
+                            item = item,
+                            leftAccent = hostAccent(allHosts, item.serverId),
+                            expanded = expanded[item.serverId] == true,
+                            onToggle = { expanded[item.serverId] = expanded[item.serverId] != true },
+                            keptChars = FleetRunHistory.OUTPUT_CHARS,
+                        ) { accent ->
+                            item.note?.let { Text(it, fontSize = 11.sp, color = accent, modifier = Modifier.padding(top = 6.dp)) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(
+                    onClick = { hosts?.let { loaded -> shareFleetReport(context, viewModel.fleetRunReport(run, loaded)) } },
+                    enabled = hosts != null,
+                    modifier = Modifier.testTag("fleet.history.share"),
+                ) { Text(stringResource(R.string.share)) }
+                TextButton(
+                    onClick = {
+                        viewModel.loadFleetRunIntoBroadcast(run, hosts.orEmpty().map { it.serverId })
+                        onDone()
+                    },
+                    enabled = hosts != null && !viewModel.isBroadcastExecuting,
+                    modifier = Modifier.testTag("fleet.history.load"),
+                ) { Text(stringResource(R.string.fleet_history_load)) }
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.testTag("fleet.history.delete")) {
+                    Text(stringResource(R.string.delete), color = Color.Red)
+                }
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+        },
+    )
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(stringResource(R.string.fleet_history_delete_title)) },
+            text = { Text(stringResource(R.string.fleet_history_delete_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteFleetRun(run.id)
+                        confirmDelete = false
+                        onBack()
+                    },
+                    modifier = Modifier.testTag("fleet.history.delete.confirm"),
+                ) { Text(stringResource(R.string.delete), color = Color.Red) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
 }
 
@@ -924,7 +1318,8 @@ internal fun commandDangerHits(command: String): List<String> {
         // the way every tutorial writes it — was the one form this did not catch.
         Regex("""\bdd\s+[^;&|\n]*of=""") to "raw write with dd",
         Regex(""">+\s*/dev/(sd|nvme|mmcblk|vd|hd)""") to "writing directly to a block device",
-        Regex("""\b(shutdown|poweroff|halt)\b""") to "host shutdown",
+        // `qm shutdown 101` shuts down a guest, not the host it runs on.
+        Regex("""(?<!\b(?:qm|pct)\s)\b(shutdown|poweroff|halt)\b""") to "host shutdown",
         Regex("""\breboot\b|\binit\s+[06]\b|\bsystemctl\s+(reboot|poweroff|halt|kexec|emergency|rescue)\b""") to "host reboot/shutdown",
         Regex("""\b(userdel|groupdel)\b""") to "account deletion",
         // Same shape: `(-\w+\s+)*` stops at the first non-flag token, so `iptables -t nat -F`
@@ -933,6 +1328,22 @@ internal fun commandDangerHits(command: String): List<String> {
         Regex("""\bchmod\s+(-\w+\s+)*[0-7]*777\s+/\S*""") to "world-writable permission change",
         Regex(""":\s*\(\s*\)\s*\{""") to "fork bomb",
         Regex("""\btruncate\s+(-\w+\s+)*-s\s*0\b""") to "file truncation",
+        Regex("""\bfind\s+[^;&|\n]*-delete\b""") to "recursive/forced delete",
+        Regex("""\b(zpool\s+(destroy|labelclear)|zfs\s+destroy|lvremove|vgremove|pvremove)\b|\bmdadm\s+[^;&|\n]*--zero-superblock""") to
+            "storage pool or volume destruction",
+        Regex("""\b(docker|podman)\s+(system|volume|image|container|network|builder)\s+prune\b|\b(docker|podman)\s+volume\s+rm\b|\b(docker|podman)[\s-]compose\s+[^;&|\n]*\bdown\s+[^;&|\n]*(-v\b|--volumes\b)""") to
+            "container data removal",
+        Regex("""\bkubectl\s+[^;&|\n]*\b(delete|drain)\b|\bhelm\s+(uninstall|delete)\b""") to "Kubernetes resource deletion",
+        Regex("""\b(qm|pct)\s+(destroy|stop)\b""") to "Proxmox VM or container destroy/hard stop",
+        Regex("""\bcrontab\s+(-\w+\s+)*-r\b""") to "deleting every cron job",
+        // Fleet's own risk: one command that ends SSH access to every host it reaches.
+        Regex("""\bsystemctl\s+(stop|disable|mask)\s+[^;&|\n]*\bssh(d)?(\.service)?\b|\bufw\s+(enable|default\s+deny)\b|\biptables\s+[^;&|\n]*-P\s+INPUT\s+DROP\b""") to
+            "may cut off SSH access",
+        // Windows hosts.
+        Regex("""(?i)\bRemove-Item\b[^;&|\n]*-Recurse\b|\b(rd|rmdir)\s+/s\b|\bdel\s+[^;&|\n]*/[sq]\b""") to "recursive/forced delete",
+        Regex("""(?i)\b(Format-Volume|Clear-Disk|Initialize-Disk)\b|\bformat\s+[a-z]:""") to "filesystem format/wipe",
+        Regex("""(?i)\b(Remove-Partition|diskpart)\b""") to "partition table changes",
+        Regex("""(?i)\b(Stop-Computer|Restart-Computer)\b""") to "host reboot/shutdown",
     )
     return patterns.mapNotNull { (re, label) -> label.takeIf { re.containsMatchIn(command) } }.distinct()
 }

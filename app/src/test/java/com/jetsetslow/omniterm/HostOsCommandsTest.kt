@@ -30,19 +30,13 @@ class HostOsCommandsTest {
 
     /** Runs [script] with only [fakes] and the base system tools on PATH. */
     private fun runWithFakes(script: String, fakes: Map<String, String>): String {
-        val sh = File("/bin/sh")
-        assumeTrue("POSIX sh is required to run the service scripts", sh.canExecute())
+        assumeTrue("POSIX sh is required to run the service scripts", TestShell.sh != null)
         val dir = Files.createTempDirectory("omniterm-fake-tools").toFile()
         try {
             fakes.forEach { (name, body) ->
                 File(dir, name).apply { writeText("#!/bin/sh\n$body\n"); setExecutable(true) }
             }
-            val process = ProcessBuilder(sh.absolutePath, "-c", script).redirectErrorStream(true)
-            process.environment()["PATH"] = "${dir.absolutePath}:/usr/bin:/bin"
-            val proc = process.start()
-            val output = proc.inputStream.bufferedReader().readText()
-            proc.waitFor()
-            return output
+            return TestShell.run(script, env = mapOf("PATH" to "${dir.absolutePath}:/usr/bin:/bin")).output
         } finally {
             dir.deleteRecursively()
         }
@@ -245,6 +239,6 @@ class HostOsCommandsTest {
         val prefix = "powershell -NoProfile -NonInteractive -EncodedCommand "
         assertTrue(command, command.startsWith(prefix))
         return String(java.util.Base64.getDecoder().decode(command.removePrefix(prefix)), Charsets.UTF_16LE)
-            .removePrefix("${'$'}ProgressPreference='SilentlyContinue'; ")
+            .removePrefix(RemoteCommands.POWERSHELL_PRELUDE)
     }
 }

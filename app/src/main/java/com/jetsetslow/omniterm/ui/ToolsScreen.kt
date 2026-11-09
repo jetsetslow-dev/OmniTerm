@@ -61,13 +61,14 @@ import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
 /**
- * Display unit for an alert metric: thresholds are percentages except latency, temperature, and
- * the TLS and URL checks.
+ * Display unit for an alert metric: thresholds are percentages except latency, temperature, the
+ * phone-side checks and the host checks.
  */
 private fun alertMetricUnit(metricName: String, system: MeasurementSystem): String = when (metricName) {
-    "Latency", EndpointChecks.URL_CHECK -> "ms"
+    "Latency", EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK -> "ms"
     "Temperature" -> temperatureUnit(system)
-    EndpointChecks.TLS_EXPIRY -> "days"
+    EndpointChecks.TLS_EXPIRY, HostChecks.SCRUB_AGE -> "days"
+    in HostChecks.ALL -> "count"
     else -> "%"
 }
 
@@ -89,16 +90,20 @@ internal fun alertThresholdError(
     return when (metricName) {
         "Latency" -> if (value <= 0f) "Must be greater than 0 ms" else null
         EndpointChecks.TLS_EXPIRY -> if (value < 1f) "Must be 1 day or more" else null
-        EndpointChecks.URL_CHECK -> when {
-            value <= 0f -> "Must be greater than 0 ms"
-            value >= EndpointChecks.URL_TIMEOUT_MS -> "Must be under ${EndpointChecks.URL_TIMEOUT_MS} ms, when a check gives up"
-            else -> null
+        EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK -> {
+            val limit = EndpointChecks.timeoutMs(metricName) ?: EndpointChecks.URL_TIMEOUT_MS
+            when {
+                value <= 0f -> "Must be greater than 0 ms"
+                value >= limit -> "Must be under $limit ms, when a check gives up"
+                else -> null
+            }
         }
         "Temperature" -> {
             // Compare in Celsius so the bound holds in either unit system.
             val celsius = displayTemperatureToCelsius(value, system)
             if (celsius <= -273.15f) "Below absolute zero" else null
         }
+        in HostChecks.ALL -> if (value < 0f) "Must be 0 or more" else null
         else -> when {
             value < 0f -> "Must be 0 or more"
             value > 100f -> "Must be 100 or less"
@@ -108,28 +113,52 @@ internal fun alertThresholdError(
 }
 
 /**
- * Validates what a TLS or URL check connects to, against the hosts the rule is for. Null when it
+ * Validates what a phone-side check connects to, against the hosts the rule is for. Null when it
  * is usable, otherwise the reason. Other metrics take no target.
  *
  * A typed address is one endpoint, so it belongs to one host: on "All hosts" or several hosts it
- * would be checked, and alert, once per host.
+ * would be checked, and alert, once per host. A bare TCP port and a bare DNS name are checked on
+ * each host's own address, so they suit any number of hosts.
  */
 internal fun alertTargetError(metricName: String, target: String, hostIds: Collection<Int>): String? {
     if (!EndpointChecks.isEndpointMetric(metricName)) return null
     val trimmed = target.trim()
-    if (metricName == EndpointChecks.URL_CHECK) {
-        if (trimmed.isEmpty()) return "Enter the address to check"
-        if (EndpointChecks.checkUrl(trimmed) == null) return "Enter a web address, like https://example.com/health"
-    } else if (trimmed.isNotEmpty() && EndpointChecks.tlsEndpoint(trimmed, hostAddress = "") == null) {
-        return "Enter a host, host:port or URL"
+    // Stands in for each host's own address, which the checks use when the target names none.
+    val anyHost = "host.invalid"
+    val perHost = when (metricName) {
+        EndpointChecks.URL_CHECK -> {
+            if (trimmed.isEmpty()) return "Enter the address to check"
+            if (EndpointChecks.checkUrl(trimmed) == null) return "Enter a web address, like https://example.com/health"
+            false
+        }
+        EndpointChecks.PING -> {
+            if (trimmed.isNotEmpty() && EndpointChecks.pingHost(trimmed) == null) return "Enter one host name or address"
+            trimmed.isEmpty()
+        }
+        EndpointChecks.TCP_PORT -> {
+            if (trimmed.isEmpty()) return "Enter a port, or host:port"
+            if (EndpointChecks.tcpEndpoint(trimmed, anyHost) == null) return "Enter a port from 1 to 65535, or host:port"
+            trimmed.toIntOrNull() != null
+        }
+        EndpointChecks.DNS_CHECK -> {
+            if (trimmed.isEmpty()) return "Enter the name to look up"
+            if (EndpointChecks.dnsTarget(trimmed, anyHost) == null) return "Enter a name, or name@server"
+            '@' !in trimmed
+        }
+        else -> {
+            if (trimmed.isNotEmpty() && EndpointChecks.tlsEndpoint(trimmed, hostAddress = "") == null) {
+                return "Enter a host, host:port or URL"
+            }
+            trimmed.isEmpty()
+        }
     }
-    if (trimmed.isNotEmpty() && (hostIds.size != 1 || 0 in hostIds)) return "Pick the one host this address belongs to"
+    if (!perHost && (hostIds.size != 1 || 0 in hostIds)) return "Pick the one host this address belongs to"
     return null
 }
 
 /**
- * An alert value as the user reads it. A TLS or URL reading says what was seen ("12 days left",
- * "HTTP 503"); its threshold ([threshold] true) is a plain amount.
+ * An alert value as the user reads it. A phone-side reading says what was seen ("12 days left",
+ * "HTTP 503", "no reply"); its threshold ([threshold] true) is a plain amount.
  */
 private fun alertMetricDisplay(
     metricName: String,
@@ -144,6 +173,11 @@ private fun alertMetricDisplay(
         } else {
             EndpointChecks.describe(metricName, canonicalValue)
         }
+    HostChecks.isHostCheck(metricName) -> when {
+        !threshold -> HostChecks.describe(metricName, canonicalValue)
+        metricName == HostChecks.SCRUB_AGE -> "${canonicalValue.roundToInt()} days"
+        else -> canonicalValue.roundToInt().toString()
+    }
     else -> "$canonicalValue${alertMetricUnit(metricName, system)}"
 }
 
@@ -154,7 +188,7 @@ private val APP_LOCK_TIMEOUT_PRESETS = listOf(
     "5 min" to 300_000L,
 )
 
-private fun copySensitiveClipboard(
+internal fun copySensitiveClipboard(
     context: android.content.Context,
     scope: kotlinx.coroutines.CoroutineScope,
     label: String,
@@ -191,6 +225,7 @@ internal val toolsItems = listOf(
     Triple(Screen.AuthKeys, "Auth & keys", Icons.Filled.Key),
     Triple(Screen.Backup, "App backup", Icons.Filled.Backup),
     Triple(Screen.HealthScoring, "Health scoring", Icons.Filled.MonitorHeart),
+    Triple(Screen.Automation, "Automation", Icons.Filled.SmartToy),
     Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
     Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
 )
@@ -533,6 +568,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
     val alertHistory by viewModel.alertHistory.collectAsStateWithLifecycle()
     val rules by viewModel.alertRules.collectAsStateWithLifecycle()
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
+    val scripts by viewModel.quickScripts.collectAsStateWithLifecycle()
     val measurementSystem = viewModel.measurementSystem
     var showCreateRuleDialog by remember { mutableStateOf(false) }
     var editRule by remember { mutableStateOf<AlertRuleEntity?>(null) }
@@ -605,6 +641,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         stringResource(R.string.rules_are_checked_on_each_metrics),
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    AlertForwardingRow(viewModel)
                 }
             }
 
@@ -661,6 +698,14 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     Text(stringResource(R.string.server, srv?.name ?: "server"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                        val runbook = rules.find { it.id == alert.ruleId }?.runbookScriptId
+                                            ?.let { id -> scripts.find { it.id == id } }
+                                        if (runbook != null && alert.serverId > 0) {
+                                            TextButton(
+                                                onClick = { viewModel.openRunbook(alert.ruleId, alert.serverId) },
+                                                modifier = Modifier.testTag("alert.runbook"),
+                                            ) { Text(stringResource(R.string.alert_runbook_run, runbook.name), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                        }
                                         if (!alert.acknowledged) {
                                             TextButton(onClick = { viewModel.acknowledgeAlert(alert.id) }) { Text(stringResource(R.string.acknowledge)) }
                                         }
@@ -765,14 +810,35 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     Text(
                                         when (r.metricName) {
                                             EndpointChecks.TLS_EXPIRY -> stringResource(R.string.tls_rule_summary, targetName, shownThreshold)
-                                            EndpointChecks.URL_CHECK -> stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
+                                            // Every timed check alerts the same way: a failure, or a slow reply.
+                                            EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK ->
+                                                stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
+                                            HostChecks.SCRUB_AGE -> stringResource(R.string.host_check_rule_summary_scrub, targetName, shownThreshold)
+                                            in HostChecks.ALL -> when {
+                                                !HostChecks.isYesNo(r.metricName) -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
+                                                r.triggerWindow == "0m" -> stringResource(R.string.host_check_rule_summary_now, targetName)
+                                                else -> stringResource(R.string.host_check_rule_summary_after, targetName, r.triggerWindow)
+                                            }
                                             else -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
                                         },
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    if (r.metricName == HostChecks.SCRIPT_CHECK) {
+                                        val name = ScriptChecks.scriptId(r)?.let { id -> scripts.find { it.id == id }?.name }
+                                        Text(
+                                            stringResource(R.string.script_check_rule_script, name ?: stringResource(R.string.script_check_no_script)),
+                                            fontSize = 11.sp,
+                                            color = if (name == null) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    r.runbookScriptId?.let { id -> scripts.find { it.id == id } }?.let { book ->
+                                        Text(stringResource(R.string.alert_rule_runbook, book.name), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                     if (EndpointChecks.isEndpointMetric(r.metricName)) {
-                                        EndpointCheckLines(r, serversList, viewModel.endpointCheckResults)
+                                        RuleCheckLines(r, serversList, viewModel.endpointCheckResults) { EndpointChecks.breached(r, it) }
+                                    } else if (HostChecks.isHostCheck(r.metricName)) {
+                                        RuleCheckLines(r, serversList, viewModel.hostCheckResults) { it > r.thresholdValue }
                                     }
                                     if (r.notes.isNotBlank()) {
                                         Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
@@ -868,16 +934,33 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var windowSelect by remember(existing) { mutableStateOf(existing?.triggerWindow ?: "5m") }
         var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
         var targetInput by remember(existing) { mutableStateOf(existing?.target ?: "") }
+        var checkScriptId by remember(existing) {
+            mutableStateOf(existing?.takeIf { it.metricName == HostChecks.SCRIPT_CHECK }?.let(ScriptChecks::scriptId))
+        }
+        var runbookId by remember(existing) { mutableStateOf(existing?.runbookScriptId) }
+        var pickingCheckScript by remember { mutableStateOf(false) }
+        var pickingRunbook by remember { mutableStateOf(false) }
+        val sortedScripts = scripts.sortedWith(compareBy<QuickScriptEntity> { it.name.lowercase() }.thenBy { it.id })
+        val checkScript = checkScriptId?.let { id -> scripts.find { it.id == id } }
+        val runbook = runbookId?.let { id -> scripts.find { it.id == id } }
         // A rule whose threshold silently fell back to a default is a rule that never fires when the
         // user expects it to, so refuse to save instead of guessing.
         val thresholdError = alertThresholdError(threshInput, metricSelect, measurementSystem)
         val targetError = alertTargetError(metricSelect, targetInput, selectedSrvIds)
+        // A check runs unattended every minute, so only a script that reads can be one.
+        val scriptError = if (metricSelect == HostChecks.SCRIPT_CHECK) {
+            ScriptChecks.problem(checkScript, checkScript?.let { commandDangerHits(it.command) }.orEmpty())
+        } else {
+            null
+        }
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
             title = { Text(if (existing == null) stringResource(R.string.add_alert_rule_trigger) else stringResource(R.string.edit_alert_rule)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Fourteen metrics, a hint and the fields outgrow a phone screen: scroll, so the
+                // last fields are never cut off.
+                Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     HostPickerField(
                         label = if (existing == null) "Hosts" else "Host",
                         servers = serversList,
@@ -900,7 +983,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     val metricsOptions = listOf(
                         "CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature",
                         EndpointChecks.TLS_EXPIRY, EndpointChecks.URL_CHECK,
-                    )
+                        EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK,
+                    ) + HostChecks.ALL
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         metricsOptions.forEach { opt ->
@@ -915,11 +999,16 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                                 celsiusToDisplay(80f, measurementSystem).toString()
                                             EndpointChecks.TLS_EXPIRY -> "14"
                                             EndpointChecks.URL_CHECK -> "2000"
+                                            EndpointChecks.PING -> "200"
+                                            EndpointChecks.TCP_PORT -> "1000"
+                                            EndpointChecks.DNS_CHECK -> "500"
+                                            in HostChecks.ALL -> HostChecks.defaultThreshold(opt).roundToInt().toString()
                                             else -> "90"
                                         }
-                                        // A certificate's expiry needs no sustained window; the
-                                        // others start from the usual five minutes.
+                                        // A certificate's expiry needs no sustained window; host
+                                        // checks have their own; the others start from five minutes.
                                         windowSelect = when {
+                                            HostChecks.isHostCheck(opt) -> HostChecks.defaultWindow(opt)
                                             opt == EndpointChecks.TLS_EXPIRY -> "0m"
                                             windowSelect == "0m" -> "5m"
                                             else -> windowSelect
@@ -940,18 +1029,30 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             color = OmniColors.amber,
                         )
                     }
+                    hostCheckHint(metricSelect)?.let { hint ->
+                        Text(stringResource(hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (metricSelect == HostChecks.SCRIPT_CHECK) {
+                        ScriptChoiceField(
+                            label = stringResource(R.string.script_check_script),
+                            choice = checkScript?.let { "${it.emoji} ${it.name}" } ?: stringResource(R.string.script_check_pick),
+                            error = scriptError?.takeIf { checkScript != null },
+                            tag = "alertRule.script",
+                            onClick = { pickingCheckScript = true },
+                        )
+                    }
                     if (EndpointChecks.isEndpointMetric(metricSelect)) {
-                        val tls = metricSelect == EndpointChecks.TLS_EXPIRY
+                        val field = endpointTargetField(metricSelect)
                         OutlinedTextField(
                             value = targetInput,
                             onValueChange = { targetInput = it },
-                            label = { Text(stringResource(if (tls) R.string.tls_target_label else R.string.url_target_label)) },
-                            placeholder = { Text(if (tls) "example.com:443" else "https://example.com/health") },
+                            label = { Text(stringResource(field.label)) },
+                            placeholder = { Text(field.placeholder) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth().testTag("alertRule.target"),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             isError = targetError != null,
-                            supportingText = (targetError ?: if (tls && targetInput.isBlank()) stringResource(R.string.tls_target_blank_hint) else null)
+                            supportingText = (targetError ?: field.hint?.takeIf { targetInput.isBlank() || field.hintAlways }?.let { stringResource(it) })
                                 ?.let { { Text(it) } },
                         )
                         Text(
@@ -960,16 +1061,20 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    OutlinedTextField(
-                        value = threshInput,
-                        onValueChange = { threshInput = it },
-                        label = { Text(stringResource(R.string.threshold_value, alertMetricUnit(metricSelect, measurementSystem))) },
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        isError = thresholdError != null,
-                        supportingText = thresholdError?.let { { Text(it) } },
-                    )
-                    if (metricSelect != EndpointChecks.TLS_EXPIRY) {
+                    // A yes-or-no check alerts on "yes"; its threshold is fixed at 0.
+                    if (!HostChecks.isYesNo(metricSelect)) {
+                        OutlinedTextField(
+                            value = threshInput,
+                            onValueChange = { threshInput = it },
+                            label = { Text(stringResource(R.string.threshold_value, alertMetricUnit(metricSelect, measurementSystem))) },
+                            modifier = Modifier.fillMaxWidth().testTag("alertRule.threshold"),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            isError = thresholdError != null,
+                            supportingText = thresholdError?.let { { Text(it) } },
+                        )
+                    }
+                    // Facts that hold until fixed (an old scrub, a pending reboot) alert at once.
+                    if (metricSelect != EndpointChecks.TLS_EXPIRY && !(HostChecks.isHostCheck(metricSelect) && HostChecks.defaultWindow(metricSelect) == "0m")) {
                         Text(stringResource(R.string.trigger_window_label))
                         @OptIn(ExperimentalLayoutApi::class)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -978,6 +1083,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             }
                         }
                     }
+                    ScriptChoiceField(
+                        label = stringResource(R.string.alert_runbook),
+                        choice = runbook?.let { "${it.emoji} ${it.name}" } ?: stringResource(R.string.alert_runbook_none),
+                        hint = stringResource(R.string.alert_runbook_hint),
+                        tag = "alertRule.runbook",
+                        onClick = { pickingRunbook = true },
+                    )
                     OutlinedTextField(
                         value = notesInput,
                         onValueChange = { notesInput = it },
@@ -990,7 +1102,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null,
+                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null && scriptError == null,
                     onClick = {
                         val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
@@ -998,15 +1110,21 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         } else {
                             enteredThreshold
                         }
-                        val target = if (EndpointChecks.isEndpointMetric(metricSelect)) targetInput.trim() else ""
+                        val target = when {
+                            EndpointChecks.isEndpointMetric(metricSelect) -> targetInput.trim()
+                            metricSelect == HostChecks.SCRIPT_CHECK -> checkScriptId?.toString().orEmpty()
+                            else -> ""
+                        }
+                        // A runbook deleted while the dialog was open is not saved.
+                        val runbookToSave = runbook?.id
                         if (existing == null) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target)
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave)
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -1019,20 +1137,97 @@ fun AlertsToolView(viewModel: AppViewModel) {
                 TextButton(onClick = { showCreateRuleDialog = false; editRule = null }) { Text(stringResource(R.string.cancel)) }
             }
         )
+        if (pickingCheckScript) {
+            ScriptPickerDialog(
+                title = stringResource(R.string.script_check_pick),
+                scripts = sortedScripts,
+                emptyText = stringResource(R.string.no_scripts_saved_yet),
+                onPick = { picked -> picked?.let { checkScriptId = it.id }; pickingCheckScript = false },
+                onDismiss = { pickingCheckScript = false },
+            )
+        }
+        if (pickingRunbook) {
+            ScriptPickerDialog(
+                title = stringResource(R.string.alert_runbook),
+                scripts = sortedScripts,
+                emptyText = stringResource(R.string.no_scripts_saved_yet),
+                onPick = { picked -> runbookId = picked?.id; pickingRunbook = false },
+                onDismiss = { pickingRunbook = false },
+                noneLabel = stringResource(R.string.alert_runbook_none),
+            )
+        }
+    }
+}
+
+/**
+ * A rule-editor field that names the script chosen for it and opens a [ScriptPickerDialog] when
+ * tapped, with an [error] or a [hint] under it.
+ */
+@Composable
+internal fun ScriptChoiceField(
+    label: String,
+    choice: String,
+    tag: String,
+    onClick: () -> Unit,
+    error: String? = null,
+    hint: String? = null,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label)
+        OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag(tag)) {
+            Text(choice, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        (error ?: hint)?.let {
+            Text(
+                it,
+                fontSize = 11.sp,
+                color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("$tag.note"),
+            )
+        }
     }
 }
 
 
 
 /**
- * What a TLS or URL rule last saw on each of its hosts, a few hosts at most. A rule for all hosts
- * names each host; a rule for one host just says what it checked.
+ * The target field of a phone-side check: its [label], an example as [placeholder], and a [hint]
+ * shown while it is blank, or always when [hintAlways].
+ */
+private class EndpointTargetField(val label: Int, val placeholder: String, val hint: Int?, val hintAlways: Boolean = false)
+
+private fun endpointTargetField(metricName: String): EndpointTargetField = when (metricName) {
+    EndpointChecks.TLS_EXPIRY -> EndpointTargetField(R.string.tls_target_label, "example.com:443", R.string.tls_target_blank_hint)
+    EndpointChecks.PING -> EndpointTargetField(R.string.ping_target_label, "192.168.1.1", R.string.ping_target_blank_hint)
+    EndpointChecks.TCP_PORT -> EndpointTargetField(R.string.tcp_target_label, "5432 or db.lan:5432", R.string.tcp_target_hint, hintAlways = true)
+    EndpointChecks.DNS_CHECK -> EndpointTargetField(R.string.dns_target_label, "nas.lan or nas.lan@192.168.1.1", R.string.dns_target_hint, hintAlways = true)
+    else -> EndpointTargetField(R.string.url_target_label, "https://example.com/health", null)
+}
+
+/** The hint under the metric picker for a host check, or null for other metrics. */
+private fun hostCheckHint(metricName: String): Int? = when (metricName) {
+    HostChecks.HOST_OFFLINE -> R.string.host_check_hint_offline
+    HostChecks.FAILED_SERVICES -> R.string.host_check_hint_failed_services
+    HostChecks.CONTAINER_PROBLEMS -> R.string.host_check_hint_containers
+    HostChecks.STORAGE_HEALTH -> R.string.host_check_hint_storage
+    HostChecks.SCRUB_AGE -> R.string.host_check_hint_scrub
+    HostChecks.UPS_ON_BATTERY -> R.string.host_check_hint_ups
+    HostChecks.REBOOT_REQUIRED -> R.string.host_check_hint_reboot
+    HostChecks.SCRIPT_CHECK -> R.string.host_check_hint_script
+    else -> null
+}
+
+/**
+ * What a TLS, URL or host-check rule last saw on each of its hosts, a few hosts at most. A rule
+ * for all hosts names each host; a rule for one host just says what it saw. A reading [breached]
+ * accepts shows in amber.
  */
 @Composable
-private fun EndpointCheckLines(
+private fun RuleCheckLines(
     rule: AlertRuleEntity,
     servers: List<ServerEntity>,
     results: Map<Pair<Int, Int>, EndpointChecks.Result>,
+    breached: (Float) -> Boolean,
 ) {
     val hosts = servers.filter { rule.serverId == 0 || it.id == rule.serverId }
     val seen = hosts.mapNotNull { host -> results[rule.id to host.id]?.let { host to it } }
@@ -1045,11 +1240,12 @@ private fun EndpointCheckLines(
             )
         }
         seen.take(3).forEach { (host, result) ->
-            val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
+            val over = result.value?.let(breached) == true
             Text(
-                (if (rule.serverId == 0) "${host.name}: " else "") + "${result.target} · ${result.summary}",
+                (if (rule.serverId == 0) "${host.name}: " else "") +
+                    listOf(result.target, result.summary).filter { it.isNotBlank() }.joinToString(" · "),
                 fontSize = 11.sp,
-                color = if (breached) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (over) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1073,6 +1269,18 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
     var createScriptTab by remember { mutableStateOf(0) }
     // When non-null the add/edit dialog opens pre-filled to edit this existing script.
     var editScript by remember { mutableStateOf<QuickScriptEntity?>(null) }
+    // Text another app shared opens a new script with it as the command; it waits while another
+    // editor is open, so a draft is never replaced.
+    var sharedCommand by remember { mutableStateOf("") }
+    LaunchedEffect(viewModel.pendingScriptText, showCreateScriptSheet, editScript) {
+        if (!showCreateScriptSheet && editScript == null) {
+            viewModel.takePendingScriptText()?.let { text ->
+                sharedCommand = text
+                createScriptTab = 0
+                showCreateScriptSheet = true
+            }
+        }
+    }
 
     val visibleScripts = if (activeScriptTab == 0) {
         scripts.filter { it.availableForQuick }
@@ -1290,11 +1498,12 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
         SharedScriptEditorDialog(
             existing = existing,
             title = if (existing != null) "Edit script" else "Add script",
+            initialCommand = if (existing == null) sharedCommand else "",
             initialCategory = if (addingFleetCommand) "Fleet" else "General",
             defaultAvailableForQuick = !addingFleetCommand,
             defaultAvailableForFleet = addingFleetCommand,
             knownCategories = knownCategories,
-            onDismiss = { showCreateScriptSheet = false; editScript = null },
+            onDismiss = { showCreateScriptSheet = false; editScript = null; sharedCommand = "" },
             onSave = { draft ->
                 if (existing != null) {
                     viewModel.updateQuickScript(
@@ -1327,6 +1536,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                 }
                 showCreateScriptSheet = false
                 editScript = null
+                sharedCommand = ""
             }
         )
     }
@@ -2219,6 +2429,9 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                 }
                             }
                             Row {
+                                IconButton(onClick = { viewModel.openKeyInstall(keyAlias = key.alias) }, modifier = Modifier.testTag("authKeys.install.${key.id}")) {
+                                    Icon(Icons.Filled.Upload, stringResource(R.string.key_install_on_hosts), tint = OmniColors.purple)
+                                }
                                 IconButton(onClick = { editKey = key }) {
                                     Icon(Icons.Filled.Edit, "Edit key", tint = OmniColors.purple)
                                 }
@@ -2669,6 +2882,13 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Button(
+                        onClick = {
+                            generatedKeyResult = null
+                            viewModel.openKeyInstall(keyAlias = alias)
+                        },
+                        modifier = Modifier.testTag("authKeys.generated.install"),
+                    ) { Text(stringResource(R.string.key_install_on_hosts)) }
                 }
             },
             confirmButton = {
@@ -4164,28 +4384,15 @@ private fun SettingsSaveAuthDialog(
     onCancel: () -> Unit,
     onAuthenticated: () -> Unit,
 ) {
-    var pin by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    BiometricPromptOnShow(viewModel, R.string.authenticate_to_save_settings, R.string.confirm_it_s_you, onAuthenticated)
-
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.authenticate_to_save)) },
-        text = {
-            Column {
-                Text(stringResource(R.string.enter_your_app_pin_to_apply), fontSize = 14.sp)
-                Spacer(Modifier.height(8.dp))
-                AppPinField(pin, onPinChange = { pin = it; error = null }, error = error)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val err = viewModel.verifyPinForSensitiveAction(pin)
-                if (err == null) onAuthenticated() else error = err
-            }) { Text(stringResource(R.string.confirm)) }
-        },
-        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+    AppLockAuthDialog(
+        viewModel = viewModel,
+        key = Unit,
+        title = R.string.authenticate_to_save,
+        text = stringResource(R.string.enter_your_app_pin_to_apply),
+        biometricTitle = R.string.authenticate_to_save_settings,
+        biometricSubtitle = R.string.confirm_it_s_you,
+        onCancel = onCancel,
+        onAuthenticated = onAuthenticated,
     )
 }
 
@@ -4472,7 +4679,7 @@ private fun CrashHistoryCard() {
  * Behavior") clearly distinct from their sub-settings, which previously shared the same bold style.
  */
 @Composable
-private fun SettingsCardHeader(title: String, subtitle: String, accent: Color, modifier: Modifier = Modifier) {
+internal fun SettingsCardHeader(title: String, subtitle: String, accent: Color, modifier: Modifier = Modifier) {
     Column(modifier) {
         Text(
             title.uppercase(java.util.Locale.US),

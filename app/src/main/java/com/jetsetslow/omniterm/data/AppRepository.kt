@@ -143,7 +143,53 @@ class AppRepository(private val db: AppDatabase) {
     val scriptsFlow: Flow<List<QuickScriptEntity>> = db.quickScriptDao().getAllScriptsFlow()
     suspend fun getAllScripts(): List<QuickScriptEntity> = db.quickScriptDao().getAllScripts()
     suspend fun insertScript(script: QuickScriptEntity) = db.quickScriptDao().insertScript(script)
-    suspend fun deleteScript(script: QuickScriptEntity) = db.quickScriptDao().deleteScript(script)
+    /** Deletes [script] and takes it off every rule that offered it as a runbook. */
+    suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {
+        db.quickScriptDao().deleteScript(script)
+        db.alertRuleDao().clearRunbook(script.id)
+        // A grant for a deleted script could never run; it goes with it.
+        db.automationGrantDao().deleteForScript(script.id)
+    }
+
+    // Automation grants
+    val automationGrantsFlow: Flow<List<AutomationGrantEntity>> = db.automationGrantDao().grantsFlow()
+    suspend fun automationGrantByTokenHash(tokenHash: String): AutomationGrantEntity? = db.automationGrantDao().byTokenHash(tokenHash)
+    suspend fun automationGrantById(id: Int): AutomationGrantEntity? = db.automationGrantDao().byId(id)
+    suspend fun insertAutomationGrant(grant: AutomationGrantEntity): Int = db.automationGrantDao().insert(grant).toInt()
+    suspend fun deleteAutomationGrant(id: Int) = db.automationGrantDao().delete(id)
+    suspend fun markAutomationGrantUsed(id: Int, at: Long) = db.automationGrantDao().markUsed(id, at)
+
+    // Fleet run history
+    val fleetRunsFlow: Flow<List<FleetRunSummary>> = db.fleetRunDao().summariesFlow()
+    suspend fun fleetRunHosts(runId: Int): List<FleetRunHostEntity> = db.fleetRunDao().hostsFor(runId)
+
+    /**
+     * Saves [run] with [hosts], updating an earlier save of the same run (same runKey): its row,
+     * and the hosts given. A host left out keeps what was saved for it, so a retry, which takes
+     * over the failed hosts' cards, leaves their first results in the run they failed in. Then
+     * drops the runs past the newest [keep].
+     */
+    suspend fun recordFleetRun(run: FleetRunEntity, hosts: List<FleetRunHostEntity>, keep: Int = FleetRunHistory.KEEP_RUNS) =
+        db.withTransaction {
+            val dao = db.fleetRunDao()
+            val earlier = dao.byKey(run.runKey)
+            val id = dao.insertRun(run.copy(id = earlier?.id ?: 0, startedAt = earlier?.startedAt ?: run.startedAt)).toInt()
+            dao.insertHosts(hosts.map { it.copy(runId = id) })
+            for (old in dao.idsBeyond(keep)) {
+                dao.deleteHostsOf(old)
+                dao.deleteRunRow(old)
+            }
+        }
+
+    suspend fun deleteFleetRun(runId: Int) = db.withTransaction {
+        db.fleetRunDao().deleteHostsOf(runId)
+        db.fleetRunDao().deleteRunRow(runId)
+    }
+
+    suspend fun clearFleetRuns() = db.withTransaction {
+        db.fleetRunDao().clearHosts()
+        db.fleetRunDao().clearRuns()
+    }
 
     // WOL Target functions
     val telnetHostsFlow: Flow<List<TelnetHostEntity>> = db.telnetHostDao().getAllTelnetHostsFlow()
@@ -248,7 +294,7 @@ class AppRepository(private val db: AppDatabase) {
         if (setting.key in secureSettingKeys) setting.copy(value = SecretStore.encrypt(setting.value) ?: "") else setting
 
     companion object {
-        private val secureSettingKeys = setOf("app_pin")
+        private val secureSettingKeys = setOf("app_pin", AlertForwarding.SETTING_TOKEN)
     }
 }
 
