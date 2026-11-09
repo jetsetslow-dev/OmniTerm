@@ -38,7 +38,11 @@ trap 'rm -rf "$work"' EXIT
 # everything. Without the clean, up-to-date Kotlin tasks would leave the database nearly empty.
 ./gradlew clean --no-daemon --quiet
 # The workflow traces scripts/ci-gradle-gate.sh; on a pull request that is the compile of both
-# variants and nothing else.
+# variants and nothing else. The repo-local Go toolchain's module cache (.go-toolchain/, ignored by
+# git) holds gomobile's example apps, whose manifests would read as five alerts of our own. The
+# Java extractor indexes XML files by these filters (its own `exclude` option does not reach XML);
+# the workflow sets the same.
+export LGTM_INDEX_FILTERS='exclude:.go-toolchain/**'
 GITHUB_EVENT_NAME=pull_request "$CODEQL" database create "$work/db" \
   --language=java-kotlin --source-root="$ROOT" --overwrite \
   --command="$ROOT/scripts/ci-gradle-gate.sh"

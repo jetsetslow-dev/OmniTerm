@@ -238,9 +238,22 @@ object EndpointChecks {
 
     /**
      * Runs [rule]'s check from this phone against its target, or [hostAddress] when it names none.
-     * Blocks for up to the check's timeout, so call it off the main thread.
+     * Blocks for up to the check's timeout, so call it off the main thread. For a host that goes
+     * through a VPN tunnel, [tunnel] opens sockets through it and [tunnelHost] is the host's address
+     * there: TCP and certificate checks of the host's own address go through the tunnel, and checks
+     * the tunnel cannot carry yet (ping, DNS, web) are not run against it at all, because a
+     * tunnelled host is never dialled directly. Checks of any other address run as usual.
      */
-    fun run(rule: AlertRuleEntity, hostAddress: String, now: () -> Long = System::currentTimeMillis): Result = when (rule.metricName) {
+    fun run(
+        rule: AlertRuleEntity,
+        hostAddress: String,
+        now: () -> Long = System::currentTimeMillis,
+        tunnel: (() -> Socket)? = null,
+        tunnelHost: String = "",
+    ): Result {
+        val own = { candidate: String -> tunnel != null && candidate.trim().removeSurrounding("[", "]").equals(hostAddress.trim(), ignoreCase = true) }
+        val dialAs = { candidate: String -> if (own(candidate) && tunnelHost.isNotBlank()) tunnelHost.trim() else candidate }
+        return when (rule.metricName) {
         TLS_EXPIRY -> {
             val endpoint = tlsEndpoint(rule.target, hostAddress)
             if (endpoint == null) {
@@ -249,7 +262,7 @@ object EndpointChecks {
                 val (host, port) = endpoint
                 val shown = if (':' in host) "[$host]:$port" else "$host:$port"
                 try {
-                    val cert = serverCertificate(host, port, TLS_TIMEOUT_MS)
+                    val cert = serverCertificate(host, port, TLS_TIMEOUT_MS, tunnel.takeIf { own(host) }, dialAs(host))
                     val days = daysLeft(cert.notAfter.time, now())
                     Result(days, describe(TLS_EXPIRY, days), shown)
                 } catch (e: IOException) {
@@ -262,6 +275,8 @@ object EndpointChecks {
             val url = checkUrl(rule.target)
             if (url == null) {
                 Result(null, "Not a web address: ${rule.target}", rule.target)
+            } else if (own(runCatching { java.net.URI(url).host.orEmpty() }.getOrDefault(""))) {
+                Result(null, NOT_THROUGH_TUNNEL, url)
             } else {
                 val (value, problem) = fetch(url, URL_TIMEOUT_MS)
                 Result(value, problem?.let { "${describe(URL_CHECK, value)}: $it" } ?: describe(URL_CHECK, value), url)
@@ -271,6 +286,8 @@ object EndpointChecks {
             val host = pingHost(rule.target.ifBlank { hostAddress })
             if (host == null) {
                 Result(null, "Not a host or address: ${rule.target}", rule.target)
+            } else if (own(host)) {
+                Result(null, NOT_THROUGH_TUNNEL, host)
             } else {
                 val (value, problem) = ping(host, QUICK_TIMEOUT_MS)
                 Result(value, problem?.let { "${describe(PING, value)}: $it" } ?: describe(PING, value), host)
@@ -283,7 +300,7 @@ object EndpointChecks {
             } else {
                 val (host, port) = endpoint
                 val shown = if (':' in host) "[$host]:$port" else "$host:$port"
-                val (value, problem) = connect(host, port, QUICK_TIMEOUT_MS)
+                val (value, problem) = connect(dialAs(host), port, QUICK_TIMEOUT_MS, tunnel.takeIf { own(host) })
                 Result(value, problem?.let { "${describe(TCP_PORT, value)}: $it" } ?: describe(TCP_PORT, value), shown)
             }
         }
@@ -294,12 +311,21 @@ object EndpointChecks {
             } else {
                 val (name, server, port) = question
                 val shown = "$name @ " + (if (':' in server) "[$server]" else server) + (if (port != DNS_PORT) ":$port" else "")
-                val (value, problem) = dnsLookup(name, server, port, QUICK_TIMEOUT_MS)
-                Result(value, problem?.let { "${describe(DNS_CHECK, value)}: $it" } ?: describe(DNS_CHECK, value), shown)
+                if (own(server)) {
+                    Result(null, NOT_THROUGH_TUNNEL, shown)
+                } else {
+                    val (value, problem) = dnsLookup(name, server, port, QUICK_TIMEOUT_MS)
+                    Result(value, problem?.let { "${describe(DNS_CHECK, value)}: $it" } ?: describe(DNS_CHECK, value), shown)
+                }
             }
         }
         else -> Result(null, "", rule.target)
+        }
     }
+
+    /** Why a check of a host that goes through a VPN tunnel did not run. */
+    const val NOT_THROUGH_TUNNEL =
+        "Not checked: this host is reached only through its VPN tunnel, and ping, DNS and web checks do not go through tunnels yet. TCP port and certificate checks do."
 
     /**
      * Fetches [url] and returns its alert value with, on failure, why. Redirects are followed, any
@@ -375,10 +401,14 @@ object EndpointChecks {
     }
 
     /** Opens a TCP connection to [host]:[port] and closes it: the connect time in ms, or [URL_NO_RESPONSE] with why. */
-    fun connect(host: String, port: Int, timeoutMs: Int): Pair<Float, String?> {
+    fun connect(host: String, port: Int, timeoutMs: Int, open: (() -> Socket)? = null): Pair<Float, String?> {
         val started = System.nanoTime()
         return try {
-            Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
+            if (open != null) {
+                open().use { it.connect(InetSocketAddress.createUnresolved(host, port), timeoutMs) }
+            } else {
+                Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
+            }
             (System.nanoTime() - started) / 1_000_000f to null
         } catch (e: IOException) {
             URL_NO_RESPONSE to (e.message ?: e.javaClass.simpleName)
@@ -445,12 +475,12 @@ object EndpointChecks {
      * certificate it rejects (self-signed, expired, wrong name) is still read: only its expiry
      * matters here. Nothing is sent after the handshake.
      */
-    fun serverCertificate(host: String, port: Int, timeoutMs: Int): X509Certificate {
+    fun serverCertificate(host: String, port: Int, timeoutMs: Int, open: (() -> Socket)? = null, dialHost: String = host): X509Certificate {
         val recorder = RecordingTrustManager(platformTrustManager())
         val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(recorder), null) }
-        val plain = Socket()
+        val plain = open?.invoke() ?: Socket()
         try {
-            plain.connect(InetSocketAddress(host, port), timeoutMs)
+            plain.connect(if (open != null) InetSocketAddress.createUnresolved(dialHost, port) else InetSocketAddress(host, port), timeoutMs)
             plain.soTimeout = timeoutMs
             // Layering on a connected socket with the host name sends SNI, so a server hosting
             // several names returns the certificate for this one.

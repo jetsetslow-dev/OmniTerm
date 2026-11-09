@@ -437,9 +437,9 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   with 3 retries. `secrets/internal-docs/tools/ci-watch.sh` watches runs and reruns network
   flakes once.
 
-## Checkpoint E — opt-in MCP server for AI assistants (this commit, branch `kotlin-mcp`)
+## Checkpoint E — opt-in MCP server for AI assistants (#145, merged Nov 9 as 179c0b6)
 
-Its own PR, stacked on #138 (base `kotlin-automation` until #138 merges, then main).
+Its own PR, after #138.
 
 - Protocol: `data/mcp/McpProtocol.kt`, pure Kotlin on kotlinx-serialization-json's tree API (the
   jar was already verified at 1.12.0), so it can move to the shared module as is.
@@ -506,6 +506,75 @@ Its own PR, stacked on #138 (base `kotlin-automation` until #138 merges, then ma
 - Gate: `local-pr-check.sh --full` passed (exit 0): 93 device tests, 0 failed; CodeQL no alerts (87,053 lines)
 - Go engine contract: remote port forwarding, used by the MCP tunnel, joins `keyOnly` in item 6.
 
+## Checkpoint T1 — per-host WireGuard tunnels (this commit, branch `kotlin-tunnels`)
+
+Its own PR against main, after #145.
+
+- Go library `tunnel/omnitunnel` (module `github.com/jetsetslow-dev/omniterm/tunnel`):
+  - wireguard-go plus gVisor's netstack, in userspace: no VpnService, no system VPN slot, no root,
+    and other apps never see the tunnel.
+  - A wg-quick configuration parser that says which line is wrong and never repeats a key.
+  - `DialFd` connects inside the tunnel and hands Kotlin one end of a socketpair, so no port is ever
+    listened on. Names go to the tunnel's DNS first; addresses outside AllowedIPs are refused.
+  - Built with gomobile into an AAR by `scripts/build-tunnel.sh` (Gradle task `buildGoTunnel`),
+    with the repo-local, checksum-verified Go 1.27.3 from `scripts/go-toolchain.sh` (approved
+    Nov 8). About 6.5 MB per ABI.
+  - Go tests (`scripts/test-tunnel.sh`: gofmt, vet, tests): real handshakes over loopback against an
+    in-process peer; a 3 MiB echo; refusals; closing; a wrong peer key; an unknown endpoint.
+- Routing (user, Nov 9: "if tunnel is confirmed and selected for a host it should never go
+  direct"):
+  - A host has an optional tunnel and an optional address inside it (`tunnelHost`); the same machine
+    can be saved twice, once direct and once through a tunnel.
+  - With a tunnel, every first hop goes through it: SSH (`HostRoute` → `TunnelSocketFactory`, the
+    only JSch-specific piece), the jump host or proxy, the connection test, and TCP and certificate
+    checks. There is no fallback: a tunnel that is down, refused or deleted fails closed.
+  - The direct reachability probe is skipped; ping, DNS and web checks of the host's own address
+    are not run ("Not checked: … through its VPN tunnel"), because they would go direct.
+  - Changing a host's route closes its terminals (they reconnect over the new route) and stops its
+    SSH tunnels (port forwards); the pool keys on the route, so no old session is reused.
+  - A tunnel that hosts use cannot be deleted. A restored host whose tunnel is not in the backup
+    points at a missing one and fails until the user picks one.
+- Data: `tunnels` table (config encrypted), `servers.tunnelId` and `servers.tunnelHost` (DB 29,
+  `MIGRATION_28_29`). Backups carry tunnels with their hosts; restore reuses an identical one.
+- `TunnelManager` starts a tunnel on first use, restarts it when its configuration changes, and
+  stops it after 5 idle minutes.
+- UI: Tools → VPN tunnels (named so because "SSH Tunnels" already means port forwards), with paste
+  or import, a live check, status (handshake, connections, traffic), stop and delete; the host
+  editor's VPN tunnel picker and its never-direct note.
+- Fixture: `wireguard` service in `scripts/test-hosts` (wireguard-go, a forward to internal-a's SSH,
+  dnsmasq for `lab.vpn`); its keys are generated into `.env`.
+- CI: `tunnel/` counts as code in both change detectors (tested), Go tests in PR Check and the
+  gate, a CodeQL Go job, Dependabot `gomod`, and the gate's update check covers Go modules and the
+  Go toolchain's patch releases. CI installs the pinned NDK when it is missing.
+- Credits: wireguard-go (MIT), gVisor (Apache-2.0), gomobile and x/* (BSD-3), Haven (reference
+  only, AGPL, no code).
+- Later (T2+): SMB/FTP/WebDAV/Kubernetes through tunnels, ping and DNS through netstack,
+  Tailscale/Headscale, NetBird, Nebula, Cloudflare Access, QR import.
+- Results (Nov 9):
+  - Go: `scripts/test-tunnel.sh` passes (gofmt, `go mod verify`, vet, tests).
+  - Mutations, each seen failing a test:
+    - a factory that ignores the tunnel;
+    - the tunnel address ignored;
+    - no restart on a new configuration;
+    - an idle stop with connections open;
+    - endpoint checks that skip the tunnel;
+    - a probe that goes direct;
+    - terminals kept over a changed route;
+    - a missing tunnel restored as direct;
+    - an identical tunnel not reused;
+    - the tunnel address left out of backups;
+    - an in-use tunnel deleted;
+    - pooled sessions shared across routes.
+  - Device (API 35, repo `wireguard` fixture): `E2eVpnTunnelTest` reaches `internal-a.lab.vpn`
+    through the tunnel. With the tunnel route bypassed it fails, unable to resolve the name directly.
+  - The device run found a real bug. The same machine through a different tunnel was refused as a
+    duplicate. A host's identity is now address + port + login + route (user, Nov 9: "the dup ip
+    should be in combination with cred and tunnel"), in the editor, in `addServer` and on restore.
+  - `./scripts/local-pr-check.sh --full` passed: unit tests for both variants, lint, dependency
+    verification, no advisories or updates (Gradle, Actions, Go), the secret scan, the API 35
+    device tests, and local CodeQL with no alerts (88,639 lines). Go's module cache is kept out
+    of the Java/XML extraction with `LGTM_INDEX_FILTERS`, locally and in CI.
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
@@ -557,7 +626,7 @@ On Nov 9 the user added:
    D3 (key install) are done. This PR (#138) ends here; items 2–6 are
    each their own PR.
 2. MCP: done in checkpoint E (its own PR).
-3. Per-host tunnels: WireGuard, Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
+3. Per-host tunnels: WireGuard is checkpoint T1 (its own PR); then Tailscale/Headscale, NetBird, Nebula and Cloudflare Access from one
    Go library, built with a repo-local, checksum-verified Go toolchain (approved Nov 8). ZeroTier,
    OpenVPN and Pangolin's Olm are left out for their licences; Pangolin raw TCP resources work as a
    plain host and port.

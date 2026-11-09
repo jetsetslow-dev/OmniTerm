@@ -62,3 +62,6 @@ test.txt
 # Generated SSH keys for the local test fleet (scripts/test-hosts.sh)
 /scripts/test-hosts/keys/
 /scripts/test-hosts/.env
+
+# Repo-local Go toolchain, modules and build cache (scripts/go-toolchain.sh).
+/.go-toolchain/

@@ -488,3 +488,28 @@ interface McpCallDao {
     @Query("DELETE FROM mcp_calls")
     suspend fun clear()
 }
+
+@Dao
+interface TunnelDao {
+    @Query("SELECT * FROM tunnels ORDER BY name COLLATE NOCASE, id")
+    fun tunnelsFlow(): Flow<List<TunnelEntity>>
+
+    @Query("SELECT * FROM tunnels ORDER BY name COLLATE NOCASE, id")
+    suspend fun getAll(): List<TunnelEntity>
+
+    @Query("SELECT * FROM tunnels WHERE id = :id")
+    suspend fun get(id: Int): TunnelEntity?
+
+    @Insert
+    suspend fun insert(tunnel: TunnelEntity): Long
+
+    @Update
+    suspend fun update(tunnel: TunnelEntity)
+
+    @Query("DELETE FROM tunnels WHERE id = :id")
+    suspend fun delete(id: Int)
+
+    /** The hosts that go through tunnel [id]: while there are any, it cannot be deleted. */
+    @Query("SELECT name FROM servers WHERE tunnelId = :id ORDER BY name COLLATE NOCASE")
+    suspend fun hostsUsing(id: Int): List<String>
+}

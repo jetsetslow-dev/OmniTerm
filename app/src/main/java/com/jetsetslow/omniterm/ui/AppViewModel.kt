@@ -26,6 +26,7 @@ import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.mcp.McpSettings
+import com.jetsetslow.omniterm.data.tunnel.TunnelManager
 import com.jetsetslow.omniterm.mcp.McpApprovals
 import com.jetsetslow.omniterm.mcp.McpConfig
 import com.jetsetslow.omniterm.mcp.McpServerState
@@ -511,6 +512,9 @@ internal fun terminalNavigationSessionIds(
     }
 }
 
+/** What a restored host points at when its VPN tunnel was not in the backup: it connects nowhere until fixed. */
+internal const val MISSING_TUNNEL_ID = -1
+
 enum class Screen {
     Servers,
     Fleet,
@@ -529,6 +533,7 @@ enum class Screen {
     About,
     Automation,
     Mcp,
+    VpnTunnels,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -663,9 +668,13 @@ internal fun sshFailureShouldMarkHostOffline(
     hasLiveSshSession: Boolean,
 ): Boolean = !hasLiveSshSession && sshFailureProvesEndpointUnreachable(failure)
 
-/** A target behind any configured proxy/jump host must not be judged by a direct socket probe. */
-internal fun shouldProbeSshPortDirectly(proxyType: String): Boolean =
-    proxyType.equals("none", ignoreCase = true)
+/**
+ * A target behind any configured proxy/jump host must not be judged by a direct socket probe. Nor
+ * may one that goes through a VPN tunnel ([tunnelId]) be probed directly at all: such a host is never
+ * dialled directly, and its address may be private or another machine on the phone's network.
+ */
+internal fun shouldProbeSshPortDirectly(proxyType: String, tunnelId: Int? = null): Boolean =
+    tunnelId == null && proxyType.equals("none", ignoreCase = true)
 
 internal fun classifySshConnectionPhase(raw: String, viaJumpHost: Boolean): SshConnectionPhase = when {
     raw.contains("resolv", ignoreCase = true) -> SshConnectionPhase.Resolving
@@ -2669,6 +2678,7 @@ class AppViewModel @JvmOverloads constructor(
 
     init {
         resumeMcpServer()
+        TunnelManager.attach(repository)
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
         SshHostKeyTrust.registerApprovalHandler(hostKeyApprovalOwner) { req ->
@@ -3166,7 +3176,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (srv.status == "offline") {
                     repository.updateReachability(srv.id, "connecting", 0)
                 }
-                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType)) {
+                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType, srv.tunnelId)) {
                     tcpReachable(srv.host, srv.port)
                 } else {
                     -1
@@ -3668,6 +3678,7 @@ class AppViewModel @JvmOverloads constructor(
         val rules = repository.getAllRules().filter { it.enabled && EndpointChecks.isEndpointMetric(it.metricName) }
         if (rules.isEmpty()) return
         val servers = repository.getAllServers()
+        if (servers.any { it.tunnelId != null }) TunnelManager.attach(repository)
         val limit = Semaphore(ENDPOINT_CHECK_PARALLELISM)
         coroutineScope {
             for (rule in rules) {
@@ -3676,7 +3687,11 @@ class AppViewModel @JvmOverloads constructor(
                     if (System.currentTimeMillis() < (endpointChecksDueAt[key] ?: 0L)) continue
                     launch {
                         limit.withPermit {
-                            val result = EndpointChecks.run(rule, srv.host)
+                            val result = EndpointChecks.run(
+                                rule, srv.host,
+                                tunnel = srv.tunnelId?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id) } },
+                                tunnelHost = srv.tunnelHost,
+                            )
                             val now = System.currentTimeMillis()
                             val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
                             endpointChecksDueAt[key] = now + endpointCheckIntervalMs(rule, result, breached)
@@ -4809,7 +4824,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     // CRUDS FOR SERVERS
-    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, onResult: (String?) -> Unit) {
+    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, tunnelId: Int? = null, tunnelHost: String = "", onResult: (String?) -> Unit) {
         viewModelScope.launch {
             // Username/password live on the credential profile when authType == "profile", so the
             // form leaves the username field greyed out and empty; only require it for the other
@@ -4835,9 +4850,10 @@ class AppViewModel @JvmOverloads constructor(
             val matchingServer = repository.findMatchingServer(ServerEntity(
                 name = name, host = host, port = port, username = username,
                 authType = authType, authProfileId = profileId,
+                tunnelId = tunnelId, tunnelHost = tunnelHost.trim(),
             ))
             if (matchingServer != null) {
-                onResult("The same host, port, SSH user and authentication method already exist as \"${matchingServer.name}\". Existing server unchanged.")
+                onResult(duplicateServerMessage(matchingServer.name))
                 return@launch
             }
             if (createProfile && authType == "password" && password != null && password.isNotBlank()) {
@@ -4877,6 +4893,8 @@ class AppViewModel @JvmOverloads constructor(
                 status = "offline",
                 authStatus = "unknown",
                 authError = null,
+                tunnelId = tunnelId,
+                tunnelHost = tunnelHost.trim(),
             )
             val newId = try {
                 repository.saveUniqueServer(server)
@@ -5021,7 +5039,23 @@ class AppViewModel @JvmOverloads constructor(
                     activeProbes[server.id] = viewModelScope.launch(Dispatchers.IO) { probeServer(updated) }
                 }
             }
-            if (creds != previousCreds) {
+            val rerouted = previous != null && (previous.tunnelId != server.tunnelId || previous.tunnelHost != server.tunnelHost)
+            if (rerouted) {
+                // Nothing may keep using the previous route: a host whose tunnel was just selected
+                // must never stay connected directly, and one whose tunnel was taken away must not
+                // keep using it. Its forwards stop; its terminals reconnect over the new route.
+                val forwards = repository.getAllPortForwards().filter { it.serverId == server.id && isTunnelActive(it.id) }
+                forwards.forEach { stopTunnel(it.id) }
+                val shells = activeSessions.filter { it.serverId == server.id && !it.userClosed }
+                shells.forEach { shell ->
+                    runCatching { shell.session.close() }
+                    reconnectSession(shell)
+                }
+                if (forwards.isNotEmpty() || shells.isNotEmpty()) {
+                    hostEditNotice = "The host's VPN tunnel changed: ${shells.size} terminal(s) reconnect through the new " +
+                        "route, and ${forwards.size} SSH tunnel(s) stopped. Start them again to use it."
+                }
+            } else if (creds != previousCreds) {
                 val running = repository.getAllPortForwards().count { it.serverId == server.id && isTunnelActive(it.id) }
                 if (running > 0) {
                     hostEditNotice = if (running == 1) {
@@ -6307,6 +6341,8 @@ class AppViewModel @JvmOverloads constructor(
         proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null,
         // What a sign-in question is titled with; the address until the host is named.
         displayName: String = "",
+        // The VPN tunnel the host goes through: the test goes through it too, never directly.
+        tunnelId: Int? = null, tunnelHost: String = "",
         onResult: (String?) -> Unit,
     ) {
         if (host.isBlank()) { onResult("Host is required."); return }
@@ -6337,7 +6373,9 @@ class AppViewModel @JvmOverloads constructor(
                     proxyKeyPem = proxyKey?.privateKey,
                     certificate = key?.certificate,
                     proxyCertificate = proxyKey?.certificate,
-                ),
+                    tunnelId = tunnelId,
+                    tunnelHost = tunnelHost.trim(),
+                ).also { if (tunnelId != null) TunnelManager.attach(repository) },
                 interactiveAuthFor(displayName.ifBlank { host }),
             )
             isTestingConnection = false
@@ -14528,6 +14566,63 @@ class AppViewModel @JvmOverloads constructor(
     /** The user's answer to an assistant's request; the dialog asks for the lock before approving. */
     fun answerMcpApproval(id: Int, approved: Boolean) = McpApprovals.answer(id, approved)
 
+    // ── TUNNELS ──
+    /** The tunnels hosts can go through, without their configurations. */
+    val tunnels = repository.tunnelsFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val tunnelStatuses = TunnelManager.statuses
+
+    /** What is wrong with a pasted configuration, or null when it can be used. */
+    fun checkTunnelConfig(config: String): String? = TunnelManager.check(TunnelKinds.WIREGUARD, config)
+
+    /**
+     * Saves a new tunnel ([id] null) or renames one, replacing its configuration when [config] is
+     * given. A tunnel whose configuration changed stops at once, so nothing keeps going through the
+     * old one; its connections reconnect through the new one.
+     */
+    fun saveTunnel(id: Int?, name: String, config: String?, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val trimmedName = name.trim()
+            val problem = when {
+                trimmedName.isEmpty() -> "Give the tunnel a name."
+                tunnels.value.any { it.id != id && it.name.equals(trimmedName, ignoreCase = true) } -> "Another tunnel is called \"$trimmedName\"."
+                id == null && config.isNullOrBlank() -> "Paste or import the tunnel's configuration."
+                config != null && config.isNotBlank() -> withContext(Dispatchers.Default) { checkTunnelConfig(config) }
+                else -> null
+            }
+            if (problem != null) {
+                onResult(problem)
+                return@launch
+            }
+            val result = runCatching {
+                if (id == null) {
+                    repository.insertTunnel(TunnelEntity(name = trimmedName, config = config.orEmpty()))
+                } else {
+                    repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() })
+                    if (!config.isNullOrBlank()) withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+                }
+            }
+            onResult(result.exceptionOrNull()?.let { it.message ?: "The tunnel could not be saved." })
+        }
+    }
+
+    /** Deletes tunnel [id], unless a host still goes through it; then says which. */
+    fun deleteTunnel(id: Int, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val users = repository.deleteTunnel(id)
+            if (users.isNotEmpty()) {
+                onResult("Still used by ${users.joinToString(", ")}. Choose another tunnel, or none, for them first.")
+                return@launch
+            }
+            withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+            onResult(null)
+        }
+    }
+
+    /** Takes tunnel [id] down now; it starts again when a host next needs it. */
+    fun stopTunnelNow(id: Int) {
+        viewModelScope.launch(Dispatchers.IO) { TunnelManager.stop(id) }
+    }
+
     /** The server stays on across restarts of the app while the user has it on. */
     private fun resumeMcpServer() {
         viewModelScope.launch {
@@ -14995,6 +15090,7 @@ class AppViewModel @JvmOverloads constructor(
         selection: BackupSelection = BackupSelection(),
         telnetHosts: List<TelnetHostEntity> = emptyList(),
         kubeClusters: List<KubeClusterEntity> = emptyList(),
+        tunnels: List<TunnelEntity> = emptyList(),
     ): String {
         val closedSelection = selection.withReferentialClosure()
         val serverArr = org.json.JSONArray()
@@ -15020,6 +15116,8 @@ class AppViewModel @JvmOverloads constructor(
                 put("proxyUser", s.proxyUser)
                 put("proxyPassword", s.proxyPassword)
                 put("proxyKeyAlias", s.proxyKeyAlias ?: "")
+                s.tunnelId?.let { put("tunnelId", it) }
+                put("tunnelHost", s.tunnelHost)
             })
         }
         val keyArr = org.json.JSONArray()
@@ -15145,6 +15243,14 @@ class AppViewModel @JvmOverloads constructor(
                 put("clientKeyPem", c.clientKeyPem); put("token", c.token); put("namespace", c.namespace)
             })
         }
+        // VPN tunnels travel with the hosts that go through them; their configurations hold private
+        // keys, which is one more reason a backup with hosts is encrypted.
+        val tunnelArr = org.json.JSONArray()
+        for (tunnel in if (closedSelection.servers) tunnels else emptyList()) {
+            tunnelArr.put(org.json.JSONObject().apply {
+                put("id", tunnel.id); put("name", tunnel.name); put("kind", tunnel.kind); put("config", tunnel.config)
+            })
+        }
         val networkShareArr = org.json.JSONArray()
         for (share in if (closedSelection.networkShares) networkShares else emptyList()) {
             networkShareArr.put(org.json.JSONObject().apply {
@@ -15238,6 +15344,7 @@ class AppViewModel @JvmOverloads constructor(
             .put("wolTargets", wolArr)
             .put("telnetHosts", telnetArr)
             .put("kubeClusters", kubeArr)
+            .put("vpnTunnels", tunnelArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
             .put("settings", settingsObj)
@@ -15348,7 +15455,7 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs", "telnetHosts", "kubeClusters",
+            "crashLogs", "telnetHosts", "kubeClusters", "vpnTunnels",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -15518,6 +15625,7 @@ class AppViewModel @JvmOverloads constructor(
                             networkShares, portForwards, activeAlerts, settings, closedSelection,
                             telnetHosts = repository.getAllTelnetHosts(),
                             kubeClusters = repository.getAllKubeClusters(),
+                            tunnels = repository.getAllTunnels(),
                         )
                         val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
                         context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
@@ -15607,6 +15715,23 @@ class AppViewModel @JvmOverloads constructor(
                                 )
                             }
                         } ?: emptyList()
+                        // A backup's tunnel is this phone's own when one here has the same name and
+                        // configuration; restoring reuses it. Any other one the restore adds.
+                        val localTunnelsAtStart = repository.getAllTunnels()
+                        val backupTunnelArr = root.optJSONArray("vpnTunnels") ?: org.json.JSONArray()
+                        val backupTunnels = (0 until backupTunnelArr.length()).map { backupTunnelArr.getJSONObject(it) }
+                            .associateBy { it.optInt("id", 0) }
+                        fun localTunnelLike(backupTunnel: org.json.JSONObject): TunnelEntity? = localTunnelsAtStart.firstOrNull {
+                            it.name.equals(backupTunnel.optString("name").trim(), ignoreCase = true) && it.config == backupTunnel.optString("config")
+                        }
+                        // A backup host's route in this phone's terms, so a host saved here directly is
+                        // not mistaken for the backup's copy that goes through a tunnel, or the reverse.
+                        fun backupRoute(backup: org.json.JSONObject): String {
+                            val oldTunnelId = backup.optInt("tunnelId", 0).takeIf { it != 0 } ?: return serverRoute(null, "")
+                            val local = backupTunnels[oldTunnelId]?.let(::localTunnelLike)
+                            return if (local != null) serverRoute(local.id, backup.optString("tunnelHost")) else "restored-tunnel:$oldTunnelId"
+                        }
+
                         suspend fun sameServerEndpoint(existing: ServerEntity, backup: org.json.JSONObject): Boolean {
                             val candidate = ServerEntity(
                                 name = backup.optString("name"), host = backup.optString("host"),
@@ -15614,7 +15739,7 @@ class AppViewModel @JvmOverloads constructor(
                                 authType = backup.optString("authType", "password"),
                                 authProfileId = backup.optInt("authProfileId", 0),
                             )
-                            val incoming = com.jetsetslow.omniterm.data.serverIdentity(candidate, backupProfiles)
+                            val incoming = com.jetsetslow.omniterm.data.serverIdentity(candidate, backupProfiles)?.copy(route = backupRoute(backup))
                             return incoming != null && incoming == com.jetsetslow.omniterm.data.serverIdentity(existing, repository.getAllProfiles())
                         }
 
@@ -15744,6 +15869,26 @@ class AppViewModel @JvmOverloads constructor(
                             availableCredSlots--
                         }
 
+                        // VPN tunnels first, so restored hosts point at them. One already here with the
+                        // same name and configuration is reused; any other is added.
+                        val tunnelIdMap = mutableMapOf<Int, Int>()
+                        if (closedSelection.servers) {
+                            val takenNames = localTunnelsAtStart.map { it.name.lowercase() }.toMutableSet()
+                            for ((oldTunnelId, o) in backupTunnels) {
+                                val tunnelName = o.optString("name").trim()
+                                val tunnelConfig = o.optString("config")
+                                val kind = o.optString("kind", TunnelKinds.WIREGUARD)
+                                if (oldTunnelId == 0 || tunnelName.isEmpty() || tunnelConfig.isBlank() || kind != TunnelKinds.WIREGUARD) continue
+                                tunnelIdMap[oldTunnelId] = localTunnelLike(o)?.id ?: run {
+                                    val freeName = generateSequence(1) { it + 1 }
+                                        .map { n -> if (n == 1) tunnelName else "$tunnelName ($n)" }
+                                        .first { it.lowercase() !in takenNames }
+                                    takenNames += freeName.lowercase()
+                                    repository.insertTunnel(TunnelEntity(name = freeName, kind = kind, config = tunnelConfig))
+                                }
+                            }
+                        }
+
                         val arr = root.optJSONArray("servers") ?: org.json.JSONArray()
                         // Maps backup server ids to restored ids so server-scoped records (alert rules,
                         // backup jobs) can be re-pointed even when the local ids differ.
@@ -15770,8 +15915,7 @@ class AppViewModel @JvmOverloads constructor(
                                 if (oldId != 0) serverIdMap[oldId] = existing.id
                                 restoredHosts.add(existing.host to existing.port)
                                 skippedExistingServers.add(
-                                    "Skipped \"$nm\": the same host, port, SSH user and authentication method " +
-                                        "already exist as \"${existing.name}\". Existing server unchanged."
+                                    "Skipped \"$nm\": " + duplicateServerMessage(existing.name).replaceFirstChar { it.lowercase() }
                                 )
                                 continue
                             }
@@ -15802,6 +15946,11 @@ class AppViewModel @JvmOverloads constructor(
                                     proxyPassword = o.optString("proxyPassword", ""),
                                     proxyKeyAlias = o.optString("proxyKeyAlias", "").takeIf { it.isNotBlank() },
                                     status = "offline",
+                                    // A host that went through a tunnel never goes direct after a
+                                    // restore: without its tunnel it keeps a reference to none, so
+                                    // it fails until the user picks one (or None).
+                                    tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
+                                    tunnelHost = o.optString("tunnelHost", ""),
                                 )
                             ).toInt()
                             if (oldId != 0) serverIdMap[oldId] = newId

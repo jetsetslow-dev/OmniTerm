@@ -21,9 +21,7 @@ class AppRepository(private val db: AppDatabase) {
 
     suspend fun saveUniqueServer(server: ServerEntity, update: Boolean = false): Long = db.withTransaction {
         val existing = findMatchingServer(server)
-        require(existing == null) {
-            "The same host, port, SSH user and authentication method already exist as \"${existing?.name}\". Existing server unchanged."
-        }
+        require(existing == null) { duplicateServerMessage(existing?.name) }
         if (update) {
             updateServer(server)
             server.id.toLong()
@@ -150,6 +148,31 @@ class AppRepository(private val db: AppDatabase) {
         db.mcpCallDao().prune(keep)
     }
     suspend fun clearMcpCalls() = db.mcpCallDao().clear()
+
+    // Tunnels. Screens get them without their configuration, which holds the private key; only a
+    // connection being dialled ([getTunnel]) and a backup read it.
+    val tunnelsFlow: Flow<List<TunnelEntity>> = db.tunnelDao().tunnelsFlow().map { list -> list.map { it.copy(config = "") } }
+    suspend fun getTunnel(id: Int): TunnelEntity? = db.tunnelDao().get(id)?.let(::decryptTunnel)
+    suspend fun getAllTunnels(): List<TunnelEntity> = db.tunnelDao().getAll().map(::decryptTunnel)
+    suspend fun insertTunnel(tunnel: TunnelEntity): Int = db.tunnelDao().insert(encryptTunnel(tunnel)).toInt()
+    /** Renames [id], and replaces its configuration when [config] is given. */
+    suspend fun updateTunnel(id: Int, name: String, config: String?) = db.withTransaction {
+        val stored = db.tunnelDao().get(id) ?: return@withTransaction
+        db.tunnelDao().update(stored.copy(name = name, config = config?.let { encryptTunnel(stored.copy(config = it)).config } ?: stored.config))
+    }
+    /**
+     * Deletes [id] unless a host still goes through it, and returns those hosts' names. A host whose
+     * tunnel is selected never goes direct, so the user picks another tunnel or None for it first.
+     */
+    suspend fun deleteTunnel(id: Int): List<String> = db.withTransaction {
+        val users = db.tunnelDao().hostsUsing(id)
+        if (users.isEmpty()) db.tunnelDao().delete(id)
+        users
+    }
+    private fun encryptTunnel(tunnel: TunnelEntity) = tunnel.copy(
+        config = requireNotNull(SecretStore.encrypt(tunnel.config)) { "The tunnel could not be encrypted on this phone." },
+    )
+    private fun decryptTunnel(tunnel: TunnelEntity) = tunnel.copy(config = SecretStore.decrypt(tunnel.config).orEmpty())
     suspend fun insertScript(script: QuickScriptEntity) = db.quickScriptDao().insertScript(script)
     /** Deletes [script] and takes it off every rule that offered it as a runbook. */
     suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {

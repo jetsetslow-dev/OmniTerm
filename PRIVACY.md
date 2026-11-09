@@ -11,12 +11,13 @@ OmniTerm stores the following data locally on the user's device when the user en
 - Quick scripts, alert rules, Wake-on-LAN targets, app settings, and recent metric history.
 - Fleet's run history: the last 50 Broadcast runs, each with its command as written, which hosts it ran on, and the end of each host's output. The values typed for a script's `{{placeholders}}` are not kept, though a host's output can still show them. The history is not included in backups, and the user can delete a run or clear it all in Fleet.
 - Automation tokens, if the user makes any under Tools → Automation: for each, the saved script and hosts it may run, the name the user gave it, and when it was made and last used. Only a SHA-256 fingerprint of each token is stored, never the token itself. Tokens and the Automation switch are not included in backups.
+- VPN tunnels the user adds under Tools → VPN tunnels: a name and the WireGuard configuration, including its private key, stored encrypted on the device; and, per host, which tunnel it goes through and its address inside the tunnel.
 - AI assistant (MCP) settings, if the user turns that on under Tools → AI assistants: which hosts assistants may see, whether any command may be asked for, the ports, the host the server is reached through, and a SHA-256 fingerprint of its token, never the token itself. The last 200 calls are kept: when, the client's own name, the tool, whether it worked, and the first line of its answer. None of this is included in backups, and the user can clear the calls.
 - Alert forwarding settings, if the user sets them up: the service, its address and topic, and an optional access token (stored encrypted).
 
 ## Network Use
 
-The app connects directly from the user's device to servers and proxies configured by the user. OmniTerm does not operate a backend service for telemetry, analytics, advertising, crash reporting, or credential sync.
+The app connects directly from the user's device to servers and proxies configured by the user, or, for a host the user set a VPN tunnel for, through that tunnel to the peer its configuration names. A tunnel runs inside the app only, does not use Android's VPN service, and carries only OmniTerm's connections to the hosts that use it; a host with a tunnel is never connected to directly. OmniTerm does not operate a backend service for telemetry, analytics, advertising, crash reporting, or credential sync.
 
 ## Alert Forwarding (Opt-In)
 
@@ -53,6 +54,8 @@ User-initiated SSH/SFTP operations send data directly to the host or proxy selec
 ## Backups
 
 Android platform auto-backup is disabled because local app data can include SSH credentials and private keys.
+
+VPN tunnels, private keys included, are part of a backup that includes hosts; such a backup is always encrypted.
 
 The in-app backup feature is user initiated. It encrypts exported app data with AES-256-GCM using a passphrase-derived key. The passphrase is not stored by OmniTerm and is required to restore the backup.
 

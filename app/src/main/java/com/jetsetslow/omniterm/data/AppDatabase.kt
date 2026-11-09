@@ -29,13 +29,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FleetRunHostEntity::class,
         AutomationGrantEntity::class,
         McpCallEntity::class,
+        TunnelEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 28,
+    version = 29,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -58,6 +59,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun fleetRunDao(): FleetRunDao
     abstract fun automationGrantDao(): AutomationGrantDao
     abstract fun mcpCallDao(): McpCallDao
+    abstract fun tunnelDao(): TunnelDao
 
     companion object {
         @Volatile
@@ -358,6 +360,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Per-host tunnels: the tunnels the user set up, and which one each host goes through.
+        private val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `tunnels` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `kind` TEXT NOT NULL, `config` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)"
+                )
+                db.execSQL("ALTER TABLE `servers` ADD COLUMN `tunnelId` INTEGER")
+                db.execSQL("ALTER TABLE `servers` ADD COLUMN `tunnelHost` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -433,6 +447,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_25_26,
             MIGRATION_26_27,
             MIGRATION_27_28,
+            MIGRATION_28_29,
         )
 
         fun getDatabase(context: Context): AppDatabase {

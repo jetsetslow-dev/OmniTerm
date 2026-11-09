@@ -66,4 +66,55 @@ with tempfile.TemporaryDirectory() as tmp:
         ("x.y:z", "2.0", "libs.versions.toml: direct"),
     ], "Gradle versions found")
 
+listing = """{"Path": "github.com/jetsetslow-dev/omniterm/tunnel", "Main": true}
+{"Path": "golang.org/x/crypto", "Version": "v0.58.0", "Update": {"Version": "v0.59.0"}}
+{"Path": "golang.zx2c4.com/wireguard", "Version": "v0.0.0-20261024220952-b3bc704ef0ee"}
+{"Path": "gvisor.dev/gvisor", "Version": "v0.0.0-20250503011706-39ed1f5ac29c",
+ "Update": {"Version": "v0.0.0-20261108131121-975fb172241c"}, "Indirect": true}
+{"Path": "golang.org/x/net", "Version": "v0.62.0", "Update": {"Version": "v1.0.0"}}
+"""
+go_rules = [{"dependency-name": "golang.org/x/net", "update-types": ["version-update:semver-major"]}]
+expect(check.go_updates(listing, go_rules), [("golang.org/x/crypto", "v0.58.0", "v0.59.0")],
+       "Go: a direct update, not an indirect one, a current pseudo-version or a held major")
+expect(check.go_updates("", []), [], "Go: no tunnel module")
+releases = [{"version": "go1.28.0", "stable": True}, {"version": "go1.27.5", "stable": True},
+            {"version": "go1.27.6rc1", "stable": False}, {"version": "go1.27.4", "stable": True}]
+expect(check.go_toolchain_update("1.27.3", releases), "1.27.5", "Go toolchain: the newest patch of its minor")
+expect(check.go_toolchain_update("1.27.5", releases), None, "Go toolchain: current")
+
+class Body:
+    def __init__(self, text): self.text = text
+    def __enter__(self): return self
+    def __exit__(self, *exc): return False
+    def read(self): return self.text.encode()
+
+
+def flaky(failures):
+    calls = []
+    def urlopen(url, timeout):
+        calls.append(url)
+        if len(calls) <= len(failures):
+            raise failures[len(calls) - 1]
+        return Body("<metadata/>")
+    return urlopen, calls
+
+
+real_urlopen = check.urllib.request.urlopen
+try:
+    check.urllib.request.urlopen, calls = flaky([TimeoutError("The read operation timed out"),
+                                                 check.urllib.error.URLError("reset")])
+    expect(check.fetch("https://repo.example/m.xml", pause=0), "<metadata/>", "fetch: a stalled read is tried again")
+    expect(len(calls), 3, "fetch: two failures, then the answer")
+    check.urllib.request.urlopen, calls = flaky([check.urllib.error.HTTPError("u", 404, "Not Found", {}, None)])
+    expect(check.fetch("https://repo.example/none.xml", pause=0), None, "fetch: 404 is no versions, not retried")
+    expect(len(calls), 1, "fetch: 404 asked once")
+    check.urllib.request.urlopen, calls = flaky([TimeoutError("t")] * 3)
+    try:
+        check.fetch("https://repo.example/down.xml", pause=0)
+        raise SystemExit("check-dependency-updates: fetch: a host that never answers must fail the check")
+    except SystemExit as e:
+        expect("Could not read https://repo.example/down.xml" in str(e), True, "fetch: gives up after three tries")
+finally:
+    check.urllib.request.urlopen = real_urlopen
+
 print("check-dependency-updates checks passed.")

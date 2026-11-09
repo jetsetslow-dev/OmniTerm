@@ -190,6 +190,15 @@ data class SshCredentials(
      * installed on a host. Every [SshTransport] must honour it.
      */
     val keyOnly: Boolean = false,
+    /**
+     * The tunnel (tunnels.id) the host is reached through, or null to dial directly. The first hop
+     * the phone dials goes through it: the host itself, or its proxy or jump host. With a tunnel
+     * set nothing is ever dialled directly, even when the tunnel is down. Every [SshTransport]
+     * must honour it; JSch does through [com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory].
+     */
+    val tunnelId: Int? = null,
+    /** The address [host] has through the tunnel, when it differs; blank means the same. */
+    val tunnelHost: String = "",
 )
 
 /** Connection failed before/while establishing the shell or exec channel. */

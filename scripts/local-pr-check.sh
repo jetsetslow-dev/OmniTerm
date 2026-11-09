@@ -74,6 +74,8 @@ python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline
   app/src/main/java app/src/playStore/java app/src/openSource/java benchmark/src
 ./scripts/test-release-version.sh
 ./scripts/test-ci-gradle-gate.sh
+# The Go tunnel library: gofmt, vet and its handshake tests (CI's PR Check runs the same).
+./scripts/test-tunnel.sh
 
 GRADLE_ARGS=(
   --no-daemon

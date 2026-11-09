@@ -104,6 +104,9 @@ class SshConnectionStateTest {
         assertThat(shouldProbeSshPortDirectly("ssh")).isFalse()
         assertThat(shouldProbeSshPortDirectly("socks5")).isFalse()
         assertThat(shouldProbeSshPortDirectly("http")).isFalse()
+        // A host behind a VPN tunnel is never dialled directly, not even to probe it.
+        assertThat(shouldProbeSshPortDirectly("none", tunnelId = 3)).isFalse()
+        assertThat(shouldProbeSshPortDirectly("none", tunnelId = null)).isTrue()
     }
 
     @Test

@@ -49,6 +49,25 @@ ensure_env() {
     umask "$old_umask"
     echo "generated $ENV_FILE"
   fi
+  # The WireGuard fixture's keys, added to an older .env too. X25519 keys from openssl, as raw
+  # 32-byte base64 like `wg genkey`, so nothing needs installing on the host.
+  if ! grep -q '^OMNITERM_TEST_WG_CLIENT_KEY=' "$ENV_FILE"; then
+    local tmp old_umask; old_umask=$(umask); umask 077
+    tmp=$(mktemp -d)
+    openssl genpkey -algorithm X25519 -out "$tmp/server.pem" 2>/dev/null
+    openssl genpkey -algorithm X25519 -out "$tmp/client.pem" 2>/dev/null
+    raw_private() { openssl pkey -in "$1" -outform DER | tail -c 32 | base64; }
+    raw_public() { openssl pkey -in "$1" -pubout -outform DER | tail -c 32 | base64; }
+    {
+      echo "OMNITERM_TEST_WG_SERVER_KEY=$(raw_private "$tmp/server.pem")"
+      echo "OMNITERM_TEST_WG_SERVER_PUB=$(raw_public "$tmp/server.pem")"
+      echo "OMNITERM_TEST_WG_CLIENT_KEY=$(raw_private "$tmp/client.pem")"
+      echo "OMNITERM_TEST_WG_CLIENT_PUB=$(raw_public "$tmp/client.pem")"
+    } >>"$ENV_FILE"
+    rm -rf "$tmp"
+    umask "$old_umask"
+    echo "added WireGuard fixture keys to $ENV_FILE"
+  fi
   # shellcheck disable=SC1090
   set -a; . "$ENV_FILE"; set +a
 }

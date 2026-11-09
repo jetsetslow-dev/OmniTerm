@@ -22,6 +22,7 @@
 #   internal-only (NO published port, unreachable from the host by design):
 #                    internal-a       reached via bastion          proxyType=ssh    (jump path)
 #                                     or via proxy                 proxyType=socks5 / http
+#                                     or via wireguard (UDP :51820) tunnelId  (VPN tunnel, 10.77.0.1:22)
 #
 # HTTP/SOCKS5 proxies ride inside the session (JschSession.applyProxy); SSH jump uses a separate
 # jump session plus a local forward (buildJumpedJschSession). internal-a is the only way to prove a
@@ -255,6 +256,24 @@ services:
       USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
       USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
     networks: [internal]
+
+  # WireGuard peer for the VPN tunnel suite (E2eVpnTunnelTest): UDP 51820 on the host's loopback,
+  # which the emulator reaches as 10.0.2.2:51820 (adb reverse carries TCP only). Inside the tunnel it
+  # is 10.77.0.1 and the only route to internal-a; see fixtures/wireguard/entrypoint.sh.
+  wireguard:
+    build: ./fixtures/wireguard
+    image: omniterm-test-wireguard:local
+    container_name: omniterm-test-wireguard
+    restart: "no"
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    environment:
+      WG_SERVER_PRIVATE_KEY: "${OMNITERM_TEST_WG_SERVER_KEY:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      WG_CLIENT_PUBLIC_KEY: "${OMNITERM_TEST_WG_CLIENT_PUB:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    ports:
+      - "127.0.0.1:51820:51820/udp"
+    networks: [edge, internal]
+    depends_on: [internal-a]
 
   # The sanitized endpoint the Play-review recording flows point at.
   #

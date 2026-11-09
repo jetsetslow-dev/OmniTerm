@@ -3,10 +3,13 @@
 
 Dependabot's weekly run proposes newer versions of what .github/dependabot.yml covers: the Gradle
 dependencies and plugins (the version catalog, coordinates written into build scripts, the plugins
-in settings.gradle.kts, the Gradle wrapper) and the pinned GitHub Actions. This asks the same
+in settings.gradle.kts, the Gradle wrapper), the pinned GitHub Actions and the Go tunnel library's
+direct modules (tunnel/go.mod). This asks the same
 repositories about the same dependencies, honours the same ignore rules, and lists each update it
 finds. check-dependency-advisories.py is its counterpart for known vulnerabilities; that one alone
-let AGP 9.5.0 sit for four pushes until Dependabot opened #133.
+let AGP 9.5.0 sit for four pushes until Dependabot opened #133. It also lists a newer patch of the
+Go toolchain scripts/go-toolchain.sh pins, which Dependabot cannot see: its security fixes ship
+inside the app's tunnel library.
 
 Usage: check-dependency-updates.py [--root DIR]
 """
@@ -17,6 +20,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -30,6 +34,7 @@ GOOGLE = "https://dl.google.com/android/maven2"
 CENTRAL = "https://repo1.maven.org/maven2"
 PLUGIN_PORTAL = "https://plugins.gradle.org/m2"
 GRADLE_CURRENT = "https://services.gradle.org/versions/current"
+GO_RELEASES = "https://go.dev/dl/?mode=json"
 # settings.gradle.kts limits Google's repository to these groups, as Gradle resolves them.
 GOOGLE_GROUPS = re.compile(r"^(com\.android|com\.google|androidx)")
 PRERELEASE = re.compile(r"(alpha|beta|rc|cr|milestone|preview|eap|dev|snapshot|(?<![a-z])m\d)", re.I)
@@ -37,17 +42,22 @@ COORDINATE = re.compile(r'"([\w.-]+):([\w.-]+):(\d[\w.-]*)"')
 SETTINGS_PLUGIN = re.compile(r'id\("([\w.-]+)"\)\s+version\s+"([\w.-]+)"')
 
 
-def fetch(url):
-    """The body at [url], or None when there is nothing there."""
-    try:
-        with urllib.request.urlopen(url, timeout=30) as response:
-            return response.read().decode()
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        sys.exit(f"Could not read {url}: HTTP {e.code}")
-    except urllib.error.URLError as e:
-        sys.exit(f"Could not read {url}: {e.reason}")
+def fetch(url, attempts=3, pause=2.0):
+    """The body at [url], or None when there is nothing there. A dropped or stalled connection is
+    tried again: one read timeout among ~70 parallel fetches ended a gate 40 minutes in (Nov 9)."""
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                return response.read().decode()
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            if e.code < 500 or attempt == attempts:
+                sys.exit(f"Could not read {url}: HTTP {e.code}")
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            if attempt == attempts:
+                sys.exit(f"Could not read {url}: {getattr(e, 'reason', e)}")
+        time.sleep(pause * attempt)
 
 
 def version_tags(repo):
@@ -198,6 +208,51 @@ def action_update(repo, commit, version, tags, rules):
     return found if found and tags[found] != commit else None
 
 
+def go_listing(root):
+    """`go list -m -u -json all` for tunnel/, with the repository's pinned Go toolchain."""
+    if not (root / "tunnel/go.mod").exists():
+        return ""
+    result = subprocess.run(
+        ["bash", "-c", 'eval "$(./scripts/go-toolchain.sh)" && cd tunnel && go list -m -u -json all'],
+        cwd=root, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        sys.exit(f"Could not list tunnel/'s Go modules: {result.stderr.strip()}")
+    return result.stdout
+
+
+def go_updates(listing, rules):
+    """The direct requirements Dependabot would move, from [listing] (`go list -m -u -json all`), as
+    (module, version, update). Go chooses the update, so a pseudo-version newer than a module's old
+    tags (wireguard-go's) stays; indirect modules follow the modules that need them, as Dependabot
+    leaves them."""
+    decoder, at, found = json.JSONDecoder(), 0, []
+    while at < len(listing):
+        while at < len(listing) and listing[at].isspace():
+            at += 1
+        if at == len(listing):
+            break
+        module, at = decoder.raw_decode(listing, at)
+        update = (module.get("Update") or {}).get("Version")
+        if module.get("Main") or module.get("Indirect") or not update:
+            continue
+        current = module["Version"]
+        if not ignored(module["Path"], current.lstrip("v"), update.lstrip("v"), rules):
+            found.append((module["Path"], current, update))
+    return found
+
+
+def go_toolchain_update(pinned, releases):
+    """A newer stable patch of the pinned Go [pinned] in [releases] (go.dev's JSON), or None."""
+    minor = pinned.rsplit(".", 1)[0]
+    patches = [
+        r["version"].removeprefix("go") for r in releases
+        if r.get("stable") and r["version"].removeprefix("go").rsplit(".", 1)[0] == minor
+    ]
+    newer = [v for v in patches if version_key(v) > version_key(pinned)]
+    return max(newer, key=version_key, default=None)
+
+
 def rules_for(config, ecosystem):
     return [r for u in config["updates"] if u["package-ecosystem"] == ecosystem for r in u.get("ignore", [])]
 
@@ -230,7 +285,16 @@ def main():
         if found:
             updates.append(f"{repo} {version} -> {found} ({path.relative_to(root).as_posix()})")
 
-    checked = f"{len(dependencies)} Gradle, {len(actions)} Actions"
+    go_modules = go_updates(go_listing(root), rules_for(config, "gomod"))
+    for module, version, found in go_modules:
+        updates.append(f"{module} {version} -> {found} (tunnel/go.mod)")
+    pinned_go = re.search(r"^GO_VERSION=(\S+)$", (root / "scripts/go-toolchain.sh").read_text(), re.M)
+    if pinned_go:
+        found = go_toolchain_update(pinned_go.group(1), json.loads(fetch(GO_RELEASES) or "[]"))
+        if found:
+            updates.append(f"Go {pinned_go.group(1)} -> {found} (scripts/go-toolchain.sh: version and checksums)")
+
+    checked = f"{len(dependencies)} Gradle, {len(actions)} Actions, Go tunnel modules"
     for line in updates:
         print(line)
     if updates:

@@ -14,6 +14,7 @@ OmniTerm is a native Android app for running your homelab and servers from a pho
 - **Fleet Broadcast** — run a command across many hosts or groups at once with live per-host output.
 - **Scripts, alerts, cron, and Wake-on-LAN** management.
 - **Tasker and automation** — let Tasker or another app run one of your saved scripts on hosts you pick, with a token you make in OmniTerm. Off until you turn it on.
+- **VPN tunnels per host** — reach a host through WireGuard without the phone's VPN: only OmniTerm's connections to the hosts you pick go through it, and a host with a tunnel never connects directly.
 - **AI assistants (MCP)** — let Claude Code, Gemini CLI or Codex read the hosts you pick and ask to run your scripts, with every run approved on your phone. Off until you turn it on; reachable only from this phone or through one of your own hosts.
 - **Install keys on hosts** — put a key on one host or many in one go, check that it works, and switch those hosts to sign in with it.
 - **Links and sharing** — open `ssh://` links from a browser or chat, share a command from another app into a new script, and share files from any app to upload them to a host.
@@ -217,11 +218,22 @@ Open **Tools → AI assistants** to let an AI assistant on your computer, such a
 - **See every call.** **Recent calls** lists each call: when, which assistant, the tool, and whether it worked. Requests with a wrong token, or from a web page, are listed as refused.
 - **What you share goes to the assistant.** Whatever it reads, including the output of runs you approve, goes to that assistant program and may reach the company behind it. Share only the hosts you are happy for it to see.
 
+### VPN tunnels
+Open **Tools → VPN tunnels** to reach hosts that are only reachable through WireGuard, such as a home server you connect to from away.
+- **Add a tunnel once.** Tap **Add WireGuard tunnel**, give it a name, and paste or import the `.conf` file your router or VPN server gave you (the `[Interface]` and `[Peer]` sections). OmniTerm checks it as you paste and says what is wrong, line by line. It never runs `PostUp` or similar commands.
+- **Pick it per host.** In a host's settings, under **VPN tunnel**, choose the tunnel. Every connection to that host then goes through it: the terminal, files, port forwards, Fleet runs and background checks (see **Checks** below). If the host has a different address inside the tunnel, enter it under **Address through the tunnel**; the host's own address stays for when you connect directly.
+- **Never direct.** A host with a tunnel always goes through it. If the tunnel cannot connect, the connection fails and says why; it never falls back to the direct address. To connect directly again, for example at home, choose **None (direct)** in the host's settings. Open terminals and port forwards that used the old route stop or reconnect when you change it.
+- **Both ways.** To keep a machine reachable both at home and away, save it twice: once with the tunnel and once with **None (direct)**. Both can use the same address and login; a different tunnel makes it a different host, so OmniTerm does not call it a duplicate.
+- **Checks.** TCP port and certificate checks of a host with a tunnel go through the tunnel. Ping, DNS and web checks of its own address do not run yet, because they would go directly; they say so instead.
+- **Only inside OmniTerm.** The tunnel runs inside the app and does not use Android's VPN, so the rest of the phone, and other VPN apps, are unaffected. It starts when a host needs it and stops after five minutes with nothing open through it. The screen shows whether it is connected, when the last handshake was and how many connections it carries; **Stop** takes it down at once.
+- A tunnel a host still uses cannot be deleted: choose another tunnel, or **None**, for those hosts first.
+
 ## Backup & restore
 Open **Tools → App backup** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, credential profiles, scripts, alert data, saved shares, tunnels, and settings).
 - Backups containing sensitive sections are compressed and encrypted with AES-256-GCM using a passphrase-derived key.
 - App backups never copy files from your remote hosts.
 - OmniTerm does not store the backup passphrase — keep it safe.
+- VPN tunnels travel with the hosts that use them, private keys included, so a backup with hosts is always encrypted. A restored host whose tunnel was not in the backup stays unreachable until you pick a tunnel or **None**; it never quietly connects directly.
 - Automation tokens and the **Let other apps run scripts** switch stay on the phone where you made them: they are never in a backup, and restoring one never turns automation on. The same goes for every AI assistant setting and its token.
 
 ## Security & privacy
@@ -234,6 +246,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
   up to 24 hours. Rotation does not start the background timer.
 - **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
 - **Automation is opt-in** — other apps can run your scripts only after you turn on **Tools → Automation** and give them a token, and then only that token's script on its hosts. A request with a token OmniTerm does not know gets no answer at all.
+- **VPN tunnels stay inside OmniTerm** — a tunnel's configuration, with its private key, is stored encrypted on the phone; the app talks only to the peer it names, and a host with a tunnel is never dialled directly.
 - **AI assistants are opt-in** — the MCP server runs only after you turn it on under **Tools → AI assistants**, listens only on the phone's own address, needs its token on every request, sees only the hosts you tick, and runs nothing you have not approved on the phone.
 - **Links and shares wait for you** — an `ssh://` link or a share from another app only opens a screen. Nothing connects, is saved or is uploaded until you tap, and a password in a link is never kept.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
@@ -266,6 +279,7 @@ bug reports that shaped features here:
 - [ConnectBot](https://github.com/connectbot/connectbot) — installing a key on a host from the phone, as `ssh-copy-id` does (ConnectBot#428, ConnectBot#666).
 - [Material Files](https://github.com/zhanghai/MaterialFiles) — sharing files from any app to save them where you choose (MaterialFiles#976).
 - [Haven](https://github.com/GlassHaven/Haven), [ConnectBot](https://github.com/connectbot/connectbot), [ServerBox](https://github.com/lollipopkit/flutter_server_box), [Nexterm](https://github.com/gnmyt/Nexterm), [Beszel](https://github.com/henrygd/beszel), [Uptime Kuma](https://github.com/louislam/uptime-kuma) and [Home Assistant for Android](https://github.com/home-assistant/android) — feature and bug reviews for the homelab and server-admin features OmniTerm covers.
+- [Haven](https://github.com/GlassHaven/Haven) — per-host WireGuard and Tailscale tunnels inside the app, built from Go with gomobile; read as a reference only. OmniTerm's tunnels use [wireguard-go](https://git.zx2c4.com/wireguard-go) with [gVisor](https://github.com/google/gvisor)'s network stack, bound with [gomobile](https://pkg.go.dev/golang.org/x/mobile).
 
 ## Support the project
 - Buy **Unlock OmniTerm** in the Play Store build.

@@ -161,7 +161,7 @@ internal fun buildJschSession(
     }
     val session = jsch.getSession(creds.username, creds.host, creds.port)
     // Before the proxy: JSch dials a proxy through the same factory.
-    session.setSocketFactory(EveryAddressSocketFactory())
+    session.setSocketFactory(socketFactoryFor(creds))
     if (!creds.password.isNullOrEmpty()) session.setPassword(creds.password)
     session.userInfo = signIn
     applyProxy(session, creds)
@@ -189,6 +189,11 @@ internal fun buildJschSession(
     session.setConfig("TCPKeepAlive", "yes")
     return session
 }
+
+/** How the phone dials [creds]'s first hop: through its tunnel when it has one, else directly. */
+internal fun socketFactoryFor(creds: SshCredentials): com.jcraft.jsch.SocketFactory =
+    com.jetsetslow.omniterm.data.tunnel.HostRoute.socketFactory(creds.host, creds.tunnelId, creds.tunnelHost)
+        ?: EveryAddressSocketFactory()
 
 /**
  * Apply an HTTP or SOCKS5 proxy to [session] before it connects. This is transparent to the
@@ -271,7 +276,7 @@ internal fun buildJumpedJschSession(
         emptyList()
     }
     val jump = jumpJsch.getSession(jumpUser, creds.proxyHost.trim(), creds.proxyPort)
-    jump.setSocketFactory(EveryAddressSocketFactory())
+    jump.setSocketFactory(socketFactoryFor(creds))
     if (creds.proxyPassword.isNotEmpty()) jump.setPassword(creds.proxyPassword)
     jump.userInfo = jumpSignIn
     jump.setConfig(Properties().apply {
@@ -308,6 +313,8 @@ internal fun buildJumpedJschSession(
             host = "127.0.0.1",
             port = lport,
             proxyType = "none",
+            // The jump host's local forward is on this phone, never through the tunnel.
+            tunnelId = null,
         )
         val target = buildJschSession(targetCreds, interactiveAuth)
         // Session.setHostKeyAlias is the JSch API that checkHost() actually reads. Setting a
