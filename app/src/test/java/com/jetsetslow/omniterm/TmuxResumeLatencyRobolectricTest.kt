@@ -52,7 +52,22 @@ class TmuxResumeLatencyRobolectricTest {
     fun aConfirmedMissingOpenTmuxRemovesOnlyItsRecoveryWithoutCreatingAReplacement() =
         checkResume(controlMode = false, reselect = true, missing = true)
 
-    private fun checkResume(controlMode: Boolean, fresh: Boolean = false, reselect: Boolean = false, missing: Boolean = false) = runBlocking {
+    /**
+     * A background probe that started while the host was up and answers only after the tmux check
+     * found it unreachable. Its "online" is older evidence, so the check's "offline" must land
+     * last. It did not: main's CodeQL run failed the test above when the startup probe ran late.
+     */
+    @Test
+    fun aProbeAnsweringAfterAFailedCheckDoesNotPutTheHostBackOnline() =
+        checkResume(controlMode = false, reselect = true, probeAcrossCheck = true)
+
+    private fun checkResume(
+        controlMode: Boolean,
+        fresh: Boolean = false,
+        reselect: Boolean = false,
+        missing: Boolean = false,
+        probeAcrossCheck: Boolean = false,
+    ) = runBlocking {
         // Real time: AppViewModel deliberately does database work on Dispatchers.IO.
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
@@ -85,6 +100,11 @@ class TmuxResumeLatencyRobolectricTest {
                 it.contains(if (fresh) "new-session" else "attach-session -t omniterm-latency-fixture")
             })
             if (reselect) {
+                if (probeAcrossCheck) {
+                    transport.holdProbe = true
+                    withContext(main) { model.refreshServer(id, markChecking = false) }
+                    withTimeout(10_000) { transport.probeHeld.await() }
+                }
                 transport.blockPresence = true
                 transport.presenceReply = if (missing) "no" else "SSH Error: connection refused"
                 withContext(main) { model.resumePersistentSession(id, "omniterm-latency-fixture") }
@@ -92,6 +112,8 @@ class TmuxResumeLatencyRobolectricTest {
                 withTimeout(5_000) { transport.presenceStarted.await() }
                 transport.presenceRelease.complete(Unit)
                 waitWhileOnMain(main) { model.isTerminalConnecting }
+                // The held probe's verdict, so its write has landed before the status is read.
+                if (probeAcrossCheck) waitWhileOnMain(main, 10_000) { model.manualRefreshError == null }
                 assertTrue("Failed host check must be visible", !model.terminalConnectError.isNullOrBlank())
                 // Saved sessions are keyed by host and name, and the database outlives each test, so
                 // only this host's entry counts: an earlier test's host may still have one by this name.
@@ -144,7 +166,19 @@ class TmuxResumeLatencyRobolectricTest {
         @Volatile var presenceReply = "SSH Error: connection refused"
         val presenceStarted = CompletableDeferred<Unit>()
         val presenceRelease = CompletableDeferred<Unit>()
+        /** Holds the next probe's OS check until the presence check is released, then answers it. */
+        @Volatile var holdProbe = false
+        val probeHeld = CompletableDeferred<Unit>()
+        private val unavailable get() = blockPresence && presenceReply.startsWith("SSH Error:")
         override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String {
+            if (command == RemoteCommands.OS_PROBE && holdProbe && !probeHeld.isCompleted) {
+                probeHeld.complete(Unit)
+                presenceRelease.await()
+                // After the check's verdict, as a slow runner had it: without ordering, this
+                // answer's "online" was written last.
+                delay(100)
+                return ""
+            }
             if (command == RemoteCommands.TMUX_CHECK) return "yes"
             if (command == RemoteCommands.tmuxHasSessionCommand("omniterm-latency-fixture")) {
                 if (blockPresence) {
@@ -154,6 +188,8 @@ class TmuxResumeLatencyRobolectricTest {
                 }
                 return "yes"
             }
+            // The unavailable host refuses every other command too, background probes included.
+            if (unavailable) return presenceReply
             if (controlMode) {
                 if (command.contains("pane_id")) return "%1"
                 if (command.contains("cursor_x")) return "0 0"
@@ -170,11 +206,11 @@ class TmuxResumeLatencyRobolectricTest {
             return ""
         }
         override suspend fun testConnection(creds: SshCredentials): String? =
-            if (blockPresence && presenceReply.startsWith("SSH Error:")) "connection refused" else null
+            if (unavailable) "connection refused" else null
         override suspend fun openShell(creds: SshCredentials, cols: Int, rows: Int, onPhaseChange: ((String) -> Unit)?): TerminalSession {
             // The unavailable-host scenario must refuse every SSH path, including background
             // authentication and automatic reconnect; a successful fake probe is fresh evidence.
-            if (blockPresence && presenceReply.startsWith("SSH Error:")) error("connection refused")
+            if (unavailable) error("connection refused")
             onPhaseChange?.invoke("Opening channel…")
             opened.complete(Unit)
             return shell

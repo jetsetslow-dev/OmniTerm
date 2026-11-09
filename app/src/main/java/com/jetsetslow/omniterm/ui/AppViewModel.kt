@@ -108,6 +108,9 @@ internal fun parseSerialSettings(stored: String): SerialSettings? {
 /** TLS and URL checks that may run at once; each can wait up to its timeout. */
 private const val ENDPOINT_CHECK_PARALLELISM = 4
 
+/** How long a failed terminal or tmux check waits for a running probe of the same host to finish. */
+private const val PROBE_ORDER_WAIT_MS = 5_000L
+
 /** Waits before the second and third try of a forwarded alert the server did not take. */
 private val ALERT_FORWARD_RETRY_DELAYS_MS = listOf(5_000L, 30_000L)
 
@@ -2418,6 +2421,23 @@ class AppViewModel @JvmOverloads constructor(
     private fun sshRevision(serverId: Int): Long = sshEvidenceRevision[serverId]?.get() ?: 0L
     private fun noteFreshSshEvidence(serverId: Int) {
         sshEvidenceRevision.computeIfAbsent(serverId) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
+    }
+
+    /**
+     * [markServerOfflineUnlessConnected] for a verdict reached outside a probe, such as a terminal
+     * or tmux check that failed. It lands after a probe already running for [srv]: that probe's
+     * evidence is older, and its "online" written afterwards kept a host that had just been found
+     * unreachable showing online until the next poll (main's CodeQL run, Nov 9). It waits at most
+     * [PROBE_ORDER_WAIT_MS] for the probe, then writes anyway.
+     */
+    private suspend fun markServerOfflineAfterProbe(srv: ServerEntity, revisionAtStart: Long) {
+        val probeLock = telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }
+        val locked = withTimeoutOrNull(PROBE_ORDER_WAIT_MS) { probeLock.lock() } != null
+        try {
+            markServerOfflineUnlessConnected(srv, revisionAtStart)
+        } finally {
+            if (locked) probeLock.unlock()
+        }
     }
 
     private suspend fun markServerOfflineUnlessConnected(srv: ServerEntity, revisionAtStart: Long) {
@@ -7483,7 +7503,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (attemptGeneration == terminalConnectGeneration) {
                     invalidateCurrentHealth(srv.id, "Connection failed. Retry when the host is available.")
                     if (sshFailureProvesEndpointUnreachable(classifySshConnectionFailure(e.message.orEmpty()))) {
-                        markServerOfflineUnlessConnected(srv, revisionAtStart)
+                        markServerOfflineAfterProbe(srv, revisionAtStart)
                     }
                     val msg = e.message ?: "Connection failed."
                     if (msg.contains("reject HostKey", ignoreCase = true) ||
@@ -8802,7 +8822,7 @@ class AppViewModel @JvmOverloads constructor(
                     _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                     invalidateCurrentHealth(srv.id, terminalConnectError!!)
                     if (sshFailureProvesEndpointUnreachable(failure)) {
-                        markServerOfflineUnlessConnected(srv, revisionAtStart)
+                        markServerOfflineAfterProbe(srv, revisionAtStart)
                         if (sshRevision(srv.id) == revisionAtStart) {
                             session.isConnected = false
                             session.disconnectError = failure.userMessage
