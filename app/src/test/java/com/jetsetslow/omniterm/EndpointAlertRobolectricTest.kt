@@ -26,7 +26,9 @@ import org.robolectric.annotation.Config
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** Checks the phone runs open incidents on their hosts, without the hosts' own metrics. */
 @RunWith(RobolectricTestRunner::class)
@@ -126,6 +128,69 @@ class EndpointAlertRobolectricTest {
             assertTrue(refused.summary, refused.summary.startsWith("not accepting connections"))
             assertEquals("the healthy host has no incident", listOf(gone), repository.getActiveAlerts().map { it.serverId })
         } finally {
+            listener.close()
+            acceptor.join(2_000)
+            try {
+                clearViewModelsAndAwaitTerminalJobs(store, main)
+            } finally {
+                Dispatchers.resetMain()
+                main.close()
+            }
+        }
+    }
+
+    /**
+     * A rule added while a round of checks runs is checked as soon as that round ends, not at the
+     * next poll: the round read the rules before it was saved. A release build failed on the wait.
+     */
+    @Test
+    fun aRuleAddedDuringARoundIsCheckedRightAfterIt() = runBlocking {
+        val reached = CountDownLatch(1)
+        val answer = CountDownLatch(1)
+        val slow = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        slow.createContext("/") {
+            reached.countDown()
+            answer.await(10, TimeUnit.SECONDS)
+            it.sendResponseHeaders(200, -1)
+            it.close()
+        }
+        slow.start()
+        val listener = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        val acceptor = Thread { while (!listener.isClosed) runCatching { listener.accept().close() } }.apply { isDaemon = true; start() }
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val store = ViewModelStore()
+        try {
+            val application = ApplicationProvider.getApplicationContext<Application>()
+            val db = AppDatabase.getDatabase(application)
+            withContext(Dispatchers.IO) { db.clearAllTables() }
+            val repository = AppRepository(db)
+            repository.insertServer(ServerEntity(name = "web", host = "127.0.0.1", port = 1, username = "deploy"))
+            val hostId = repository.getAllServers().single().id
+            val model = withContext(main) { AppViewModel(application, QuietHosts()) }
+            store.put("test", model)
+
+            withContext(main) {
+                model.addAlertRule(hostId, EndpointChecks.URL_CHECK, "/", 5000f, "CRITICAL", "0m", target = "http://127.0.0.1:${slow.address.port}/")
+            }
+            assertTrue("the round reached the slow site", withContext(Dispatchers.IO) { reached.await(10, TimeUnit.SECONDS) })
+            withContext(main) {
+                model.addAlertRule(hostId, EndpointChecks.TCP_PORT, "/", 1000f, "CRITICAL", "0m", target = listener.localPort.toString())
+            }
+            val tcpRule = withTimeout(5_000) {
+                while (repository.getAllRules().size < 2) delay(10)
+                repository.getAllRules().single { it.metricName == EndpointChecks.TCP_PORT }.id
+            }
+            // Let the new rule's own start request land while the round still waits on the site.
+            delay(500)
+            answer.countDown()
+
+            // The next poll is 15 s away; the round queued behind the slow one checks it now.
+            waitWhileOnMain(main, timeoutMillis = 5_000) { model.endpointCheckResults[tcpRule to hostId] == null }
+            assertTrue("connected in ms", (model.endpointCheckResults.getValue(tcpRule to hostId).value ?: -1f) >= 0f)
+        } finally {
+            answer.countDown()
+            slow.stop(0)
             listener.close()
             acceptor.join(2_000)
             try {

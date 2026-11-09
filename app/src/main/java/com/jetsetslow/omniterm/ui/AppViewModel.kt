@@ -3650,16 +3650,14 @@ class AppViewModel @JvmOverloads constructor(
     /** What each (rule, host) TLS or URL check last saw, for the rule list. */
     val endpointCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
 
-    private var endpointCheckJob: Job? = null
+    private val endpointCheckRounds = LatestRun(viewModelScope, Dispatchers.IO)
 
     /**
      * Runs every TLS and URL check that is due, from this phone. Called each telemetry cycle, so
-     * the checks pause with polling (battery saver) and never overlap a previous round.
+     * the checks pause with polling (battery saver) and never overlap a previous round. Asked
+     * during a round (a rule just added), it runs another round right after that one.
      */
-    private fun startEndpointChecks() {
-        if (endpointCheckJob?.isActive == true) return
-        endpointCheckJob = viewModelScope.launch(Dispatchers.IO) { runEndpointChecks() }
-    }
+    private fun startEndpointChecks() = endpointCheckRounds.request { runEndpointChecks() }
 
     private suspend fun runEndpointChecks() {
         if (!alertsEnabled) return
@@ -3740,7 +3738,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** When each host's [HostChecks.PROBE] is next due, by host id. */
     private val hostChecksDueAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
-    private val hostCheckJobs = java.util.concurrent.ConcurrentHashMap<Int, Job>()
+    private val hostCheckRuns = java.util.concurrent.ConcurrentHashMap<Int, LatestRun>()
 
     /** What each (rule, host) host check last read, for the rule list; value null when unknown. */
     val hostCheckResults = mutableStateMapOf<Pair<Int, Int>, EndpointChecks.Result>()
@@ -3751,19 +3749,27 @@ class AppViewModel @JvmOverloads constructor(
     /**
      * Runs the host-check probe on [srv] when one of its rules needs it and it is due. Its own job,
      * so the extra command never holds the host's metrics probe or the fleet-wide probe limit.
+     * Asked during a run (a rule just added), it runs again right after, if that is due.
      */
     private fun startHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
         if (!alertsEnabled) return
-        if (hostCheckJobs[srv.id]?.isActive == true) return
-        if (System.currentTimeMillis() < (hostChecksDueAt[srv.id] ?: 0L)) return
-        hostCheckJobs[srv.id] = viewModelScope.launch(Dispatchers.IO) { runHostChecks(srv, disks) }
+        hostCheckRuns.computeIfAbsent(srv.id) { LatestRun(viewModelScope, Dispatchers.IO) }.request {
+            if (System.currentTimeMillis() >= (hostChecksDueAt[srv.id] ?: 0L)) runHostChecks(srv, disks)
+        }
     }
 
     private suspend fun runHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
+        // Due again before the rules are read: a rule added meanwhile clears this, so the run
+        // queued behind this one checks it now rather than a minute later.
+        val dueAt = System.currentTimeMillis() + hostCheckIntervalMs()
+        hostChecksDueAt[srv.id] = dueAt
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
             .filter { it.enabled && HostChecks.runsOnHost(it.metricName) }
-        if (rules.isEmpty()) return
-        hostChecksDueAt[srv.id] = System.currentTimeMillis() + hostCheckIntervalMs()
+        if (rules.isEmpty()) {
+            // Nothing to check: look again next poll, as before.
+            hostChecksDueAt.remove(srv.id, dueAt)
+            return
+        }
         val (probed, scripted) = rules.partition { HostChecks.needsProbe(it.metricName) }
         if (probed.isNotEmpty()) runHostProbe(srv, probed, disks)
         for (rule in scripted) runScriptCheck(srv, rule)
