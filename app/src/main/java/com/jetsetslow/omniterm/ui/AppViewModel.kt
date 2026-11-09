@@ -1284,6 +1284,8 @@ internal val builtInFleetPresetCommands: Map<String, String> get() =
 class AppViewModel @JvmOverloads constructor(
     application: Application,
     private val sshTransport: SshTransport = JschSshTransport(),
+    // Fleet's file client for a host: SFTP, unless a test brings its own.
+    private val fleetFiles: (suspend (ServerEntity) -> RemoteFsClient)? = null,
 ) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val repository = AppRepository(db)
@@ -2925,6 +2927,8 @@ class AppViewModel @JvmOverloads constructor(
         com.jetsetslow.omniterm.data.ssh.SshTunnelManager.stopAll()
         // A foreground progress row with no surviving ViewModel/work behind it would be a lie.
         LongOperationNotifications.stopAll(getApplication())
+        // The phone's copies of files picked to push are only for this screen's runs.
+        runCatching { fleetPushDir().deleteRecursively() }
     }
 
     // Ensures the cold-start lock is evaluated once, not on every settings write.
@@ -13678,21 +13682,32 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun retryFailedBroadcastHosts(ids: List<Int> = broadcastRetryableIds) {
         if (ids.isEmpty() || isBroadcastExecuting || lastBroadcastCommand.isBlank()) return
-        runFleetBroadcast(lastBroadcastCommand, ids, lastBroadcastParams, keepOtherResults = true, source = FleetRunHistory.SOURCE_RETRY)
+        runFleetBroadcast(
+            lastBroadcastCommand, ids, lastBroadcastParams,
+            keepOtherResults = true, source = FleetRunHistory.SOURCE_RETRY, push = lastBroadcastPush,
+        )
     }
 
     /** The last run as plain text, one section per host, for Share. */
-    fun broadcastReport(): String =
-        fleetReport(ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams), broadcastResults, BROADCAST_OUTPUT_MAX_CHARS)
+    fun broadcastReport(): String = fleetReport(
+        lastBroadcastPush?.let { fleetPushHeading(it.fileName, it.destination) }
+            ?: "$ " + ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams),
+        broadcastResults,
+        BROADCAST_OUTPUT_MAX_CHARS,
+    )
 
     /** A run from the history as plain text, as [broadcastReport] words the last run. */
     fun fleetRunReport(run: FleetRunEntity, hosts: List<BroadcastResultItem>): String =
-        fleetReport(run.command, hosts, FleetRunHistory.OUTPUT_CHARS)
+        fleetReport(run.pushedFile?.let { fleetPushHeading(it, run.command) } ?: "$ ${run.command}", hosts, FleetRunHistory.OUTPUT_CHARS)
 
-    private fun fleetReport(command: String, hosts: List<BroadcastResultItem>, keptChars: Int): String {
+    /** What a push run did, in a line: "Push app.conf to /etc/app/". */
+    fun fleetPushHeading(fileName: String, destination: String): String =
+        getApplication<Application>().getString(R.string.fleet_push_heading, fileName, destination)
+
+    private fun fleetReport(heading: String, hosts: List<BroadcastResultItem>, keptChars: Int): String {
         val app = getApplication<Application>()
         return buildString {
-            appendLine("$ $command")
+            appendLine(heading)
             hosts.forEach { item ->
                 appendLine()
                 appendLine("== ${item.serverName} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
@@ -13708,6 +13723,8 @@ class AppViewModel @JvmOverloads constructor(
         broadcastResults.clear()
         broadcastCardRun.clear()
         historyRuns.clear()
+        // Without the cards there is nothing to retry, so the pushed file's copy can go.
+        lastBroadcastPush?.let { push -> lastBroadcastPush = null; discardFleetPushFile(push) }
     }
 
     /** One run's hosts from the history, as cards. */
@@ -13764,7 +13781,8 @@ class AppViewModel @JvmOverloads constructor(
      * asks first, and for the `{{placeholder}}` values again, which the history does not keep.
      */
     fun loadFleetRunIntoBroadcast(run: FleetRunEntity, serverIds: List<Int>) {
-        if (isBroadcastExecuting) return
+        // A push's file is not kept, so it cannot be used again.
+        if (isBroadcastExecuting || run.pushedFile != null) return
         viewModelScope.launch {
             val known = repository.getAllServers().map { it.id }.toSet()
             val script = run.scriptName?.let { name -> repository.getAllScripts().firstOrNull { it.name == name && it.command.trim() == run.command } }
@@ -13784,6 +13802,9 @@ class AppViewModel @JvmOverloads constructor(
         private set
     private var lastBroadcastRunId = ""
     private var lastBroadcastScriptName: String? = null
+    /** The file the last run pushed, or null when it ran a command; a retry pushes it again. */
+    internal var lastBroadcastPush: FleetPush? = null
+        private set
 
     /** A run on the cards, for the history: saved when it ends, and again when a host in it finishes later. */
     private class PendingFleetRun(
@@ -13792,8 +13813,84 @@ class AppViewModel @JvmOverloads constructor(
         val command: String,
         val scriptName: String?,
         val source: String,
+        val pushedFile: String? = null,
         var dirty: Boolean = true,
     )
+
+    // ── Fleet file push ──
+    /** The file picked to push, as the phone's copy of it; [fleetPushDestination] says where it goes. */
+    internal var fleetPushPick by mutableStateOf<FleetPush?>(null)
+        private set
+    var fleetPushReading by mutableStateOf(false)
+        private set
+    var fleetPushError by mutableStateOf<String?>(null)
+        private set
+    /** Where a push puts the file on each host, as typed (see [FleetPush.remotePath]). */
+    var fleetPushDestination by mutableStateOf("~/")
+
+    private fun fleetPushDir() = java.io.File(getApplication<Application>().cacheDir, "fleet-push")
+
+    /**
+     * Copies the file at [uri] onto the phone, so every host, and a retry later, reads the same
+     * bytes. A file over [FleetPush.MAX_BYTES] is refused.
+     */
+    fun pickFleetPushFile(uri: android.net.Uri) {
+        val app = getApplication<Application>()
+        fleetPushError = null
+        fleetPushReading = true
+        viewModelScope.launch {
+            val previous = fleetPushPick
+            try {
+                val name = deviceUploadName(app, uri) ?: UploadName.from(uri.lastPathSegment) ?: "upload_${System.currentTimeMillis()}"
+                val (file, size) = withContext(Dispatchers.IO) {
+                    val dir = fleetPushDir().apply { mkdirs() }
+                    // Copies an earlier process left; the last run's file stays for a retry.
+                    dir.listFiles()?.filter { it != lastBroadcastPush?.local && it != previous?.local }?.forEach { it.delete() }
+                    val file = java.io.File(dir, UUID.randomUUID().toString())
+                    try {
+                        val copied = app.contentResolver.openInputStream(uri)?.use { input ->
+                            file.outputStream().use { output -> FleetPush.copyAtMost(input, output, FleetPush.MAX_BYTES) }
+                        } ?: throw java.io.IOException(app.getString(R.string.fleet_push_unreadable))
+                        if (copied < 0) throw java.io.IOException(app.getString(R.string.fleet_push_too_large, FleetPush.MAX_BYTES / (1024 * 1024)))
+                        file to copied
+                    } catch (e: Exception) {
+                        file.delete()
+                        throw e
+                    }
+                }
+                fleetPushPick = FleetPush(name, size, file, destination = "")
+                discardFleetPushFile(previous)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                fleetPushError = e.message ?: app.getString(R.string.fleet_push_unreadable)
+            } finally {
+                fleetPushReading = false
+            }
+        }
+    }
+
+    /** Forgets the picked file, as when the push dialog is closed. */
+    fun clearFleetPushPick() {
+        val pick = fleetPushPick ?: return
+        fleetPushPick = null
+        fleetPushError = null
+        discardFleetPushFile(pick)
+    }
+
+    /** Deletes [push]'s copy unless the picked file or the last run (for a retry) still needs it. */
+    private fun discardFleetPushFile(push: FleetPush?) {
+        val file = push?.local ?: return
+        if (file == fleetPushPick?.local || file == lastBroadcastPush?.local) return
+        viewModelScope.launch(Dispatchers.IO) { runCatching { file.delete() } }
+    }
+
+    /** Pushes the picked file to [serverIds] (as the confirmation listed them), as a Fleet run. */
+    fun runFleetPush(serverIds: List<Int>) {
+        val pick = fleetPushPick ?: return
+        if (!FleetPush.validDestination(fleetPushDestination)) return
+        val push = pick.copy(destination = fleetPushDestination.trim().ifEmpty { "~/" })
+        runFleetBroadcast(push.destination, serverIds, push = push)
+    }
     /** The runs whose cards are on screen, by run id. */
     private val historyRuns = linkedMapOf<String, PendingFleetRun>()
     /** The run each card belongs to: a retry takes over the cards it runs again. */
@@ -13830,6 +13927,7 @@ class AppViewModel @JvmOverloads constructor(
                 command = run.command,
                 scriptName = run.scriptName,
                 source = run.source,
+                pushedFile = run.pushedFile,
             ) to hosts
         }
         // A run a retry took every card from is saved already and is done with.
@@ -13861,15 +13959,21 @@ class AppViewModel @JvmOverloads constructor(
         keepOtherResults: Boolean = false,
         // FleetRunHistory.SOURCE_*, for the run history.
         source: String = FleetRunHistory.SOURCE_FLEET,
+        // A file to push instead of a command; [command] is then where it goes.
+        push: FleetPush? = null,
     ) {
         if (command.isBlank()) return
         if (isBroadcastExecuting) return
         val cmd = command.trim()
         // A retry runs the last command again, whatever the picker shows now.
-        val scriptName = if (source == FleetRunHistory.SOURCE_RETRY) lastBroadcastScriptName
-        else broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
+        val scriptName = when {
+            push != null -> null
+            source == FleetRunHistory.SOURCE_RETRY -> lastBroadcastScriptName
+            else -> broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
+        }
         val targets = broadcastTargets
-        val inTmux = broadcastInTmux
+        // A push is one SFTP transfer per host, with nothing to keep running in tmux.
+        val inTmux = broadcastInTmux && push == null
         val batchSize = broadcastBatchSize
         val stopOnFailure = broadcastStopOnFailure && batchSize > 0
         val runId = UUID.randomUUID().toString().replace("-", "").take(10)
@@ -13877,6 +13981,8 @@ class AppViewModel @JvmOverloads constructor(
         lastBroadcastParams = paramValues
         lastBroadcastRunId = runId
         lastBroadcastScriptName = scriptName
+        lastBroadcastPush.takeIf { it != push }?.let { previous -> lastBroadcastPush = push; discardFleetPushFile(previous) }
+        lastBroadcastPush = push
         broadcastStopRequested = false
         isBroadcastExecuting = true
         if (!keepOtherResults) {
@@ -13900,13 +14006,14 @@ class AppViewModel @JvmOverloads constructor(
                 isBroadcastExecuting = false
                 return@launch
             }
-            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source)
+            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source, pushedFile = push?.fileName)
             selected.forEach { broadcastCardRun[it.id] = runId }
             val operationId = "fleet-broadcast-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
                 operationId,
-                "Running command on ${selected.size} hosts",
+                push?.let { getApplication<Application>().getString(R.string.fleet_push_running, it.fileName, selected.size) }
+                    ?: "Running command on ${selected.size} hosts",
                 destination = "fleet",
             )
             var succeeded = false
@@ -13930,7 +14037,11 @@ class AppViewModel @JvmOverloads constructor(
                     async {
                         limiter.withPermit {
                             updateBroadcastResult(srv.id) { it.copy(status = BroadcastStatus.Running) }
-                            if (inTmux) broadcastHostInTmux(srv, cmd, runId) else broadcastHostPlain(srv, cmd)
+                            when {
+                                push != null -> pushFileToHost(srv, push)
+                                inTmux -> broadcastHostInTmux(srv, cmd, runId)
+                                else -> broadcastHostPlain(srv, cmd)
+                            }
                         }
                     }
                 }.awaitAll()
@@ -14005,6 +14116,63 @@ class AppViewModel @JvmOverloads constructor(
             "SSH Error: ${e.message ?: "unknown error"}"
         }
         finishBroadcastResult(srv.id, result)
+    }
+
+    /**
+     * Pushes [push] to [srv] over SFTP. The file arrives under a hidden name, its size on the host
+     * is checked, and only then does it replace the destination, so a cut-off push never leaves
+     * half a file. A destination that is a folder on the host gets the file inside it, under its
+     * own name.
+     */
+    private suspend fun pushFileToHost(srv: ServerEntity, push: FleetPush) {
+        val app = getApplication<Application>()
+        var client: RemoteFsClient? = null
+        var staged: String? = null
+        try {
+            if (!push.local.exists()) throw java.io.IOException(app.getString(R.string.fleet_push_file_gone))
+            val files = fleetFiles?.invoke(srv) ?: sftpClientFor(srv)
+            client = files
+            var dest = push.remotePath(files.home())
+            val parent = dest.substringBeforeLast('/', "").ifEmpty { "/" }
+            val inParent = try {
+                files.list(parent)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                throw java.io.IOException(app.getString(R.string.fleet_push_no_folder, parent), e)
+            }
+            val folder = inParent.any { it.isDirectory && it.name == dest.substringAfterLast('/') }
+            if (folder) dest = joinPath(dest, push.fileName)
+            val stage = transferStagingPath(dest)
+            staged = stage
+            withContext(Dispatchers.IO) {
+                push.local.inputStream().use { input -> files.uploadStream(stage, input, push.size) }
+            }
+            // Checked before it replaces anything, so a short copy never takes the file's place.
+            val stageParent = stage.substringBeforeLast('/', "").ifEmpty { "/" }
+            val arrived = files.list(stageParent).firstOrNull { !it.isDirectory && it.name == stage.substringAfterLast('/') }?.size
+            if (arrived != null && arrived != push.size) {
+                throw java.io.IOException(app.getString(R.string.fleet_push_short, formatBytes(arrived), formatBytes(push.size)))
+            }
+            commitStagedRemoteFile(files, stage, dest)
+            staged = null
+            updateBroadcastResult(srv.id) {
+                it.copy(
+                    status = BroadcastStatus.Success,
+                    output = app.getString(R.string.fleet_push_done, push.fileName, formatBytes(push.size), dest),
+                    note = null,
+                )
+            }
+        } catch (e: CancellationException) {
+            client?.let { files -> staged?.let { discardStagedFile(files, it) } }
+            throw e
+        } catch (e: Exception) {
+            client?.let { files -> staged?.let { discardStagedFile(files, it) } }
+            updateBroadcastResult(srv.id) {
+                it.copy(status = BroadcastStatus.Failure, note = e.message?.takeIf { m -> m.isNotBlank() } ?: app.getString(R.string.fleet_push_failed))
+            }
+        } finally {
+            client?.let { files -> withContext(NonCancellable + Dispatchers.IO) { runCatching { files.close() } } }
+        }
     }
 
     /**

@@ -499,7 +499,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationToThirtyGivesHostsNoTagsAndAddsNoSavedTargets() {
+    fun migrationToThirtyGivesHostsNoTagsAddsNoSavedTargetsAndKeepsRunsAsCommands() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val databaseName = "migration-29-host-tags"
         context.deleteDatabase(databaseName)
@@ -510,6 +510,7 @@ class AppDatabaseMigrationTest {
                     "agentForwarding, healthScore, lastLatency, status, authStatus, tunnelHost) VALUES ('nas', '192.168.1.5', 22, 'u', " +
                     "'Default', 'password', '', '', 30, 0, 0, '', 'none', '', 0, '', '', 0, -1, 0, 'offline', 'unknown', '')"
             )
+            db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('r1', 1, 2, 'uptime', NULL, 'fleet')")
         }
 
         helper.runMigrationsAndValidate(
@@ -525,6 +526,11 @@ class AppDatabaseMigrationTest {
             db.query("SELECT COUNT(*) FROM fleet_target_sets").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("an upgrade saves no targets", 0, cursor.getInt(0))
+            }
+            db.query("SELECT command, pushedFile FROM fleet_runs WHERE runKey = 'r1'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("uptime", cursor.getString(0))
+                assertTrue("an earlier run ran a command, not a push", cursor.isNull(1))
             }
             db.execSQL("UPDATE servers SET tags = 'nas, prod' WHERE name = 'nas'")
             db.execSQL("INSERT INTO fleet_target_sets (name, mode, serverIds, groups, tags, allTags) VALUES ('Prod', 'Tags', '[]', '[]', '[\"prod\"]', 0)")

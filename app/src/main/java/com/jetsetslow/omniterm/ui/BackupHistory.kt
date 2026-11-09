@@ -11,6 +11,7 @@ import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.StackRegistryEntity
+import com.jetsetslow.omniterm.data.UploadName
 import com.jetsetslow.omniterm.data.UseOutcome
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import org.json.JSONArray
@@ -103,6 +104,7 @@ internal object BackupHistory {
             put(
                 JSONObject().put("runKey", run.runKey).put("startedAt", run.startedAt).put("finishedAt", run.finishedAt)
                     .put("command", run.command).put("scriptName", run.scriptName ?: JSONObject.NULL).put("source", run.source)
+                    .put("pushedFile", run.pushedFile ?: JSONObject.NULL)
                     .put(
                         "hosts",
                         JSONArray().apply {
@@ -129,6 +131,7 @@ internal object BackupHistory {
             command = o.optString("command"),
             scriptName = nullableString(o, "scriptName"),
             source = o.optString("source").takeIf { it in FleetRunHistory.SOURCES } ?: FleetRunHistory.SOURCE_FLEET,
+            pushedFile = UploadName.from(nullableString(o, "pushedFile")),
         )
         val statuses = BroadcastStatus.entries.mapTo(mutableSetOf()) { it.name }
         val hosts = objects(o.optJSONArray("hosts")).mapNotNull { h ->

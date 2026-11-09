@@ -69,7 +69,8 @@ class HistoryBackupRobolectricTest {
         val web = repo.insertServer(host("web")).toInt()
         val dbHost = repo.insertServer(host("db")).toInt()
         repo.recordFleetRun(
-            FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute + 5_000, command = "uptime"),
+            // A push: the file by name, where it went as the command.
+            FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute + 5_000, command = "~/conf/", pushedFile = "app.conf"),
             listOf(
                 FleetRunHistory.host(web, "web", "Success", null, "up 3 days", false),
                 FleetRunHistory.host(dbHost, "db", "Success", null, "up 9 days", false),
@@ -112,6 +113,9 @@ class HistoryBackupRobolectricTest {
 
         val runs = repo.fleetRunsForBackup().associate { (run, hosts) -> run.runKey to hosts }
         assertEquals(setOf("run-1", "run-2"), runs.keys)
+        val push = repo.fleetRunsForBackup().single { it.first.runKey == "run-1" }.first
+        assertEquals("a push comes back as a push", "app.conf" to "~/conf/", push.pushedFile to push.command)
+        assertEquals(null, repo.fleetRunsForBackup().single { it.first.runKey == "run-2" }.first.pushedFile)
         val hosts = runs.getValue("run-1").associateBy { it.serverName }
         assertEquals(webHere, hosts.getValue("web").serverId)
         assertEquals(dbHere, hosts.getValue("db").serverId)

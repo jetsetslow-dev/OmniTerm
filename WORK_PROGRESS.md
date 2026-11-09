@@ -791,7 +791,30 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       picks them again from Saved, and deletes the set. Guard: with the editor not saving tags, it
       failed waiting for them.
     - The saved-sets dialog now scrolls, and each host card's menu button has a test tag.
-  - Next: file push to many hosts, scheduled runs, alert-triggered runs, then the other five.
+  - Push a file to many hosts: done (commit "Push a file to many hosts from Fleet").
+    - Broadcast's **Push a file** picks a file and a destination per run. A path ending in `/`
+      (or `~/`, or nothing) is a folder; a path that is a folder on the host gets the file inside.
+    - The phone copies the file once (cacheDir/fleet-push, 100 MB at most), so every host and a
+      retry read the same bytes. The copy goes when the cards are cleared or the model ends.
+    - A push is a Fleet run: same targets, rolling batches, Stop, Retry, Share, notification and
+      History. Each host gets a hidden staged file whose size is checked before it replaces the
+      destination (the Files screen's commit, reused).
+    - History marks a push (`fleet_runs.pushedFile`, folded into schema 30) and offers no Use
+      again. Backups carry it.
+    - `AppViewModel` takes an optional file-client factory, the seam the tests use and the Go
+      engine can fill later.
+    - Sudo for protected paths comes with "sudo in Fleet"; until then a push there fails, naming
+      the cause.
+    - Tests: `FleetPushTest` 4, `FleetPushRobolectricTest` 1 (in-memory hosts),
+      `HistoryBackupRobolectricTest` 7, `FleetRunHistoryRobolectricTest` 6,
+      `FleetBroadcastOutcomeRobolectricTest` 6, all 0 failed. Guards seen failing: no size check,
+      folder not detected, Use again on a push, retry without the file, backup dropping the push.
+    - Devices: the new `E2eFleetPushTest` (`-e omniterm_e2e_fleet_push yes -e host 127.0.0.1`) 1,
+      `AppDatabaseMigrationTest` 13, `E2eFleetTagsTest` 1, `E2eScriptParamsFleetTest` 1, all 0
+      failed. The push test replaces an older copy on the lab host through the dialog, checks
+      that no part file is left, and sees a missing folder fail. Guard: without the commit step it
+      failed ("old copy").
+  - Next: scheduled runs, alert-triggered runs, then the other five.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 30,
-    "identityHash": "a0c25902635f3c2c727f3600422611f4",
+    "identityHash": "aea8665bc06789a9b151320d263b94b0",
     "entities": [
       {
         "tableName": "servers",
@@ -1205,7 +1205,7 @@
       },
       {
         "tableName": "fleet_runs",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runKey` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER NOT NULL, `command` TEXT NOT NULL, `scriptName` TEXT, `source` TEXT NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runKey` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER NOT NULL, `command` TEXT NOT NULL, `scriptName` TEXT, `source` TEXT NOT NULL, `pushedFile` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -1247,6 +1247,11 @@
             "columnName": "source",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "pushedFile",
+            "columnName": "pushedFile",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -1602,7 +1607,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a0c25902635f3c2c727f3600422611f4')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'aea8665bc06789a9b151320d263b94b0')"
     ]
   }
 }

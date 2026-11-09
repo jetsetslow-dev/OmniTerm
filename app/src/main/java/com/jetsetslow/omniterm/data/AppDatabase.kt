@@ -378,7 +378,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         // Runs other apps and AI assistants start, as they run: each automation token's
         // notification choice and use history, and the run each AI assistant call started. Hosts'
-        // tags, and Fleet's saved target sets.
+        // tags, Fleet's saved target sets, and the file a Fleet push sent.
         private val MIGRATION_29_30 = object : Migration(29, 30) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `automation_grants` ADD COLUMN `notify` TEXT NOT NULL DEFAULT 'failures'")
@@ -390,6 +390,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_automation_uses_grantId_at` ON `automation_uses` (`grantId`, `at`)")
                 db.execSQL("ALTER TABLE `servers` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `pushedFile` TEXT")
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `fleet_target_sets` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "`name` TEXT NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, `groups` TEXT NOT NULL, " +

@@ -367,6 +367,8 @@ data class FleetRunEntity(
     val scriptName: String? = null,
     // FleetRunHistory.SOURCE_*: a run from Broadcast, a retry of failed hosts, or an alert's runbook.
     val source: String = FleetRunHistory.SOURCE_FLEET,
+    // The file a push sent, by name; [command] is then where it went, as typed. Null for a command.
+    val pushedFile: String? = null,
 )
 
 /** One host's result in a [FleetRunEntity]. */
