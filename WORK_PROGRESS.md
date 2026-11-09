@@ -574,6 +574,25 @@ Its own PR against main, after #145.
     verification, no advisories or updates (Gradle, Actions, Go), the secret scan, the API 35
     device tests, and local CodeQL with no alerts (88,639 lines). Go's module cache is kept out
     of the Java/XML extraction with `LGTM_INDEX_FILTERS`, locally and in CI.
+- PR #147's first CI run failed three ways the local gate could not see (user, Nov 9: "why are so
+  many pr runs failing, we should catch those before"). Each is fixed, and the gate now catches it:
+  - Dependency review rejected the `PATENTS` file of Go's x/ libraries
+    (`LicenseRef-scancode-google-patent-license-golang`, Google's extra patent grant). It is now
+    allowed, with a note, and `scripts/check-licenses.py` checks every Go module's licence files
+    against the same `allow-licenses` list in every gate. With main's list it fails on the same 8
+    modules. Go modules also go to the advisory check (an old `x/net` fails it).
+  - CodeQL Go "could not process any code written in Go": the build step put the pinned go in
+    front of CodeQL's wrapper after init. `go-toolchain.sh --github` now sets it up before init,
+    with `source-root: tunnel`. `scripts/test-workflow-guards.sh` keeps that order and fails on
+    #147's workflow. `scripts/local-codeql.sh` analyses Go too, as the workflow does, with the
+    checksum-pinned Go bundle fetched into `.go-toolchain/`.
+  - `TunnelRoutingTest` read the direct echo server's accept count before its thread had run. The
+    test now waits for the count, and the no-connection checks wait 300 ms so a queued one is counted.
+    The gate repeats changed tests on one processor (`repeat-changed-tests.sh --cpus 1`). #147's
+    version of the test failed 3 of 13 runs on one processor ("expected: 1 but was: 0", as in CI),
+    and none of 5 on two, so two would not have caught it. The fixed
+    test passed 13 of 13 runs on one processor, and still passes with the server's accept slowed by
+    200 ms (#147's version fails that every time).
 
 ## Decision pivot — 2026-11-08
 

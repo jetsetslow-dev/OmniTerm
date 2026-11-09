@@ -28,14 +28,20 @@ These rules apply to every contributor and automation tool working in this repos
 - Run `git diff --check` and `git diff --cached --check` before committing.
 - The gate and PR Check run every unit-test class the change adds or edits five more times
   (`scripts/repeat-changed-tests.sh`): a test that depends on timing passed PR Check once and then
-  failed main's release build. Fix such a test's race; never retry it until it passes.
+  failed main's release build. The gate runs those repeats on one processor (`--cpus 1`), since a
+  test racing a thread it starts can pass every time on a desktop and lose on a CI runner. Fix such
+  a test's race; never retry it until it passes.
+- Every gate also checks what only showed on GitHub before: the Go modules' licences against
+  Dependency review's `allow-licenses` (`scripts/check-licenses.py`), and workflow wiring such as the
+  CodeQL Go job setting up the pinned toolchain before CodeQL's init (`scripts/test-workflow-guards.sh`).
 - `--full` also catches what GitHub would only report after the push: updates Dependabot would
   open a PR for (`scripts/check-dependency-updates.py`; take them in the change, or hold one in
   `.github/dependabot.yml` with its reason and the condition that lifts it), dependencies with a known
-  vulnerability (`scripts/check-dependency-advisories.py`, Dependabot's database and graphs) and
-  CodeQL alerts (`scripts/local-codeql.sh`, the workflow's CLI version and `security-extended`
-  queries; it prints how to install the CLI). Bump the CLI pin in that script with the
-  `github/codeql-action` pin in `codeql.yml`.
+  vulnerability (`scripts/check-dependency-advisories.py`, Dependabot's database and graphs, the Go
+  modules included) and CodeQL alerts in Kotlin/Java and Go (`scripts/local-codeql.sh`, the
+  workflow's CLI version and `security-extended` queries; it prints how to install the Java CLI and
+  fetches the Go bundle itself, checked against its digest). Bump the CLI pin and both digests in
+  that script with the `github/codeql-action` pin in `codeql.yml`.
 - Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.
   `scripts/check-duplicates.py` fails the gate and CI on a new copied block. Its baseline
   (`scripts/duplicate-code-baseline.json`) is empty; only `--update-baseline` adds to it, and that

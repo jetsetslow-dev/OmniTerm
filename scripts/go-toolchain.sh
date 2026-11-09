@@ -3,6 +3,7 @@
 # SHA-256 before it is unpacked under .go-toolchain/ (gitignored). Nothing is installed on the host,
 # and CI runs this same script. Prints the environment to evaluate:
 #   eval "$(./scripts/go-toolchain.sh)"
+# or, in a GitHub Actions step, `./scripts/go-toolchain.sh --github` for the steps after it.
 set -euo pipefail
 
 GO_VERSION=1.27.3
@@ -39,12 +40,25 @@ fi
 
 # Everything Go writes stays under .go-toolchain/ too. GOTOOLCHAIN=local stops Go fetching another
 # toolchain on its own; modules are checked against go.sum and the public checksum database.
-cat <<EOF
-export GOROOT='$GOROOT_DIR'
-export GOPATH='$DEST/gopath'
-export GOMODCACHE='$DEST/gopath/pkg/mod'
-export GOCACHE='$DEST/cache'
-export GOTOOLCHAIN=local
-export GOFLAGS=-mod=readonly
-export PATH='$GOROOT_DIR/bin:$DEST/gopath/bin':"\$PATH"
-EOF
+ENV=(
+  "GOROOT=$GOROOT_DIR"
+  "GOPATH=$DEST/gopath"
+  "GOMODCACHE=$DEST/gopath/pkg/mod"
+  "GOCACHE=$DEST/cache"
+  "GOTOOLCHAIN=local"
+  "GOFLAGS=-mod=readonly"
+)
+BIN=("$GOROOT_DIR/bin" "$DEST/gopath/bin")
+
+if [[ "${1:-}" == "--github" ]]; then
+  # For the later steps of a GitHub Actions job. Run it before CodeQL's init: CodeQL wraps the go it
+  # finds on PATH to watch the build, and a step that put this go in front of the wrapper afterwards
+  # left CodeQL seeing no Go at all (PR #147).
+  printf '%s\n' "${ENV[@]}" >> "${GITHUB_ENV:?--github runs only inside GitHub Actions}"
+  printf '%s\n' "${BIN[@]}" >> "${GITHUB_PATH:?--github runs only inside GitHub Actions}"
+  exit 0
+fi
+for entry in "${ENV[@]}"; do
+  printf "export %s='%s'\n" "${entry%%=*}" "${entry#*=}"
+done
+printf "export PATH='%s:%s':\"\$PATH\"\n" "${BIN[@]}"

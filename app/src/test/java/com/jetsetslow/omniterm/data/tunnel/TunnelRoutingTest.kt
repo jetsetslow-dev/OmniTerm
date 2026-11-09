@@ -40,6 +40,21 @@ class TunnelRoutingTest {
             }
         }
         val port get() = server.localPort
+
+        /**
+         * How many connections were accepted, once [count] were or [waitMs] passed. A connect returns
+         * as soon as the system queues it, before this server's thread takes it, so reading [accepted]
+         * at once raced that thread (and lost on a slow CI runner, PR #147).
+         */
+        fun acceptedOnce(count: Int, waitMs: Long = 5_000): Int {
+            val deadline = System.nanoTime() + waitMs * 1_000_000
+            while (accepted.get() < count && System.nanoTime() < deadline) Thread.sleep(10)
+            return accepted.get()
+        }
+
+        /** Connections accepted after a short wait, so a stray one that is still queued is counted. */
+        fun acceptedSoFar(): Int = acceptedOnce(1, waitMs = 300)
+
         override fun close() = server.close()
     }
 
@@ -113,7 +128,7 @@ class TunnelRoutingTest {
             assertThat(roundTrip(socket)).isEqualTo("ping")
             socket.close()
             assertThat(engine.dials).containsExactly("127.0.0.1:${direct.port}/${TunnelSocket.DEFAULT_TIMEOUT_MS}")
-            assertWithMessage("nothing reached the direct address").that(direct.accepted.get()).isEqualTo(0)
+            assertWithMessage("nothing reached the direct address").that(direct.acceptedSoFar()).isEqualTo(0)
         }
     }
 
@@ -130,7 +145,7 @@ class TunnelRoutingTest {
             tunnels.remove(1)
             val gone = assertThrows(JSchException::class.java) { socketFactoryFor(creds).createSocket(creds.host, creds.port) }
             assertThat(gone.message).contains("no longer exists")
-            assertWithMessage("a selected tunnel never goes direct").that(direct.accepted.get()).isEqualTo(0)
+            assertWithMessage("a selected tunnel never goes direct").that(direct.acceptedSoFar()).isEqualTo(0)
         }
     }
 
@@ -142,7 +157,7 @@ class TunnelRoutingTest {
             assertThat(roundTrip(socket)).isEqualTo("ping")
             socket.close()
             assertThat(engine.starts).isEmpty()
-            assertThat(direct.accepted.get()).isEqualTo(1)
+            assertThat(direct.acceptedOnce(1)).isEqualTo(1)
         }
     }
 
@@ -207,7 +222,7 @@ class TunnelRoutingTest {
             val other = EndpointChecks.run(rule(EndpointChecks.TCP_PORT, "127.0.0.1:${direct.port}"), "nas.lan", tunnel = tunnel, tunnelHost = "10.9.0.7")
             assertWithMessage(other.summary).that(other.value!!).isAtLeast(0f)
             assertThat(asked).hasSize(1)
-            assertThat(direct.accepted.get()).isEqualTo(1)
+            assertThat(direct.acceptedOnce(1)).isEqualTo(1)
         }
     }
 

@@ -207,6 +207,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # Before init: CodeQL wraps the go on PATH when it starts, so the pinned toolchain has to be
+      # there already. Putting it in front afterwards hid the build from CodeQL ("could not process
+      # any code written in Go", PR #147); scripts/test-workflow-guards.sh keeps this order.
+      - name: Set up the pinned Go toolchain
+        run: ./scripts/go-toolchain.sh --github
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
@@ -214,12 +220,12 @@ jobs:
           build-mode: manual
           dependency-caching: false
           queries: security-extended
+          # Only the library is ours; the module cache under .go-toolchain/ is not analysed.
+          source-root: tunnel
 
       - name: Build the tunnel library
-        run: |
-          eval "$(./scripts/go-toolchain.sh)"
-          cd tunnel
-          go build ./...
+        working-directory: tunnel
+        run: go build ./...
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3

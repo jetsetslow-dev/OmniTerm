@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Pins scripts/repeat-changed-tests.sh: it repeats the test classes a change adds, edits or
-# renames, not helpers without tests or untouched classes, and fails when any repeat fails.
+# renames, not helpers without tests or untouched classes, fails when any repeat fails, and runs
+# the repeats on only the processors --cpus allows.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,6 +54,7 @@ FAKE_GRADLEW="$WORK/gradlew"
 cat > "$FAKE_GRADLEW" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OMNITERM_TEST_INVOCATIONS"
+[[ -r /proc/self/status ]] && awk '$1 == "Cpus_allowed_list:" { print $2 }' /proc/self/status >> "$OMNITERM_TEST_INVOCATIONS.cpus"
 [[ -z "${OMNITERM_TEST_FAIL_ON:-}" ]] && exit 0
 [[ "$(wc -l < "$OMNITERM_TEST_INVOCATIONS")" -lt "$OMNITERM_TEST_FAIL_ON" ]]
 EOF
@@ -71,6 +73,21 @@ status=0
 (cd "$REPO" && OMNITERM_TEST_FAIL_ON=2 "$SCRIPT" --base "$BASE" --runs 5) > /dev/null 2>&1 || status=$?
 [[ "$status" -eq 1 ]] || fail "a failing repeat exited $status instead of 1"
 [[ "$(wc -l < "$WORK/invocations")" -eq 2 ]] || fail "kept running after a failed repeat"
+
+if command -v taskset >/dev/null 2>&1 && [[ -r /proc/self/status ]]; then
+  rm -f "$WORK/invocations" "$WORK/invocations.cpus"
+  (cd "$REPO" && "$SCRIPT" --base "$BASE" --runs 2 --cpus 1) > /dev/null
+  [[ "$(sort -u "$WORK/invocations.cpus")" == "0" ]] || fail "--cpus 1 ran Gradle on $(sort -u "$WORK/invocations.cpus" | tr '\n' ' ')"
+  [[ "$(wc -l < "$WORK/invocations.cpus")" -eq 2 ]] || fail "--cpus ran $(wc -l < "$WORK/invocations.cpus") repeats, not 2"
+  # A running Gradle daemon would not be held to the limit.
+  [[ "$(tail -1 "$WORK/invocations")" == *" --no-daemon" ]] || fail "--cpus let Gradle use a daemon: $(tail -1 "$WORK/invocations")"
+  rm -f "$WORK/invocations.cpus"
+  (cd "$REPO" && "$SCRIPT" --base "$BASE" --runs 1) > /dev/null
+  [[ "$(cat "$WORK/invocations.cpus")" != "0" ]] || fail "without --cpus, Gradle still ran on processor 0 alone"
+fi
+status=0
+(cd "$REPO" && "$SCRIPT" --base "$BASE" --cpus 0) > /dev/null 2>&1 || status=$?
+[[ "$status" -eq 2 ]] || fail "--cpus 0 exited $status instead of 2"
 
 rm -f "$WORK/invocations"
 (cd "$REPO" && "$SCRIPT" --base HEAD --runs 3) > /dev/null

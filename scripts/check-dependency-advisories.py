@@ -4,10 +4,10 @@
 Dependabot alerts and the pull request's Dependency review (fail-on-severity: moderate) both read
 GitHub's advisory database. This asks the same database, through `gh api`, about the same
 dependencies: the release runtime classpaths that dependency-submission.yml reports (as CycloneDX
-SBOMs) and the pinned GitHub Actions. main has no open Dependabot alerts, so any moderate or worse
-advisory fails.
+SBOMs), the Go modules tunnel/go.mod requires, and the pinned GitHub Actions. main has no open
+Dependabot alerts, so any moderate or worse advisory fails.
 
-Usage: check-dependency-advisories.py [--cyclonedx bom.json]... [--actions .github]
+Usage: check-dependency-advisories.py [--cyclonedx bom.json]... [--go-mod go.mod]... [--actions .github]
 """
 import argparse
 import json
@@ -25,6 +25,18 @@ def cyclonedx(path):
         # The project's own modules appear too, as unversioned components with a project path.
         if c.get("purl", "").startswith("pkg:maven/") and "project_path=" not in c["purl"]:
             yield f'{c["group"]}:{c["name"]}', c["version"]
+
+
+def go_requires(path):
+    """(module, version) for each module a go.mod requires, in one-line or block form. The advisory
+    database writes Go versions without the leading v."""
+    text = re.sub(r"//[^\n]*", "", pathlib.Path(path).read_text())
+    blocks = re.findall(r"^require\s*\((.*?)^\)", text, re.MULTILINE | re.DOTALL)
+    lines = [l for b in blocks for l in b.splitlines()] + re.findall(r"^require\s+([^(\s].*)$", text, re.MULTILINE)
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2:
+            yield parts[0], parts[1].removeprefix("v")
 
 
 PINNED = re.compile(r"uses:\s*([\w.-]+/[\w.-]+)(?:/[^@\s]*)?@([0-9a-f]{40})\s*#\s*v?([\w.-]+)")
@@ -80,11 +92,13 @@ def advisories(ecosystem, packages):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cyclonedx", action="append", default=[])
+    parser.add_argument("--go-mod", action="append", default=[])
     parser.add_argument("--actions")
     args = parser.parse_args()
 
     inputs = {
         "maven": sorted({p for f in args.cyclonedx for p in cyclonedx(f)}),
+        "go": sorted({p for f in args.go_mod for p in go_requires(f)}),
         "actions": sorted(set(actions(args.actions))) if args.actions else [],
     }
     hits = {}

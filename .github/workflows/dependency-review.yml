@@ -33,6 +33,10 @@ jobs:
           fail-on-severity: moderate
           # New dependencies must use a reviewed permissive/weak-file-level license. Unknown
           # licenses are still surfaced by the action and require maintainer review.
+          # LicenseRef-scancode-google-patent-license-golang is the PATENTS file beside the BSD-3-Clause
+          # licence of Go's golang.org/x libraries: Google's extra patent grant. It only gives rights.
+          # scripts/check-licenses.py checks the Go modules against this same list before a push.
           allow-licenses: >-
             Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, EPL-2.0, MPL-2.0,
-            Unicode-3.0, OFL-1.1, CC0-1.0, Unlicense, Zlib
+            Unicode-3.0, OFL-1.1, CC0-1.0, Unlicense, Zlib,
+            LicenseRef-scancode-google-patent-license-golang
