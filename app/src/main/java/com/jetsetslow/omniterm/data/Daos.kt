@@ -153,6 +153,9 @@ interface AlertRuleDao {
 
     @Query("DELETE FROM alert_rules WHERE serverId = :serverId")
     suspend fun deleteForServer(serverId: Int)
+
+    @Query("UPDATE alert_rules SET runbookScriptId = NULL WHERE runbookScriptId = :scriptId")
+    suspend fun clearRunbook(scriptId: Int)
 }
 
 @Dao

@@ -153,6 +153,10 @@ class MainActivity : AppCompatActivity() {
         "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> add(ExternalLaunchRequest.OpenNetworkTools)
       }
       if (intent.data?.scheme == "omniterm" && intent.data?.host == "notification") {
+        // An alert's "Run" action (NotificationLinks.runbook).
+        intent.data?.pathSegments?.let(com.jetsetslow.omniterm.ui.NotificationLinks::parseRunbook)?.let { (ruleId, serverId) ->
+          add(ExternalLaunchRequest.OpenRunbook(ruleId, serverId))
+        }
         when (intent.data?.lastPathSegment) {
           "transfers" -> add(ExternalLaunchRequest.OpenTransfers)
           "network" -> add(ExternalLaunchRequest.OpenNetworkTools)

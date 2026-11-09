@@ -536,6 +536,8 @@ sealed interface ExternalLaunchRequest {
     data object OpenFleet : ExternalLaunchRequest
     data object OpenInfra : ExternalLaunchRequest
     data object OpenBackup : ExternalLaunchRequest
+    /** An alert's "Run" action: its rule's runbook on that host, after the usual confirmation. */
+    data class OpenRunbook(val ruleId: Int, val serverId: Int) : ExternalLaunchRequest
 }
 
 /** [request], a host's sign-in questions, waiting in [AppViewModel.pendingInteractiveAuth] for the user's answers. */
@@ -3721,9 +3723,16 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun runHostChecks(srv: ServerEntity, disks: List<DiskUsage>) {
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0))
-            .filter { it.enabled && HostChecks.needsProbe(it.metricName) }
+            .filter { it.enabled && HostChecks.runsOnHost(it.metricName) }
         if (rules.isEmpty()) return
         hostChecksDueAt[srv.id] = System.currentTimeMillis() + hostCheckIntervalMs()
+        val (probed, scripted) = rules.partition { HostChecks.needsProbe(it.metricName) }
+        if (probed.isNotEmpty()) runHostProbe(srv, probed, disks)
+        for (rule in scripted) runScriptCheck(srv, rule)
+    }
+
+    /** Reads every [HostChecks.PROBE] check in [rules] on [srv] with one command. */
+    private suspend fun runHostProbe(srv: ServerEntity, rules: List<AlertRuleEntity>, disks: List<DiskUsage>) {
         // The probe is POSIX sh; Windows has none of these tools, so its checks stay unknown.
         val reading = if (hostOs(srv) == "Windows") {
             null
@@ -3754,6 +3763,62 @@ class AppViewModel @JvmOverloads constructor(
                 )
             }
         }
+    }
+
+    /**
+     * Runs a [HostChecks.SCRIPT_CHECK] rule's script on [srv] and feeds its exit status to the
+     * rule. A script that cannot be a check, or does not target this host, reads as unknown with
+     * the reason; one that never ran (no connection) leaves the incident as it is.
+     */
+    private suspend fun runScriptCheck(srv: ServerEntity, rule: AlertRuleEntity) {
+        val app = getApplication<Application>()
+        val key = rule.id to srv.id
+        suspend fun unknown(reason: String) = withContext(Dispatchers.Main) {
+            hostCheckResults[key] = EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, reason), "")
+        }
+        val script = ScriptChecks.scriptId(rule)?.let { id -> repository.getAllScripts().find { it.id == id } }
+        ScriptChecks.problem(script, script?.let { commandDangerHits(it.command) }.orEmpty())?.let { return unknown(it) }
+        script!!
+        if (fleetHostsScriptSkips(script, listOf(srv), hostMetricsById).isNotEmpty()) {
+            return unknown(app.getString(R.string.script_check_wrong_target, scriptTargetLabel(script)))
+        }
+        val raw = try {
+            withTimeoutOrNull(ScriptChecks.TIMEOUT_MS) {
+                val (creds, command) = savedScriptRun(srv, ScriptParams.fill(script.command, emptyMap(), ScriptParams.shellFor(hostOs(srv))))
+                sshTransport.exec(creds, command)
+            } ?: "SSH Error: command failed (${ScriptChecks.TIMED_OUT.toInt()}): " +
+                app.getString(R.string.script_check_timed_out, ScriptChecks.TIMEOUT_MS / 1000)
+        } catch (e: ScriptParams.UnsafeValueException) {
+            return unknown(e.message ?: "unsafe value")
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            "SSH Error: ${e.message ?: "unknown error"}"
+        }
+        // Never ran: says nothing about the check, so any incident stays as it is.
+        val (status, line) = ScriptChecks.outcome(raw) ?: return
+        val names = listOf(script.name, line)
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            // The rule may have been edited or deleted while the script ran.
+            if (repository.getAllRules().find { it.id == rule.id } != rule) return@withLock
+            withContext(Dispatchers.Main) {
+                hostCheckResults[key] = EndpointChecks.Result(status, HostChecks.summary(HostChecks.SCRIPT_CHECK, status, names), "")
+            }
+            applyAlertSample(
+                rule, srv, status, status > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
+                staleGapMs = hostCheckIntervalMs() * 3,
+                notificationText = HostChecks.alertText(HostChecks.SCRIPT_CHECK, status, rule.thresholdValue, names),
+            )
+        }
+    }
+
+    /**
+     * How [srv] runs a saved script's [command], placeholders already filled: a built-in preset
+     * in the app's own form for that host, anything else in the user's login shell, as Fleet runs it.
+     */
+    private suspend fun savedScriptRun(srv: ServerEntity, command: String): Pair<SshCredentials, String> {
+        val preset = builtInPresetCommand(srv, command)
+        return (if (preset != null) buildCredentials(srv) else loginShellCredentials(srv)) to (preset ?: command)
     }
 
     /**
@@ -3894,7 +3959,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
-    private fun postAlertNotification(
+    private suspend fun postAlertNotification(
         srv: ServerEntity,
         rule: AlertRuleEntity,
         value: Float,
@@ -3902,6 +3967,7 @@ class AppViewModel @JvmOverloads constructor(
         detail: String? = null,
     ) {
         val app = getApplication<Application>()
+        val runbook = rule.runbookScriptId?.let { id -> repository.getAllScripts().find { it.id == id } }
         val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
         val openAppIntent = Intent(app, MainActivity::class.java)
         openAppIntent.setClass(app, MainActivity::class.java)
@@ -3911,7 +3977,7 @@ class AppViewModel @JvmOverloads constructor(
             app, alertNotificationId(rule.id, srv.id), openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
             .setContentTitle(alertNotificationTitle(rule, srv))
             .setContentText(alertNotificationText(srv, rule, value, target, detail))
             .setSmallIcon(R.drawable.ic_stat_omniterm)
@@ -3919,8 +3985,22 @@ class AppViewModel @JvmOverloads constructor(
             .setContentIntent(contentIntent)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
-            .build()
-        nm.notify(alertNotificationId(rule.id, srv.id), n)
+        // The runbook opens Fleet with it ready to run on this host; the user still confirms there.
+        if (runbook != null) {
+            val runIntent = Intent(app, MainActivity::class.java)
+                .setData(Uri.parse(NotificationLinks.runbook(rule.id, srv.id)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            builder.addAction(
+                0,
+                app.getString(R.string.alert_runbook_run, runbook.name),
+                // Same request code as the tap: a different URI makes it a different PendingIntent.
+                PendingIntent.getActivity(
+                    app, alertNotificationId(rule.id, srv.id), runIntent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ),
+            )
+        }
+        nm.notify(alertNotificationId(rule.id, srv.id), builder.build())
     }
 
     /**
@@ -4492,7 +4572,39 @@ class AppViewModel @JvmOverloads constructor(
                 ExternalLaunchRequest.OpenFleet -> navigateTo(Screen.Fleet)
                 ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
                 ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
+                is ExternalLaunchRequest.OpenRunbook -> openRunbook(request.ruleId, request.serverId)
             }
+        }
+    }
+
+    /**
+     * Set when [openRunbook] has filled in Broadcast; Fleet then asks to run it, with the same
+     * confirmation as the Run button, and clears it. Nothing runs without that confirmation.
+     */
+    var pendingRunbookConfirm by mutableStateOf(false)
+
+    /**
+     * Opens Fleet → Broadcast with [ruleId]'s runbook as the command and [serverId] as the only
+     * target, then asks to run it. While another broadcast runs, it only shows that one, which it
+     * leaves alone. Does nothing when the rule has no runbook (any more).
+     */
+    fun openRunbook(ruleId: Int, serverId: Int) {
+        viewModelScope.launch {
+            val rule = repository.getAllRules().find { it.id == ruleId } ?: return@launch
+            val script = rule.runbookScriptId?.let { id -> repository.getAllScripts().find { it.id == id } } ?: return@launch
+            if (repository.getServerById(serverId) == null) return@launch
+            fleetTabIndex = 1
+            if (isBroadcastExecuting) {
+                navigateTo(Screen.Fleet)
+                return@launch
+            }
+            broadcastTargetMode = FleetTargetMode.Servers
+            broadcastTargetServerIds.clear()
+            broadcastTargetServerIds.add(serverId)
+            broadcastCommandText = script.command
+            broadcastPreset = script
+            navigateTo(Screen.Fleet)
+            pendingRunbookConfirm = true
         }
     }
 
@@ -5239,6 +5351,7 @@ class AppViewModel @JvmOverloads constructor(
         triggerWindow: String,
         notes: String = "",
         target: String = "",
+        runbookScriptId: Int? = null,
     ) {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
@@ -5250,6 +5363,7 @@ class AppViewModel @JvmOverloads constructor(
                 triggerWindow = triggerWindow,
                 notes = notes,
                 target = target,
+                runbookScriptId = runbookScriptId,
             )
             repository.insertRule(rule)
             if (EndpointChecks.isEndpointMetric(metricName)) {
@@ -13364,10 +13478,8 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun broadcastHostPlain(srv: ServerEntity, template: String) {
         val result = try {
-            val cmd = broadcastCommandFor(srv, template)
-            val preset = builtInPresetCommand(srv, cmd)
-            val creds = if (preset != null) buildCredentials(srv) else loginShellCredentials(srv)
-            sshTransport.execStream(creds, preset ?: cmd) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            val (creds, command) = savedScriptRun(srv, broadcastCommandFor(srv, template))
+            sshTransport.execStream(creds, command) { chunk -> appendBroadcastChunk(srv.id, chunk) }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             "SSH Error: ${e.message ?: "unknown error"}"
@@ -14587,6 +14699,12 @@ class AppViewModel @JvmOverloads constructor(
             it.id in ruleIdsForBackup && (it.serverId == 0 || it.serverId in exportedServerIds)
         }
         val exportedRuleIds = rulesForBackup.mapTo(mutableSetOf()) { it.id }
+        // Script ids differ from device to device, so a rule names its scripts by category and
+        // name, the key a restore matches scripts by.
+        val scriptsById = scripts.associateBy { it.id }
+        fun scriptRef(id: Int?) = id?.let(scriptsById::get)?.let {
+            org.json.JSONObject().put("category", it.category).put("name", it.name)
+        }
         for (r in rulesForBackup) {
             ruleArr.put(org.json.JSONObject().apply {
                 put("id", r.id); put("serverId", r.serverId); put("metricName", r.metricName)
@@ -14594,7 +14712,12 @@ class AppViewModel @JvmOverloads constructor(
                 put("severity", r.severity); put("triggerWindow", r.triggerWindow); put("enabled", r.enabled)
                 put("notes", r.notes)
                 r.presetKey?.let { put("presetKey", it) }
-                if (r.target.isNotEmpty()) put("target", r.target)
+                if (r.metricName == HostChecks.SCRIPT_CHECK) {
+                    scriptRef(ScriptChecks.scriptId(r))?.let { put("targetScript", it) }
+                } else if (r.target.isNotEmpty()) {
+                    put("target", r.target)
+                }
+                scriptRef(r.runbookScriptId)?.let { put("runbookScript", it) }
             })
         }
         val historyArr = org.json.JSONArray()
@@ -15361,6 +15484,13 @@ class AppViewModel @JvmOverloads constructor(
                             .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}|${it.target}" }.toMutableSet()
                         val ruleArr = root.optJSONArray("alertRules") ?: org.json.JSONArray()
                         val ruleIdMap = mutableMapOf<Int, Int>()
+                        // A rule names its scripts by category and name (see buildBackupJson); the
+                        // scripts above are restored first, so look them up on this device now.
+                        val scriptIdsByKey = repository.getAllScripts()
+                            .groupBy { it.category to it.name }.mapValues { (_, same) -> same.minOf { it.id } }
+                        fun restoredScriptId(ref: org.json.JSONObject?): Int? = ref?.let {
+                            scriptIdsByKey[it.optString("category", "General").ifBlank { "General" } to it.optString("name")]
+                        }
                         var importedRules = 0
                         for (i in 0 until if (closedSelection.alertRules) ruleArr.length() else 0) {
                             val o = ruleArr.getJSONObject(i)
@@ -15370,7 +15500,11 @@ class AppViewModel @JvmOverloads constructor(
                             val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
                             val window = o.optString("triggerWindow", "5m")
                             val metric = o.optString("metricName")
-                            val target = o.optString("target", "")
+                            val target = if (metric == HostChecks.SCRIPT_CHECK) {
+                                restoredScriptId(o.optJSONObject("targetScript"))?.toString().orEmpty()
+                            } else {
+                                o.optString("target", "")
+                            }
                             val key = "$mappedServerId|$metric|$threshold|$window|$target"
                             if (key in existingRuleKeys) {
                                 if (oldRuleId != 0) {
@@ -15388,6 +15522,7 @@ class AppViewModel @JvmOverloads constructor(
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
                                     target = target,
+                                    runbookScriptId = restoredScriptId(o.optJSONObject("runbookScript")),
                                 )
                             )
                             repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }?.let { restoredRule ->

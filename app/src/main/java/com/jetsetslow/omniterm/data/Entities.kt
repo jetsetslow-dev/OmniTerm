@@ -167,8 +167,12 @@ data class AlertRuleEntity(
     // delete exactly what it seeded instead of matching on mutable content.
     val presetKey: String? = null,
     // What a TLS or URL check connects to: a URL, or host[:port] for TLS. Blank on a TLS rule
-    // means each host's own address on port 443. Unused by the other metrics.
+    // means each host's own address on port 443. A Script Check holds its script's id here.
+    // Unused by the other metrics.
     val target: String = "",
+    // The saved script this rule's notification and incident offer to run, after the usual
+    // confirmation, or null for none. Cleared when that script is deleted.
+    val runbookScriptId: Int? = null,
 )
 
 @Entity(

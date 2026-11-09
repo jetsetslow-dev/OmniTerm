@@ -4,9 +4,10 @@ import java.util.Locale
 
 /**
  * Alert rules about a host's state rather than a usage figure: whether it answers at all, failed
- * services, containers in trouble, storage health, the last ZFS scrub, a UPS on battery and a
- * pending reboot. Each reading is a plain number, so it fits the same incident and history rows as
- * every other metric: a count, a number of days, or 1 for yes.
+ * services, containers in trouble, storage health, the last ZFS scrub, a UPS on battery, a
+ * pending reboot, and a saved script's exit status ([ScriptChecks]). Each reading is a plain
+ * number, so it fits the same incident and history rows as every other metric: a count, a number
+ * of days, an exit status, or 1 for yes.
  *
  * Credit: the alert classes follow Beszel (henrygd/beszel#437 host down, #716 containers, #1813
  * systemd services) and Uptime Kuma (louislam/uptime-kuma#177, #819).
@@ -19,23 +20,34 @@ object HostChecks {
     const val SCRUB_AGE = "ZFS Scrub Age"
     const val UPS_ON_BATTERY = "UPS On Battery"
     const val REBOOT_REQUIRED = "Reboot Required"
+    const val SCRIPT_CHECK = "Script Check"
 
-    val ALL = listOf(HOST_OFFLINE, FAILED_SERVICES, CONTAINER_PROBLEMS, STORAGE_HEALTH, SCRUB_AGE, UPS_ON_BATTERY, REBOOT_REQUIRED)
+    val ALL = listOf(
+        HOST_OFFLINE, FAILED_SERVICES, CONTAINER_PROBLEMS, STORAGE_HEALTH, SCRUB_AGE, UPS_ON_BATTERY, REBOOT_REQUIRED,
+        SCRIPT_CHECK,
+    )
 
     fun isHostCheck(metricName: String) = metricName in ALL
 
-    /** Checks read with [PROBE]. Host Offline comes from the reachability probe itself. */
-    fun needsProbe(metricName: String) = isHostCheck(metricName) && metricName != HOST_OFFLINE
+    /** Checks that run a command on the host. Host Offline comes from the reachability probe itself. */
+    fun runsOnHost(metricName: String) = isHostCheck(metricName) && metricName != HOST_OFFLINE
 
-    /** Yes-or-no checks: the threshold is fixed at 0, so the rule editor does not ask for one. */
+    /** Checks read with [PROBE]. A script check runs its own script ([ScriptChecks]). */
+    fun needsProbe(metricName: String) = runsOnHost(metricName) && metricName != SCRIPT_CHECK
+
+    /**
+     * Yes-or-no checks: the threshold is fixed at 0, so the rule editor does not ask for one. A
+     * script check alerts on any exit status but 0.
+     */
     fun isYesNo(metricName: String) =
-        metricName == HOST_OFFLINE || metricName == UPS_ON_BATTERY || metricName == REBOOT_REQUIRED
+        metricName == HOST_OFFLINE || metricName == UPS_ON_BATTERY || metricName == REBOOT_REQUIRED ||
+            metricName == SCRIPT_CHECK
 
     fun defaultThreshold(metricName: String): Float = if (metricName == SCRUB_AGE) 35f else 0f
 
     /** How long a reading must hold before it alerts; a pending reboot or an old scrub at once. */
     fun defaultWindow(metricName: String): String = when (metricName) {
-        HOST_OFFLINE -> "2m"
+        HOST_OFFLINE, SCRIPT_CHECK -> "2m"
         REBOOT_REQUIRED, SCRUB_AGE -> "0m"
         else -> "5m"
     }
@@ -178,11 +190,19 @@ object HostChecks {
         FAILED_SERVICES -> plural(value.toInt(), "failed service")
         CONTAINER_PROBLEMS -> plural(value.toInt(), "container in trouble", "containers in trouble")
         STORAGE_HEALTH -> plural(value.toInt(), "storage problem")
+        SCRIPT_CHECK -> if (value > 0f) "exit ${value.toInt()}" else "passed"
         else -> value.toString()
     }
 
-    /** The notification line for an alert, naming up to five of the items behind it. */
+    /**
+     * The notification line for an alert, naming up to five of the items behind it. For a script
+     * check, [names] is the script's name and then the first line it printed, if any.
+     */
     fun alertText(metricName: String, value: Float, threshold: Float, names: List<String>): String {
+        if (metricName == SCRIPT_CHECK) {
+            val script = names.firstOrNull()?.takeIf { it.isNotBlank() } ?: "The check script"
+            return "$script failed (${describe(SCRIPT_CHECK, value)})" + (names.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+        }
         val listed = names.take(5).joinToString(", ") + if (names.size > 5) " and ${names.size - 5} more" else ""
         return when (metricName) {
             HOST_OFFLINE -> "Not reachable over SSH"
@@ -198,6 +218,7 @@ object HostChecks {
     fun summary(metricName: String, value: Float, names: List<String>): String {
         val listed = names.take(3).joinToString(", ") + if (names.size > 3) " and ${names.size - 3} more" else ""
         return when {
+            metricName == SCRIPT_CHECK -> describe(SCRIPT_CHECK, value) + (names.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
             metricName == SCRUB_AGE -> "Last scrub ${value.toInt()} days ago" + if (listed.isNotEmpty()) " ($listed)" else ""
             value > 0f && listed.isNotEmpty() -> describe(metricName, value) + ": $listed"
             else -> describe(metricName, value)

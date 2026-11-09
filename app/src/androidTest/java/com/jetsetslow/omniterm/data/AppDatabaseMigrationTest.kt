@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 24
+        const val CURRENT_VERSION = 25
     }
 
     @get:Rule
@@ -283,6 +283,43 @@ class AppDatabaseMigrationTest {
                 assertEquals("lab", cursor.getString(0))
                 assertEquals("https://10.0.0.5:6443", cursor.getString(1))
                 assertEquals("shop", cursor.getString(2))
+            }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /** Rules from before runbooks keep everything and have none; a runbook id then saves and reads back. */
+    @Test
+    fun migrationToTwentyFiveGivesExistingRulesNoRunbook() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-24-runbook"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 24).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey, target) " +
+                    "VALUES (5, 3, 'TCP Port', '/', 1000.0, 'CRITICAL', '2m', 1, 'db', NULL, 'db.lan:5432')"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT serverId, metricName, triggerWindow, notes, target, runbookScriptId FROM alert_rules WHERE id = 5").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(3, cursor.getInt(0))
+                assertEquals("TCP Port", cursor.getString(1))
+                assertEquals("2m", cursor.getString(2))
+                assertEquals("db", cursor.getString(3))
+                assertEquals("db.lan:5432", cursor.getString(4))
+                assertTrue(cursor.isNull(5))
+            }
+            db.execSQL("UPDATE alert_rules SET runbookScriptId = 9 WHERE id = 5")
+            db.query("SELECT runbookScriptId FROM alert_rules WHERE id = 5").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(9, cursor.getInt(0))
             }
         }
         context.deleteDatabase(databaseName)

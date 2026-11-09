@@ -122,7 +122,7 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   fails them. Device `E2ePhoneChecksTest` (`omniterm_e2e_phone_checks=yes`) passed on API 35.
 - README: the three checks; Uptime Kuma credited for them.
 
-## Checkpoint C3 — opt-in alert forwarding (this commit)
+## Checkpoint C3 — opt-in alert forwarding (dd92901)
 
 - `data/AlertForwarding`: Off (the default), an ntfy topic (ntfy.sh or the user's server, optional
   access token), a Gotify server (application token) or any webhook (optional bearer token).
@@ -163,6 +163,54 @@ The private audit (sources per finding, designs, order) is in the internal docs 
   no new duplicates, the API 35 device matrix, and CodeQL 2.27.4 with no alerts (79,332 lines).
 - README: the feature, the privacy line, and Uptime Kuma and Beszel credited for the idea.
 
+## Checkpoint C4 — script checks and runbooks (this commit)
+
+- `HostChecks.SCRIPT_CHECK`: a rule whose `target` holds a saved script's id. `runHostChecks` now
+  runs the probe for the probed checks and each Script Check's script on its own, at the same pace
+  (at most once a minute per host). `data/ScriptChecks` reads the transport's result: exit 0
+  passes, any other status is the reading, the first line printed is the reason (at most 160
+  characters, never the transport's "Command exited with status" filler); a result that never ran
+  (no connection, sign-in failed) leaves any incident as it is. 60 s without finishing counts as
+  exit 124.
+- Refused as a check, shown in the editor and as "Not checked: …" in the rule list: no script, a
+  blank command, anything `commandDangerHits` flags, and a `{{value}}` with no default. A script
+  limited to another OS or system reads as not checked on that host (`fleetHostsScriptSkips`).
+  Placeholders take their defaults; the command runs exactly as Fleet runs that script
+  (`savedScriptRun`, now shared with `broadcastHostPlain`).
+- Runbooks: `AlertRuleEntity.runbookScriptId` (schema v25, `MIGRATION_24_25`). The alert
+  notification gets a "Run <script>" action (`omniterm://notification/runbook/<rule>/<host>`), the
+  Active tab's incident a Run link (`NotificationLinks` builds and reads the link, so the two
+  cannot drift); both call `openRunbook`, which fills in Broadcast with that
+  script and host only, and Fleet then shows the Run button's own confirmation. Nothing runs before
+  it. The deep link goes through the external-launch queue, so App Lock still comes first. A host
+  that is offline stays picked with the command filled in, without asking later. Deleting a script
+  clears it from every rule (one transaction).
+- Backups name a rule's check script (`targetScript`) and runbook (`runbookScript`) by category and
+  name, the key restores already match scripts by; a Script Check no longer exports its raw id.
+- UI: one `ScriptPickerDialog` (search, command preview, target tag) now serves Fleet's preset
+  picker, the Script Check picker and the runbook picker (with None). Rule rows name the script and
+  runbook.
+- PRIVACY.md: a forwarded Script Check alert carries the script's name and first output line.
+- Tests: `ScriptChecksTest` (exit status and first line, the filler and never-ran results, the
+  refusals, the rule's script id, the texts). `HostCheckAlertsRobolectricTest`: a failing check
+  opens an incident with "exit 2: …" that six metrics polls leave open, the script running once
+  and the probe not at all, its placeholder filled with the default; a destructive script never
+  reaches the host; a runbook fills in Broadcast for that host only and runs nothing, and
+  deleting its script clears it. `ScriptRefsBackupRobolectricTest`: an encrypted backup restored
+  where the scripts get other ids keeps both references. `AppDatabaseMigrationTest`: 24 → 25.
+  Device `E2eScriptCheckTest` (`omniterm_e2e_script_check=yes`): the editor refuses a destructive
+  script and saves a check plus runbook; the fixture's exit 3 opens an incident and a notification
+  with "Run <runbook>"; that action's link opens the confirmation, and the runbook's output comes
+  back only after Run. Passed on API 35. (The test delivers the link to its own activity: sent as
+  is, the action starts a second activity, because ActivityScenario hosts this one in the test
+  package's task; it also puts the launch intent back, since `onNewIntent` replaces it.)
+  `NotificationLinksTest`: the link reads back as its rule and host, and other links do not.
+- Guards seen failing: dropping the danger refusal fails the destructive-script test; exporting the
+  raw script id fails the backup test; not clearing the runbook on delete fails the runbook test.
+- `./scripts/local-pr-check.sh --full` passed: unit tests, five repeats of the 18 changed test
+  classes, lint, strict dependency verification, no advisories or outstanding updates, secret scan,
+  no new duplicates, the API 35 device matrix, and CodeQL 2.27.4 with no alerts (80,155 lines).
+
 ## Decision pivot — 2026-11-08
 
 The Flutter migration (PR #92, `migration-to-flutter`) is cancelled. Flutter never shipped; the
@@ -193,8 +241,8 @@ Later on Nov 8 the user settled the rest:
 
 ## Remaining, in order
 
-1. Alerts (checkpoint C), C1 to C3 done above:
-   - C4: script checks, runbooks offered from the notification, run history.
+1. Alerts (checkpoint C), C1 to C4 done above:
+   - C5: run history (schema v26).
 2. Automation: token-guarded Tasker/Locale plugin and broadcast to run a saved script or runbook,
    `ssh://` links, share target, one-tap public-key install.
 3. MCP: opt-in, loopback only, reached through an SSH reverse tunnel, read-only by default,

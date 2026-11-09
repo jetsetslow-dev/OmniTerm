@@ -260,16 +260,9 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     var confirmClearOutputs by remember { mutableStateOf(false) }
     var showPresetPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
-    var presetSearch by remember { mutableStateOf("") }
     val commandPresets = quickScripts
         .filter { it.availableForFleet }
         .sortedWith(compareBy<QuickScriptEntity> { it.sortOrder }.thenBy { it.name.lowercase() })
-    val filteredPresets = commandPresets.filter { preset ->
-        val query = presetSearch.trim()
-        query.isBlank() ||
-            preset.name.contains(query, ignoreCase = true) ||
-            preset.command.contains(query, ignoreCase = true)
-    }
     // A picked group stays listed while all its hosts are offline, so it can be unpicked.
     val groups = (srvList.mapNotNull { it.groupName?.takeIf { group -> group.isNotBlank() } } + viewModel.broadcastTargetGroups)
         .distinct().sorted()
@@ -515,10 +508,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             verticalAlignment = Alignment.CenterVertically,
         ) {
             OutlinedButton(
-                onClick = {
-                    presetSearch = ""
-                    showPresetPicker = true
-                },
+                onClick = { showPresetPicker = true },
                 modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -707,66 +697,29 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         }
     }
 
+    // An alert's runbook (AppViewModel.openRunbook) asks to run through the Run button's own
+    // confirmation once the hosts have loaded. A host that is offline stays picked with the
+    // command filled in, for Run once it is back, rather than asking later out of the blue.
+    LaunchedEffect(viewModel.pendingRunbookConfirm, allHosts, srvList) {
+        if (!viewModel.pendingRunbookConfirm) return@LaunchedEffect
+        if (allHosts.none { it.id in viewModel.broadcastTargetServerIds }) return@LaunchedEffect
+        viewModel.pendingRunbookConfirm = false
+        if (srvList.any { it.id in viewModel.broadcastTargetServerIds }) confirmAndRunBroadcast()
+    }
+
     if (showPresetPicker) {
-        AlertDialog(
-            onDismissRequest = { showPresetPicker = false },
-            title = {
-                Text(stringResource(R.string.choose_fleet_script))
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = presetSearch,
-                        onValueChange = { presetSearch = it },
-                        label = { Text(stringResource(R.string.search_presets)) },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (filteredPresets.isEmpty()) {
-                        Text(
-                            if (commandPresets.isEmpty()) stringResource(R.string.no_fleet_presets_saved_yet) else stringResource(R.string.no_presets_match_your_search),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        OverflowLazyColumn(
-                            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            items(filteredPresets, key = { it.id }) { preset ->
-                                ListItem(
-                                    headlineContent = {
-                                        Text("${preset.emoji} ${preset.name}", fontWeight = FontWeight.Bold)
-                                    },
-                                    trailingContent = if (scriptTargetsAnyHost(preset)) null else {
-                                        { OmniTag(scriptTargetLabel(preset), color = OmniColors.amber) }
-                                    },
-                                    supportingContent = {
-                                        Text(
-                                            preset.command,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                            fontFamily = OmniFonts.mono,
-                                            fontSize = 11.sp,
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            viewModel.broadcastCommandText = preset.command
-                                            viewModel.broadcastPreset = preset
-                                            showPresetPicker = false
-                                        },
-                                )
-                            }
-                        }
-                    }
+        ScriptPickerDialog(
+            title = stringResource(R.string.choose_fleet_script),
+            scripts = commandPresets,
+            emptyText = stringResource(R.string.no_fleet_presets_saved_yet),
+            onPick = { preset ->
+                if (preset != null) {
+                    viewModel.broadcastCommandText = preset.command
+                    viewModel.broadcastPreset = preset
                 }
+                showPresetPicker = false
             },
-            confirmButton = {
-                TextButton(onClick = { showPresetPicker = false }) { Text(stringResource(R.string.close)) }
-            },
+            onDismiss = { showPresetPicker = false },
         )
     }
 

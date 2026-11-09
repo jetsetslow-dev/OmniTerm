@@ -143,7 +143,11 @@ class AppRepository(private val db: AppDatabase) {
     val scriptsFlow: Flow<List<QuickScriptEntity>> = db.quickScriptDao().getAllScriptsFlow()
     suspend fun getAllScripts(): List<QuickScriptEntity> = db.quickScriptDao().getAllScripts()
     suspend fun insertScript(script: QuickScriptEntity) = db.quickScriptDao().insertScript(script)
-    suspend fun deleteScript(script: QuickScriptEntity) = db.quickScriptDao().deleteScript(script)
+    /** Deletes [script] and takes it off every rule that offered it as a runbook. */
+    suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {
+        db.quickScriptDao().deleteScript(script)
+        db.alertRuleDao().clearRunbook(script.id)
+    }
 
     // WOL Target functions
     val telnetHostsFlow: Flow<List<TelnetHostEntity>> = db.telnetHostDao().getAllTelnetHostsFlow()

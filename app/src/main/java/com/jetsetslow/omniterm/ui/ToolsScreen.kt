@@ -567,6 +567,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
     val alertHistory by viewModel.alertHistory.collectAsStateWithLifecycle()
     val rules by viewModel.alertRules.collectAsStateWithLifecycle()
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
+    val scripts by viewModel.quickScripts.collectAsStateWithLifecycle()
     val measurementSystem = viewModel.measurementSystem
     var showCreateRuleDialog by remember { mutableStateOf(false) }
     var editRule by remember { mutableStateOf<AlertRuleEntity?>(null) }
@@ -696,6 +697,14 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     Text(stringResource(R.string.server, srv?.name ?: "server"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                        val runbook = rules.find { it.id == alert.ruleId }?.runbookScriptId
+                                            ?.let { id -> scripts.find { it.id == id } }
+                                        if (runbook != null && alert.serverId > 0) {
+                                            TextButton(
+                                                onClick = { viewModel.openRunbook(alert.ruleId, alert.serverId) },
+                                                modifier = Modifier.testTag("alert.runbook"),
+                                            ) { Text(stringResource(R.string.alert_runbook_run, runbook.name), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                        }
                                         if (!alert.acknowledged) {
                                             TextButton(onClick = { viewModel.acknowledgeAlert(alert.id) }) { Text(stringResource(R.string.acknowledge)) }
                                         }
@@ -814,6 +823,17 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    if (r.metricName == HostChecks.SCRIPT_CHECK) {
+                                        val name = ScriptChecks.scriptId(r)?.let { id -> scripts.find { it.id == id }?.name }
+                                        Text(
+                                            stringResource(R.string.script_check_rule_script, name ?: stringResource(R.string.script_check_no_script)),
+                                            fontSize = 11.sp,
+                                            color = if (name == null) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    r.runbookScriptId?.let { id -> scripts.find { it.id == id } }?.let { book ->
+                                        Text(stringResource(R.string.alert_rule_runbook, book.name), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                     if (EndpointChecks.isEndpointMetric(r.metricName)) {
                                         RuleCheckLines(r, serversList, viewModel.endpointCheckResults) { EndpointChecks.breached(r, it) }
                                     } else if (HostChecks.isHostCheck(r.metricName)) {
@@ -913,10 +933,25 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var windowSelect by remember(existing) { mutableStateOf(existing?.triggerWindow ?: "5m") }
         var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
         var targetInput by remember(existing) { mutableStateOf(existing?.target ?: "") }
+        var checkScriptId by remember(existing) {
+            mutableStateOf(existing?.takeIf { it.metricName == HostChecks.SCRIPT_CHECK }?.let(ScriptChecks::scriptId))
+        }
+        var runbookId by remember(existing) { mutableStateOf(existing?.runbookScriptId) }
+        var pickingCheckScript by remember { mutableStateOf(false) }
+        var pickingRunbook by remember { mutableStateOf(false) }
+        val sortedScripts = scripts.sortedWith(compareBy<QuickScriptEntity> { it.name.lowercase() }.thenBy { it.id })
+        val checkScript = checkScriptId?.let { id -> scripts.find { it.id == id } }
+        val runbook = runbookId?.let { id -> scripts.find { it.id == id } }
         // A rule whose threshold silently fell back to a default is a rule that never fires when the
         // user expects it to, so refuse to save instead of guessing.
         val thresholdError = alertThresholdError(threshInput, metricSelect, measurementSystem)
         val targetError = alertTargetError(metricSelect, targetInput, selectedSrvIds)
+        // A check runs unattended every minute, so only a script that reads can be one.
+        val scriptError = if (metricSelect == HostChecks.SCRIPT_CHECK) {
+            ScriptChecks.problem(checkScript, checkScript?.let { commandDangerHits(it.command) }.orEmpty())
+        } else {
+            null
+        }
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
@@ -996,6 +1031,15 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     hostCheckHint(metricSelect)?.let { hint ->
                         Text(stringResource(hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    if (metricSelect == HostChecks.SCRIPT_CHECK) {
+                        ScriptChoiceField(
+                            label = stringResource(R.string.script_check_script),
+                            choice = checkScript?.let { "${it.emoji} ${it.name}" } ?: stringResource(R.string.script_check_pick),
+                            error = scriptError?.takeIf { checkScript != null },
+                            tag = "alertRule.script",
+                            onClick = { pickingCheckScript = true },
+                        )
+                    }
                     if (EndpointChecks.isEndpointMetric(metricSelect)) {
                         val field = endpointTargetField(metricSelect)
                         OutlinedTextField(
@@ -1038,6 +1082,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             }
                         }
                     }
+                    ScriptChoiceField(
+                        label = stringResource(R.string.alert_runbook),
+                        choice = runbook?.let { "${it.emoji} ${it.name}" } ?: stringResource(R.string.alert_runbook_none),
+                        hint = stringResource(R.string.alert_runbook_hint),
+                        tag = "alertRule.runbook",
+                        onClick = { pickingRunbook = true },
+                    )
                     OutlinedTextField(
                         value = notesInput,
                         onValueChange = { notesInput = it },
@@ -1050,7 +1101,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null,
+                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null && scriptError == null,
                     onClick = {
                         val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
@@ -1058,15 +1109,21 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         } else {
                             enteredThreshold
                         }
-                        val target = if (EndpointChecks.isEndpointMetric(metricSelect)) targetInput.trim() else ""
+                        val target = when {
+                            EndpointChecks.isEndpointMetric(metricSelect) -> targetInput.trim()
+                            metricSelect == HostChecks.SCRIPT_CHECK -> checkScriptId?.toString().orEmpty()
+                            else -> ""
+                        }
+                        // A runbook deleted while the dialog was open is not saved.
+                        val runbookToSave = runbook?.id
                         if (existing == null) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target)
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave)
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -1079,6 +1136,54 @@ fun AlertsToolView(viewModel: AppViewModel) {
                 TextButton(onClick = { showCreateRuleDialog = false; editRule = null }) { Text(stringResource(R.string.cancel)) }
             }
         )
+        if (pickingCheckScript) {
+            ScriptPickerDialog(
+                title = stringResource(R.string.script_check_pick),
+                scripts = sortedScripts,
+                emptyText = stringResource(R.string.no_scripts_saved_yet),
+                onPick = { picked -> picked?.let { checkScriptId = it.id }; pickingCheckScript = false },
+                onDismiss = { pickingCheckScript = false },
+            )
+        }
+        if (pickingRunbook) {
+            ScriptPickerDialog(
+                title = stringResource(R.string.alert_runbook),
+                scripts = sortedScripts,
+                emptyText = stringResource(R.string.no_scripts_saved_yet),
+                onPick = { picked -> runbookId = picked?.id; pickingRunbook = false },
+                onDismiss = { pickingRunbook = false },
+                noneLabel = stringResource(R.string.alert_runbook_none),
+            )
+        }
+    }
+}
+
+/**
+ * A rule-editor field that names the script chosen for it and opens a [ScriptPickerDialog] when
+ * tapped, with an [error] or a [hint] under it.
+ */
+@Composable
+private fun ScriptChoiceField(
+    label: String,
+    choice: String,
+    tag: String,
+    onClick: () -> Unit,
+    error: String? = null,
+    hint: String? = null,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label)
+        OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag(tag)) {
+            Text(choice, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        (error ?: hint)?.let {
+            Text(
+                it,
+                fontSize = 11.sp,
+                color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("$tag.note"),
+            )
+        }
     }
 }
 
@@ -1107,6 +1212,7 @@ private fun hostCheckHint(metricName: String): Int? = when (metricName) {
     HostChecks.SCRUB_AGE -> R.string.host_check_hint_scrub
     HostChecks.UPS_ON_BATTERY -> R.string.host_check_hint_ups
     HostChecks.REBOOT_REQUIRED -> R.string.host_check_hint_reboot
+    HostChecks.SCRIPT_CHECK -> R.string.host_check_hint_script
     else -> null
 }
 
