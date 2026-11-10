@@ -235,6 +235,10 @@ data class AlertRuleEntity(
     // The saved script this rule's notification and incident offer to run, after the usual
     // confirmation, or null for none. Cleared when that script is deleted.
     val runbookScriptId: Int? = null,
+    // Opt-in: run the runbook on the host, unattended, when an incident of this rule opens.
+    val runbookAuto: Boolean = false,
+    // RunNotify: what that run's notification shows.
+    val runbookNotify: String = RunNotify.FAILURES,
 )
 
 @Entity(
@@ -251,7 +255,9 @@ data class ActiveAlertEntity(
     val severity: String,
     val triggeredTime: Long,
     val acknowledged: Boolean = false,
-    val mutedUntil: Long = 0L // timestamp, 0 if not muted
+    val mutedUntil: Long = 0L, // timestamp, 0 if not muted
+    // The run in Fleet's history the rule's runbook made when this incident opened, if it ran one.
+    val runbookRunKey: String? = null,
 )
 
 @Entity(
@@ -444,12 +450,14 @@ object FleetRunHistory {
     const val SOURCE_AUTOMATION = "automation"
     const val SOURCE_MCP = "mcp"
     const val SOURCE_SCHEDULE = "schedule"
+    /** A rule's runbook, run on its own when an incident opened. */
+    const val SOURCE_ALERT = "alert"
 
     /** The sources whose runs are saved while they run: nobody is watching them on the Broadcast screen. */
-    val LIVE_SOURCES = listOf(SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE)
+    val LIVE_SOURCES = listOf(SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE, SOURCE_ALERT)
 
     /** Every source a saved run may have; a backup's run with any other is read as [SOURCE_FLEET]. */
-    val SOURCES = setOf(SOURCE_FLEET, SOURCE_RETRY, SOURCE_RUNBOOK, SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE)
+    val SOURCES = setOf(SOURCE_FLEET, SOURCE_RETRY, SOURCE_RUNBOOK, SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE, SOURCE_ALERT)
 
     /**
      * A live run still "running" this long after it started was cut off with its process (a run

@@ -127,6 +127,7 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun muteAlert(id: Int, mutedUntil: Long) = db.activeAlertDao().muteAlert(id, mutedUntil)
     suspend fun updateAlertCurrentValue(id: Int, currentValue: Float) =
         db.activeAlertDao().updateCurrentValue(id, currentValue)
+    suspend fun setAlertRunbookRunKey(id: Int, runKey: String) = db.activeAlertDao().setRunbookRunKey(id, runKey)
 
     // Alert History functions
     val alertHistoryFlow: Flow<List<AlertHistoryEntity>> = db.alertHistoryDao().getAlertHistoryFlow()

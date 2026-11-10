@@ -698,10 +698,24 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Text(stringResource(R.string.server, srv?.name ?: "server"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val runbook = rules.find { it.id == alert.ruleId }?.runbookScriptId
+                                        ?.let { id -> scripts.find { it.id == id } }
+                                    alert.runbookRunKey?.let { runKey ->
+                                        Text(
+                                            stringResource(R.string.alert_runbook_ran, runbook?.name ?: stringResource(R.string.alert_runbook)),
+                                            fontSize = 12.sp,
+                                            color = OmniColors.cyan,
+                                            modifier = Modifier
+                                                .clickable {
+                                                    viewModel.closeAlertsPopup()
+                                                    viewModel.openFleetRun(runKey)
+                                                }
+                                                .padding(vertical = 4.dp)
+                                                .testTag("alert.runbook.ran"),
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                        val runbook = rules.find { it.id == alert.ruleId }?.runbookScriptId
-                                            ?.let { id -> scripts.find { it.id == id } }
                                         if (runbook != null && alert.serverId > 0) {
                                             TextButton(
                                                 onClick = { viewModel.openRunbook(alert.ruleId, alert.serverId) },
@@ -835,7 +849,11 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         )
                                     }
                                     r.runbookScriptId?.let { id -> scripts.find { it.id == id } }?.let { book ->
-                                        Text(stringResource(R.string.alert_rule_runbook, book.name), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            stringResource(if (r.runbookAuto) R.string.alert_rule_runbook_auto else R.string.alert_rule_runbook, book.name),
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
                                     if (EndpointChecks.isEndpointMetric(r.metricName)) {
                                         RuleCheckLines(r, serversList, viewModel.endpointCheckResults) { EndpointChecks.breached(r, it) }
@@ -940,6 +958,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
             mutableStateOf(existing?.takeIf { it.metricName == HostChecks.SCRIPT_CHECK }?.let(ScriptChecks::scriptId))
         }
         var runbookId by remember(existing) { mutableStateOf(existing?.runbookScriptId) }
+        var runbookAuto by remember(existing) { mutableStateOf(existing?.runbookAuto ?: false) }
+        var runbookNotify by remember(existing) { mutableStateOf(RunNotify.of(existing?.runbookNotify)) }
         var pickingCheckScript by remember { mutableStateOf(false) }
         var pickingRunbook by remember { mutableStateOf(false) }
         val sortedScripts = scripts.sortedWith(compareBy<QuickScriptEntity> { it.name.lowercase() }.thenBy { it.id })
@@ -955,6 +975,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
         } else {
             null
         }
+        // Likewise a runbook the alert runs on its own.
+        val runbookError = runbook?.takeIf { runbookAuto }
+            ?.let { UnattendedScripts.problem(it, commandDangerHits(it.command), UnattendedScripts.Runner.ALERT) }
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
@@ -1092,6 +1115,23 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         tag = "alertRule.runbook",
                         onClick = { pickingRunbook = true },
                     )
+                    if (runbook != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(R.string.alert_runbook_auto), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Switch(
+                                checked = runbookAuto,
+                                onCheckedChange = { runbookAuto = it },
+                                modifier = Modifier.testTag("alertRule.runbook.auto"),
+                            )
+                        }
+                        if (runbookAuto) {
+                            Text(stringResource(R.string.alert_runbook_auto_help), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            runbookError?.let {
+                                Text(it, fontSize = 12.sp, color = OmniColors.amber, modifier = Modifier.testTag("alertRule.runbook.problem"))
+                            }
+                            RunNotifyPicker(runbookNotify, { runbookNotify = it }, "alertRule.runbook.notify")
+                        }
+                    }
                     OutlinedTextField(
                         value = notesInput,
                         onValueChange = { notesInput = it },
@@ -1104,7 +1144,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null && scriptError == null,
+                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null && scriptError == null && runbookError == null,
                     onClick = {
                         val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
@@ -1119,14 +1159,15 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         }
                         // A runbook deleted while the dialog was open is not saved.
                         val runbookToSave = runbook?.id
+                        val autoToSave = runbookAuto && runbookToSave != null
                         if (existing == null) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave)
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave, autoToSave, runbookNotify)
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave, runbookAuto = autoToSave, runbookNotify = runbookNotify))
                         }
                         showCreateRuleDialog = false
                         editRule = null

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 30,
-    "identityHash": "4c4e2ba2080a94e8f7d83d1362d215fe",
+    "identityHash": "5801af6f8732396073adac02e772de02",
     "entities": [
       {
         "tableName": "servers",
@@ -392,7 +392,7 @@
       },
       {
         "tableName": "alert_rules",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `serverId` INTEGER NOT NULL, `metricName` TEXT NOT NULL, `mountPoint` TEXT NOT NULL, `thresholdValue` REAL NOT NULL, `severity` TEXT NOT NULL, `triggerWindow` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `notes` TEXT NOT NULL, `presetKey` TEXT, `target` TEXT NOT NULL, `runbookScriptId` INTEGER)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `serverId` INTEGER NOT NULL, `metricName` TEXT NOT NULL, `mountPoint` TEXT NOT NULL, `thresholdValue` REAL NOT NULL, `severity` TEXT NOT NULL, `triggerWindow` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `notes` TEXT NOT NULL, `presetKey` TEXT, `target` TEXT NOT NULL, `runbookScriptId` INTEGER, `runbookAuto` INTEGER NOT NULL, `runbookNotify` TEXT NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -463,6 +463,18 @@
             "fieldPath": "runbookScriptId",
             "columnName": "runbookScriptId",
             "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "runbookAuto",
+            "columnName": "runbookAuto",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runbookNotify",
+            "columnName": "runbookNotify",
+            "affinity": "TEXT",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -474,7 +486,7 @@
       },
       {
         "tableName": "active_alerts",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ruleId` INTEGER NOT NULL, `serverId` INTEGER NOT NULL, `metricName` TEXT NOT NULL, `currentValue` REAL NOT NULL, `thresholdValue` REAL NOT NULL, `severity` TEXT NOT NULL, `triggeredTime` INTEGER NOT NULL, `acknowledged` INTEGER NOT NULL, `mutedUntil` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `ruleId` INTEGER NOT NULL, `serverId` INTEGER NOT NULL, `metricName` TEXT NOT NULL, `currentValue` REAL NOT NULL, `thresholdValue` REAL NOT NULL, `severity` TEXT NOT NULL, `triggeredTime` INTEGER NOT NULL, `acknowledged` INTEGER NOT NULL, `mutedUntil` INTEGER NOT NULL, `runbookRunKey` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -535,6 +547,11 @@
             "columnName": "mutedUntil",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "runbookRunKey",
+            "columnName": "runbookRunKey",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -1735,7 +1752,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4c4e2ba2080a94e8f7d83d1362d215fe')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5801af6f8732396073adac02e772de02')"
     ]
   }
 }

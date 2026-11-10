@@ -1371,17 +1371,24 @@ private fun fleetRunSourceLabel(source: String): String? = when (source) {
     FleetRunHistory.SOURCE_AUTOMATION -> stringResource(R.string.fleet_history_source_automation)
     FleetRunHistory.SOURCE_MCP -> stringResource(R.string.fleet_history_source_mcp)
     FleetRunHistory.SOURCE_SCHEDULE -> stringResource(R.string.fleet_history_source_schedule)
+    FleetRunHistory.SOURCE_ALERT -> stringResource(R.string.fleet_history_source_alert)
     else -> null
 }
 
-/** The history's filters, in the order they are offered: a retry counts as a Broadcast run. */
+/**
+ * The history's filters, in the order they are offered: a retry counts as a Broadcast run, and a
+ * runbook an alert ran on its own as a runbook.
+ */
 private val FLEET_RUN_GROUPS = listOf(
     FleetRunHistory.SOURCE_FLEET, FleetRunHistory.SOURCE_SCHEDULE, FleetRunHistory.SOURCE_RUNBOOK, FleetRunHistory.SOURCE_AUTOMATION,
     FleetRunHistory.SOURCE_MCP,
 )
 
-private fun fleetRunGroup(source: String): String =
-    if (source == FleetRunHistory.SOURCE_RETRY) FleetRunHistory.SOURCE_FLEET else source
+private fun fleetRunGroup(source: String): String = when (source) {
+    FleetRunHistory.SOURCE_RETRY -> FleetRunHistory.SOURCE_FLEET
+    FleetRunHistory.SOURCE_ALERT -> FleetRunHistory.SOURCE_RUNBOOK
+    else -> source
+}
 
 /** A run's line in the history: when, how it went (or how far it is), and who started it. */
 @Composable

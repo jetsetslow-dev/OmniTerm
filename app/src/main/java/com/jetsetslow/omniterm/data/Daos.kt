@@ -214,6 +214,9 @@ interface ActiveAlertDao {
     @Query("UPDATE active_alerts SET currentValue = :currentValue WHERE id = :id")
     suspend fun updateCurrentValue(id: Int, currentValue: Float)
 
+    @Query("UPDATE active_alerts SET runbookRunKey = :runKey WHERE id = :id")
+    suspend fun setRunbookRunKey(id: Int, runKey: String)
+
     @Query("DELETE FROM active_alerts WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 

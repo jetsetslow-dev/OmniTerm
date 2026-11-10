@@ -34,6 +34,7 @@ internal class RunNotifications(
     enum class Channel(val id: String, val nameRes: Int) {
         EXTERNAL("external_runs", R.string.external_runs_channel),
         SCHEDULES("fleet_schedules", R.string.fleet_schedules_channel),
+        ALERT_RUNS("alert_runbook_runs", R.string.alert_runbook_channel),
     }
 
     companion object {

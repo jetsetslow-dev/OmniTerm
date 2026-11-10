@@ -9,6 +9,7 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.HostChecks
 import com.jetsetslow.omniterm.data.QuickScriptEntity
+import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.ScriptChecks
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupSelection
@@ -23,6 +24,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -59,6 +61,7 @@ class ScriptRefsBackupRobolectricTest {
                 AlertRuleEntity(
                     serverId = 0, metricName = HostChecks.SCRIPT_CHECK, thresholdValue = 0f, severity = "WARNING",
                     triggerWindow = "2m", target = check.id.toString(), runbookScriptId = runbook.id,
+                    runbookAuto = true, runbookNotify = RunNotify.ALWAYS,
                 ),
             )
             val selection = BackupSelection.NONE.copy(scripts = true, alertRules = true)
@@ -90,6 +93,8 @@ class ScriptRefsBackupRobolectricTest {
             val rule = repo.getAllRules().single { it.metricName == HostChecks.SCRIPT_CHECK }
             assertEquals(newCheck.id, ScriptChecks.scriptId(rule))
             assertEquals(newRunbook.id, rule.runbookScriptId)
+            assertFalse("a restored rule only offers its runbook until it is set to run it again", rule.runbookAuto)
+            assertEquals("and keeps how that run would notify", RunNotify.ALWAYS, rule.runbookNotify)
             assertTrue(other.id != newCheck.id && other.id != newRunbook.id)
             waitWhileOnMain(main) { model.backupRestoreRunning }
         } finally {

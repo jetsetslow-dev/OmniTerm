@@ -1519,6 +1519,7 @@
     <string name="fleet_history_source_mcp">"AI assistant"</string>
     <string name="fleet_history_source_automation">"Automation"</string>
     <string name="fleet_history_source_schedule">"Scheduled"</string>
+    <string name="fleet_history_source_alert">"Runbook, on its own"</string>
     <string name="fleet_history_running">"Running · %1$d of %2$d done"</string>
     <string name="fleet_history_running_since">"Started %1$s · still running"</string>
     <string name="fleet_history_filter_all">"All"</string>
@@ -1553,6 +1554,12 @@
     <string name="external_run_done_title">"%1$s ran %2$s"</string>
     <string name="external_run_refused_title">"%1$s could not run %2$s"</string>
     <string name="fleet_schedules_channel">"Scheduled Fleet runs"</string>
+    <string name="alert_runbook_channel">"Runbooks alerts ran"</string>
+    <string name="alert_runbook_by">"Alert “%1$s” on %2$s"</string>
+    <string name="alert_runbook_auto">"Run it when an incident opens"</string>
+    <string name="alert_runbook_auto_help">"The runbook runs on the host by itself, in the background, with nobody there to confirm it, so a script the danger list flags is refused and every {{value}} needs a default. It runs once when an incident opens, at most once every 30 minutes per host, and the run is in Fleet → History."</string>
+    <string name="alert_rule_runbook_auto">"Runbook: %1$s, runs when an incident opens"</string>
+    <string name="alert_runbook_ran">"%1$s ran by itself. Open the run"</string>
     <string name="fleet_schedules_intro">"Run a saved script on its hosts at set times, in the background, with each run in Broadcast → History as Scheduled."</string>
     <string name="fleet_schedules_empty">"No schedules yet."</string>
     <string name="fleet_schedules_unattended">"A schedule runs with nobody there to confirm it, so it takes only scripts that only read and whose {{values}} all have defaults."</string>

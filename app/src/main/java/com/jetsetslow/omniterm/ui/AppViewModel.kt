@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
+import com.jetsetslow.omniterm.automation.AlertRunbooks
 import com.jetsetslow.omniterm.automation.FleetSchedules
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.mcp.McpSettings
@@ -583,6 +584,8 @@ sealed interface ExternalLaunchRequest {
     data object OpenFleet : ExternalLaunchRequest
     /** A schedule that could not run, from its notification. */
     data object OpenFleetSchedules : ExternalLaunchRequest
+    /** A runbook an alert could not run, from its notification. */
+    data object OpenAlerts : ExternalLaunchRequest
     /** A run another app or an AI assistant started, from its notification. */
     data class OpenFleetRun(val runKey: String) : ExternalLaunchRequest
     data object OpenInfra : ExternalLaunchRequest
@@ -3849,6 +3852,8 @@ class AppViewModel @JvmOverloads constructor(
                 )
                 repository.insertAlert(alert)
                 postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget, notificationText)
+                // Opt-in per rule: its runbook runs on this host, in the background, once.
+                if (r.runbookAuto && r.runbookScriptId != null) AlertRunbooks.start(getApplication(), r.id, srv.id, now)
                 forwardAlert(
                     AlertForwarding.Event(
                         resolved = false, severity = r.severity, host = srv.name, rule = r.metricName,
@@ -4859,6 +4864,7 @@ class AppViewModel @JvmOverloads constructor(
                     fleetTabIndex = 2
                     navigateTo(Screen.Fleet)
                 }
+                ExternalLaunchRequest.OpenAlerts -> openAlertsPopup()
                 is ExternalLaunchRequest.OpenFleetRun -> openFleetRun(request.runKey)
                 ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
                 ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
@@ -5824,6 +5830,8 @@ class AppViewModel @JvmOverloads constructor(
         notes: String = "",
         target: String = "",
         runbookScriptId: Int? = null,
+        runbookAuto: Boolean = false,
+        runbookNotify: String = RunNotify.FAILURES,
     ) {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
@@ -5836,6 +5844,8 @@ class AppViewModel @JvmOverloads constructor(
                 notes = notes,
                 target = target,
                 runbookScriptId = runbookScriptId,
+                runbookAuto = runbookAuto && runbookScriptId != null,
+                runbookNotify = RunNotify.of(runbookNotify),
             )
             repository.insertRule(rule)
             if (EndpointChecks.isEndpointMetric(metricName)) {
@@ -15645,6 +15655,8 @@ class AppViewModel @JvmOverloads constructor(
                     put("target", r.target)
                 }
                 scriptRef(r.runbookScriptId)?.let { put("runbookScript", it) }
+                // Whether it runs on its own is not kept: a restored rule only offers its runbook.
+                put("runbookNotify", RunNotify.of(r.runbookNotify))
             })
         }
         val historyArr = org.json.JSONArray()
@@ -16586,6 +16598,7 @@ class AppViewModel @JvmOverloads constructor(
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
                                     target = target,
                                     runbookScriptId = restoredScriptId(o.optJSONObject("runbookScript")),
+                                    runbookNotify = RunNotify.of(o.optString("runbookNotify")),
                                 )
                             )
                             repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }?.let { restoredRule ->

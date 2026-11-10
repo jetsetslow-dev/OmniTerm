@@ -849,7 +849,42 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       Broadcast's picks, sees its persisted job, runs it now over SSH, finds the run in History as
       Scheduled, opens it from the card, and pauses it. Guard: a job service that never runs made
       it time out waiting for the run.
-  - Next: alert-triggered runs, then the other five.
+  - Alert-triggered runs: done (commit "Let an alert run its runbook on its own").
+    - An alert rule with a runbook gains **Run it on its own when an incident opens** (off by
+      default) and the token-style notification choice. The editor shows why a script cannot run
+      unattended and will not save the switch on until it can.
+    - When an incident opens, the runbook starts on that one host as an expedited job (ids
+      0x4F50_xxxx; a deadline-0 job when expedited is refused). Each rule and host starts at most
+      once every 30 minutes, so a service that keeps falling over is not restarted in a loop. The
+      cooldown is in memory: a restarted app may run it once more.
+    - The job runs only while the rule still runs it on its own and the incident is still open. It
+      goes through `AutomationRunner.runScript` with source `alert` ("Runbook, on its own" in
+      History, grouped with runbooks) and refuses what automation refuses
+      (`UnattendedScripts.Runner.ALERT`). A refusal posts "could not run" and opens the alerts. The
+      incident keeps the run's key (`active_alerts.runbookRunKey`) and links to it in Fleet's
+      history. Notifications use a new "Runbooks alerts ran" channel.
+    - `alert_rules.runbookAuto`/`runbookNotify` and `active_alerts.runbookRunKey` are folded into
+      schema 30. Backups carry the notification choice; the switch is always restored off.
+    - The three job services now share one `RunJobService` (scope, running jobs, failures logged,
+      cancellation passed on).
+    - Tests: `AlertRunbookRobolectricTest` 4 (the incident's host only and its link, nothing once
+      the incident closed or the rule only offers it, refusals and their link, the cooldown),
+      `HostCheckAlertsRobolectricTest` 8 (an incident starts the runbook only for a rule set to),
+      `ScriptRefsBackupRobolectricTest` 1, `FleetScheduleRobolectricTest` 5,
+      `AutomationRunnerRobolectricTest` 17, `AutomationRobolectricTest` 11,
+      `AutomationBackupRobolectricTest` 3, all 0 failed. Seven guards seen failing: an incident not
+      starting it, the switch ignored, no cooldown, a closed incident, no refusal, no link,
+      restored switched on.
+    - Devices (API 35, fresh install, repository fixture on 127.0.0.1:2205): `E2eAlertRunbookTest`
+      1, `E2eFleetScheduleTest` 1, `AppDatabaseMigrationTest` 13, `E2eAutomationTest` 1,
+      `E2eMcpTest` 1, `E2eHostChecksTest` 1, `E2eFleetPushTest` 1, `E2eFleetTagsTest` 1, all 0
+      failed. The new `E2eAlertRunbookTest`
+      (`-e omniterm_e2e_alert_runbook yes -e host 127.0.0.1`) makes a script check fail on the lab
+      host, sees the runbook run on its own over SSH and fix it, opens the run from the incident,
+      and waits for the next checks to close it. Guard: a job service that never runs made it time
+      out waiting for the run.
+  - Next: identical output grouped, a failure threshold, an output filter and search, sudo in Fleet
+    (pushes to protected paths too), and broadcast typing last.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,

@@ -1,9 +1,11 @@
 package com.jetsetslow.omniterm
 
 import android.app.Application
+import android.app.job.JobScheduler
 import android.net.ConnectivityManager
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
+import com.jetsetslow.omniterm.automation.AlertRunbooks
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.HostChecks
@@ -59,6 +61,31 @@ class HostCheckAlertsRobolectricTest {
         assertEquals(1f, alert.currentValue)
         val ruleId = repository.getAllRules().single().id
         assertEquals("offline", model.hostCheckResults.getValue(ruleId to hostId).summary)
+    }
+
+    /** A rule set to run its runbook starts it on the host when the incident opens; one that only offers it does not. */
+    @Test
+    fun anIncidentStartsTheRunbookOnlyForARuleSetToRunIt() {
+        for (auto in listOf(true, false)) {
+            withModel(Unreachable()) { repository, model, hostId ->
+                AlertRunbooks.resetCooldowns()
+                val scheduler = ApplicationProvider.getApplicationContext<Application>().getSystemService(JobScheduler::class.java)
+                scheduler.cancelAll()
+                val runbook = saveScript(repository, "Wake it", "systemctl restart networking")
+                withContext(main) {
+                    model.addAlertRule(hostId, HostChecks.HOST_OFFLINE, "/", 0f, "CRITICAL", "0m", runbookScriptId = runbook, runbookAuto = auto)
+                }
+                withTimeout(15_000) {
+                    while (repository.getActiveAlerts().isEmpty()) {
+                        withContext(main) { model.refreshServer(hostId) }
+                        delay(200)
+                    }
+                }
+                val ruleId = repository.getAllRules().single().id
+                assertEquals("auto=$auto", auto, scheduler.getPendingJob(AlertRunbooks.jobId(ruleId, hostId)) != null)
+                scheduler.cancelAll()
+            }
+        }
     }
 
     /** With the phone itself off the network every host looks down, which says nothing about them. */

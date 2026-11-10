@@ -3,7 +3,6 @@ package com.jetsetslow.omniterm.automation
 import android.app.job.JobInfo
 import android.app.job.JobParameters
 import android.app.job.JobScheduler
-import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import android.os.PersistableBundle
@@ -22,14 +21,7 @@ import com.jetsetslow.omniterm.data.ssh.SshTransport
 import com.jetsetslow.omniterm.ui.FleetTargets
 import com.jetsetslow.omniterm.ui.NotificationLinks
 import com.jetsetslow.omniterm.ui.commandDangerHits
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -228,23 +220,17 @@ class FleetScheduleRunner(
 }
 
 /** Runs a schedule's job, then sets its next run, however the run ends. */
-class FleetScheduleJobService : JobService() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val runs = ConcurrentHashMap<Int, Job>()
-
-    override fun onStartJob(params: JobParameters): Boolean {
-        val scheduleId = params.extras.getInt(FleetSchedules.KEY_SCHEDULE, 0).takeIf { it > 0 } ?: return false
+class FleetScheduleJobService : RunJobService() {
+    override fun workFor(params: JobParameters): (suspend () -> Unit)? {
+        val scheduleId = params.extras.getInt(FleetSchedules.KEY_SCHEDULE, 0).takeIf { it > 0 } ?: return null
         val runNow = params.extras.getBoolean(FleetSchedules.KEY_NOW, false)
         val startedAt = System.currentTimeMillis()
-        runs[params.jobId] = scope.launch {
+        return {
             val repository = AutomationJobs.repository(applicationContext)
             val transport = JschSshTransport()
             try {
+                // Stopped part-way, the schedule's last run says so.
                 FleetScheduleRunner(applicationContext, repository, transport).run(scheduleId, evenIfPaused = runNow)
-            } catch (e: CancellationException) {
-                // Android stopped it; the schedule's last run says so.
-            } catch (e: Exception) {
-                Log.w("OmniTermSchedule", "The scheduled run failed", e)
             } finally {
                 transport.shutdown()
                 withContext(NonCancellable) {
@@ -255,20 +241,6 @@ class FleetScheduleJobService : JobService() {
                     }
                 }
             }
-            runs.remove(params.jobId)
-            jobFinished(params, false)
         }
-        return true
-    }
-
-    /** Android stopped the job: the run ends, and the schedule's last run says so. */
-    override fun onStopJob(params: JobParameters): Boolean {
-        runs.remove(params.jobId)?.cancel()
-        return false
-    }
-
-    override fun onDestroy() {
-        scope.cancel()
-        super.onDestroy()
     }
 }

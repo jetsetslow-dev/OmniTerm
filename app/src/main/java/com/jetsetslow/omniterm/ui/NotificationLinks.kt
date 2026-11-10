@@ -16,6 +16,10 @@ internal object NotificationLinks {
         return ruleId to serverId
     }
 
+    /** The alerts, for a runbook an alert could not run, which so is not in the history. */
+    fun alerts() = "omniterm://notification/$ALERTS"
+    const val ALERTS = "alerts"
+
     /** Fleet's Schedules tab, for a schedule that could not run and so is not in the history. */
     fun fleetSchedules() = "omniterm://notification/$FLEET_SCHEDULES"
     const val FLEET_SCHEDULES = "fleet-schedules"

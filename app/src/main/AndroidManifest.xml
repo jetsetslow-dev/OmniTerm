@@ -220,6 +220,11 @@
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
+        <service
+            android:name=".automation.AlertRunbookJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <!-- yubikit-android declares two prompt activities OmniTerm never starts. -->
         <activity android:name="com.yubico.yubikit.android.ui.OtpActivity" tools:node="remove" />
         <activity android:name="com.yubico.yubikit.android.ui.YubiKeyPromptActivity" tools:node="remove" />
