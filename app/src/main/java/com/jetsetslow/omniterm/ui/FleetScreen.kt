@@ -40,11 +40,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.data.*
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
@@ -657,10 +661,11 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             modifier = modifier.fillMaxWidth().padding(top = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(viewModel.broadcastResults, key = { it.serverId }) { item ->
+            items(FleetOutputGroups.group(viewModel.broadcastResults), key = { it.first().serverId }) { same ->
+                val item = same.first()
                 BroadcastResultCard(
-                    item = item,
-                    leftAccent = hostAccent(allHosts, item.serverId),
+                    hosts = same,
+                    allHosts = allHosts,
                     expanded = expandedOutputs[item.serverId] == true,
                     onToggle = { expandedOutputs[item.serverId] = expandedOutputs[item.serverId] != true },
                     keptChars = BROADCAST_OUTPUT_MAX_CHARS,
@@ -1296,20 +1301,26 @@ private fun broadcastAccent(status: BroadcastStatus): Color = when (status) {
 }
 
 /**
- * One host's result, in Broadcast and in the run history: its name and status, its output when
- * [expanded] (at most [keptChars] of it kept), and [footer] in its status colour below.
+ * A result, in Broadcast and in the run history: the host's name, or for [hosts] that ended the
+ * same way ([FleetOutputGroups]) their count and each name in its host colour; the status; the
+ * output when [expanded] (at most [keptChars] of it kept); and [footer] in the status colour below.
  */
 @Composable
 private fun BroadcastResultCard(
-    item: BroadcastResultItem,
-    leftAccent: Color,
+    hosts: List<BroadcastResultItem>,
+    allHosts: List<ServerEntity>,
     expanded: Boolean,
     onToggle: () -> Unit,
     keptChars: Int,
     footer: @Composable (accent: Color) -> Unit,
 ) {
+    val item = hosts.first()
+    val shared = hosts.size > 1
     val accent = broadcastAccent(item.status)
-    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = leftAccent) {
+    // A shared card stands for no one host, so it takes no host's colour; its names do.
+    val leftAccent = if (shared) MaterialTheme.colorScheme.outline else hostAccent(allHosts, item.serverId)
+    val surface = MaterialTheme.colorScheme.surface
+    OmniCard(modifier = Modifier.fillMaxWidth().testTag("fleet.output.${item.serverId}"), leftAccent = leftAccent) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).clickable(onClick = onToggle),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1321,7 +1332,13 @@ private fun BroadcastResultCard(
                     contentDescription = if (expanded) stringResource(R.string.collapse_output) else stringResource(R.string.expand_output),
                     tint = MaterialTheme.colorScheme.primary,
                 )
-                Text(item.serverName, fontWeight = FontWeight.Bold, fontSize = 14.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    if (shared) pluralStringResource(R.plurals.broadcast_same_result, hosts.size, hosts.size) else item.serverName,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    fontFamily = OmniFonts.mono,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (item.status == BroadcastStatus.Running || item.status == BroadcastStatus.Reconnecting) {
@@ -1334,6 +1351,19 @@ private fun BroadcastResultCard(
                     fontWeight = FontWeight.Bold,
                 )
             }
+        }
+        if (shared) {
+            Text(
+                buildAnnotatedString {
+                    hosts.forEachIndexed { i, host ->
+                        if (i > 0) append(", ")
+                        withStyle(SpanStyle(color = hostAccent(allHosts, host.serverId, surface))) { append(host.serverName) }
+                    }
+                },
+                fontSize = 12.sp,
+                fontFamily = OmniFonts.mono,
+                modifier = Modifier.padding(bottom = 6.dp).testTag("fleet.output.${item.serverId}.hosts"),
+            )
         }
         if (expanded) {
             val placeholder = stringResource(
@@ -1577,10 +1607,11 @@ private fun FleetRunDetailsDialog(
                 if (loaded == null) {
                     item { CircularProgressIndicator(modifier = Modifier.size(20.dp)) }
                 } else {
-                    items(loaded, key = { it.serverId }) { item ->
+                    items(FleetOutputGroups.group(loaded), key = { it.first().serverId }) { same ->
+                        val item = same.first()
                         BroadcastResultCard(
-                            item = item,
-                            leftAccent = hostAccent(allHosts, item.serverId),
+                            hosts = same,
+                            allHosts = allHosts,
                             expanded = expanded[item.serverId] == true,
                             onToggle = { expanded[item.serverId] = expanded[item.serverId] != true },
                             keptChars = FleetRunHistory.OUTPUT_CHARS,

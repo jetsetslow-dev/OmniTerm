@@ -5,8 +5,13 @@ import android.app.Instrumentation
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.IntentCompat
+import androidx.compose.ui.test.assertAll
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -21,6 +26,7 @@ import com.jetsetslow.omniterm.ui.BroadcastStatus
 import com.jetsetslow.omniterm.ui.FleetTargetMode
 import com.jetsetslow.omniterm.ui.Screen
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -32,8 +38,9 @@ import java.util.UUID
 
 /**
  * A rolling Fleet run over SSH to the repository's provisioned disposable host, listed twice: one
- * host at a time, the first fails, so the second is not run; Retry runs both again; Share hands
- * the whole run to the share sheet as a file.
+ * host at a time, the first fails, so the second is not run; Retry runs both again, and the two,
+ * ending the same way, share one card, in Broadcast and in History, and one section of the report
+ * that Share hands to the share sheet as a file.
  */
 class E2eRollingFleetTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -59,7 +66,9 @@ class E2eRollingFleetTest {
         val originalBatch = vm.broadcastBatchSize
         val originalStop = vm.broadcastStopOnFailure
         // The same fixture under a second name: two hosts for the batches, one machine to clean up.
-        val copyId = repository.insertServer(host.copy(id = 0, name = "E2E Rolling Copy")).toInt()
+        // A run cut off before its cleanup left its copy; it would join this run's hosts.
+        repository.getAllServers().filter { it.name == COPY }.forEach { repository.deleteServerAndDependents(it.id) }
+        val copyId = repository.insertServer(host.copy(id = 0, name = COPY)).toInt()
         val marker = "/tmp/omniterm-e2e-rolling-${UUID.randomUUID().toString().take(8)}"
         // Fails the first time anything runs it, succeeds every time after.
         val command = "f=$marker; if [ -f \"\$f\" ]; then echo again; else touch \"\$f\"; echo first; exit 3; fi"
@@ -74,6 +83,7 @@ class E2eRollingFleetTest {
                     null
                 }
         }
+        var monitoring = false
         try {
             withTimeout(15_000) { while (vm.servers.value.none { it.id == copyId }) delay(20) }
             val previousProbe = vm.lastTelemetryStartMs
@@ -130,21 +140,36 @@ class E2eRollingFleetTest {
             assertEquals(retried.toString(), listOf(BroadcastStatus.Success, BroadcastStatus.Success), retried.map { it.status })
             assertEquals("The cards keep their order", first.map { it.serverId }, retried.map { it.serverId })
             retried.forEach { assertTrue(it.output, it.output.contains("again")) }
+            // Both ended the same way, so they share one card that names them.
+            val names = retried.joinToString(", ") { it.serverName }
+            val shared = "fleet.output.${retried.first().serverId}.hosts"
+            composeRule.onNodeWithText("2 hosts, same result").assertIsDisplayed()
+            composeRule.onNodeWithTag(shared).assertTextEquals(names)
+            composeRule.onAllNodesWithTag("fleet.output.${retried.last().serverId}").assertCountEquals(0)
 
             instrumentation.addMonitor(chooser)
+            monitoring = true
             composeRule.onNodeWithTag("fleet.broadcast.share").performClick()
             withTimeout(10_000) { while (shares.isEmpty()) delay(50) }
             val send = checkNotNull(IntentCompat.getParcelableExtra(shares.single(), Intent.EXTRA_INTENT, Intent::class.java))
             assertEquals(Intent.ACTION_SEND, send.action)
-            val shared = checkNotNull(send.getStringExtra(Intent.EXTRA_TEXT)) { "A short run goes in the message too" }
-            assertTrue(shared, shared.startsWith("$ $command\n"))
-            retried.forEach { card -> assertTrue(shared, shared.contains("== ${card.serverName} · complete\nagain")) }
+            val report = checkNotNull(send.getStringExtra(Intent.EXTRA_TEXT)) { "A short run goes in the message too" }
+            assertTrue(report, report.startsWith("$ $command\n"))
+            assertTrue("The two hosts share one section", report.contains("== $names · complete\nagain"))
             val uri = checkNotNull(IntentCompat.getParcelableExtra(send, Intent.EXTRA_STREAM, Uri::class.java))
             assertTrue("The receiving app may read the file", send.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
             val attached = context.contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
-            assertEquals("The attached file is the same run, through the app's provider", shared, attached)
+            assertEquals("The attached file is the same run, through the app's provider", report, attached)
+
+            // The retry in History shows them the same way.
+            val retry = repository.fleetRunsFlow.first().maxBy { it.run.startedAt }.run
+            composeRule.runOnUiThread { vm.openFleetRun(retry.runKey) }
+            composeRule.waitUntil(10_000) { runCatching { composeRule.onNodeWithTag("fleet.history.details").assertExists() }.isSuccess }
+            // The live card and the history's: the same tag, in two windows.
+            composeRule.onAllNodesWithTag(shared).assertCountEquals(2).assertAll(hasText(names))
         } finally {
-            instrumentation.removeMonitor(chooser)
+            // Android's monitor list is null until one is added: removing first would hide the failure.
+            if (monitoring) instrumentation.removeMonitor(chooser)
             composeRule.runOnUiThread {
                 if (vm.isBroadcastExecuting) vm.stopFleetBroadcast()
             }
@@ -170,5 +195,9 @@ class E2eRollingFleetTest {
             }
             repository.deleteServerAndDependents(copyId)
         }
+    }
+
+    private companion object {
+        const val COPY = "E2E Rolling Copy"
     }
 }

@@ -79,6 +79,29 @@ class FleetRunHistoryRobolectricTest {
     }
 
     @Test
+    fun hostsThatEndedTheSameWayShareOneSectionOfTheReportLiveAndInTheHistory() = withFleet { model, main, transport ->
+        transport.replies[NAS] = "nginx is running\n"
+        transport.replies[PI] = "nginx is running\n"
+        withContext(main) {
+            model.updateBroadcastInTmux(false)
+            model.runFleetBroadcast("systemctl is-active nginx", listOf(nasId, piId))
+        }
+        val run = awaitRuns(1).single()
+        waitWhileOnMain(main, 10_000) { model.isBroadcastExecuting }
+        val shared = "$ systemctl is-active nginx\n\n== nas, pi · complete\nnginx is running\n"
+        assertEquals(shared, withContext(main) { model.broadcastReport() })
+        assertEquals("the history's report reads the same", shared, model.fleetRunReport(run.run, model.fleetRunResults(run.run.id)))
+
+        // One host differs: each has its own section again.
+        transport.replies[PI] = "nginx is stopped\n"
+        withContext(main) { model.runFleetBroadcast("systemctl is-active nginx", listOf(nasId, piId)) }
+        awaitRuns(2)
+        waitWhileOnMain(main, 10_000) { model.isBroadcastExecuting }
+        val report = withContext(main) { model.broadcastReport() }
+        assertTrue(report, report.contains("== nas · complete\nnginx is running\n\n== pi · complete\nnginx is stopped\n"))
+    }
+
+    @Test
     fun aRetryIsItsOwnRunAndLeavesTheFirstResultsAlone() = withFleet { model, main, transport ->
         transport.replies[NAS] = "ok\n"
         transport.replies[PI] = "SSH Error: command failed (1): busy\n"

@@ -21,6 +21,8 @@ features. No code from them is included; see the README's Acknowledgements for w
 - ssh-mcp-server — https://github.com/classfang/ssh-mcp-server
 - ssh-mcp — https://github.com/tufantunc/ssh-mcp
 - Komodo — https://github.com/moghtech/komodo
+- ClusterShell — https://github.com/cea-hpc/clustershell
+- pdsh — https://github.com/chaos/pdsh
 - Haven — https://github.com/GlassHaven/Haven
 - ConnectBot — https://github.com/connectbot/connectbot
 - ServerBox — https://github.com/lollipopkit/flutter_server_box

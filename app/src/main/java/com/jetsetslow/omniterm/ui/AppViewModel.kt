@@ -13780,13 +13780,15 @@ class AppViewModel @JvmOverloads constructor(
     fun fleetPushHeading(fileName: String, destination: String): String =
         getApplication<Application>().getString(R.string.fleet_push_heading, fileName, destination)
 
+    /** One section per result: hosts that ended the same way share theirs, as on the cards. */
     private fun fleetReport(heading: String, hosts: List<BroadcastResultItem>, keptChars: Int): String {
         val app = getApplication<Application>()
         return buildString {
             appendLine(heading)
-            hosts.forEach { item ->
+            FleetOutputGroups.group(hosts).forEach { same ->
+                val item = same.first()
                 appendLine()
-                appendLine("== ${item.serverName} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
+                appendLine("== ${same.joinToString(", ") { it.serverName }} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
                 if (item.truncated) appendLine(app.getString(R.string.broadcast_output_truncated, keptChars))
                 if (item.output.isNotBlank()) appendLine(item.output.trimEnd())
             }

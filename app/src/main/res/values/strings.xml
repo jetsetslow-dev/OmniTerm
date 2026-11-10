@@ -1490,6 +1490,10 @@
     <string name="broadcast_status_waiting">"waiting"</string>
     <string name="broadcast_status_not_run">"not run"</string>
     <string name="broadcast_output_truncated">"[Output truncated; showing latest %1$d characters]"</string>
+    <plurals name="broadcast_same_result">
+        <item quantity="one">"%1$d host"</item>
+        <item quantity="other">"%1$d hosts, same result"</item>
+    </plurals>
     <string name="broadcast_waiting_for_output">"Waiting for output…"</string>
     <string name="broadcast_waiting_for_batch">"Waits for the hosts before it to finish."</string>
     <string name="broadcast_done_no_output">"Done (no output)"</string>
