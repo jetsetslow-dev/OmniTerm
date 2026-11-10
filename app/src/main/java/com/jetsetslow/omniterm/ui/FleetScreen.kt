@@ -338,10 +338,11 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         if (batchSize != null) {
             appendLine()
             appendLine(
-                confirm.str(
-                    if (viewModel.broadcastStopOnFailure) R.string.broadcast_rolling_stop_confirm else R.string.broadcast_rolling_confirm,
-                    batchSize,
-                ),
+                when {
+                    !viewModel.broadcastStopOnFailure -> confirm.str(R.string.broadcast_rolling_confirm, batchSize)
+                    viewModel.broadcastFailurePercent == 0 -> confirm.str(R.string.broadcast_rolling_stop_confirm, batchSize)
+                    else -> confirm.str(R.string.broadcast_rolling_threshold_confirm, batchSize, viewModel.broadcastFailurePercent)
+                },
             )
         }
         if (skipped.isNotEmpty()) {
@@ -794,8 +795,9 @@ private data class BroadcastParamsRequest(
 )
 
 /**
- * Rolling runs: how many hosts start at a time, and whether a batch with a failure stops the run.
- * Credit: Komodo's batch deploys (moghtech/komodo#1080).
+ * Rolling runs: how many hosts start at a time, and whether failures stop the run: any, or more
+ * than a share of the hosts. Credit: Komodo's batch deploys (moghtech/komodo#1080), and Ansible's
+ * max_fail_percentage for the share.
  */
 @Composable
 private fun BroadcastRollingControls(viewModel: AppViewModel) {
@@ -830,7 +832,11 @@ private fun BroadcastRollingControls(viewModel: AppViewModel) {
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.broadcast_stop_on_failure), fontSize = 13.sp)
                     Text(
-                        stringResource(R.string.broadcast_stop_on_failure_explained),
+                        if (viewModel.broadcastStopOnFailure && viewModel.broadcastFailurePercent > 0) {
+                            stringResource(R.string.broadcast_stop_over_threshold_explained, viewModel.broadcastFailurePercent)
+                        } else {
+                            stringResource(R.string.broadcast_stop_on_failure_explained)
+                        },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -841,6 +847,30 @@ private fun BroadcastRollingControls(viewModel: AppViewModel) {
                     enabled = idle,
                     modifier = Modifier.testTag("fleet.broadcast.stop_on_failure"),
                 )
+            }
+            if (viewModel.broadcastStopOnFailure) {
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.broadcast_failures_allowed), fontSize = 12.sp, modifier = Modifier.padding(end = 2.dp))
+                    BROADCAST_FAILURE_PERCENTS.forEach { percent ->
+                        FilterChip(
+                            selected = viewModel.broadcastFailurePercent == percent,
+                            onClick = { viewModel.updateBroadcastFailurePercent(percent) },
+                            enabled = idle,
+                            label = {
+                                Text(
+                                    if (percent == 0) stringResource(R.string.broadcast_failures_none) else stringResource(R.string.broadcast_failures_percent, percent),
+                                    fontSize = 12.sp,
+                                )
+                            },
+                            modifier = Modifier.testTag("fleet.broadcast.failures.$percent"),
+                        )
+                    }
+                }
             }
         }
     }

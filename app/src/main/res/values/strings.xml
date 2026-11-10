@@ -1499,6 +1499,7 @@
     <string name="broadcast_done_no_output">"Done (no output)"</string>
     <string name="broadcast_no_output">"No output"</string>
     <string name="broadcast_not_run_after_failure">"Not run: %1$s did not succeed, and the run stops on a failure."</string>
+    <string name="broadcast_not_run_over_threshold">"Not run: %1$d of %2$d hosts did not succeed, more than the %3$d%% the run allows."</string>
     <string name="broadcast_not_run_timed_out">"Not run: the run timed out before this host's turn."</string>
     <string name="broadcast_not_run_stopped">"Not run: the run was stopped before this host's turn."</string>
     <string name="broadcast_rolling">"Rolling run"</string>
@@ -1507,8 +1508,13 @@
     <string name="broadcast_batch_size_label">"Hosts at a time"</string>
     <string name="broadcast_stop_on_failure">"Stop if a host fails"</string>
     <string name="broadcast_stop_on_failure_explained">"The hosts after a batch with a failure are not run."</string>
+    <string name="broadcast_stop_over_threshold_explained">"Once more than %1$d%% of the hosts have failed, the hosts after that batch are not run."</string>
+    <string name="broadcast_failures_allowed">"Failures allowed"</string>
+    <string name="broadcast_failures_none">"None"</string>
+    <string name="broadcast_failures_percent">"%1$d%%"</string>
     <string name="broadcast_rolling_confirm">"Runs on %1$d at a time, in this order."</string>
     <string name="broadcast_rolling_stop_confirm">"Runs on %1$d at a time, in this order, and stops after a batch with a failure."</string>
+    <string name="broadcast_rolling_threshold_confirm">"Runs on %1$d at a time, in this order, and stops once more than %2$d%% of the hosts have failed."</string>
     <string name="broadcast_retry_failed">"Retry %1$d"</string>
     <string name="broadcast_retry_title">"Run again on %1$d host%2$s?"</string>
     <string name="broadcast_retry_keeps_others">"Only the hosts that failed or did not run. The other results stay."</string>

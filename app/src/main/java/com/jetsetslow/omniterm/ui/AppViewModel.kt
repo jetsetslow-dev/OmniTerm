@@ -159,6 +159,17 @@ internal val BROADCAST_BATCH_SIZES = listOf(0, 1, 2, 5, 10)
 internal fun <T> broadcastBatches(hosts: List<T>, batchSize: Int): List<List<T>> =
     if (batchSize <= 0 || batchSize >= hosts.size) listOf(hosts) else hosts.chunked(batchSize)
 
+/** The share of a rolling run's hosts that may fail before it stops: none, or one of these percentages. */
+internal val BROADCAST_FAILURE_PERCENTS = listOf(0, 10, 25, 50)
+
+/**
+ * Whether [failed] of a run's [total] hosts is more than [percent] allows: any failure at 0,
+ * otherwise more than that share of all the run's hosts. Ansible's max_fail_percentage counts each
+ * batch; this counts the whole run, so it still means something one host at a time.
+ */
+internal fun broadcastFailuresExceed(failed: Int, total: Int, percent: Int): Boolean =
+    if (percent <= 0) failed > 0 else failed * 100L > percent.toLong() * total
+
 /** Default hard stop for one Fleet Broadcast run. */
 private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
 /** How often a tmux broadcast host whose connection dropped is tried again, and for how long. */
@@ -2893,6 +2904,8 @@ class AppViewModel @JvmOverloads constructor(
         private set
     var broadcastStopOnFailure by mutableStateOf(true)
         private set
+    var broadcastFailurePercent by mutableStateOf(0)
+        private set
 
     init {
         resumeMcpServer()
@@ -3161,6 +3174,8 @@ class AppViewModel @JvmOverloads constructor(
                 broadcastBatchSize = list.find { it.key == "broadcast_batch_size" }?.value?.toIntOrNull()
                     ?.takeIf { it in BROADCAST_BATCH_SIZES } ?: 0
                 broadcastStopOnFailure = list.find { it.key == "broadcast_stop_on_failure" }?.value?.toBooleanStrictOrNull() ?: true
+                broadcastFailurePercent = list.find { it.key == "broadcast_failure_percent" }?.value?.toIntOrNull()
+                    ?.takeIf { it in BROADCAST_FAILURE_PERCENTS } ?: 0
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
                     isKeepScreenOnEnabled = keepScreenOn
@@ -13749,6 +13764,12 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.insertSetting("broadcast_stop_on_failure", on.toString()) }
     }
 
+    /** With [broadcastStopOnFailure], the share of the hosts that may fail first (one of [BROADCAST_FAILURE_PERCENTS]). */
+    fun updateBroadcastFailurePercent(percent: Int) {
+        broadcastFailurePercent = percent.takeIf { it in BROADCAST_FAILURE_PERCENTS } ?: 0
+        viewModelScope.launch { repository.insertSetting("broadcast_failure_percent", broadcastFailurePercent.toString()) }
+    }
+
     /** Hosts on the cards that did not succeed: failed, or not run after a failure or a stop. */
     val broadcastRetryableIds: List<Int>
         get() = broadcastResults.filter { it.status == BroadcastStatus.Failure || it.status == BroadcastStatus.NotRun }.map { it.serverId }
@@ -14055,6 +14076,7 @@ class AppViewModel @JvmOverloads constructor(
         val inTmux = broadcastInTmux && push == null
         val batchSize = broadcastBatchSize
         val stopOnFailure = broadcastStopOnFailure && batchSize > 0
+        val failurePercent = broadcastFailurePercent
         val runId = UUID.randomUUID().toString().replace("-", "").take(10)
         lastBroadcastCommand = cmd
         lastBroadcastParams = paramValues
@@ -14126,14 +14148,22 @@ class AppViewModel @JvmOverloads constructor(
                 }.awaitAll()
             }
             try {
+                var failedSoFar = 0
                 for ((index, batch) in batches.withIndex()) {
                     // A tmux run outlives a dropped connection, so it is not cut off at the plain
                     // broadcast's limit; Stop ends it. The limit is per batch, so a long rolling run
                     // is not cut off at the total.
                     if (inTmux) runBatch(batch) else withTimeout(BROADCAST_TIMEOUT_MS) { runBatch(batch) }
-                    val failed = batch.firstOrNull { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status != BroadcastStatus.Success }
-                    if (stopOnFailure && failed != null && index < batches.lastIndex) {
-                        markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_after_failure, failed.name))
+                    val failed = batch.filter { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status != BroadcastStatus.Success }
+                    failedSoFar += failed.size
+                    if (stopOnFailure && index < batches.lastIndex && broadcastFailuresExceed(failedSoFar, selected.size, failurePercent)) {
+                        markWaitingBroadcastsNotRun(
+                            if (failurePercent == 0) {
+                                app.getString(R.string.broadcast_not_run_after_failure, failed.first().name)
+                            } else {
+                                app.getString(R.string.broadcast_not_run_over_threshold, failedSoFar, selected.size, failurePercent)
+                            },
+                        )
                         break
                     }
                 }

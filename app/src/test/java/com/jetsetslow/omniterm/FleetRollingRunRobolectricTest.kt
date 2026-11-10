@@ -12,6 +12,7 @@ import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BroadcastStatus
 import com.jetsetslow.omniterm.ui.broadcastBatches
+import com.jetsetslow.omniterm.ui.broadcastFailuresExceed
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +25,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,6 +52,40 @@ class FleetRollingRunRobolectricTest {
         assertEquals(listOf(listOf(1, 2), listOf(3, 4), listOf(5)), broadcastBatches(listOf(1, 2, 3, 4, 5), 2))
         assertEquals(listOf(listOf(1, 2, 3)), broadcastBatches(listOf(1, 2, 3), 0))
         assertEquals(listOf(listOf(1, 2, 3)), broadcastBatches(listOf(1, 2, 3), 5))
+    }
+
+    @Test
+    fun noFailuresAllowedStopsAtOneAndAShareStopsOnlyWhenPassed() {
+        assertFalse(broadcastFailuresExceed(0, 4, 0))
+        assertTrue("none allowed: one is too many", broadcastFailuresExceed(1, 40, 0))
+        assertFalse("25% of 4 is one host, which is allowed", broadcastFailuresExceed(1, 4, 25))
+        assertTrue(broadcastFailuresExceed(2, 4, 25))
+        assertFalse("10% of 40 is four", broadcastFailuresExceed(4, 40, 10))
+        assertTrue(broadcastFailuresExceed(5, 40, 10))
+        assertTrue("one of three is over 10%", broadcastFailuresExceed(1, 3, 10))
+        assertFalse(broadcastFailuresExceed(2, 4, 50))
+        assertTrue(broadcastFailuresExceed(3, 4, 50))
+    }
+
+    @Test
+    fun aRunAllowingAShareOfFailuresGoesOnUntilMoreHaveFailed() = withHosts { model, main, hosts, ids ->
+        hosts.failing.addAll(listOf("b", "c"))
+        withContext(main) {
+            model.updateBroadcastBatchSize(1)
+            model.updateBroadcastStopOnFailure(true)
+            model.updateBroadcastFailurePercent(25)
+            model.runFleetBroadcast(COMMAND, ids)
+        }
+        waitWhileOnMain(main, 10_000) { model.isBroadcastExecuting }
+
+        assertEquals("b's failure is the 25% allowed; c's is more", listOf("a", "b", "c"), hosts.started())
+        val cards = withContext(main) { model.broadcastResults.toList() }
+        assertEquals(
+            listOf(BroadcastStatus.Success, BroadcastStatus.Failure, BroadcastStatus.Failure, BroadcastStatus.NotRun),
+            cards.map { it.status },
+        )
+        assertEquals("Not run: 2 of 4 hosts did not succeed, more than the 25% the run allows.", cards[3].note)
+        assertEquals(25, withContext(main) { model.broadcastFailurePercent })
     }
 
     @Test
@@ -171,7 +207,7 @@ class FleetRollingRunRobolectricTest {
             block(model, main, hosts, ids)
         } finally {
             hosts.release.complete(Unit)
-            model?.let { withContext(main) { it.updateBroadcastBatchSize(0); it.updateBroadcastStopOnFailure(true) } }
+            model?.let { withContext(main) { it.updateBroadcastBatchSize(0); it.updateBroadcastStopOnFailure(true); it.updateBroadcastFailurePercent(0) } }
             clearViewModelsAndAwaitTerminalJobs(store, main)
             ids.forEach { id -> repository.getServerById(id)?.let { repository.deleteServer(it) } }
             Dispatchers.resetMain()

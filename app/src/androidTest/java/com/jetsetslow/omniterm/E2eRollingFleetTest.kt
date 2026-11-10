@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModelProvider
@@ -40,7 +41,8 @@ import java.util.UUID
  * A rolling Fleet run over SSH to the repository's provisioned disposable host, listed twice: one
  * host at a time, the first fails, so the second is not run; Retry runs both again, and the two,
  * ending the same way, share one card, in Broadcast and in History, and one section of the report
- * that Share hands to the share sheet as a file.
+ * that Share hands to the share sheet as a file. Allowing half the hosts to fail, the second runs
+ * after the first fails.
  */
 class E2eRollingFleetTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -65,6 +67,7 @@ class E2eRollingFleetTest {
         val originalTmux = vm.broadcastInTmux
         val originalBatch = vm.broadcastBatchSize
         val originalStop = vm.broadcastStopOnFailure
+        val originalPercent = vm.broadcastFailurePercent
         // The same fixture under a second name: two hosts for the batches, one machine to clean up.
         // A run cut off before its cleanup left its copy; it would join this run's hosts.
         repository.getAllServers().filter { it.name == COPY }.forEach { repository.deleteServerAndDependents(it.id) }
@@ -96,6 +99,7 @@ class E2eRollingFleetTest {
             composeRule.runOnUiThread {
                 vm.updateBroadcastInTmux(false)
                 vm.updateBroadcastBatchSize(0)
+                vm.updateBroadcastFailurePercent(0)
                 vm.broadcastCommandText = ""
                 vm.broadcastPreset = null
                 vm.broadcastTargetMode = FleetTargetMode.Servers
@@ -167,6 +171,27 @@ class E2eRollingFleetTest {
             composeRule.waitUntil(10_000) { runCatching { composeRule.onNodeWithTag("fleet.history.details").assertExists() }.isSuccess }
             // The live card and the history's: the same tag, in two windows.
             composeRule.onAllNodesWithTag(shared).assertCountEquals(2).assertAll(hasText(names))
+
+            // Allowing half the hosts to fail, the second runs after the first fails. Coming back to
+            // Broadcast with no cards shows its controls again, and closes the history.
+            composeRule.runOnUiThread { vm.clearBroadcastOutputs(); vm.fleetTabIndex = 0 }
+            composeRule.waitForIdle()
+            composeRule.runOnUiThread { vm.fleetTabIndex = 1 }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("fleet.broadcast.failures.50").performScrollTo().performClick()
+            composeRule.waitForIdle()
+            assertEquals(50, vm.broadcastFailurePercent)
+            val again = composeRule.onNodeWithTag("fleet.broadcast.command")
+            again.performTextClearance()
+            again.performTextInput(command.replace(marker, "$marker-share"))
+            composeRule.onNodeWithTag("fleet.broadcast.run").performClick()
+            composeRule.onNodeWithText("Runs on 1 at a time, in this order, and stops once more than 50% of the hosts have failed.", substring = true)
+                .assertIsDisplayed()
+            composeRule.onNodeWithText("Run").performClick()
+            withTimeout(60_000) { while (!vm.isBroadcastExecuting) delay(20) }
+            withTimeout(90_000) { while (vm.isBroadcastExecuting) delay(50) }
+            val allowed = vm.broadcastResults.toList()
+            assertEquals(allowed.toString(), listOf(BroadcastStatus.Failure, BroadcastStatus.Success), allowed.map { it.status })
         } finally {
             // Android's monitor list is null until one is added: removing first would hide the failure.
             if (monitoring) instrumentation.removeMonitor(chooser)
@@ -177,13 +202,14 @@ class E2eRollingFleetTest {
             // Removes the marker from the fixture with one more plain run on the original host.
             composeRule.runOnUiThread {
                 vm.updateBroadcastBatchSize(0)
-                vm.runFleetBroadcast("rm -f $marker", listOf(host.id))
+                vm.runFleetBroadcast("rm -f $marker $marker-share", listOf(host.id))
             }
             withTimeout(60_000) { while (vm.isBroadcastExecuting) delay(50) }
             composeRule.runOnUiThread {
                 vm.updateBroadcastInTmux(originalTmux)
                 vm.updateBroadcastBatchSize(originalBatch)
                 vm.updateBroadcastStopOnFailure(originalStop)
+                vm.updateBroadcastFailurePercent(originalPercent)
                 vm.broadcastResults.clear()
                 vm.broadcastCommandText = originalDraft
                 vm.broadcastPreset = originalPreset

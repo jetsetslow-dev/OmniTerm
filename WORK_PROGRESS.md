@@ -918,8 +918,25 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     `reconcile` or `apply` unlocked. `E2eFleetScheduleTest` also waited for the job only as long
     as its next run took to appear, though the job is armed just after; it now waits for the job.
     Devices: `E2eFleetScheduleTest` 1, twice, with the sweep above.
-  - Next: a failure threshold, an output filter and search, sudo in Fleet (pushes to protected
-    paths too), and broadcast typing last.
+  - A failure threshold: done (commit "Let a rolling run allow a share of its hosts to fail").
+    - Under **Stop if a host fails**, **Failures allowed**: None (as before), 10%, 25% or 50%.
+      The run stops once more than that share of all its hosts has failed, counted over the whole
+      run rather than per batch as Ansible's `max_fail_percentage` is, so it works one host at a
+      time. The hosts left say so ("Not run: 2 of 4 hosts did not succeed, more than the 25% the
+      run allows."), and the confirmation names the share.
+    - The choice is a setting (`broadcast_failure_percent`), so backups carry it with the others.
+    - Credit: Ansible (README, NOTICE, audit).
+    - Tests: `FleetRollingRunRobolectricTest` 6 (the boundaries, and a run that goes on past the
+      allowed failure and stops at the next), `FleetRunHistoryRobolectricTest` 7, all 0 failed.
+      Three guards seen failing: counted per batch, the share itself counted as over it, the
+      share ignored.
+    - Devices (API 35, repository fixture): `E2eRollingFleetTest` 1 (now also picks 50% in the
+      editor, sees the confirmation name it, and the second host runs after the first fails),
+      `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1, `E2eScriptParamsFleetTest` 1,
+      `E2eFleetScheduleTest` 1, `E2eScriptCheckTest` 1, all 0 failed. Guard: with the share
+      ignored, the second host was left not run and the test failed.
+  - Next: an output filter and search, sudo in Fleet (pushes to protected paths too), and
+    broadcast typing last.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,
