@@ -1728,7 +1728,8 @@ class AppViewModel @JvmOverloads constructor(
     fun deleteFleetSchedule(id: Int) {
         viewModelScope.launch {
             repository.deleteFleetSchedule(id)
-            FleetSchedules.cancel(getApplication(), id)
+            // With the schedule gone, its jobs go, in turn with the app start's reconcile.
+            FleetSchedules.apply(getApplication(), repository, id)
         }
     }
 

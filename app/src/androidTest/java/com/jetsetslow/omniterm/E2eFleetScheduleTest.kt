@@ -22,6 +22,7 @@ import com.jetsetslow.omniterm.ui.Screen
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -79,7 +80,15 @@ class E2eFleetScheduleTest {
             scheduleId = saved.id
             assertEquals("it takes Broadcast's picks", "[${host.id}]", saved.serverIds)
             assertEquals(script.id, saved.scriptId)
-            val job = scheduler.getPendingJob(FleetSchedules.timerJobId(saved.id))
+            // Saving sets the next run and then arms its job, so the job can follow a moment later.
+            val job = withTimeoutOrNull(10_000) {
+                var pending = scheduler.getPendingJob(FleetSchedules.timerJobId(saved.id))
+                while (pending == null) {
+                    delay(50)
+                    pending = scheduler.getPendingJob(FleetSchedules.timerJobId(saved.id))
+                }
+                pending
+            }
             assertNotNull("it waits as a job", job)
             assertTrue("one that survives a restart", job!!.isPersisted)
 

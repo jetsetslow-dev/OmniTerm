@@ -883,8 +883,43 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       host, sees the runbook run on its own over SSH and fix it, opens the run from the incident,
       and waits for the next checks to close it. Guard: a job service that never runs made it time
       out waiting for the run.
-  - Next: identical output grouped, a failure threshold, an output filter and search, sudo in Fleet
-    (pushes to protected paths too), and broadcast typing last.
+  - Identical output grouped: done (commit "Show hosts that ended the same way as one card").
+    - Hosts with the same status, output, note and truncation share one card ("12 hosts, same
+      result"), which lists each name in its host colour and takes no host's colour itself. Only
+      hosts whose card has no actions group (Success, Failure, Waiting, Not run); Running,
+      Reconnecting, Detached and Needs tmux keep their own. Groups keep their first host's place.
+    - `FleetOutputGroups.group` is the one rule for Broadcast's cards, History's cards and the
+      shared report ("== nas, pi · complete"). No setting: a group only merges cards that would
+      read the same.
+    - Credit: ClusterShell `clush -b` and pdsh `dshbak -c` (README, NOTICE, audit; the audit's
+      earlier pssh/Ansible credit was wrong).
+    - Tests: `FleetOutputGroupsTest` 3, `FleetRunHistoryRobolectricTest` 7 (live and history
+      reports share a section, and split when one host differs), `FleetRollingRunRobolectricTest`
+      4, `FleetPushRobolectricTest` 1, `FleetBroadcastOutcomeRobolectricTest` 6, all 0 failed. Four
+      guards seen failing: the note ignored, every status grouped, groups reordered, the report
+      not grouped.
+    - Devices (API 35, repository fixture on 127.0.0.1:2205): `E2eRollingFleetTest` 1 (after the
+      retry the two hosts share one "2 hosts, same result" card that names both, in Broadcast and
+      in History, and the shared report has one section for them), `E2eFleetTagsTest` 1,
+      `E2eFleetScheduleTest` 1 (twice), `E2eScriptCheckTest` 1, `E2eAlertRunbookTest` 1,
+      `E2eFleetPushTest` 1, `E2eScriptParamsFleetTest` 1, all 0 failed. Guard: with Broadcast's
+      cards not grouped, the rolling test failed ("2 hosts, same result" not displayed).
+    - That guard first failed with a `NullPointerException` from the test's own cleanup: removing
+      the share monitor before one was added. The cleanup stopped there and left its host copy,
+      which then broke `E2eFleetTagsTest`. The test now removes the monitor only once added, and
+      deletes a copy an earlier run left before it starts.
+  - Fix found by that sweep (commit "Keep a schedule's job when it is saved as the app starts"):
+    `E2eFleetScheduleTest` failed once with "it waits as a job". The app start's `reconcile` read
+    the schedules, the editor then saved one and armed its job, and `reconcile` dropped that job as
+    having no schedule. A schedule switched back on in that window lost its job and its next run
+    the same way. `apply`, `armNext` and `reconcile` now take turns on one lock, and Delete goes
+    through `apply`. `FleetScheduleRobolectricTest` 6 (a schedule saved while the app starts keeps
+    its job, through a seam between the read and the matching); guards seen failing with either
+    `reconcile` or `apply` unlocked. `E2eFleetScheduleTest` also waited for the job only as long
+    as its next run took to appear, though the job is armed just after; it now waits for the job.
+    Devices: `E2eFleetScheduleTest` 1, twice, with the sweep above.
+  - Next: a failure threshold, an output filter and search, sudo in Fleet (pushes to protected
+    paths too), and broadcast typing last.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,

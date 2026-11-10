@@ -22,6 +22,8 @@ import com.jetsetslow.omniterm.ui.FleetTargets
 import com.jetsetslow.omniterm.ui.NotificationLinks
 import com.jetsetslow.omniterm.ui.commandDangerHits
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -43,6 +45,10 @@ object FleetSchedules {
     internal const val KEY_NOW = "now"
 
     private val running = ConcurrentHashMap.newKeySet<Int>()
+
+    // What changes the jobs takes turns: the app start's [reconcile] reads the schedules, then drops
+    // the jobs it did not see, so a schedule saved or switched on in between lost its job.
+    private val jobs = Mutex()
 
     internal fun timerJobId(scheduleId: Int) = TIMER_BASE + (scheduleId and ID_MASK)
     internal fun nowJobId(scheduleId: Int) = NOW_BASE + (scheduleId and ID_MASK)
@@ -94,7 +100,7 @@ object FleetSchedules {
      * After [scheduleId] was saved, switched on or off: its next run counted from [now] when it
      * is on, nothing when off. A run in progress finishes, and sets its own next run when it does.
      */
-    suspend fun apply(context: Context, repository: AppRepository, scheduleId: Int, now: Long = System.currentTimeMillis()) {
+    suspend fun apply(context: Context, repository: AppRepository, scheduleId: Int, now: Long = System.currentTimeMillis()): Unit = jobs.withLock {
         val schedule = repository.fleetSchedule(scheduleId)
         if (schedule == null) {
             cancel(context, scheduleId)
@@ -110,7 +116,7 @@ object FleetSchedules {
      * After a run that started at [startedAt]: the next one, counted from then, or from [now] when
      * the run took longer than the gap between runs.
      */
-    internal suspend fun armNext(context: Context, repository: AppRepository, scheduleId: Int, startedAt: Long, now: Long) {
+    internal suspend fun armNext(context: Context, repository: AppRepository, scheduleId: Int, startedAt: Long, now: Long): Unit = jobs.withLock {
         val schedule = repository.fleetSchedule(scheduleId) ?: return
         if (!schedule.enabled) {
             repository.setFleetScheduleNextRun(scheduleId, null)
@@ -125,11 +131,17 @@ object FleetSchedules {
     /**
      * Matches the jobs Android holds to the saved schedules, when the app starts and after a
      * restore: a schedule that is on and has no job gets one (at once, if its time went by while
-     * it had none), and a job whose schedule is off or gone is dropped.
+     * it had none), and a job whose schedule is off or gone is dropped. [schedulesOf] is the
+     * tests' way in between reading the schedules and matching the jobs.
      */
-    suspend fun reconcile(context: Context, repository: AppRepository, now: Long = System.currentTimeMillis()) {
+    suspend fun reconcile(
+        context: Context,
+        repository: AppRepository,
+        now: Long = System.currentTimeMillis(),
+        schedulesOf: suspend () -> List<FleetScheduleEntity> = { repository.fleetSchedules() },
+    ): Unit = jobs.withLock {
         val scheduler = scheduler(context) ?: return
-        val schedules = repository.fleetSchedules()
+        val schedules = schedulesOf()
         val wanted = schedules.filter { it.enabled }.mapTo(mutableSetOf()) { timerJobId(it.id) }
         runCatching { scheduler.allPendingJobs }.getOrDefault(emptyList())
             .filter { it.id and ID_MASK.inv() == TIMER_BASE && it.id !in wanted }

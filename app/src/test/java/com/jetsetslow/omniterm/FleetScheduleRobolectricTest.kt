@@ -25,6 +25,7 @@ import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.FleetTargetMode
 import com.jetsetslow.omniterm.ui.FleetTargets
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -173,6 +175,27 @@ class FleetScheduleRobolectricTest {
         // Run again, nothing changes: a job that is waiting is left alone.
         FleetSchedules.reconcile(application, repository, now + 1)
         assertEquals(0L, scheduler.getPendingJob(FleetSchedules.timerJobId(id))!!.minLatencyMillis)
+    }
+
+    @Test
+    fun aScheduleSavedWhileTheAppStartsKeepsItsJob() = withLab { _ ->
+        val scheduler = application.getSystemService(JobScheduler::class.java)
+        val now = 1_800_000_000_000L
+        val script = script("uptime")
+        var saving: Deferred<Unit>? = null
+        var saved = 0
+        // The app start has read the schedules when the editor saves a new one and arms it.
+        FleetSchedules.reconcile(application, repository, now) {
+            val before = repository.fleetSchedules()
+            saved = schedule(script, FleetTargets(FleetTargetMode.Servers, serverIds = setOf(nasId)))
+            saving = async(Dispatchers.IO) { FleetSchedules.apply(application, repository, saved, now) }
+            // Not taking turns, it is armed at once, and the app start then dropped it as an orphan.
+            withTimeoutOrNull(2_000) { while (scheduler.getPendingJob(FleetSchedules.timerJobId(saved)) == null) delay(20) }
+            before
+        }
+        saving!!.await()
+        assertNotNull("the new schedule keeps its job", scheduler.getPendingJob(FleetSchedules.timerJobId(saved)))
+        assertEquals(now + 60 * 60_000L, repository.fleetSchedule(saved)!!.nextRunAt)
     }
 
     private fun notification(runKey: String): Notification =
