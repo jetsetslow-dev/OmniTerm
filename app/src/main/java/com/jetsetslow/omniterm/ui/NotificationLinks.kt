@@ -16,6 +16,10 @@ internal object NotificationLinks {
         return ruleId to serverId
     }
 
+    /** Fleet's Schedules tab, for a schedule that could not run and so is not in the history. */
+    fun fleetSchedules() = "omniterm://notification/$FLEET_SCHEDULES"
+    const val FLEET_SCHEDULES = "fleet-schedules"
+
     /** A run another app or an AI assistant started: [runKey]'s run in Fleet's history. */
     fun fleetRun(runKey: String) = "omniterm://notification/fleet-run/$runKey"
 

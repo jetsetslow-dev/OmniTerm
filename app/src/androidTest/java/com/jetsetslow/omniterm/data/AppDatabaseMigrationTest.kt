@@ -499,7 +499,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationToThirtyGivesHostsNoTagsAddsNoSavedTargetsAndKeepsRunsAsCommands() {
+    fun migrationToThirtyGivesHostsNoTagsAddsNoSavedTargetsOrSchedulesAndKeepsRunsAsCommands() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val databaseName = "migration-29-host-tags"
         context.deleteDatabase(databaseName)
@@ -527,6 +527,10 @@ class AppDatabaseMigrationTest {
                 assertTrue(cursor.moveToFirst())
                 assertEquals("an upgrade saves no targets", 0, cursor.getInt(0))
             }
+            db.query("SELECT COUNT(*) FROM fleet_schedules").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade schedules nothing", 0, cursor.getInt(0))
+            }
             db.query("SELECT command, pushedFile FROM fleet_runs WHERE runKey = 'r1'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("uptime", cursor.getString(0))
@@ -534,6 +538,10 @@ class AppDatabaseMigrationTest {
             }
             db.execSQL("UPDATE servers SET tags = 'nas, prod' WHERE name = 'nas'")
             db.execSQL("INSERT INTO fleet_target_sets (name, mode, serverIds, groups, tags, allTags) VALUES ('Prod', 'Tags', '[]', '[]', '[\"prod\"]', 0)")
+            db.execSQL(
+                "INSERT INTO fleet_schedules (name, scriptId, mode, serverIds, groups, tags, allTags, repeat, everyMinutes, minuteOfDay, " +
+                    "dayOfWeek, enabled, notify, createdAt, lastDetail) VALUES ('Nightly', 1, 'Tags', '[]', '[]', '[\"prod\"]', 0, 'daily', 60, 180, 1, 1, 'failures', 1, '')"
+            )
         }
         context.deleteDatabase(databaseName)
     }

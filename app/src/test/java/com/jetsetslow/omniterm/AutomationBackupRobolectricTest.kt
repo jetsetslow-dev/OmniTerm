@@ -9,6 +9,8 @@ import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.Automation
 import com.jetsetslow.omniterm.data.AutomationGrantEntity
 import com.jetsetslow.omniterm.data.AutomationUseEntity
+import com.jetsetslow.omniterm.data.FleetScheduleEntity
+import com.jetsetslow.omniterm.data.FleetScheduleTiming
 import com.jetsetslow.omniterm.data.McpCallEntity
 import com.jetsetslow.omniterm.data.QuickScriptEntity
 import com.jetsetslow.omniterm.data.RunNotify
@@ -18,6 +20,7 @@ import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupHistory
 import com.jetsetslow.omniterm.ui.BackupSelection
+import com.jetsetslow.omniterm.ui.FleetTargets
 import org.json.JSONArray
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -76,6 +79,15 @@ class AutomationBackupRobolectricTest {
         )
         repo.insertSetting(Automation.SETTING_ENABLED, "true")
         repo.insertSetting(OTHER_SETTING, "kept")
+        // A schedule on the host, and one on a tag; both are on, and run nightly at 02:30.
+        repo.saveFleetSchedule(
+            FleetScheduleEntity(
+                name = "Nightly", scriptId = script.id, mode = "Servers", serverIds = "[$host]",
+                repeat = FleetScheduleTiming.WEEKLY, dayOfWeek = 6, minuteOfDay = 150, notify = RunNotify.ALWAYS, createdAt = 3L,
+                nextRunAt = 9L, lastRunAt = 8L, lastOutcome = UseOutcome.OK, lastRunKey = "schedule-run-a",
+            ),
+        )
+        repo.saveFleetSchedule(FleetScheduleEntity(name = "Tagged", scriptId = script.id, mode = "Tags", tags = "[\"prod\"]", repeat = FleetScheduleTiming.EVERY, everyMinutes = 30))
 
         val uri = Uri.parse("content://backup-fixture/automation.json")
         val bytes = ByteArrayOutputStream()
@@ -104,8 +116,20 @@ class AutomationBackupRobolectricTest {
         assertEquals("the AI assistant keeps its choice", RunNotify.OFF, repo.getSetting(McpSettings.NOTIFY))
         assertEquals("a call still opens its run", "automation-run-b", repo.mcpCallsFlow.first().single().runKey)
 
+        val schedules = repo.fleetSchedules().associateBy { it.name }
+        assertEquals(setOf("Nightly", "Tagged"), schedules.keys)
+        assertTrue("schedules come back paused", schedules.values.none { it.enabled || it.nextRunAt != null })
+        val nightly = schedules.getValue("Nightly")
+        assertEquals("on the restored script", restored.scriptId, nightly.scriptId)
+        assertEquals("and the restored host", repo.getAllServers().filter { it.name == "web" }.map { it.id }, FleetTargets.of(nightly).serverIds.toList())
+        assertEquals(listOf(FleetScheduleTiming.WEEKLY, 6, 150, RunNotify.ALWAYS, 3L), listOf(nightly.repeat, nightly.dayOfWeek, nightly.minuteOfDay, nightly.notify, nightly.createdAt))
+        assertNull("a schedule's last run is this phone's to make", nightly.lastRunKey)
+        assertEquals(listOf("prod"), FleetTargets.of(schedules.getValue("Tagged")).tags)
+        assertEquals(30, schedules.getValue("Tagged").everyMinutes)
+
         restore(model, main, bytes.toString(Charsets.UTF_8))
         assertEquals("restoring twice adds no use twice", 2, uses().size)
+        assertEquals("nor a schedule", 2, repo.fleetSchedules().size)
     }
 
     @Test

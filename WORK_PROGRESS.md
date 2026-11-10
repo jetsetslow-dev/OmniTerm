@@ -814,7 +814,42 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       failed. The push test replaces an older copy on the lab host through the dialog, checks
       that no part file is left, and sees a missing folder fail. Guard: without the commit step it
       failed ("old copy").
-  - Next: scheduled runs, alert-triggered runs, then the other five.
+  - Scheduled runs: done (commit "Run a saved script on a schedule from Fleet").
+    - Fleet → Schedules: name, script, hosts (Broadcast's picks or a saved set), Every 15 min to
+      12 h, Daily at a time, or Weekly on a day at a time, and the token-style notification
+      choice. Each card shows the next run and the last one (it opens the run in History), a
+      pause switch, Run now and Delete.
+    - Each schedule waits as one persisted JobScheduler job (ids 0x4F4E_xxxx; Run now 0x4F4F_xxxx;
+      automation keeps 0x4F4D_xxxx), with a network. The next run counts from when the last one
+      started, so a phone asleep through several runs makes up one. The app start reconciles the
+      jobs (a force-stop drops them). `RECEIVE_BOOT_COMPLETED` is new in the manifest and
+      PRIVACY.md. WorkManager was not used: it is only transitive here, and the job engine is
+      the one automation already uses.
+    - A run goes through `AutomationRunner.runScript` with source `schedule` ("Scheduled" in
+      History) and refuses what automation refuses (`UnattendedScripts.Runner.SCHEDULE`). Groups
+      and tags resolve when it runs; offline hosts fail. A refusal posts "could not run" and opens
+      the Schedules tab. One schedule never overlaps itself. Notifications use a new "Scheduled
+      Fleet runs" channel.
+    - Backups carry schedules in the Automation & AI assistants section, by script and host, and
+      restore them paused. `fleet_schedules` is folded into schema 30.
+    - iOS has no background scheduler of this kind; the iOS PR shows a notice instead.
+    - Tests: `FleetScheduleTimingTest` 5 (intervals, daily, weekly, London's clock changes, typed
+      times), `FleetScheduleRobolectricTest` 5 (tag targets and History, refusals and their
+      notification link, no overlap, paused timer, persisted job and next run, app-start
+      reconcile), `AutomationBackupRobolectricTest` 3 (schedules round-trip paused, once),
+      `AutomationRunnerRobolectricTest` 17, `FleetTargetBackupRobolectricTest` 3,
+      `HistoryBackupRobolectricTest` 7, `BackupSafetyTest` 4, `FleetRunHistoryRobolectricTest` 6,
+      `FleetPushRobolectricTest` 1, all 0 failed. Nine guards seen failing: overlap, refusal,
+      target matching, orphan jobs, counting from the start, persistence, strictly-after times,
+      restored switched on, a paused timer running.
+    - Devices (API 35, fresh install, repository fixture on 127.0.0.1:2205): the new
+      `E2eFleetScheduleTest` (`-e omniterm_e2e_fleet_schedule yes -e host 127.0.0.1`) 1,
+      `AppDatabaseMigrationTest` 13, `E2eAutomationTest` 1, `E2eMcpTest` 1, `E2eFleetPushTest` 1,
+      `E2eFleetTagsTest` 1, all 0 failed. The new test makes a schedule in the editor from
+      Broadcast's picks, sees its persisted job, runs it now over SSH, finds the run in History as
+      Scheduled, opens it from the card, and pauses it. Guard: a job service that never runs made
+      it time out waiting for the run.
+  - Next: alert-triggered runs, then the other five.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,

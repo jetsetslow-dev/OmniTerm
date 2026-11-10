@@ -124,6 +124,43 @@ data class FleetTargetSetEntity(
     val allTags: Boolean = false,
 )
 
+/**
+ * A saved script Fleet runs by itself on a schedule ([FleetScheduleTiming]): every [everyMinutes],
+ * or daily or weekly at [minuteOfDay]. Its targets are kept as a saved target set keeps them
+ * ([FleetTargetSetEntity]). The last run's outcome is kept for the list; the run itself is in
+ * Fleet's history under [lastRunKey].
+ *
+ * Idea credit: Termix Automations' schedules (docs.termix.site/plugins/automations).
+ */
+@Entity(tableName = "fleet_schedules")
+data class FleetScheduleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val scriptId: Int,
+    val mode: String,
+    val serverIds: String = "[]",
+    val groups: String = "[]",
+    val tags: String = "[]",
+    val allTags: Boolean = false,
+    // FleetScheduleTiming.EVERY, DAILY or WEEKLY.
+    val repeat: String = FleetScheduleTiming.DAILY,
+    val everyMinutes: Int = 60,
+    // Minutes after local midnight, for DAILY and WEEKLY.
+    val minuteOfDay: Int = 3 * 60,
+    // ISO day of the week (1 is Monday), for WEEKLY.
+    val dayOfWeek: Int = 1,
+    val enabled: Boolean = true,
+    // RunNotify: what the run's notification shows.
+    val notify: String = RunNotify.FAILURES,
+    val createdAt: Long = 0,
+    val nextRunAt: Long? = null,
+    val lastRunAt: Long? = null,
+    // UseOutcome of the last run.
+    val lastOutcome: String? = null,
+    val lastDetail: String = "",
+    val lastRunKey: String? = null,
+)
+
 // Indexed on (serverId, timestamp) because every read path groups or filters by exactly that pair:
 // getLatestMetricsForAllServers() groups by serverId to find MAX(timestamp), then re-probes the
 // table per matched row to break ties. Unindexed those become repeated full scans, and the cost
@@ -406,12 +443,13 @@ object FleetRunHistory {
     const val SOURCE_RUNBOOK = "runbook"
     const val SOURCE_AUTOMATION = "automation"
     const val SOURCE_MCP = "mcp"
+    const val SOURCE_SCHEDULE = "schedule"
 
     /** The sources whose runs are saved while they run: nobody is watching them on the Broadcast screen. */
-    val LIVE_SOURCES = listOf(SOURCE_AUTOMATION, SOURCE_MCP)
+    val LIVE_SOURCES = listOf(SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE)
 
     /** Every source a saved run may have; a backup's run with any other is read as [SOURCE_FLEET]. */
-    val SOURCES = setOf(SOURCE_FLEET, SOURCE_RETRY, SOURCE_RUNBOOK, SOURCE_AUTOMATION, SOURCE_MCP)
+    val SOURCES = setOf(SOURCE_FLEET, SOURCE_RETRY, SOURCE_RUNBOOK, SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE)
 
     /**
      * A live run still "running" this long after it started was cut off with its process (a run

@@ -610,6 +610,33 @@ interface TunnelDao {
 }
 
 @Dao
+interface FleetScheduleDao {
+    @Query("SELECT * FROM fleet_schedules ORDER BY name COLLATE NOCASE ASC, id ASC")
+    fun schedulesFlow(): Flow<List<FleetScheduleEntity>>
+
+    @Query("SELECT * FROM fleet_schedules ORDER BY name COLLATE NOCASE ASC, id ASC")
+    suspend fun all(): List<FleetScheduleEntity>
+
+    @Query("SELECT * FROM fleet_schedules WHERE id = :id")
+    suspend fun byId(id: Int): FleetScheduleEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(schedule: FleetScheduleEntity): Long
+
+    @Query("UPDATE fleet_schedules SET nextRunAt = :nextRunAt WHERE id = :id")
+    suspend fun setNextRun(id: Int, nextRunAt: Long?)
+
+    @Query("UPDATE fleet_schedules SET lastRunAt = :at, lastOutcome = :outcome, lastDetail = :detail, lastRunKey = :runKey WHERE id = :id")
+    suspend fun recordRun(id: Int, at: Long, outcome: String, detail: String, runKey: String?)
+
+    @Query("UPDATE fleet_schedules SET enabled = :enabled WHERE id = :id")
+    suspend fun setEnabled(id: Int, enabled: Boolean)
+
+    @Query("DELETE FROM fleet_schedules WHERE id = :id")
+    suspend fun delete(id: Int)
+}
+
+@Dao
 interface FleetTargetSetDao {
     @Query("SELECT * FROM fleet_target_sets ORDER BY name COLLATE NOCASE ASC, id ASC")
     fun setsFlow(): Flow<List<FleetTargetSetEntity>>

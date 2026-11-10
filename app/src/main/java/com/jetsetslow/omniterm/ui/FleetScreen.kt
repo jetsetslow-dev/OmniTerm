@@ -77,6 +77,11 @@ fun FleetScreen(viewModel: AppViewModel) {
                     selected = viewModel.fleetTabIndex == 1,
                     onClick = { viewModel.fleetTabIndex = 1 }
                 ) { Text(stringResource(R.string.broadcast), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+                Tab(
+                    selected = viewModel.fleetTabIndex == 2,
+                    onClick = { viewModel.fleetTabIndex = 2 },
+                    modifier = Modifier.testTag("fleet.tab.schedules"),
+                ) { Text(stringResource(R.string.fleet_tab_schedules), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             }
         }
 
@@ -88,6 +93,7 @@ fun FleetScreen(viewModel: AppViewModel) {
         ) {
             when (viewModel.fleetTabIndex) {
                 1 -> FleetBroadcastView(viewModel, onlineSrvList, allHosts = srvList)
+                2 -> FleetSchedulesView(viewModel, allHosts = srvList)
                 else -> FleetDashboardView(viewModel, onlineSrvList, allHosts = srvList)
             }
         }
@@ -1076,7 +1082,7 @@ private fun SavedTargetsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
 
 /** What a saved set picks, in a line: its hosts by name, its groups, or its tags and how they combine. */
 @Composable
-private fun savedTargetsSummary(targets: FleetTargets, servers: List<ServerEntity>): String = when (targets.mode) {
+internal fun savedTargetsSummary(targets: FleetTargets, servers: List<ServerEntity>): String = when (targets.mode) {
     FleetTargetMode.Servers -> servers.filter { it.id in targets.serverIds }.joinToString(", ") { it.name }
         .ifEmpty { stringResource(R.string.saved_targets_no_hosts) }
     FleetTargetMode.Groups -> stringResource(R.string.saved_targets_groups, targets.groups.sorted().joinToString(", "))
@@ -1364,12 +1370,14 @@ private fun fleetRunSourceLabel(source: String): String? = when (source) {
     FleetRunHistory.SOURCE_RUNBOOK -> stringResource(R.string.fleet_history_source_runbook)
     FleetRunHistory.SOURCE_AUTOMATION -> stringResource(R.string.fleet_history_source_automation)
     FleetRunHistory.SOURCE_MCP -> stringResource(R.string.fleet_history_source_mcp)
+    FleetRunHistory.SOURCE_SCHEDULE -> stringResource(R.string.fleet_history_source_schedule)
     else -> null
 }
 
 /** The history's filters, in the order they are offered: a retry counts as a Broadcast run. */
 private val FLEET_RUN_GROUPS = listOf(
-    FleetRunHistory.SOURCE_FLEET, FleetRunHistory.SOURCE_RUNBOOK, FleetRunHistory.SOURCE_AUTOMATION, FleetRunHistory.SOURCE_MCP,
+    FleetRunHistory.SOURCE_FLEET, FleetRunHistory.SOURCE_SCHEDULE, FleetRunHistory.SOURCE_RUNBOOK, FleetRunHistory.SOURCE_AUTOMATION,
+    FleetRunHistory.SOURCE_MCP,
 )
 
 private fun fleetRunGroup(source: String): String =

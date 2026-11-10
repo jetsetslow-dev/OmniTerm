@@ -166,6 +166,7 @@ class MainActivity : AppCompatActivity() {
           "transfers" -> add(ExternalLaunchRequest.OpenTransfers)
           "network" -> add(ExternalLaunchRequest.OpenNetworkTools)
           "fleet" -> add(ExternalLaunchRequest.OpenFleet)
+          com.jetsetslow.omniterm.ui.NotificationLinks.FLEET_SCHEDULES -> add(ExternalLaunchRequest.OpenFleetSchedules)
           "infra" -> add(ExternalLaunchRequest.OpenInfra)
           "backup" -> add(ExternalLaunchRequest.OpenBackup)
         }

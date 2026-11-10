@@ -15,10 +15,11 @@ import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.ui.NotificationLinks
 
 /**
- * The notification of one run another app or an AI assistant started, as its token's [RunNotify]
- * choice says: progress while it runs, then the result, or nothing once every host succeeded. A
- * tap opens the run in Fleet's history. [by] names who started it ("Tasker", "Claude Code").
- * Without the notification permission nothing shows, and the run is still in the history.
+ * The notification of one run nobody was there to start: another app, an AI assistant or a
+ * schedule, as its [RunNotify] choice says: progress while it runs, then the result, or nothing
+ * once every host succeeded. A tap opens [link], the run in Fleet's history unless told otherwise.
+ * [by] names who started it ("Tasker", "Claude Code"). Without the notification permission
+ * nothing shows, and the run is still in the history.
  */
 internal class RunNotifications(
     context: Context,
@@ -26,9 +27,16 @@ internal class RunNotifications(
     private val scriptName: String,
     private val by: String,
     private val policy: String,
+    private val channel: Channel = Channel.EXTERNAL,
+    private val link: String = NotificationLinks.fleetRun(runKey),
 ) {
+    /** Each kind of run has its own channel, so the user can quiet one and keep the other. */
+    enum class Channel(val id: String, val nameRes: Int) {
+        EXTERNAL("external_runs", R.string.external_runs_channel),
+        SCHEDULES("fleet_schedules", R.string.fleet_schedules_channel),
+    }
+
     companion object {
-        const val CHANNEL = "external_runs"
         private const val ID_BASE = 7_300
 
         /** One notification per run: its progress, then its result, under the same id. */
@@ -63,8 +71,10 @@ internal class RunNotifications(
             result.failed.isNotEmpty() -> context.getString(R.string.external_run_failed_on, result.failed.joinToString(", ") { it.name })
             else -> result.errorMessage ?: context.getString(R.string.external_run_nothing_ran)
         }
+        // Turned away before anything ran: nothing "ran".
+        val title = if (result.hosts.isEmpty() && result.error != null) R.string.external_run_refused_title else R.string.external_run_done_title
         post(
-            builder(context.getString(R.string.external_run_done_title, who, scriptName))
+            builder(context.getString(title, who, scriptName))
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setAutoCancel(true)
@@ -78,18 +88,18 @@ internal class RunNotifications(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             runCatching {
                 manager?.createNotificationChannel(
-                    NotificationChannel(CHANNEL, context.getString(R.string.external_runs_channel), NotificationManager.IMPORTANCE_DEFAULT),
+                    NotificationChannel(channel.id, context.getString(channel.nameRes), NotificationManager.IMPORTANCE_DEFAULT),
                 )
             }
         }
         val open = PendingIntent.getActivity(
             context, id,
             Intent(context, MainActivity::class.java)
-                .setData(Uri.parse(NotificationLinks.fleetRun(runKey)))
+                .setData(Uri.parse(link))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        return NotificationCompat.Builder(context, CHANNEL)
+        return NotificationCompat.Builder(context, channel.id)
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setContentTitle(title)
             .setContentIntent(open)

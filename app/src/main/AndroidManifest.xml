@@ -29,6 +29,8 @@
          This normal permission represents the app's user-initiated network connection lifecycle. -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Fleet's schedules wait as jobs that Android keeps across a restart, which needs this. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
       No storage permissions: all file access goes through the Storage Access Framework
       (ACTION_OPEN_DOCUMENT / ACTION_CREATE_DOCUMENT pickers), which grants per-file access without
@@ -210,6 +212,11 @@
 
         <service
             android:name=".automation.AutomationJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".automation.FleetScheduleJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 

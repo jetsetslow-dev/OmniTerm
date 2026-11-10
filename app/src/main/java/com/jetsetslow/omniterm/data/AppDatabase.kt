@@ -32,6 +32,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TunnelEntity::class,
         AutomationUseEntity::class,
         FleetTargetSetEntity::class,
+        FleetScheduleEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
@@ -64,6 +65,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tunnelDao(): TunnelDao
     abstract fun automationUseDao(): AutomationUseDao
     abstract fun fleetTargetSetDao(): FleetTargetSetDao
+    abstract fun fleetScheduleDao(): FleetScheduleDao
 
     companion object {
         @Volatile
@@ -378,7 +380,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         // Runs other apps and AI assistants start, as they run: each automation token's
         // notification choice and use history, and the run each AI assistant call started. Hosts'
-        // tags, Fleet's saved target sets, and the file a Fleet push sent.
+        // tags, Fleet's saved target sets and schedules, and the file a Fleet push sent.
         private val MIGRATION_29_30 = object : Migration(29, 30) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `automation_grants` ADD COLUMN `notify` TEXT NOT NULL DEFAULT 'failures'")
@@ -391,6 +393,14 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_automation_uses_grantId_at` ON `automation_uses` (`grantId`, `at`)")
                 db.execSQL("ALTER TABLE `servers` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `pushedFile` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `fleet_schedules` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `scriptId` INTEGER NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, " +
+                        "`groups` TEXT NOT NULL, `tags` TEXT NOT NULL, `allTags` INTEGER NOT NULL, `repeat` TEXT NOT NULL, " +
+                        "`everyMinutes` INTEGER NOT NULL, `minuteOfDay` INTEGER NOT NULL, `dayOfWeek` INTEGER NOT NULL, " +
+                        "`enabled` INTEGER NOT NULL, `notify` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `nextRunAt` INTEGER, " +
+                        "`lastRunAt` INTEGER, `lastOutcome` TEXT, `lastDetail` TEXT NOT NULL, `lastRunKey` TEXT)"
+                )
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `fleet_target_sets` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "`name` TEXT NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, `groups` TEXT NOT NULL, " +

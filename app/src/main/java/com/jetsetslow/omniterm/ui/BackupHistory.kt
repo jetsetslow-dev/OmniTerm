@@ -6,6 +6,7 @@ import com.jetsetslow.omniterm.data.AutomationUseEntity
 import com.jetsetslow.omniterm.data.FleetRunEntity
 import com.jetsetslow.omniterm.data.FleetRunHistory
 import com.jetsetslow.omniterm.data.FleetRunHostEntity
+import com.jetsetslow.omniterm.data.FleetScheduleEntity
 import com.jetsetslow.omniterm.data.McpCallEntity
 import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
@@ -28,6 +29,7 @@ internal data class BackupHistoryRows(
     val automationGrants: List<AutomationGrantEntity> = emptyList(),
     /** Each automation token's uses, by grant id. */
     val automationUses: Map<Int, List<AutomationUseEntity>> = emptyMap(),
+    val fleetSchedules: List<FleetScheduleEntity> = emptyList(),
 )
 
 /**

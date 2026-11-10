@@ -212,6 +212,18 @@ class AppRepository(private val db: AppDatabase) {
 
     suspend fun deleteFleetTargetSet(id: Int) = db.fleetTargetSetDao().delete(id)
 
+    val fleetSchedulesFlow: Flow<List<FleetScheduleEntity>> get() = db.fleetScheduleDao().schedulesFlow()
+    suspend fun fleetSchedules(): List<FleetScheduleEntity> = db.fleetScheduleDao().all()
+    suspend fun fleetSchedule(id: Int): FleetScheduleEntity? = db.fleetScheduleDao().byId(id)
+
+    /** Saves [schedule], new or edited, and returns its id. */
+    suspend fun saveFleetSchedule(schedule: FleetScheduleEntity): Int = db.fleetScheduleDao().upsert(schedule).toInt()
+    suspend fun setFleetScheduleNextRun(id: Int, nextRunAt: Long?) = db.fleetScheduleDao().setNextRun(id, nextRunAt)
+    suspend fun setFleetScheduleEnabled(id: Int, enabled: Boolean) = db.fleetScheduleDao().setEnabled(id, enabled)
+    suspend fun recordFleetScheduleRun(id: Int, at: Long, outcome: String, detail: String, runKey: String?) =
+        db.fleetScheduleDao().recordRun(id, at, outcome, detail.take(Automation.USE_DETAIL_CHARS), runKey)
+    suspend fun deleteFleetSchedule(id: Int) = db.fleetScheduleDao().delete(id)
+
     /** Adds [use] to its token's history, keeping the newest [keep]. */
     suspend fun recordAutomationUse(use: AutomationUseEntity, keep: Int = Automation.KEEP_USES) = db.withTransaction {
         db.automationUseDao().insert(use.copy(detail = use.detail.take(Automation.USE_DETAIL_CHARS)))

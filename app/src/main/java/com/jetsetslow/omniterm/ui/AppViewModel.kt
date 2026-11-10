@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
+import com.jetsetslow.omniterm.automation.FleetSchedules
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.data.tunnel.TunnelManager
@@ -580,6 +581,8 @@ sealed interface ExternalLaunchRequest {
     data object OpenTransfers : ExternalLaunchRequest
     data object OpenNetworkTools : ExternalLaunchRequest
     data object OpenFleet : ExternalLaunchRequest
+    /** A schedule that could not run, from its notification. */
+    data object OpenFleetSchedules : ExternalLaunchRequest
     /** A run another app or an AI assistant started, from its notification. */
     data class OpenFleetRun(val runKey: String) : ExternalLaunchRequest
     data object OpenInfra : ExternalLaunchRequest
@@ -1006,6 +1009,7 @@ data class BackupContents(
     val automationGrants: Int = 0,
     // 1 when the backup has the AI assistant's settings.
     val assistantSettings: Int = 0,
+    val fleetSchedules: Int = 0,
 )
 
 data class BackupHostOption(
@@ -1634,7 +1638,7 @@ class AppViewModel @JvmOverloads constructor(
     var isLogsLive by mutableStateOf(true)
 
     // FLEET SCREEN MODE
-    var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast
+    var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast, 2: Schedules
     val broadcastTargetServerIds = mutableStateListOf<Int>()
     val broadcastTargetGroups = mutableStateListOf<String>()
     val broadcastTargetTags = mutableStateListOf<String>()
@@ -1678,6 +1682,55 @@ class AppViewModel @JvmOverloads constructor(
     fun deleteFleetTargetSet(id: Int) {
         viewModelScope.launch { repository.deleteFleetTargetSet(id) }
     }
+
+    /** Fleet's schedules, by name. */
+    val fleetSchedules = repository.fleetSchedulesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Saves [schedule], new or edited, on [targets], and sets its next run. An edit keeps how the
+     * last run went; nothing is saved without a name or a target.
+     */
+    internal fun saveFleetSchedule(schedule: FleetScheduleEntity, targets: FleetTargets) {
+        val name = schedule.name.trim().take(FleetTargets.MAX_NAME)
+        if (name.isEmpty() || targets.isEmpty) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val previous = schedule.id.takeIf { it > 0 }?.let { repository.fleetSchedule(it) }
+            val picks = targets.toSet(name)
+            val id = repository.saveFleetSchedule(
+                schedule.copy(
+                    name = name,
+                    mode = picks.mode, serverIds = picks.serverIds, groups = picks.groups, tags = picks.tags, allTags = picks.allTags,
+                    notify = RunNotify.of(schedule.notify),
+                    createdAt = previous?.createdAt ?: now,
+                    nextRunAt = previous?.nextRunAt,
+                    lastRunAt = previous?.lastRunAt,
+                    lastOutcome = previous?.lastOutcome,
+                    lastDetail = previous?.lastDetail.orEmpty(),
+                    lastRunKey = previous?.lastRunKey,
+                ),
+            )
+            FleetSchedules.apply(getApplication(), repository, id, now)
+        }
+    }
+
+    fun setFleetScheduleEnabled(id: Int, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setFleetScheduleEnabled(id, enabled)
+            FleetSchedules.apply(getApplication(), repository, id)
+        }
+    }
+
+    /** Deletes schedule [id]; a run of it in progress stops. */
+    fun deleteFleetSchedule(id: Int) {
+        viewModelScope.launch {
+            repository.deleteFleetSchedule(id)
+            FleetSchedules.cancel(getApplication(), id)
+        }
+    }
+
+    /** Runs schedule [id] once now, in the background; its run shows in Fleet's history. False when Android refused. */
+    fun runFleetScheduleNow(id: Int): Boolean = FleetSchedules.runNow(getApplication(), id)
 
     var broadcastCommandText by mutableStateOf("")
     /**
@@ -2867,6 +2920,15 @@ class AppViewModel @JvmOverloads constructor(
         // Doing this once in init (at process/viewmodel start) avoids periodic performance hits.
         viewModelScope.launch(Dispatchers.IO) {
             repository.resetAllConnectionStates()
+        }
+        // Force-stopping the app drops its jobs: each schedule that is on gets its job back.
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                FleetSchedules.reconcile(application, repository)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                android.util.Log.w("OmniTermSchedule", "Restoring the schedules' jobs failed", e)
+            }
         }
         // Load settings, security configs, generate examples
         loadSecuritySettings()
@@ -4793,6 +4855,10 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 ExternalLaunchRequest.OpenNetworkTools -> navigateTo(Screen.Network)
                 ExternalLaunchRequest.OpenFleet -> navigateTo(Screen.Fleet)
+                ExternalLaunchRequest.OpenFleetSchedules -> {
+                    fleetTabIndex = 2
+                    navigateTo(Screen.Fleet)
+                }
                 is ExternalLaunchRequest.OpenFleetRun -> openFleetRun(request.runKey)
                 ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
                 ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
@@ -15730,8 +15796,9 @@ class AppViewModel @JvmOverloads constructor(
             history.automationUses,
         )
 
-        // Saved Fleet targets go with the hosts they name.
+        // Saved Fleet targets go with the hosts they name; schedules go with automation, by script and host.
         val fleetTargetSetArr = BackupFleetTargets.json(if (closedSelection.servers) fleetTargetSets else emptyList(), exportedServerIds)
+        val fleetScheduleArr = BackupFleetSchedules.json(history.fleetSchedules, { id -> scriptRef(id) }, exportedServerIds)
 
         return org.json.JSONObject()
             .put("format", "omniterm-backup")
@@ -15745,6 +15812,7 @@ class AppViewModel @JvmOverloads constructor(
             .put("automation", automationObj)
             .put("servers", serverArr)
             .put("fleetTargetSets", fleetTargetSetArr)
+            .put("fleetSchedules", fleetScheduleArr)
             .put("sshKeys", keyArr)
             .put("credentialProfiles", profileArr)
             .put("quickScripts", scriptArr)
@@ -15774,6 +15842,7 @@ class AppViewModel @JvmOverloads constructor(
             assistantCalls = if (selection.assistantLog) repository.getMcpCalls() else emptyList(),
             automationGrants = if (selection.automation) repository.getAutomationGrants() else emptyList(),
             automationUses = if (selection.automation) repository.automationUsesForBackup() else emptyMap(),
+            fleetSchedules = if (selection.automation) repository.fleetSchedules() else emptyList(),
         )
     }
 
@@ -15882,7 +15951,7 @@ class AppViewModel @JvmOverloads constructor(
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
             "crashLogs", "telnetHosts", "kubeClusters", "vpnTunnels",
             "tmuxSessions", "composeStacks", "monitoringHistory", "fleetRuns", "assistantCalls",
-            "fleetTargetSets",
+            "fleetTargetSets", "fleetSchedules",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -15954,6 +16023,7 @@ class AppViewModel @JvmOverloads constructor(
             assistantCalls = root.optJSONArray("assistantCalls")?.length() ?: 0,
             automationGrants = BackupAccess.grantCount(root.optJSONObject("automation")),
             assistantSettings = if (BackupAccess.hasAssistant(root.optJSONObject("automation"))) 1 else 0,
+            fleetSchedules = root.optJSONArray("fleetSchedules")?.length() ?: 0,
         )
     }
 
@@ -16864,6 +16934,16 @@ class AppViewModel @JvmOverloads constructor(
                                 assistant.forEach { (key, value) -> repository.insertSetting(key, value) }
                                 assistantRestored = true
                             }
+                        }
+
+                        // Fleet's schedules, paused like automation; the phone's own schedule of a name wins.
+                        if (closedSelection.automation) {
+                            BackupFleetSchedules.restore(
+                                root.optJSONArray("fleetSchedules"),
+                                ::restoredScriptId,
+                                serverIdMap,
+                                repository.fleetSchedules().map { it.name },
+                            ).forEach { repository.saveFleetSchedule(it) }
                         }
 
                         // Report any partial restore explicitly with its reason, so a backup that

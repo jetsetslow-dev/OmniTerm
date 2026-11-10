@@ -3497,7 +3497,7 @@ private fun BackupSelectionList(
         BackupSelectionRow("Fleet history *", contents?.fleetRuns, selection.fleetHistory, { onChange(selection.copy(fleetHistory = it)) }, contents == null || contents.fleetRuns > 0)
         BackupSelectionRow("Monitoring history *", contents?.monitoringPoints, selection.monitoringHistory, { onChange(selection.withMonitoringHistorySelected(it)) }, contents == null || (contents.monitoringPoints > 0 && contents.servers > 0))
         BackupSelectionRow("AI assistant log *", contents?.assistantCalls, selection.assistantLog, { onChange(selection.copy(assistantLog = it)) }, contents == null || contents.assistantCalls > 0)
-        val automationCount = contents?.let { it.automationGrants + it.assistantSettings }
+        val automationCount = contents?.let { it.automationGrants + it.assistantSettings + it.fleetSchedules }
         BackupSelectionRow("Automation & AI assistants *", automationCount, selection.automation, { onChange(selection.withAutomationSelected(it)) }, contents == null || ((automationCount ?: 0) > 0 && contents.servers > 0))
         BackupSelectionRow("Crash logs *", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
         Text(stringResource(R.string.sensitive_selecting_forces_an_encrypted_backup),

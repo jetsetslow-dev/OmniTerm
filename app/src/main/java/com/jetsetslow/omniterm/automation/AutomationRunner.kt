@@ -135,10 +135,10 @@ class AutomationRunner(
      * Runs [script] on [servers] and keeps the run in Fleet's history under [source], saved when
      * it starts and as each host finishes. [values] fill its `{{values}}` (a value left out takes
      * its default); null runs the command exactly as written, for a command that was typed rather
-     * than saved. [notify] ([RunNotify]) and [by], who asked for it, are for its notification. The
-     * caller has already decided it may run.
+     * than saved. [notify] ([RunNotify]) and [by], who asked for it, are for its notification, on
+     * [channel]. The caller has already decided it may run.
      */
-    suspend fun runScript(
+    internal suspend fun runScript(
         script: QuickScriptEntity,
         servers: List<ServerEntity>,
         values: Map<String, String>?,
@@ -146,6 +146,7 @@ class AutomationRunner(
         notify: String = RunNotify.OFF,
         by: String = "",
         runKey: String = Automation.newRunKey(),
+        channel: RunNotifications.Channel = RunNotifications.Channel.EXTERNAL,
     ): Automation.RunResult {
         val started = clock()
         val deadline = started + runTimeoutMs
@@ -157,7 +158,7 @@ class AutomationRunner(
             scriptName = script.name,
             source = source,
         )
-        val notice = RunNotifications(context, runKey, script.name, by, notify)
+        val notice = RunNotifications(context, runKey, script.name, by, notify, channel)
         val done = ConcurrentHashMap<Int, Automation.HostResult>()
         safely {
             repository.endStaleLiveRuns(started, context.getString(R.string.external_run_cut_off))
