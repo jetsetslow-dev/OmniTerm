@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contributing - OmniTerm documentation</title>
+<meta name="description" content="How to propose changes, report bugs and get help.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html" aria-current="page">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Contributing</h1>
+
+<p>Contributions are welcome. The authoritative rules are in <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>; by contributing you agree that your contribution is licensed under the GPL-3.0 and that the project owner may also license it under other terms (see <a href="../index.html#licence">Licence</a>).</p>
+<h2>Workflow</h2>
+<ol>
+<li>Branch from <code>main</code> with a descriptive name.</li>
+<li>Keep changes focused and add regression tests for behaviour changes.</li>
+<li>Run the smallest relevant tests, then the repository gate (see <a href="build.html">Building from source</a>).</li>
+<li>Open a pull request that explains the user-visible behaviour, risks and test evidence, with screenshots for UI changes.</li>
+</ol>
+<p>Pull requests must pass build and tests, lint, dependency review, secret guards and CodeQL where applicable. Never commit credentials, keystores, service-account files, host inventories or terminal output containing secrets; use synthetic fixtures.</p>
+<h2>Terminal changes</h2>
+<p>Terminal behaviour is stateful and timing-sensitive. Include tests for chunk boundaries, malformed input, resize during alternate-screen use, reconnect and close races, UTF-8 and tmux control-mode framing, and update the compatibility matrix when support changes.</p>
+<h2>AI-assisted work</h2>
+<p>The project documents how AI tools are used in its <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/AI_FIRST_DEVELOPMENT.md">AI-first development policy</a>.</p>
+<h2>Community and policies</h2>
+<ul>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/CODE_OF_CONDUCT.md">Code of conduct</a></li>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> (private reporting)</li>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SUPPORT.md">Support</a></li>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/GOVERNANCE.md">Governance</a></li>
+</ul>
+<h2>Acknowledgements</h2>
+<p>OmniTerm learns from other projects. No code is copied from them. The ideas and bug reports that shaped features are credited in the README's <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md#acknowledgements">Acknowledgements</a> and in <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/NOTICE.md">NOTICE.md</a>: Semaphore UI, Termix, ssh-mcp-server, ssh-mcp, Komodo, Haven, ConnectBot, ServerBox, Nexterm, Beszel, Uptime Kuma, Home Assistant for Android, Termux:Tasker, electerm, Material Files and the Model Context Protocol specification.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="build.html">&larr; Building from source</a><span></span></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

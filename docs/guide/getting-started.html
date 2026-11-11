@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started - OmniTerm documentation</title>
+<meta name="description" content="Install OmniTerm and add your first host.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html" aria-current="page">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Getting started</h1>
+
+<p>OmniTerm is an Android app. It connects straight from your phone or tablet to your own servers; there is no OmniTerm account and nothing to install on the servers.</p>
+<h2>Choose a build</h2>
+<p>Two builds share the same features. They differ in how they are distributed and paid for.</p>
+<table>
+<thead><tr><th scope="col">Build</th><th scope="col">Where from</th><th scope="col">Saved hosts</th><th scope="col">Ads</th></tr></thead>
+<tbody>
+<tr><th scope="row">Open-source build</th><td><a href="https://github.com/jetsetslow-dev/OmniTerm/releases">GitHub releases</a> (APK)</td><td>Unlimited</td><td>None</td></tr>
+<tr><th scope="row">Play Store build</th><td><a href="https://play.google.com/store/apps/details?id=com.jetsetslow.omniterm.app">Google Play</a></td><td>1 when free; unlimited after the one-time Unlock</td><td>One banner, removed by either purchase</td></tr>
+</tbody></table>
+<p>The open-source build uses the application ID <code>com.jetsetslow.omniterm.app.oss</code>, so it can sit beside the Play Store package. It contains no Play Billing code and no ad SDK. The Unlock purchase also enables Quick connect, Telnet and USB serial terminals in the Play Store build. The Play Store build adds Google's proprietary billing, ads, consent and in-app review libraries, which are not part of the repository. The licence is stated on the <a href="../index.html#licence">home page</a>.</p>
+<h3>Install the APK</h3>
+<ol><li>Download the latest APK from the GitHub releases page.</li><li>Allow installs from your download source in Android settings.</li><li>Open the APK and install it.</li></ol>
+<h2>Add your first host</h2>
+<ol>
+<li>Open <strong>Servers</strong> and add a host: a display name, hostname or IP address, SSH port, user name and sign-in method.</li>
+<li>Sign in with a password, an imported SSH key or a reusable credential profile. See <a href="hosts.html">Hosts and sign-in</a>.</li>
+<li>The first time you connect, OmniTerm pins the host key. A changed key later is rejected until you review it.</li>
+<li>Open <strong>Term</strong> for a shell, <strong>Monitor</strong> for live metrics or <strong>Files</strong> to browse.</li>
+</ol>
+<p>Already have hosts in <code>~/.ssh/config</code>? You can import them; see <a href="hosts.html#ssh-config">Import from ssh_config</a>.</p>
+<h2>What the servers need</h2>
+<p>An SSH server and a user that can sign in. Monitoring reads standard Linux <code>/proc</code> and utility output, so no agent runs on your servers. Linux gives the richest metrics; macOS, BSD and Windows (OpenSSH Server and Windows PowerShell) are also supported, with some features unavailable on Windows, such as cron, tmux, sudo mode and containers.</p>
+
+<nav class="pager" aria-label="Previous and next page"><span></span><a href="hosts.html">Hosts and sign-in &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

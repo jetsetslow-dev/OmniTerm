@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Containers - OmniTerm documentation</title>
+<meta name="description" content="Docker, Podman, Compose and Kubernetes.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html" aria-current="page">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Containers</h1>
+
+<h2>Docker and Podman</h2>
+<p>Under <strong>Containers</strong>, containers, stacks, images and volumes are listed for the selected host; Docker and Podman are detected automatically. Each container offers logs, live stats (CPU, memory, network, block I/O), an exec shell and start, stop, restart and pause. Stacks run by Docker Compose or podman-compose have full lifecycle actions.</p>
+<h2>Compose Builder</h2>
+<p>A visual editor for <code>docker-compose.yml</code>. It keeps the file's own style and comments, updates every reference when you rename a service, flags what Compose would refuse (missing dependencies, loops, undeclared volumes or networks, duplicate container names) and validates with <code>compose config</code> before a deploy.</p>
+<h2>Kubernetes</h2>
+<p>Open <strong>Containers &rarr; Kubernetes</strong> on a host with kubectl, k3s or MicroK8s, or import a kubeconfig to talk to a cluster directly. Pods offer logs, follow, previous logs, shell, describe and delete; deployments offer scale, restart and describe; services and nodes can be described; nodes can be cordoned. Clusters whose credentials come from a program such as aws or gcloud cannot be used, and the import says so.</p>
+<p>Container management needs a Linux, macOS or BSD host; Windows hosts say so instead of failing.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="files.html">&larr; Files and shares</a><a href="monitoring.html">Monitoring and alerts &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

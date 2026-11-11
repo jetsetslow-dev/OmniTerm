@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VPN tunnels - OmniTerm documentation</title>
+<meta name="description" content="Per-host WireGuard tunnels inside the app.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html" aria-current="page">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>VPN tunnels</h1>
+
+<p>Reach hosts that are only available over WireGuard, such as a home server, without using Android's VPN.</p>
+<ol>
+<li><strong>Add the tunnel once</strong> under <strong>Tools &rarr; VPN tunnels</strong>: paste or import the <code>.conf</code> from your router or VPN server. OmniTerm checks it and explains problems line by line. It never runs <code>PostUp</code> or similar commands.</li>
+<li><strong>Pick it per host</strong> in the host's settings under <strong>VPN tunnel</strong>. Terminal, files, port forwards, Fleet runs and background checks then go through it. If the host has another address inside the tunnel, enter it under <strong>Address through the tunnel</strong>.</li>
+</ol>
+<h2>Behaviour to know</h2>
+<ul>
+<li><strong>Never direct</strong>: a host with a tunnel always goes through it. If the tunnel cannot connect, the connection fails and says why. Choose <strong>None (direct)</strong> to connect directly again.</li>
+<li>To use one machine both at home and away, save it twice: once with the tunnel, once with None (direct).</li>
+<li>The tunnel runs only inside the app; the rest of the phone and other VPN apps are unaffected. It starts when needed and stops after five minutes unused.</li>
+<li>TCP port and certificate checks of a tunnelled host use the tunnel; ping, DNS and web checks of its own address do not run yet and say so.</li>
+<li>A tunnel a host still uses cannot be deleted.</li>
+<li>The configuration, including its private key, is stored encrypted on the device and travels with the hosts in an encrypted backup.</li>
+</ul>
+
+<nav class="pager" aria-label="Previous and next page"><a href="automation.html">&larr; Automation and MCP</a><a href="backup.html">Backup and restore &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>
