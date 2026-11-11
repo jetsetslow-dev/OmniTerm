@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 30,
-    "identityHash": "0e1ed5c2c52c8a673046111230edfc0c",
+    "identityHash": "f058bb2c4fa964dfa758293b9554520e",
     "entities": [
       {
         "tableName": "servers",
@@ -1222,7 +1222,7 @@
       },
       {
         "tableName": "fleet_runs",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runKey` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER NOT NULL, `command` TEXT NOT NULL, `scriptName` TEXT, `source` TEXT NOT NULL, `pushedFile` TEXT)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runKey` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER NOT NULL, `command` TEXT NOT NULL, `scriptName` TEXT, `source` TEXT NOT NULL, `pushedFile` TEXT, `sudo` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -1269,6 +1269,12 @@
             "fieldPath": "pushedFile",
             "columnName": "pushedFile",
             "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sudo",
+            "columnName": "sudo",
+            "affinity": "INTEGER",
+            "notNull": true
           }
         ],
         "primaryKey": {
@@ -1758,7 +1764,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0e1ed5c2c52c8a673046111230edfc0c')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f058bb2c4fa964dfa758293b9554520e')"
     ]
   }
 }

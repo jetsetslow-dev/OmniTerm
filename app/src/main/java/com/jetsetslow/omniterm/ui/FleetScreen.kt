@@ -369,10 +369,12 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
         val shown = if (values.isEmpty()) cmd else ScriptParams.preview(cmd, values)
         val danger = fleetCommandDangerWarning(shown)
         val plural = if (targets.size == 1) "" else "s"
+        // A retry runs as the last run did, whatever the switch says now.
+        val sudo = if (retry) viewModel.lastBroadcastSudo else viewModel.broadcastSudo
         confirm.ask(
             title = confirm.str(if (retry) R.string.broadcast_retry_title else R.string.run_on_host, targets.size, plural),
             message = buildString {
-                appendLine("$ $shown")
+                appendLine(viewModel.fleetPrompt(sudo) + shown)
                 if (ScriptParams.usesHostVars(cmd)) appendLine(confirm.str(R.string.broadcast_host_vars))
                 appendRunTargets(targets, retry)
                 if (mismatched.isNotEmpty() && activePreset != null) {
@@ -386,7 +388,11 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                     )
                 }
                 appendLine()
-                appendLine(confirm.str(if (viewModel.broadcastInTmux) R.string.broadcast_tmux_confirm else R.string.broadcast_drop_warning))
+                if (sudo) {
+                    appendLine(confirm.str(R.string.broadcast_sudo_confirm))
+                    appendLine()
+                }
+                appendLine(confirm.str(if (viewModel.broadcastInTmux && !sudo) R.string.broadcast_tmux_confirm else R.string.broadcast_drop_warning))
                 if (danger != null) {
                     appendLine()
                     append("⚠ $danger")
@@ -396,7 +402,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             destructive = danger != null,
         ) {
             if (retry) viewModel.retryFailedBroadcastHosts(targets.map { it.id })
-            else viewModel.runFleetBroadcast(cmd, targets.map { it.id }, values, source = source)
+            else viewModel.runFleetBroadcast(cmd, targets.map { it.id }, values, source = source, sudo = sudo)
         }
     }
 
@@ -408,6 +414,10 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             message = buildString {
                 appendLine(confirm.str(R.string.fleet_push_confirm, push.fileName, formatBytes(push.size), push.destination))
                 appendRunTargets(targets, retry)
+                if (if (retry) viewModel.lastBroadcastSudo else viewModel.broadcastSudo) {
+                    appendLine()
+                    appendLine(confirm.str(R.string.fleet_push_sudo_confirm))
+                }
                 appendLine()
                 append(confirm.str(R.string.fleet_push_replaces))
             }.trimEnd(),
@@ -542,12 +552,14 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
                 )
             }
             Switch(
-                checked = viewModel.broadcastInTmux,
+                checked = viewModel.broadcastInTmux && !viewModel.broadcastSudo,
                 onCheckedChange = viewModel::updateBroadcastInTmux,
-                enabled = !viewModel.isBroadcastExecuting,
+                // A sudo password cannot be handed to a command in tmux, so the two do not combine.
+                enabled = !viewModel.isBroadcastExecuting && !viewModel.broadcastSudo,
                 modifier = Modifier.testTag("fleet.broadcast.tmux"),
             )
         }
+        BroadcastSudoSwitch(viewModel, R.string.broadcast_sudo, R.string.broadcast_sudo_explained, "fleet.broadcast.sudo")
         BroadcastRollingControls(viewModel)
         Spacer(modifier = Modifier.height(8.dp))
         Text(stringResource(R.string.command_presets), fontWeight = FontWeight.Bold)
@@ -804,6 +816,26 @@ private data class BroadcastParamsRequest(
     val mismatched: List<ServerEntity>,
     val source: String,
 )
+
+/**
+ * Whether Fleet's next command, or push, goes through sudo ([AppViewModel.broadcastSudo]): one
+ * switch, shown with the command and in the push dialog under the words that fit each.
+ */
+@Composable
+private fun BroadcastSudoSwitch(viewModel: AppViewModel, @androidx.annotation.StringRes label: Int, @androidx.annotation.StringRes explained: Int, tag: String) {
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(label), fontWeight = FontWeight.Bold)
+            Text(stringResource(explained), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(
+            checked = viewModel.broadcastSudo,
+            onCheckedChange = viewModel::updateBroadcastSudo,
+            enabled = !viewModel.isBroadcastExecuting,
+            modifier = Modifier.testTag(tag),
+        )
+    }
+}
 
 /**
  * Rolling runs: how many hosts start at a time, and whether failures stop the run: any, or more
@@ -1190,6 +1222,7 @@ private fun FleetPushDialog(viewModel: AppViewModel, targetCount: Int, onPush: (
                     },
                     modifier = Modifier.fillMaxWidth().testTag("fleet.push.destination"),
                 )
+                BroadcastSudoSwitch(viewModel, R.string.fleet_push_sudo, R.string.fleet_push_sudo_explained, "fleet.push.sudo")
             }
         },
         confirmButton = {
@@ -1660,7 +1693,7 @@ private fun FleetRunDetailsDialog(
                     if (run.pushedFile != null) {
                         Text(viewModel.fleetPushHeading(run.pushedFile, run.command), fontSize = 12.sp)
                     } else {
-                        Text("$ ${run.command}", fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                        Text(viewModel.fleetPrompt(run.sudo) + run.command, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                     }
                     Text(
                         listOfNotNull(
@@ -1674,6 +1707,7 @@ private fun FleetRunDetailsDialog(
                                 )
                             },
                             fleetRunSourceLabel(run.source),
+                            if (run.sudo) stringResource(R.string.fleet_history_sudo) else null,
                         ).joinToString(" · "),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

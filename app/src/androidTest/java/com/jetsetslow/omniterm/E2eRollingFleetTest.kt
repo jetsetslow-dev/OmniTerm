@@ -111,10 +111,11 @@ class E2eRollingFleetTest {
             }
             composeRule.waitForIdle()
 
-            composeRule.onNodeWithTag("fleet.broadcast.batch.1").performClick()
+            // Below Run with sudo the rolling controls start under the fold: scroll to them as a user would.
+            composeRule.onNodeWithTag("fleet.broadcast.batch.1").performScrollTo().performClick()
             composeRule.waitForIdle()
             assertEquals(1, vm.broadcastBatchSize)
-            if (!vm.broadcastStopOnFailure) composeRule.onNodeWithTag("fleet.broadcast.stop_on_failure").performClick()
+            if (!vm.broadcastStopOnFailure) composeRule.onNodeWithTag("fleet.broadcast.stop_on_failure").performScrollTo().performClick()
             composeRule.waitForIdle()
             assertTrue(vm.broadcastStopOnFailure)
 

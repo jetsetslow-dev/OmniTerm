@@ -412,6 +412,8 @@ data class FleetRunEntity(
     val source: String = FleetRunHistory.SOURCE_FLEET,
     // The file a push sent, by name; [command] is then where it went, as typed. Null for a command.
     val pushedFile: String? = null,
+    // Whether it ran as root, with sudo.
+    val sudo: Boolean = false,
 )
 
 /** One host's result in a [FleetRunEntity]. */

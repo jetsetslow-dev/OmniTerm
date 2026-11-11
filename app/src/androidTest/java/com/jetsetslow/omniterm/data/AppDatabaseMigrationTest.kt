@@ -536,10 +536,11 @@ class AppDatabaseMigrationTest {
                 assertTrue(cursor.moveToFirst())
                 assertEquals("an upgrade schedules nothing", 0, cursor.getInt(0))
             }
-            db.query("SELECT command, pushedFile FROM fleet_runs WHERE runKey = 'r1'").use { cursor ->
+            db.query("SELECT command, pushedFile, sudo FROM fleet_runs WHERE runKey = 'r1'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("uptime", cursor.getString(0))
                 assertTrue("an earlier run ran a command, not a push", cursor.isNull(1))
+                assertEquals("and not with sudo", 0, cursor.getInt(2))
             }
             db.execSQL("UPDATE servers SET tags = 'nas, prod' WHERE name = 'nas'")
             db.execSQL("INSERT INTO fleet_target_sets (name, mode, serverIds, groups, tags, allTags) VALUES ('Prod', 'Tags', '[]', '[]', '[\"prod\"]', 0)")

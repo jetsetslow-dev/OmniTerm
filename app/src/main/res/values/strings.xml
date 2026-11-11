@@ -1490,6 +1490,19 @@
     <string name="broadcast_status_waiting">"waiting"</string>
     <string name="broadcast_status_not_run">"not run"</string>
     <string name="broadcast_output_truncated">"[Output truncated; showing latest %1$d characters]"</string>
+    <string name="broadcast_sudo">"Run with sudo"</string>
+    <string name="broadcast_sudo_explained">"Runs the command as root on each host, in sh, with the sudo password saved in that host's settings. OmniTerm asks you to confirm every such run. Run in tmux is not used with it."</string>
+    <string name="broadcast_sudo_confirm">"Runs as root, with sudo, using each host's saved sudo password. OmniTerm asks you to confirm next."</string>
+    <string name="broadcast_sudo_windows">"Windows hosts have no sudo."</string>
+    <string name="broadcast_sudo_refused">"sudo did not run it (%1$s). Check the sudo password in this host's settings."</string>
+    <plurals name="broadcast_sudo_hosts">
+        <item quantity="one">"%1$d host (%2$s)"</item>
+        <item quantity="other">"%1$d hosts (%2$s)"</item>
+    </plurals>
+    <string name="fleet_history_sudo">"with sudo"</string>
+    <string name="fleet_push_sudo">"Write with sudo"</string>
+    <string name="fleet_push_sudo_explained">"For a folder the login may not write to, such as /etc. The file is uploaded to the login's home folder and moved into place as root, keeping the owner and permissions of a file it replaces."</string>
+    <string name="fleet_push_sudo_confirm">"Written as root, with sudo, using each host's saved sudo password. OmniTerm asks you to confirm next."</string>
     <string name="fleet_outputs_search">"Find in outputs"</string>
     <string name="fleet_outputs_failed_only">"Failed only"</string>
     <string name="fleet_outputs_none_match">"No host matches."</string>

@@ -69,8 +69,8 @@ class HistoryBackupRobolectricTest {
         val web = repo.insertServer(host("web")).toInt()
         val dbHost = repo.insertServer(host("db")).toInt()
         repo.recordFleetRun(
-            // A push: the file by name, where it went as the command.
-            FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute + 5_000, command = "~/conf/", pushedFile = "app.conf"),
+            // A push, written with sudo: the file by name, where it went as the command.
+            FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute + 5_000, command = "~/conf/", pushedFile = "app.conf", sudo = true),
             listOf(
                 FleetRunHistory.host(web, "web", "Success", null, "up 3 days", false),
                 FleetRunHistory.host(dbHost, "db", "Success", null, "up 9 days", false),
@@ -116,6 +116,7 @@ class HistoryBackupRobolectricTest {
         val push = repo.fleetRunsForBackup().single { it.first.runKey == "run-1" }.first
         assertEquals("a push comes back as a push", "app.conf" to "~/conf/", push.pushedFile to push.command)
         assertEquals(null, repo.fleetRunsForBackup().single { it.first.runKey == "run-2" }.first.pushedFile)
+        assertEquals("a run with sudo comes back as one, and only that run", true to false, push.sudo to repo.fleetRunsForBackup().single { it.first.runKey == "run-2" }.first.sudo)
         val hosts = runs.getValue("run-1").associateBy { it.serverName }
         assertEquals(webHere, hosts.getValue("web").serverId)
         assertEquals(dbHere, hosts.getValue("db").serverId)

@@ -173,6 +173,9 @@ internal val BROADCAST_FAILURE_PERCENTS = listOf(0, 10, 25, 50)
 internal fun broadcastFailuresExceed(failed: Int, total: Int, percent: Int): Boolean =
     if (percent <= 0) failed > 0 else failed * 100L > percent.toLong() * total
 
+/** How many of a sudo run's hosts its confirmation names before "…". */
+private const val SUDO_NAMED_HOSTS = 3
+
 /** Default hard stop for one Fleet Broadcast run. */
 private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
 /** How often a tmux broadcast host whose connection dropped is tried again, and for how long. */
@@ -2908,6 +2911,10 @@ class AppViewModel @JvmOverloads constructor(
     var broadcastStopOnFailure by mutableStateOf(true)
         private set
     var broadcastFailurePercent by mutableStateOf(0)
+        private set
+    // Whether the next Fleet run, or push, goes through sudo. Never saved: it is off again when
+    // the app starts, and every run with it on asks first (withSudoAuth's rule).
+    var broadcastSudo by mutableStateOf(false)
         private set
 
     init {
@@ -13775,6 +13782,11 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.insertSetting("broadcast_stop_on_failure", on.toString()) }
     }
 
+    /** Runs Fleet's next command as root on each host, or writes its next push as root. */
+    fun updateBroadcastSudo(on: Boolean) {
+        broadcastSudo = on
+    }
+
     /** With [broadcastStopOnFailure], the share of the hosts that may fail first (one of [BROADCAST_FAILURE_PERCENTS]). */
     fun updateBroadcastFailurePercent(percent: Int) {
         broadcastFailurePercent = percent.takeIf { it in BROADCAST_FAILURE_PERCENTS } ?: 0
@@ -13794,20 +13806,24 @@ class AppViewModel @JvmOverloads constructor(
         runFleetBroadcast(
             lastBroadcastCommand, ids, lastBroadcastParams,
             keepOtherResults = true, source = FleetRunHistory.SOURCE_RETRY, push = lastBroadcastPush,
+            sudo = lastBroadcastSudo,
         )
     }
 
     /** The last run as plain text, one section per host, for Share. */
     fun broadcastReport(): String = fleetReport(
         lastBroadcastPush?.let { fleetPushHeading(it.fileName, it.destination) }
-            ?: "$ " + ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams),
+            ?: fleetPrompt(lastBroadcastSudo) + ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams),
         broadcastResults,
         BROADCAST_OUTPUT_MAX_CHARS,
     )
 
     /** A run from the history as plain text, as [broadcastReport] words the last run. */
     fun fleetRunReport(run: FleetRunEntity, hosts: List<BroadcastResultItem>): String =
-        fleetReport(run.pushedFile?.let { fleetPushHeading(it, run.command) } ?: "$ ${run.command}", hosts, FleetRunHistory.OUTPUT_CHARS)
+        fleetReport(run.pushedFile?.let { fleetPushHeading(it, run.command) } ?: (fleetPrompt(run.sudo) + run.command), hosts, FleetRunHistory.OUTPUT_CHARS)
+
+    /** What a Fleet command is shown after: a shell's `$`, or root's `#` for one run with sudo. */
+    fun fleetPrompt(sudo: Boolean): String = if (sudo) "# " else "$ "
 
     /** What a push run did, in a line: "Push app.conf to /etc/app/". */
     fun fleetPushHeading(fileName: String, destination: String): String =
@@ -13899,6 +13915,7 @@ class AppViewModel @JvmOverloads constructor(
             val script = run.scriptName?.let { name -> repository.getAllScripts().firstOrNull { it.name == name && it.command.trim() == run.command } }
             broadcastCommandText = run.command
             broadcastPreset = script
+            broadcastSudo = run.sudo
             broadcastTargetMode = FleetTargetMode.Servers
             broadcastTargetServerIds.clear()
             broadcastTargetServerIds.addAll(serverIds.filter { it in known })
@@ -13916,6 +13933,9 @@ class AppViewModel @JvmOverloads constructor(
     /** The file the last run pushed, or null when it ran a command; a retry pushes it again. */
     internal var lastBroadcastPush: FleetPush? = null
         private set
+    /** Whether the last run used sudo; a retry does too, and asks again. */
+    var lastBroadcastSudo = false
+        private set
 
     /** A run on the cards, for the history: saved when it ends, and again when a host in it finishes later. */
     private class PendingFleetRun(
@@ -13925,6 +13945,7 @@ class AppViewModel @JvmOverloads constructor(
         val scriptName: String?,
         val source: String,
         val pushedFile: String? = null,
+        val sudo: Boolean = false,
         var dirty: Boolean = true,
     )
 
@@ -14000,7 +14021,7 @@ class AppViewModel @JvmOverloads constructor(
         val pick = fleetPushPick ?: return
         if (!FleetPush.validDestination(fleetPushDestination)) return
         val push = pick.copy(destination = fleetPushDestination.trim().ifEmpty { "~/" })
-        runFleetBroadcast(push.destination, serverIds, push = push)
+        runFleetBroadcast(push.destination, serverIds, push = push, sudo = broadcastSudo)
     }
     /** The runs whose cards are on screen, by run id. */
     private val historyRuns = linkedMapOf<String, PendingFleetRun>()
@@ -14039,6 +14060,7 @@ class AppViewModel @JvmOverloads constructor(
                 scriptName = run.scriptName,
                 source = run.source,
                 pushedFile = run.pushedFile,
+                sudo = run.sudo,
             ) to hosts
         }
         // A run a retry took every card from is saved already and is done with.
@@ -14072,6 +14094,32 @@ class AppViewModel @JvmOverloads constructor(
         source: String = FleetRunHistory.SOURCE_FLEET,
         // A file to push instead of a command; [command] is then where it goes.
         push: FleetPush? = null,
+        // As root on each host, with that host's saved sudo password. Asks first, every time.
+        sudo: Boolean = false,
+    ) {
+        if (command.isBlank()) return
+        if (isBroadcastExecuting) return
+        if (!sudo) {
+            startFleetBroadcast(command, resolvedIds, paramValues, keepOtherResults, source, push, sudo = false)
+            return
+        }
+        // One answer covers this run's hosts; the next run with sudo asks again.
+        val app = getApplication<Application>()
+        val hosts = resolvedIds?.let { ids -> servers.value.filter { it.id in ids } } ?: servers.value.filter { broadcastTargets.matches(it) }
+        val named = hosts.take(SUDO_NAMED_HOSTS).joinToString(", ") { it.name } + if (hosts.size > SUDO_NAMED_HOSTS) ", …" else ""
+        pendingSudoAction = PendingSudoAction(app.resources.getQuantityString(R.plurals.broadcast_sudo_hosts, hosts.size, hosts.size, named)) {
+            startFleetBroadcast(command, resolvedIds, paramValues, keepOtherResults, source, push, sudo = true)
+        }
+    }
+
+    private fun startFleetBroadcast(
+        command: String,
+        resolvedIds: List<Int>?,
+        paramValues: Map<String, String>,
+        keepOtherResults: Boolean,
+        source: String,
+        push: FleetPush?,
+        sudo: Boolean,
     ) {
         if (command.isBlank()) return
         if (isBroadcastExecuting) return
@@ -14083,8 +14131,9 @@ class AppViewModel @JvmOverloads constructor(
             else -> broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
         }
         val targets = broadcastTargets
-        // A push is one SFTP transfer per host, with nothing to keep running in tmux.
-        val inTmux = broadcastInTmux && push == null
+        // A push is one SFTP transfer per host, with nothing to keep running in tmux. A sudo
+        // password cannot be handed to a command inside tmux without leaving it on the host.
+        val inTmux = broadcastInTmux && push == null && !sudo
         val batchSize = broadcastBatchSize
         val stopOnFailure = broadcastStopOnFailure && batchSize > 0
         val failurePercent = broadcastFailurePercent
@@ -14095,6 +14144,7 @@ class AppViewModel @JvmOverloads constructor(
         lastBroadcastScriptName = scriptName
         lastBroadcastPush.takeIf { it != push }?.let { previous -> lastBroadcastPush = push; discardFleetPushFile(previous) }
         lastBroadcastPush = push
+        lastBroadcastSudo = sudo
         broadcastStopRequested = false
         isBroadcastExecuting = true
         if (!keepOtherResults) {
@@ -14118,7 +14168,7 @@ class AppViewModel @JvmOverloads constructor(
                 isBroadcastExecuting = false
                 return@launch
             }
-            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source, pushedFile = push?.fileName)
+            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source, pushedFile = push?.fileName, sudo = sudo)
             selected.forEach { broadcastCardRun[it.id] = runId }
             val operationId = "fleet-broadcast-${UUID.randomUUID()}"
             LongOperationNotifications.start(
@@ -14150,9 +14200,9 @@ class AppViewModel @JvmOverloads constructor(
                         limiter.withPermit {
                             updateBroadcastResult(srv.id) { it.copy(status = BroadcastStatus.Running) }
                             when {
-                                push != null -> pushFileToHost(srv, push)
+                                push != null -> pushFileToHost(srv, push, sudo)
                                 inTmux -> broadcastHostInTmux(srv, cmd, runId)
-                                else -> broadcastHostPlain(srv, cmd)
+                                else -> broadcastHostPlain(srv, cmd, sudo)
                             }
                         }
                     }
@@ -14227,15 +14277,25 @@ class AppViewModel @JvmOverloads constructor(
         return ScriptParams.fill(template, lastBroadcastParams, ScriptParams.shellFor(os), ScriptParams.HostVars.of(srv, os))
     }
 
-    private suspend fun broadcastHostPlain(srv: ServerEntity, template: String) {
+    /**
+     * Runs [template] on [srv] and follows its output. With [sudo] the whole command runs as root
+     * in `sh`, with the host's saved sudo password on the command's input, never in the command.
+     */
+    private suspend fun broadcastHostPlain(srv: ServerEntity, template: String, sudo: Boolean = false) {
         val result = try {
             val (creds, command) = savedScriptRun(srv, broadcastCommandFor(srv, template))
-            sshTransport.execStream(creds, command) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            when {
+                !sudo -> sshTransport.execStream(creds, command) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+                !RemoteCommands.hasSudo(hostOs(srv)) -> "SSH Error: " + getApplication<Application>().getString(R.string.broadcast_sudo_windows)
+                else -> sshTransport.execStream(
+                    creds, RemoteCommands.sudoShWrap(command, srv.sudoPassword), RemoteCommands.sudoStdin(srv.sudoPassword),
+                ) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             "SSH Error: ${e.message ?: "unknown error"}"
         }
-        finishBroadcastResult(srv.id, result)
+        finishBroadcastResult(srv.id, result, sudo)
     }
 
     /**
@@ -14244,25 +14304,33 @@ class AppViewModel @JvmOverloads constructor(
      * half a file. A destination that is a folder on the host gets the file inside it, under its
      * own name.
      */
-    private suspend fun pushFileToHost(srv: ServerEntity, push: FleetPush) {
+    private suspend fun pushFileToHost(srv: ServerEntity, push: FleetPush, sudo: Boolean = false) {
         val app = getApplication<Application>()
         var client: RemoteFsClient? = null
         var staged: String? = null
         try {
             if (!push.local.exists()) throw java.io.IOException(app.getString(R.string.fleet_push_file_gone))
+            if (sudo && !RemoteCommands.hasSudo(hostOs(srv))) throw java.io.IOException(app.getString(R.string.broadcast_sudo_windows))
             val files = fleetFiles?.invoke(srv) ?: sftpClientFor(srv)
             client = files
-            var dest = push.remotePath(files.home())
-            val parent = dest.substringBeforeLast('/', "").ifEmpty { "/" }
-            val inParent = try {
-                files.list(parent)
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                throw java.io.IOException(app.getString(R.string.fleet_push_no_folder, parent), e)
+            val home = files.home()
+            var dest = push.remotePath(home)
+            val stage = if (sudo) {
+                // The login may not write where the file goes, so it arrives in its own home
+                // folder, and root moves it into place (RemoteCommands.sudoInstallFile).
+                joinPath(home, ".omniterm-push-${UUID.randomUUID().toString().take(8)}.part")
+            } else {
+                val parent = dest.substringBeforeLast('/', "").ifEmpty { "/" }
+                val inParent = try {
+                    files.list(parent)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    throw java.io.IOException(app.getString(R.string.fleet_push_no_folder, parent), e)
+                }
+                val folder = inParent.any { it.isDirectory && it.name == dest.substringAfterLast('/') }
+                if (folder) dest = joinPath(dest, push.fileName)
+                transferStagingPath(dest)
             }
-            val folder = inParent.any { it.isDirectory && it.name == dest.substringAfterLast('/') }
-            if (folder) dest = joinPath(dest, push.fileName)
-            val stage = transferStagingPath(dest)
             staged = stage
             withContext(Dispatchers.IO) {
                 push.local.inputStream().use { input -> files.uploadStream(stage, input, push.size) }
@@ -14273,7 +14341,21 @@ class AppViewModel @JvmOverloads constructor(
             if (arrived != null && arrived != push.size) {
                 throw java.io.IOException(app.getString(R.string.fleet_push_short, formatBytes(arrived), formatBytes(push.size)))
             }
-            commitStagedRemoteFile(files, stage, dest)
+            if (sudo) {
+                val out = executeSshCommand(
+                    srv,
+                    RemoteCommands.sudoShWrap(RemoteCommands.sudoInstallFile(stage, dest, push.fileName), srv.sudoPassword),
+                    stdin = RemoteCommands.sudoStdin(srv.sudoPassword),
+                )
+                dest = RemoteCommands.sudoPushedPath(out) ?: throw java.io.IOException(
+                    RemoteCommands.sudoRefusal(out)?.let { app.getString(R.string.broadcast_sudo_refused, it) }
+                        ?: RemoteCommands.sudoPushMissingFolder(out)?.let { app.getString(R.string.fleet_push_no_folder, it) }
+                        ?: out.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }?.removePrefix("SSH Error:")?.trim()
+                        ?: app.getString(R.string.fleet_push_failed),
+                )
+            } else {
+                commitStagedRemoteFile(files, stage, dest)
+            }
             staged = null
             updateBroadcastResult(srv.id) {
                 it.copy(
@@ -14512,11 +14594,18 @@ class AppViewModel @JvmOverloads constructor(
      * Ends [serverId]'s card from the transport's [result]: complete, or failed with a note saying
      * why (its exit status, a dropped connection, an SSH error) unless its output already ends so.
      */
-    private fun finishBroadcastResult(serverId: Int, result: String) {
+    private fun finishBroadcastResult(serverId: Int, result: String, sudo: Boolean = false) {
         val app = getApplication<Application>()
         val exit = broadcastExitStatus(result)
+        // sudo's own refusal says more than the status it exits with.
+        val refused = if (sudo && exit != 0) {
+            RemoteCommands.sudoRefusal(broadcastResults.firstOrNull { it.serverId == serverId }?.output.orEmpty())
+        } else {
+            null
+        }
         val note = when {
             exit == 0 -> null
+            refused != null -> app.getString(R.string.broadcast_sudo_refused, refused)
             exit != null -> app.getString(R.string.broadcast_exited_with, exit)
             result == "SSH Error: $SSH_CONNECTION_LOST" -> app.getString(R.string.broadcast_connection_lost)
             else -> result.removePrefix("SSH Error:").trim()

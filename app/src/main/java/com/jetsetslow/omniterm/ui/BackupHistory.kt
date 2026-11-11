@@ -107,6 +107,7 @@ internal object BackupHistory {
                 JSONObject().put("runKey", run.runKey).put("startedAt", run.startedAt).put("finishedAt", run.finishedAt)
                     .put("command", run.command).put("scriptName", run.scriptName ?: JSONObject.NULL).put("source", run.source)
                     .put("pushedFile", run.pushedFile ?: JSONObject.NULL)
+                    .put("sudo", run.sudo)
                     .put(
                         "hosts",
                         JSONArray().apply {
@@ -134,6 +135,7 @@ internal object BackupHistory {
             scriptName = nullableString(o, "scriptName"),
             source = o.optString("source").takeIf { it in FleetRunHistory.SOURCES } ?: FleetRunHistory.SOURCE_FLEET,
             pushedFile = UploadName.from(nullableString(o, "pushedFile")),
+            sudo = o.optBoolean("sudo", false),
         )
         val statuses = BroadcastStatus.entries.mapTo(mutableSetOf()) { it.name }
         val hosts = objects(o.optJSONArray("hosts")).mapNotNull { h ->

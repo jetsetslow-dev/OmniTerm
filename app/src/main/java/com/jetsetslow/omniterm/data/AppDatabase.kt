@@ -380,9 +380,9 @@ abstract class AppDatabase : RoomDatabase() {
 
         // Runs other apps and AI assistants start, as they run: each automation token's
         // notification choice and use history, and the run each AI assistant call started. Hosts'
-        // tags, Fleet's saved target sets and schedules, and the file a Fleet push sent. Whether an
-        // alert rule runs its runbook on its own, and the run an incident's runbook made. The
-        // Wi-Fi networks a tunnel is not needed on.
+        // tags, Fleet's saved target sets and schedules, the file a Fleet push sent, and whether a
+        // Fleet run used sudo. Whether an alert rule runs its runbook on its own, and the run an
+        // incident's runbook made. The Wi-Fi networks a tunnel is not needed on.
         private val MIGRATION_29_30 = object : Migration(29, 30) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `automation_grants` ADD COLUMN `notify` TEXT NOT NULL DEFAULT 'failures'")
@@ -396,6 +396,7 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `servers` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `tunnels` ADD COLUMN `directWifi` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `pushedFile` TEXT")
+                db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `sudo` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `alert_rules` ADD COLUMN `runbookAuto` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `alert_rules` ADD COLUMN `runbookNotify` TEXT NOT NULL DEFAULT 'failures'")
                 db.execSQL("ALTER TABLE `active_alerts` ADD COLUMN `runbookRunKey` TEXT")

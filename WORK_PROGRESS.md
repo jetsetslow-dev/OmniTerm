@@ -955,7 +955,40 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       and both show again once cleared), `E2eScriptCheckTest` 1, `E2eFleetScheduleTest` 1,
       `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1, `E2eAlertRunbookTest` 1, all 0 failed. Guard:
       with the cards ignoring the filter, the rolling test failed at its count of cards.
-  - Next: sudo in Fleet (pushes to protected paths too), and broadcast typing last.
+  - Sudo in Fleet: done (commit "Run a Fleet command, or write a pushed file, with sudo").
+    - **Run with sudo** in Broadcast, and **Write with sudo** in the push dialog, are one switch
+      (`broadcastSudo`, never saved: off again when the app starts). A run with it on waits in
+      the app's existing sudo question (`pendingSudoAction`: App Lock, else the screen lock, else
+      a plain question), once for the run's hosts; Retry and Use again keep sudo and ask again.
+    - A command runs whole as root (`sudoShWrap`, in `sh`), with each host's own saved sudo
+      password on the command's input (`sudoStdin`), never in the command; a host with none
+      saved uses `sudo -n`. sudo's own refusal is what the card says (`sudoRefusal`: only sudo's
+      words in the first lines, so a command's own "Permission denied" is not taken for one).
+      Windows hosts fail with "Windows hosts have no sudo." Run in tmux is not used with it: a
+      password cannot be handed to a command in tmux without leaving it on the host.
+    - A push with sudo uploads to the login's home under a hidden name, checks the size, and
+      root finishes the file beside its destination and moves it over it in one step, with the
+      owner and permissions of a file it replaces (`sudoInstallFile`); what was uploaded is
+      removed either way. This closes "a push to a protected path fails" from the push entry.
+    - `fleet_runs.sudo` (folded into schema 30) marks the run: History says "with sudo" and
+      shows root's `#`, the shared report too. Backups carry it.
+    - Schedules, automation and MCP never use sudo: nobody is there to answer.
+    - Tests: `FleetSudoRobolectricTest` 6, `FleetPushRobolectricTest` 1 (its in-memory host is
+      now the shared `MemoryHost`), `HistoryBackupRobolectricTest` 7. Eight guards seen failing:
+      no question asked, the password not sent, tmux used, a retry without sudo, the refusal
+      not named, a Windows host run anyway, the upload left behind, the history forgetting sudo.
+    - Devices (API 35, clean install, repository fixtures): `E2eFleetSudoTest` 1 (turned on in
+      Broadcast, the confirmation shows root's `#` and the sudo question follows; `id -u` is 0 with
+      no sudo password saved and with one saved, the login without sudo, and History marks the
+      run; a file pushed into `/etc` belongs to root and nothing is left in the login's home),
+      `E2eRollingFleetTest` 1, `E2eFleetPushTest` 1, `E2eScriptCheckTest` 1,
+      `E2eFleetScheduleTest` 1, `E2eAlertRunbookTest` 1, `E2eAutomationTest` 1, `E2eMcpTest` 1,
+      `E2eFleetTagsTest` 1, `E2eScriptParamsFleetTest` 1, `E2eHostChecksTest` 1,
+      `AppDatabaseMigrationTest` 13, all 0 failed. Guard: with the sudo question skipped,
+      `E2eFleetSudoTest` failed waiting for it.
+    - The new switch pushes Broadcast's rolling controls below the fold, so `E2eRollingFleetTest`
+      now scrolls to the batch chips and "Stop if a host fails" before tapping them, as a user does.
+  - Next: broadcast typing, last of the Fleet items.
 - Piece 4, Tunnels (in progress):
   - Tunnels follow the network (user, Nov 11): done (commit "Let a tunnel be skipped on the Wi-Fi
     networks it is not needed on").
