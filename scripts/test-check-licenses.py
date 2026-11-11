@@ -35,12 +35,32 @@ MIT = """Permission is hereby granted, free of charge, to any person obtaining a
 software and associated documentation files (the "Software"), to deal in the Software ..."""
 APACHE = """                                 Apache License
                            Version 2.0, January 2004"""
+TAILSCALE_PATENTS = """Additional IP Rights Grant (Patents)
+
+"This implementation" means the copyrightable works distributed by
+Tailscale Inc. as part of the Tailscale project.
+
+Tailscale Inc. hereby grants to You a perpetual, worldwide,
+non-exclusive, no-charge, royalty-free, irrevocable (except as stated
+in this section) patent license to make, have made, use, offer to
+sell, sell, import, transfer and otherwise run, modify and propagate
+the contents of this implementation of Tailscale, ..."""
+ISC_AND_OR = """Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies."""
+ISC_AND = """Permission to use, copy, modify, and distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies."""
 GPL = """GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007"""
 AGPL = """GNU AFFERO GENERAL PUBLIC LICENSE Version 3, 19 November 2007 ... the GNU General Public License"""
 
 expect(check.licences_in(BSD3), {"BSD-3-Clause"}, "the three-clause BSD is not also called two-clause")
 expect(check.licences_in(BSD2), {"BSD-2-Clause"}, "the two-clause BSD")
 expect(check.licences_in(PATENTS), {"LicenseRef-scancode-google-patent-license-golang"}, "Go's PATENTS file")
+expect(check.licences_in(TAILSCALE_PATENTS), {"LicenseRef-scancode-google-patent-license-golang"},
+       "Tailscale's PATENTS file, Go's grant with Tailscale's name")
+expect(check.licences_in(ISC_AND_OR), {"ISC"}, "ISC as OpenBSD words it")
+expect(check.licences_in(ISC_AND), {"ISC"}, "ISC worded \"modify, and distribute\" (coder/websocket)")
 expect(check.licences_in(MIT), {"MIT"}, "MIT")
 expect(check.licences_in(APACHE + "\nSome files carry the following license:\n" + MIT), {"Apache-2.0", "MIT"},
        "a file holding two licences (gVisor's)")
@@ -91,6 +111,17 @@ with tempfile.TemporaryDirectory() as tmp:
     expect(check.problems([module("copyleft", COPYING=GPL)], allowed),
            [("copyleft", "COPYING is GPL, which allow-licenses does not list")], "a GPL module")
     expect(check.problems([module("bare")], allowed), [("bare", "has no licence file")], "no licence file")
+    # tailscale.com's license_test.go is code that checks its files' headers, not a licence file.
+    ts = tmp / "tailscale"
+    ts.mkdir()
+    (ts / "LICENSE").write_text(BSD3)
+    (ts / "PATENTS").write_text(TAILSCALE_PATENTS)
+    (ts / "license_test.go").write_text("package tailscaleroot\n\nfunc TestLicenseHeaders(t *testing.T) {}\n")
+    (ts / "LICENSE-MIT").write_text(MIT)
+    expect(check.problems([("tailscale", ts)], allowed), [], "Tailscale's licence files, and no source file read as one")
+    expect(check.problems([("tailscale", ts)], allowed - {"MIT"}),
+           [("tailscale", "LICENSE-MIT is MIT, which allow-licenses does not list")],
+           "a licence file with a suffix is still read")
     expect([m for _, m in check.problems([module("odd", LICENSE="All rights reserved.")], allowed)],
            ["LICENSE holds a licence this script cannot name; read it and add it to SIGNATURES"], "an unnamed licence")
 
