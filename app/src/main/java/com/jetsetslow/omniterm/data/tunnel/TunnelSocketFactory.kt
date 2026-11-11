@@ -2,6 +2,7 @@ package com.jetsetslow.omniterm.data.tunnel
 
 import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.SocketFactory
+import com.jetsetslow.omniterm.data.AppRepository
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -13,8 +14,26 @@ import java.net.Socket
  * SSH, SFTP, shares and HTTP all follow the same rule: only through the tunnel, never directly,
  * even when the tunnel is down. Through the tunnel the host is dialled at its tunnel address when
  * it has one (a Tailscale 100.x or MagicDNS name), else at its own.
+ *
+ * The one exception is a rule the user sets on the tunnel ([TunnelNetworks]): on a Wi-Fi it names,
+ * its hosts dial their own address. [tunnelNow] decides it for every kind of tunnel.
  */
 object HostRoute {
+    /** The name of the Wi-Fi the phone is on, or null: the phone's, unless a test sets its own. */
+    @Volatile internal var wifiName: suspend () -> String? = { CurrentWifi.name() }
+
+    /**
+     * The tunnel a host that picked [tunnelId] goes through right now: that tunnel, or none (null)
+     * when it picked none or the phone is on a Wi-Fi the tunnel goes direct on. A tunnel that no
+     * longer exists stays the answer, so the dial fails and says so instead of going direct.
+     */
+    suspend fun tunnelNow(repository: AppRepository, tunnelId: Int?): Int? {
+        tunnelId ?: return null
+        val direct = repository.tunnelDirectWifi(tunnelId)
+        if (direct.isNullOrEmpty()) return tunnelId
+        return if (TunnelNetworks.goesDirect(direct, wifiName())) null else tunnelId
+    }
+
     /** JSch's dialer for a host, or null when it has no tunnel and dials as before. */
     internal fun socketFactory(host: String, tunnelId: Int?, tunnelHost: String): SocketFactory? =
         tunnelId?.let { TunnelSocketFactory(it, rename(host, tunnelHost)) }

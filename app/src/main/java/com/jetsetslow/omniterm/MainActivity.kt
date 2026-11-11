@@ -111,6 +111,12 @@ class MainActivity : AppCompatActivity() {
     appViewModel?.relockIfNeeded()
   }
 
+  override fun onResume() {
+    super.onResume()
+    // On screen: Android now gives the Wi-Fi's name it withholds from an app in the background.
+    com.jetsetslow.omniterm.data.tunnel.CurrentWifi.refreshIfWithheld()
+  }
+
   override fun onStop() {
     super.onStop()
     // Rotation/theme recreation must not count as leaving the app. A process restart still follows

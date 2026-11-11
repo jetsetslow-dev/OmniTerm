@@ -598,6 +598,10 @@ interface TunnelDao {
     @Query("SELECT * FROM tunnels WHERE id = :id")
     suspend fun get(id: Int): TunnelEntity?
 
+    /** The Wi-Fi networks tunnel [id]'s hosts dial directly on; null when there is no such tunnel. */
+    @Query("SELECT directWifi FROM tunnels WHERE id = :id")
+    suspend fun directWifi(id: Int): String?
+
     @Insert
     suspend fun insert(tunnel: TunnelEntity): Long
 

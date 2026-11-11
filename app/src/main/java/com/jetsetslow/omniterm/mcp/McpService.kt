@@ -126,6 +126,7 @@ class McpService : Service() {
     override fun onCreate() {
         super.onCreate()
         repository = AppRepository(AppDatabase.getDatabase(applicationContext))
+        com.jetsetslow.omniterm.data.tunnel.CurrentWifi.start(applicationContext)
         SshHostKeyTrust.init(applicationContext)
     }
 

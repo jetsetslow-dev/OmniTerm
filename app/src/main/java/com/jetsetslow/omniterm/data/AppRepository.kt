@@ -155,11 +155,19 @@ class AppRepository(private val db: AppDatabase) {
     val tunnelsFlow: Flow<List<TunnelEntity>> = db.tunnelDao().tunnelsFlow().map { list -> list.map { it.copy(config = "") } }
     suspend fun getTunnel(id: Int): TunnelEntity? = db.tunnelDao().get(id)?.let(::decryptTunnel)
     suspend fun getAllTunnels(): List<TunnelEntity> = db.tunnelDao().getAll().map(::decryptTunnel)
+    /** The Wi-Fi networks tunnel [id]'s hosts dial directly on, read on every dial: its key is not decrypted for it. */
+    suspend fun tunnelDirectWifi(id: Int): String? = db.tunnelDao().directWifi(id)
     suspend fun insertTunnel(tunnel: TunnelEntity): Int = db.tunnelDao().insert(encryptTunnel(tunnel)).toInt()
-    /** Renames [id], and replaces its configuration when [config] is given. */
-    suspend fun updateTunnel(id: Int, name: String, config: String?) = db.withTransaction {
+    /** Renames [id] and sets where it goes direct, and replaces its configuration when [config] is given. */
+    suspend fun updateTunnel(id: Int, name: String, config: String?, directWifi: String) = db.withTransaction {
         val stored = db.tunnelDao().get(id) ?: return@withTransaction
-        db.tunnelDao().update(stored.copy(name = name, config = config?.let { encryptTunnel(stored.copy(config = it)).config } ?: stored.config))
+        db.tunnelDao().update(
+            stored.copy(
+                name = name,
+                config = config?.let { encryptTunnel(stored.copy(config = it)).config } ?: stored.config,
+                directWifi = directWifi,
+            ),
+        )
     }
     /**
      * Deletes [id] unless a host still goes through it, and returns those hosts' names. A host whose

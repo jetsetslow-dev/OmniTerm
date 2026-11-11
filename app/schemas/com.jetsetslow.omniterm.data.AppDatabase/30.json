@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 30,
-    "identityHash": "5801af6f8732396073adac02e772de02",
+    "identityHash": "0e1ed5c2c52c8a673046111230edfc0c",
     "entities": [
       {
         "tableName": "servers",
@@ -1468,7 +1468,7 @@
       },
       {
         "tableName": "tunnels",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `config` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `config` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `directWifi` TEXT NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -1498,6 +1498,12 @@
             "fieldPath": "createdAt",
             "columnName": "createdAt",
             "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "directWifi",
+            "columnName": "directWifi",
+            "affinity": "TEXT",
             "notNull": true
           }
         ],
@@ -1752,7 +1758,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5801af6f8732396073adac02e772de02')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0e1ed5c2c52c8a673046111230edfc0c')"
     ]
   }
 }

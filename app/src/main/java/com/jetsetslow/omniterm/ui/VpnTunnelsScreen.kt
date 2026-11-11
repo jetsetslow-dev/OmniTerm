@@ -10,9 +10,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -22,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,10 +43,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.TunnelEntity
+import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
+import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
 import com.jetsetslow.omniterm.data.tunnel.TunnelStatus
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -52,6 +62,7 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
     val tunnels by viewModel.tunnels.collectAsStateWithLifecycle()
     val statuses by viewModel.tunnelStatuses.collectAsStateWithLifecycle()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
+    val wifi by CurrentWifi.state.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<TunnelEntity?>(null) }
     var adding by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<TunnelEntity?>(null) }
@@ -76,6 +87,7 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
                     tunnel = tunnel,
                     status = statuses[tunnel.id],
                     users = users,
+                    wifi = wifi.name,
                     onEdit = { editing = tunnel },
                     onStop = { viewModel.stopTunnelNow(tunnel.id) },
                     onDelete = { deleting = tunnel },
@@ -116,6 +128,7 @@ private fun TunnelCard(
     tunnel: TunnelEntity,
     status: TunnelStatus?,
     users: List<String>,
+    wifi: String?,
     onEdit: () -> Unit,
     onStop: () -> Unit,
     onDelete: () -> Unit,
@@ -130,6 +143,22 @@ private fun TunnelCard(
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            val directOn = TunnelNetworks.names(tunnel.directWifi)
+            if (directOn.isNotEmpty()) {
+                Text(
+                    if (wifi != null && wifi in directOn) {
+                        stringResource(R.string.vpn_direct_now, wifi)
+                    } else {
+                        stringResource(R.string.vpn_direct_on, directOn.joinToString(", "))
+                    },
+                    fontSize = 12.sp,
+                    color = if (wifi != null && wifi in directOn) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("vpn.direct.${tunnel.id}"),
+                )
+                if (!CurrentWifi.mayReadName(LocalContext.current)) {
+                    Text(stringResource(R.string.vpn_direct_wifi_blocked), fontSize = 12.sp, color = OmniColors.amber)
+                }
+            }
             Row {
                 TextButton(onClick = onEdit, modifier = Modifier.testTag("vpn.edit.${tunnel.id}")) { Text(stringResource(R.string.vpn_edit)) }
                 if (status != null) {
@@ -158,7 +187,10 @@ private fun formatAgo(seconds: Long): String = when {
     else -> "${seconds / 3600}h"
 }
 
-/** Adds a tunnel ([existing] null) or renames one and, optionally, replaces its configuration. */
+/**
+ * Adds a tunnel ([existing] null), or renames one, sets the Wi-Fi networks it is not needed on
+ * and, optionally, replaces its configuration.
+ */
 @Composable
 private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, onDone: () -> Unit) {
     val context = LocalContext.current
@@ -167,6 +199,7 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
     var problem by remember { mutableStateOf<String?>(null) }
     var checkMessage by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var directWifi by remember { mutableStateOf(TunnelNetworks.names(existing?.directWifi.orEmpty())) }
     val importFailed = stringResource(R.string.vpn_import_failed)
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -186,7 +219,7 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
         onDismissRequest = { if (!saving) onDone() },
         title = { Text(stringResource(if (existing == null) R.string.vpn_add_title else R.string.vpn_edit_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -209,6 +242,7 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
                 }
                 checkMessage?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.check")) }
                 problem?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.problem")) }
+                TunnelDirectWifiEditor(directWifi) { directWifi = it }
                 Text(stringResource(R.string.vpn_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
@@ -218,7 +252,7 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
                 onClick = {
                     saving = true
                     problem = null
-                    viewModel.saveTunnel(existing?.id, name, config.takeIf { it.isNotBlank() }) { err ->
+                    viewModel.saveTunnel(existing?.id, name, config.takeIf { it.isNotBlank() }, directWifi) { err ->
                         saving = false
                         if (err == null) onDone() else problem = err
                     }
@@ -228,6 +262,113 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
         },
         dismissButton = { TextButton(onClick = onDone, enabled = !saving) { Text(stringResource(R.string.vpn_cancel)) } },
     )
+}
+
+/**
+ * The Wi-Fi networks a tunnel is not needed on ([TunnelNetworks]): typed, or taken from the Wi-Fi
+ * the phone is on. Android gives that name only with the precise location permission, which is
+ * asked for here, when the user wants it, and nowhere else.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TunnelDirectWifiEditor(names: List<String>, onChange: (List<String>) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var typed by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf<String?>(null) }
+    var mayRead by remember { mutableStateOf(CurrentWifi.mayReadName(context)) }
+    val tooLong = stringResource(R.string.vpn_direct_wifi_too_long)
+    val full = stringResource(R.string.vpn_direct_wifi_full, TunnelNetworks.MAX_NAMES)
+    val notWifi = stringResource(R.string.vpn_direct_wifi_not_wifi)
+    val withheld = stringResource(R.string.vpn_direct_wifi_withheld)
+
+    fun add(name: String) {
+        note = when {
+            name.isEmpty() || name in names -> null
+            TunnelNetworks.tooLong(name) -> tooLong
+            names.size >= TunnelNetworks.MAX_NAMES -> full
+            else -> {
+                onChange(names + name)
+                null
+            }
+        }
+    }
+
+    fun addCurrent() {
+        scope.launch {
+            // Asked again, so a name Android withheld until now comes with the answer.
+            CurrentWifi.refresh()
+            val name = CurrentWifi.name()
+            when {
+                name != null -> add(name)
+                CurrentWifi.state.value.onWifi -> note = withheld
+                else -> note = notWifi
+            }
+        }
+    }
+
+    val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        mayRead = CurrentWifi.mayReadName(context)
+        if (mayRead) addCurrent() else CurrentWifi.refresh()
+    }
+    val permissions = arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION)
+
+    Text(stringResource(R.string.vpn_direct_wifi_header), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+    Text(stringResource(R.string.vpn_direct_wifi_help), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (names.isNotEmpty()) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            names.forEach { name ->
+                InputChip(
+                    selected = false,
+                    onClick = { onChange(names - name) },
+                    label = { Text(name, fontSize = 12.sp) },
+                    trailingIcon = { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.vpn_direct_wifi_remove, name)) },
+                    modifier = Modifier.testTag("vpn.wifi.item.$name"),
+                )
+            }
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = typed,
+            onValueChange = { typed = it },
+            label = { Text(stringResource(R.string.vpn_direct_wifi_name)) },
+            singleLine = true,
+            modifier = Modifier.weight(1f).testTag("vpn.wifi.name"),
+        )
+        TextButton(
+            onClick = {
+                add(typed.trim())
+                if (note == null) typed = ""
+            },
+            enabled = typed.isNotBlank(),
+            modifier = Modifier.testTag("vpn.wifi.add"),
+        ) { Text(stringResource(R.string.vpn_direct_wifi_add)) }
+    }
+    TextButton(
+        onClick = { if (mayRead) addCurrent() else askPermission.launch(permissions) },
+        modifier = Modifier.testTag("vpn.wifi.current"),
+    ) { Text(stringResource(R.string.vpn_direct_wifi_add_current)) }
+    note?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.wifi.note")) }
+    if (names.isNotEmpty()) {
+        when {
+            !mayRead -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.vpn_direct_wifi_permission),
+                    fontSize = 11.sp,
+                    color = OmniColors.amber,
+                    modifier = Modifier.weight(1f).testTag("vpn.wifi.permission"),
+                )
+                TextButton(onClick = { askPermission.launch(permissions) }, modifier = Modifier.testTag("vpn.wifi.allow")) {
+                    Text(stringResource(R.string.vpn_direct_wifi_allow))
+                }
+            }
+            !CurrentWifi.locationOn(context) ->
+                Text(stringResource(R.string.vpn_direct_wifi_location_off), fontSize = 11.sp, color = OmniColors.amber)
+            else ->
+                Text(stringResource(R.string.vpn_direct_wifi_background), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 /**
@@ -273,6 +414,15 @@ internal fun HostVpnTunnelPicker(
             Text(stringResource(R.string.vpn_host_tunnel_gone), fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
         }
         Text(stringResource(R.string.vpn_host_never_direct), fontSize = 11.sp, color = OmniColors.amber)
+        val directOn = TunnelNetworks.names(tunnels.firstOrNull { it.id == selected }?.directWifi.orEmpty())
+        if (directOn.isNotEmpty()) {
+            Text(
+                stringResource(R.string.vpn_host_direct_on_wifi, directOn.joinToString(", ")),
+                fontSize = 11.sp,
+                color = OmniColors.amber,
+                modifier = Modifier.testTag("host.tunnel.directWifi"),
+            )
+        }
         OutlinedTextField(
             value = tunnelHost,
             onValueChange = onTunnelHostChange,

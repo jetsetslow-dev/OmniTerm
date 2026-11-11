@@ -937,6 +937,49 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       ignored, the second host was left not run and the test failed.
   - Next: an output filter and search, sudo in Fleet (pushes to protected paths too), and
     broadcast typing last.
+- Piece 4, Tunnels (in progress):
+  - Tunnels follow the network (user, Nov 11): done (commit "Let a tunnel be skipped on the Wi-Fi
+    networks it is not needed on").
+    - A tunnel takes up to 10 Wi-Fi names (`tunnels.directWifi`, one per line, folded into schema
+      30). On one of them its hosts dial their own address; on any other network, on mobile data,
+      behind another app's VPN, or when the name is not known, they go through the tunnel.
+    - `HostRoute.tunnelNow` is the one decision, asked by everything that dials a host:
+      `HostCredentials.build` (SSH, SFTP, Fleet, checks, automation, MCP), the direct reachability
+      probe, the endpoint checks and the editor's Test. No engine knows about it, so Tailscale and
+      the other kinds get it as they land. A tunnel that is gone still fails closed.
+    - `CurrentWifi` follows Android's default network. The name needs `ACCESS_FINE_LOCATION`
+      (with `ACCESS_COARSE_LOCATION` and `ACCESS_WIFI_STATE`, all new in the manifest and
+      PRIVACY.md), asked for in the tunnel editor only. Android gives the name only while the app
+      is on screen, so `WifiMemory` keeps it per connection (Android's network handle, with the
+      boot count) for background checks, schedules and automation. Background location is not
+      requested: on a Wi-Fi joined while the app was closed, background runs use the tunnel.
+    - When the phone joins or leaves a named Wi-Fi, or the list changes, the hosts' kept
+      connections over the old route are dropped, terminals reconnect, SSH forwards stop, and a
+      tunnel no host goes through any more comes down.
+    - Editor: type a name or **Add the Wi-Fi this phone is on**; the card says when its hosts are
+      going direct; the host editor names the exception. Backups carry the list; a tunnel the
+      phone already has keeps its own.
+    - iOS needs Apple's "Access Wi-Fi Information" entitlement, which needs a paid developer
+      account, so the iOS PR shows a notice instead.
+    - Tests: `TunnelNetworksTest` 5, `TunnelNetworkRouteRobolectricTest` 4,
+      `VpnTunnelBackupRobolectricTest` 1, `TunnelRoutingTest` 8, all 0 failed. Seven guards seen
+      failing: an unknown network going direct, names matched without case, a name kept for
+      another connection, credentials ignoring the rule, a deleted tunnel going direct, the
+      network not followed, the backup dropping the list.
+    - Devices (API 35, clean install, repository fixtures with the WireGuard one):
+      `E2eVpnTunnelTest` 1 (`-e omniterm_e2e_vpn yes` and the keys from `scripts/test-hosts/.env`)
+      now also allows location, adds the emulator's own Wi-Fi in the tunnel's editor, sees the
+      card say its hosts connect directly, reaches the host behind a tunnel that cannot connect,
+      then takes the Wi-Fi off the list and sees that host fail closed again.
+      `AppDatabaseMigrationTest` 13 (an upgraded tunnel names no Wi-Fi), `E2eRollingFleetTest` 1,
+      `E2eFleetScheduleTest` 1, `E2eAlertRunbookTest` 1, `E2eAutomationTest` 1, `E2eMcpTest` 1,
+      `E2eHostChecksTest` 1, `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1,
+      `E2eScriptParamsFleetTest` 1, `E2eScriptCheckTest` 1, all 0 failed. Guard: with the rule
+      ignored, the host went into the broken tunnel and the test failed there.
+    - The test leaves the location permission granted to the installed test build: taking a
+      permission away kills the app under test.
+  - Next: Tailscale/Headscale, NetBird, Nebula and Cloudflare Access, with the `check-licenses.py`
+    fixes the feasibility run found.
 - Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
   - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
   - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,
@@ -1007,6 +1050,17 @@ On Nov 9 the user added:
    Go library, built with a repo-local, checksum-verified Go toolchain (approved Nov 8). ZeroTier,
    OpenVPN and Pangolin's Olm are left out for their licences; Pangolin raw TCP resources work as a
    plain host and port.
+
+   User, Nov 11: "also make tunnels network specific, i.e. when on home network bypass tunnel
+   (wifi ssid), when outside that network use tunnels", then "what about tailscake" (Tailscale).
+   So, for every tunnel kind, Tailscale included:
+   - A tunnel takes a list of Wi-Fi names. On one of them its hosts dial their direct address; on
+     any other network, or when the network cannot be identified, they use the tunnel.
+   - It is a rule the user sets, not a fallback, so "a host with a tunnel never goes direct" still
+     holds everywhere else.
+   - Android gives a Wi-Fi name only with the location permission, asked for when the user turns
+     this on; background location is not asked for. PRIVACY.md says so.
+   - It is built in the shared routing (not in one engine), first, on WireGuard, in the bundle PR.
 4. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
    presets.
 5. Fleet enhancements (user, Nov 9: "investigate other enhancements there as well"), its own PR.

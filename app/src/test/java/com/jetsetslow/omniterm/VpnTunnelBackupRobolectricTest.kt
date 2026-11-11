@@ -8,6 +8,7 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.TunnelEntity
+import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupSelection
 import com.jetsetslow.omniterm.ui.MISSING_TUNNEL_ID
@@ -56,7 +57,8 @@ class VpnTunnelBackupRobolectricTest {
             withContext(Dispatchers.IO) { db.clearAllTables() }
             val model = withContext(main) { AppViewModel(application) }
             store.put("backup", model)
-            val home = repo.insertTunnel(TunnelEntity(name = "Home", config = HOME))
+            val homeWifi = listOf("Home WiFi", "Café, upstairs")
+            val home = repo.insertTunnel(TunnelEntity(name = "Home", config = HOME, directWifi = TunnelNetworks.stored(homeWifi)))
             repo.insertTunnel(TunnelEntity(name = "Lab", config = LAB))
             repo.insertServer(host("nas", tunnelId = home, tunnelHost = "10.9.0.7"))
             repo.insertServer(host("router", tunnelId = null))
@@ -78,7 +80,7 @@ class VpnTunnelBackupRobolectricTest {
             // Another phone: its own "Home" is a different tunnel; its "Lab" is the same one.
             withContext(Dispatchers.IO) { db.clearAllTables() }
             val otherHome = repo.insertTunnel(TunnelEntity(name = "home", config = "[Interface]\n# another phone's\n"))
-            val sameLab = repo.insertTunnel(TunnelEntity(name = "Lab", config = LAB))
+            val sameLab = repo.insertTunnel(TunnelEntity(name = "Lab", config = LAB, directWifi = "Lab net"))
             // The same machine and login, saved here directly: not the backup's copy through a tunnel.
             repo.insertServer(host("nas", tunnelId = null).copy(name = "nas here"))
             val restored = CompletableDeferred<Pair<Boolean, String>>()
@@ -91,6 +93,8 @@ class VpnTunnelBackupRobolectricTest {
             assertEquals(setOf("home", "Home (2)", "Lab"), tunnels.map { it.name }.toSet())
             val restoredHome = tunnels.single { it.name == "Home (2)" }
             assertEquals(HOME, restoredHome.config)
+            assertEquals("the Wi-Fi networks it is not needed on come with it", homeWifi, TunnelNetworks.names(restoredHome.directWifi))
+            assertEquals("a tunnel the phone has keeps its own", "Lab net", tunnels.single { it.name == "Lab" }.directWifi)
             assertEquals("the same Lab tunnel is not added twice", sameLab, tunnels.single { it.name == "Lab" }.id)
             val servers = repo.getAllServers().associateBy { it.name }
             assertEquals(restoredHome.id, servers.getValue("nas").tunnelId)

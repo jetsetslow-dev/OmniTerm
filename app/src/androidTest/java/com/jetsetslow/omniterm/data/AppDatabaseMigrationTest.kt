@@ -511,6 +511,7 @@ class AppDatabaseMigrationTest {
                     "'Default', 'password', '', '', 30, 0, 0, '', 'none', '', 0, '', '', 0, -1, 0, 'offline', 'unknown', '')"
             )
             db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('r1', 1, 2, 'uptime', NULL, 'fleet')")
+            db.execSQL("INSERT INTO tunnels (name, kind, config, createdAt) VALUES ('Home', 'wireguard', 'enc:v1:x', 1)")
         }
 
         helper.runMigrationsAndValidate(
@@ -522,6 +523,10 @@ class AppDatabaseMigrationTest {
             db.query("SELECT tags FROM servers WHERE name = 'nas'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("an upgraded host has no tags", "", cursor.getString(0))
+            }
+            db.query("SELECT directWifi FROM tunnels WHERE name = 'Home'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgraded tunnel is needed on every network, as before", "", cursor.getString(0))
             }
             db.query("SELECT COUNT(*) FROM fleet_target_sets").use { cursor ->
                 assertTrue(cursor.moveToFirst())

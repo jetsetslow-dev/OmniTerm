@@ -548,6 +548,7 @@ object UseOutcome {
 /**
  * A tunnel the user set up once and picks per host. [config] is the tunnel's own configuration
  * (for WireGuard, the wg-quick file with its private key), encrypted at the repository boundary.
+ * [directWifi] names the Wi-Fi networks its hosts dial directly on (TunnelNetworks), one per line.
  */
 @Entity(tableName = "tunnels")
 data class TunnelEntity(
@@ -556,6 +557,7 @@ data class TunnelEntity(
     val kind: String = TunnelKinds.WIREGUARD,
     val config: String,
     val createdAt: Long = System.currentTimeMillis(),
+    val directWifi: String = "",
 )
 
 object TunnelKinds {

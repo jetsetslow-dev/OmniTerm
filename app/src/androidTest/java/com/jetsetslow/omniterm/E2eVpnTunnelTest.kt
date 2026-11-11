@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm
 
+import android.Manifest
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
@@ -7,6 +8,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
@@ -15,6 +17,7 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.TunnelEntity
+import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
 import com.jetsetslow.omniterm.data.tunnel.TunnelManager
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BroadcastStatus
@@ -35,6 +38,8 @@ import org.junit.Test
  * - a host named internal-a.lab.vpn, found only by the tunnel's DNS, is reached through it;
  * - a host that answers directly, once its tunnel is picked, is never dialled directly again: not by
  *   a pooled session from before, and not when its tunnel cannot connect;
+ * - on a Wi-Fi a tunnel is listed as not needed on, its host is reached directly, and off that
+ *   list it is behind the tunnel again;
  * - a tunnel a host still uses cannot be deleted.
  * Run with -e omniterm_e2e_vpn yes -e wg_client_key <key> -e wg_server_pub <key> -e pass <password>
  * (scripts/test-hosts/.env). Everything it adds is removed again.
@@ -143,6 +148,39 @@ class E2eVpnTunnelTest {
             val (strandedStatus, strandedOut) = broadcast(stranded, "echo vpn-$stamp-stranded")
             assertFalse("never reached directly: $strandedOut", strandedOut.contains("vpn-$stamp-stranded"))
             assertTrue(strandedOut, strandedStatus != BroadcastStatus.Success)
+
+            // On a Wi-Fi its tunnel is not needed on, the stranded host is reached directly: the
+            // tunnel cannot connect, so an answer can only have come the direct way. Android gives
+            // the Wi-Fi's name with the location permission, which a user allows in the editor.
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION).forEach {
+                instrumentation.uiAutomation.grantRuntimePermission(context.packageName, it)
+            }
+            instrumentation.uiAutomation.executeShellCommand("cmd location set-location-enabled true").close()
+            CurrentWifi.refresh()
+            composeRule.waitUntil(30_000) { CurrentWifi.state.value.name != null }
+            val wifi = CurrentWifi.state.value.name!!
+            composeRule.onNodeWithTag("vpn.edit.${broken.id}").performScrollTo().performClick()
+            composeRule.waitUntil(10_000) { has("vpn.wifi.current") }
+            composeRule.onNodeWithTag("vpn.wifi.current").performScrollTo().performClick()
+            composeRule.waitUntil(10_000) { has("vpn.wifi.item.$wifi") }
+            composeRule.onNodeWithTag("vpn.save").performClick()
+            composeRule.waitUntil(15_000) { vm.tunnels.value.single { it.id == broken.id }.directWifi == wifi }
+            composeRule.waitUntil(10_000) { has("vpn.direct.${broken.id}") }
+            composeRule.onNodeWithTag("vpn.direct.${broken.id}").assert(hasText("On “$wifi” now: its hosts connect directly."))
+            val (homeStatus, homeOut) = broadcast(stranded, "echo vpn-$stamp-home")
+            assertEquals(homeOut, BroadcastStatus.Success, homeStatus)
+            assertTrue(homeOut, homeOut.contains("vpn-$stamp-home"))
+
+            // Off the list again, it is back behind its tunnel: the direct session from a moment
+            // ago is not reused, and it fails instead of going direct.
+            var cleared: String? = "pending"
+            composeRule.runOnUiThread { vm.saveTunnel(broken.id, broken.name, null, emptyList()) { cleared = it } }
+            composeRule.waitUntil(15_000) { cleared != "pending" }
+            assertEquals(null, cleared)
+            val (awayStatus, awayOut) = broadcast(stranded, "echo vpn-$stamp-away")
+            assertFalse("never reached directly once the Wi-Fi is off the list: $awayOut", awayOut.contains("vpn-$stamp-away"))
+            assertTrue(awayOut, awayStatus != BroadcastStatus.Success)
 
             // A tunnel hosts still use cannot be deleted.
             var refusal: String? = "pending"

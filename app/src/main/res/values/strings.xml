@@ -1784,7 +1784,25 @@
     <!-- VPN tunnels (Tools → VPN tunnels, and the host editor) -->
     <string name="vpn_title">"VPN tunnels"</string>
     <string name="vpn_intro">"Reach hosts through WireGuard without using the phone's VPN. A tunnel runs inside OmniTerm only: just the connections to the hosts you pick go through it, and it starts when one of them needs it."</string>
-    <string name="vpn_never_direct">"A host with a tunnel always goes through it and never connects directly, even when the tunnel is down."</string>
+    <string name="vpn_never_direct">"A host with a tunnel always goes through it and never connects directly, even when the tunnel is down. The one exception is a Wi-Fi you list on the tunnel as one it is not needed on."</string>
+    <string name="vpn_direct_wifi_header">"Not needed on these Wi-Fi networks"</string>
+    <string name="vpn_direct_wifi_help">"On a Wi-Fi listed here, such as your home network, hosts that use this tunnel connect directly, at their own address. On any other network, or when OmniTerm cannot tell which Wi-Fi the phone is on, they go through the tunnel."</string>
+    <string name="vpn_direct_wifi_name">"Wi-Fi name"</string>
+    <string name="vpn_direct_wifi_add">"Add"</string>
+    <string name="vpn_direct_wifi_add_current">"Add the Wi-Fi this phone is on"</string>
+    <string name="vpn_direct_wifi_remove">"Remove %1$s"</string>
+    <string name="vpn_direct_wifi_too_long">"A Wi-Fi name is at most 32 bytes."</string>
+    <string name="vpn_direct_wifi_full">"A tunnel takes up to %1$d Wi-Fi names."</string>
+    <string name="vpn_direct_wifi_not_wifi">"This phone's connections are not going over Wi-Fi right now."</string>
+    <string name="vpn_direct_wifi_withheld">"Android did not give the Wi-Fi's name. Turn on Location, and allow OmniTerm precise location."</string>
+    <string name="vpn_direct_wifi_permission">"Android gives a Wi-Fi's name only to apps with the Location permission (precise). OmniTerm reads the name, on the phone, and never your location. Until it is allowed, this tunnel is always used."</string>
+    <string name="vpn_direct_wifi_allow">"Allow"</string>
+    <string name="vpn_direct_wifi_location_off">"Location is off, so Android withholds the Wi-Fi's name and this tunnel is always used. Turn Location on in the phone's settings."</string>
+    <string name="vpn_direct_wifi_background">"OmniTerm learns the Wi-Fi's name while it is open and remembers it until the phone leaves that network. A background check on a Wi-Fi it has not seen yet uses the tunnel."</string>
+    <string name="vpn_direct_on">"Not needed on: %1$s"</string>
+    <string name="vpn_direct_wifi_blocked">"OmniTerm may not read the Wi-Fi's name yet, so this tunnel is always used. Tap Edit to allow it."</string>
+    <string name="vpn_direct_now">"On “%1$s” now: its hosts connect directly."</string>
+    <string name="vpn_host_direct_on_wifi">"Except on %1$s: the tunnel is not needed there, and the host connects directly at its address above."</string>
     <string name="vpn_add_wireguard">"Add WireGuard tunnel"</string>
     <string name="vpn_none_yet">"No VPN tunnels yet."</string>
     <string name="vpn_kind_wireguard">"WireGuard"</string>

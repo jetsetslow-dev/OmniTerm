@@ -78,7 +78,11 @@ object AutomationJobs {
     private const val JOB_ID_BASE = 0x4F_4D_00_00
     private val nextJobId = AtomicInteger(Random.nextInt(0, 0x8000))
 
-    fun repository(context: Context) = AppRepository(AppDatabase.getDatabase(context.applicationContext))
+    fun repository(context: Context): AppRepository {
+        // A background run follows the tunnels' Wi-Fi rule too, from what the app last saw.
+        com.jetsetslow.omniterm.data.tunnel.CurrentWifi.start(context)
+        return AppRepository(AppDatabase.getDatabase(context.applicationContext))
+    }
 
     /**
      * Starts [request]'s run as soon as Android allows: an expedited job on Android 12 and later,

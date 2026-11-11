@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Host Offline and phone-side checks record nothing while the phone has no network. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Only for a VPN tunnel the user says is not needed on some Wi-Fi: Android gives a Wi-Fi's
+         name to an app with precise location only. Asked for when the user sets that up; the name
+         stays on the phone, and location itself is never read. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- USB serial consoles and plugged-in security keys work on phones that can host USB devices;
          the app installs on any. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />

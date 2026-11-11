@@ -28,7 +28,10 @@ import com.jetsetslow.omniterm.automation.AlertRunbooks
 import com.jetsetslow.omniterm.automation.FleetSchedules
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.mcp.McpSettings
+import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
+import com.jetsetslow.omniterm.data.tunnel.HostRoute
 import com.jetsetslow.omniterm.data.tunnel.TunnelManager
+import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
 import com.jetsetslow.omniterm.mcp.McpApprovals
 import com.jetsetslow.omniterm.mcp.McpConfig
 import com.jetsetslow.omniterm.mcp.McpServerState
@@ -2910,6 +2913,17 @@ class AppViewModel @JvmOverloads constructor(
     init {
         resumeMcpServer()
         TunnelManager.attach(repository)
+        CurrentWifi.start(application)
+        // A tunnel may not be needed on some Wi-Fi (TunnelNetworks): as the phone joins or leaves
+        // one, that tunnel's hosts leave the route they were on.
+        viewModelScope.launch {
+            var before = CurrentWifi.state.value.name
+            CurrentWifi.state.map { it.name }.distinctUntilChanged().collect { now ->
+                val was = before
+                before = now
+                if (was != now) followNetwork(was, now)
+            }
+        }
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
         SshHostKeyTrust.registerApprovalHandler(hostKeyApprovalOwner) { req ->
@@ -3420,7 +3434,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (srv.status == "offline") {
                     repository.updateReachability(srv.id, "connecting", 0)
                 }
-                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType, srv.tunnelId)) {
+                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType, HostRoute.tunnelNow(repository, srv.tunnelId))) {
                     tcpReachable(srv.host, srv.port)
                 } else {
                     -1
@@ -3931,10 +3945,11 @@ class AppViewModel @JvmOverloads constructor(
                     if (System.currentTimeMillis() < (endpointChecksDueAt[key] ?: 0L)) continue
                     launch {
                         limit.withPermit {
+                            val tunnelNow = HostRoute.tunnelNow(repository, srv.tunnelId)
                             val result = EndpointChecks.run(
                                 rule, srv.host,
-                                tunnel = srv.tunnelId?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id) } },
-                                tunnelHost = srv.tunnelHost,
+                                tunnel = tunnelNow?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id) } },
+                                tunnelHost = srv.tunnelHost.takeIf { tunnelNow != null }.orEmpty(),
                             )
                             val now = System.currentTimeMillis()
                             val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
@@ -5304,16 +5319,10 @@ class AppViewModel @JvmOverloads constructor(
                 // Nothing may keep using the previous route: a host whose tunnel was just selected
                 // must never stay connected directly, and one whose tunnel was taken away must not
                 // keep using it. Its forwards stop; its terminals reconnect over the new route.
-                val forwards = repository.getAllPortForwards().filter { it.serverId == server.id && isTunnelActive(it.id) }
-                forwards.forEach { stopTunnel(it.id) }
-                val shells = activeSessions.filter { it.serverId == server.id && !it.userClosed }
-                shells.forEach { shell ->
-                    runCatching { shell.session.close() }
-                    reconnectSession(shell)
-                }
-                if (forwards.isNotEmpty() || shells.isNotEmpty()) {
-                    hostEditNotice = "The host's VPN tunnel changed: ${shells.size} terminal(s) reconnect through the new " +
-                        "route, and ${forwards.size} SSH tunnel(s) stopped. Start them again to use it."
+                val (shells, forwards) = leaveOldRoute(server.id)
+                if (forwards > 0 || shells > 0) {
+                    hostEditNotice = "The host's VPN tunnel changed: $shells terminal(s) reconnect through the new " +
+                        "route, and $forwards SSH tunnel(s) stopped. Start them again to use it."
                 }
             } else if (creds != previousCreds) {
                 val running = repository.getAllPortForwards().count { it.serverId == server.id && isTunnelActive(it.id) }
@@ -6629,6 +6638,8 @@ class AppViewModel @JvmOverloads constructor(
                 }
             }
             val proxyKey = proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
+            // As a connection would go right now: directly on a Wi-Fi the tunnel is not needed on.
+            val tunnelNow = HostRoute.tunnelNow(repository, tunnelId)
             val err = sshTransport.testConnection(
                 SshCredentials(
                     host, port, user, pass, key?.privateKey,
@@ -6637,9 +6648,9 @@ class AppViewModel @JvmOverloads constructor(
                     proxyKeyPem = proxyKey?.privateKey,
                     certificate = key?.certificate,
                     proxyCertificate = proxyKey?.certificate,
-                    tunnelId = tunnelId,
-                    tunnelHost = tunnelHost.trim(),
-                ).also { if (tunnelId != null) TunnelManager.attach(repository) },
+                    tunnelId = tunnelNow,
+                    tunnelHost = tunnelHost.trim().takeIf { tunnelNow != null }.orEmpty(),
+                ).also { if (tunnelNow != null) TunnelManager.attach(repository) },
                 interactiveAuthFor(displayName.ifBlank { host }),
             )
             isTestingConnection = false
@@ -15063,9 +15074,10 @@ class AppViewModel @JvmOverloads constructor(
     /**
      * Saves a new tunnel ([id] null) or renames one, replacing its configuration when [config] is
      * given. A tunnel whose configuration changed stops at once, so nothing keeps going through the
-     * old one; its connections reconnect through the new one.
+     * old one; its connections reconnect through the new one. [directWifi] is the Wi-Fi networks
+     * it is not needed on ([TunnelNetworks]); null keeps the ones it has.
      */
-    fun saveTunnel(id: Int?, name: String, config: String?, onResult: (String?) -> Unit) {
+    fun saveTunnel(id: Int?, name: String, config: String?, directWifi: List<String>? = null, onResult: (String?) -> Unit) {
         viewModelScope.launch {
             val trimmedName = name.trim()
             val problem = when {
@@ -15081,10 +15093,17 @@ class AppViewModel @JvmOverloads constructor(
             }
             val result = runCatching {
                 if (id == null) {
-                    repository.insertTunnel(TunnelEntity(name = trimmedName, config = config.orEmpty()))
+                    repository.insertTunnel(
+                        TunnelEntity(name = trimmedName, config = config.orEmpty(), directWifi = TunnelNetworks.stored(directWifi.orEmpty())),
+                    )
                 } else {
-                    repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() })
+                    val wifi = CurrentWifi.state.value.name
+                    val before = repository.tunnelDirectWifi(id).orEmpty()
+                    val direct = directWifi?.let(TunnelNetworks::stored) ?: before
+                    repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() }, direct)
                     if (!config.isNullOrBlank()) withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+                    // Naming, or no longer naming, the Wi-Fi the phone is on moves its hosts now.
+                    if (TunnelNetworks.goesDirect(before, wifi) != TunnelNetworks.goesDirect(direct, wifi)) leaveRouteOf(setOf(id), nowDirect = TunnelNetworks.goesDirect(direct, wifi))
                 }
             }
             onResult(result.exceptionOrNull()?.let { it.message ?: "The tunnel could not be saved." })
@@ -15102,6 +15121,54 @@ class AppViewModel @JvmOverloads constructor(
             withContext(Dispatchers.IO) { TunnelManager.stop(id) }
             onResult(null)
         }
+    }
+
+    /**
+     * The phone joined or left a Wi-Fi ([was], [now]; null is none, or not known): the hosts of
+     * each tunnel that is not needed on one of the two leave the route they were on.
+     */
+    private suspend fun followNetwork(was: String?, now: String?) {
+        val moved = repository.tunnelsFlow.first()
+            .filter { TunnelNetworks.goesDirect(it.directWifi, was) != TunnelNetworks.goesDirect(it.directWifi, now) }
+        val (direct, tunnelled) = moved.partition { TunnelNetworks.goesDirect(it.directWifi, now) }
+        if (direct.isNotEmpty()) leaveRouteOf(direct.mapTo(HashSet()) { it.id }, nowDirect = true)
+        if (tunnelled.isNotEmpty()) leaveRouteOf(tunnelled.mapTo(HashSet()) { it.id }, nowDirect = false)
+    }
+
+    /**
+     * Moves the hosts of [tunnelIds] off the route they just left: their kept connections over it
+     * close, their terminals reconnect over the route they have now, their SSH forwards stop, and
+     * a tunnel its hosts no longer go through ([nowDirect]) comes down.
+     */
+    private suspend fun leaveRouteOf(tunnelIds: Set<Int>, nowDirect: Boolean) {
+        for (server in repository.getAllServers().filter { it.tunnelId in tunnelIds }) {
+            runCatching { buildCredentials(server) }.getOrNull()?.let { current ->
+                val left = if (nowDirect) {
+                    current.copy(tunnelId = server.tunnelId, tunnelHost = server.tunnelHost)
+                } else {
+                    current.copy(tunnelId = null, tunnelHost = "")
+                }
+                sshTransport.forgetCredentials(left)
+                JschSftp.forgetCredentials(left)
+            }
+            leaveOldRoute(server.id)
+        }
+        if (nowDirect) withContext(Dispatchers.IO) { tunnelIds.forEach(TunnelManager::stop) }
+    }
+
+    /**
+     * Ends what host [serverId] has open over a route it no longer uses: its SSH forwards stop and
+     * its terminals reconnect over the route it has now. Returns how many terminals and forwards.
+     */
+    private suspend fun leaveOldRoute(serverId: Int): Pair<Int, Int> {
+        val forwards = repository.getAllPortForwards().filter { it.serverId == serverId && isTunnelActive(it.id) }
+        forwards.forEach { stopTunnel(it.id) }
+        val shells = activeSessions.filter { it.serverId == serverId && !it.userClosed }
+        shells.forEach { shell ->
+            runCatching { shell.session.close() }
+            reconnectSession(shell)
+        }
+        return shells.size to forwards.size
     }
 
     /** Takes tunnel [id] down now; it starts again when a host next needs it. */
@@ -15740,6 +15807,8 @@ class AppViewModel @JvmOverloads constructor(
         for (tunnel in if (closedSelection.servers) tunnels else emptyList()) {
             tunnelArr.put(org.json.JSONObject().apply {
                 put("id", tunnel.id); put("name", tunnel.name); put("kind", tunnel.kind); put("config", tunnel.config)
+                // The Wi-Fi networks its hosts dial directly on, each name as it is spelled.
+                put("directWifi", org.json.JSONArray(TunnelNetworks.names(tunnel.directWifi)))
             })
         }
         val networkShareArr = org.json.JSONArray()
@@ -16454,7 +16523,12 @@ class AppViewModel @JvmOverloads constructor(
                                         .map { n -> if (n == 1) tunnelName else "$tunnelName ($n)" }
                                         .first { it.lowercase() !in takenNames }
                                     takenNames += freeName.lowercase()
-                                    repository.insertTunnel(TunnelEntity(name = freeName, kind = kind, config = tunnelConfig))
+                                    // A tunnel the phone already has keeps its own Wi-Fi list; a new one takes the backup's.
+                                    val directWifi = o.optJSONArray("directWifi")
+                                        ?.let { names -> (0 until names.length()).map { names.optString(it) } }.orEmpty()
+                                    repository.insertTunnel(
+                                        TunnelEntity(name = freeName, kind = kind, config = tunnelConfig, directWifi = TunnelNetworks.stored(directWifi)),
+                                    )
                                 }
                             }
                         }
