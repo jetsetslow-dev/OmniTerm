@@ -73,7 +73,7 @@ android {
       dimension = "distribution"
       applicationIdSuffix = ".oss"
       buildConfigField("boolean", "PLAY_STORE_BUILD", "false")
-      buildConfigField("String", "DISTRIBUTION_NAME", "\"Source Available\"")
+      buildConfigField("String", "DISTRIBUTION_NAME", "\"Open Source\"")
       // The ads SDK isn't bundled here, but the manifest merger still resolves placeholders.
       manifestPlaceholders["admobAppId"] = admobTestAppId
     }

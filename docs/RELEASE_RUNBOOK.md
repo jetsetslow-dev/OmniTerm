@@ -22,7 +22,7 @@ The public Git history was intentionally reset after `v0.9.239` to remove creden
    ```
 
    The script requires a fully published prerelease for the same SHA and base version, then promotes it to the suffix-free build-99 tag. It pushes only the tag and never pushes `main`, which prevents duplicate branch-plus-tag release races.
-4. Verify the internal Play release and install the source-available APK. Promote to wider Play tracks in Play Console only after smoke testing.
+4. Verify the internal Play release and install the open-source APK. Promote to wider Play tracks in Play Console only after smoke testing.
 
 For an explicit version use `./scripts/release.sh --tag vMAJOR.MINOR.PATCH[-SUFFIX]`. For an additional prerelease line use `./scripts/release.sh --prerelease rc.2`. The helper refuses non-increasing versions and existing tags.
 

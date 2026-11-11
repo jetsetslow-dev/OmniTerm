@@ -450,7 +450,7 @@
     <string name="enter_your_app_pin_to_apply">"Enter your app PIN to apply these changes."</string>
     <string name="omniterm_terminal_console">"OmniTerm Terminal Console"</string>
     <string name="source_code_contributions">"Source code &amp; contributions"</string>
-    <string name="build_from_source_for_noncommercial_use">"Build from source for noncommercial use, file issues, or contribute on GitHub."</string>
+    <string name="build_from_source_for_noncommercial_use">"Build from source, file issues, or contribute on GitHub."</string>
     <string name="view_on_github">"View on GitHub"</string>
     <string name="privacy_policy">"Privacy Policy"</string>
     <string name="copy_diagnostics">"Copy diagnostics"</string>
@@ -806,7 +806,7 @@
     <string name="history_entries_per_host">"History entries per host: %1$s"</string>
     <string name="version">"Version %1$s"</string>
     <string name="build">"Build %1$s"</string>
-    <string name="build_source_available_for_noncommercial_use">"%1$s build. Source available for noncommercial use under the PolyForm Noncommercial License 1.0.0. OmniTerm connects directly to your hosts and keeps SSH keys and credentials on-device. There is no OmniTerm account or usage telemetry. "</string>
+    <string name="build_source_available_for_noncommercial_use">"%1$s build. Free and open-source software under the GPL-3.0. OmniTerm connects directly to your hosts and keeps SSH keys and credentials on-device. There is no OmniTerm account or usage telemetry. "</string>
     <string name="recorded_release_traces_are_obfuscated_keep">"%1$s recorded. Release traces are obfuscated — keep the version line so it can be decoded."</string>
     <string name="score_starts_at_100_each_metric">"Score starts at 100; each metric subtracts points when it reaches a tier (warn / high / critical). Edit the thresholds and the points each deducts."</string>
     <string name="threshold_then_penalty">"%1$s · threshold (%2$s) then penalty"</string>

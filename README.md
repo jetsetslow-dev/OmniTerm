@@ -25,14 +25,14 @@ OmniTerm is a native Android app for running your homelab and servers from a pho
 
 OmniTerm ships in two builds with the exact same core features. They differ only in distribution and monetization:
 
-| | Source-available build | Play Store build (free) | Remove Ads | Unlock |
+| | Open-source build | Play Store build (free) | Remove Ads | Unlock |
 |---|---|---|---|---|
 | Saved hosts | Unlimited | 1 | 1 | Unlimited |
 | Saved credentials | Unlimited | 1 | 1 | Unlimited |
 | Ads | None | Single bottom banner | None | None |
 | All other features | Yes | Yes | Yes | Yes |
 
-### Source-available build
+### Open-source build
 Install the APK from the OmniTerm GitHub release page. It has **no host limits, no ads, and no in-app purchases** — no Play Billing code and no ad SDK. It uses the application ID `com.jetsetslow.omniterm.app.oss` so it can co-exist with the Play Store package (`com.jetsetslow.omniterm.app`).
 
 1. Download the latest APK from the GitHub release page.
@@ -45,7 +45,8 @@ Free with a 1-host limit and a single bottom banner. Both purchases are **one-ti
 - **Unlock OmniTerm** removes the banner *and* lifts the host/credential limits (so you never need both). It also enables **Quick connect**, the ad-hoc SSH session to an unsaved host, and the **Telnet** and **USB serial** terminals — the free build must save a host first, so that the 1-host limit still means something.
 - Purchases are tied to your Google account — use **Restore purchase** on the unlock screen after a reinstall or device switch.
 
-*OmniTerm source is available under the PolyForm Noncommercial License 1.0.0. Personal, educational, evaluation, and other noncommercial source builds are allowed. Commercial redistribution, paid forks, third-party app-store publication, hosted/managed paid builds, and monetized derivatives require separate written permission.*
+## Licence
+OmniTerm is free and open-source software under the GPL-3.0 (see [LICENSE](LICENSE)). The Play Store build additionally includes Google's billing and ads libraries, which are not part of this repository. The OmniTerm name and logo are not covered by the licence.
 
 ## Architecture
 
@@ -242,7 +243,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
 - **App Lock** comes back with **Settings & customizations**: the backup's PIN and lock replace the phone's, and the restore says so, so make sure you know that PIN. A backup made with App Lock off leaves the phone's lock as it is. Biometric unlock and failed PIN attempts stay with each phone: turn on fingerprint unlock again on the new phone.
 
 ## Security & privacy
-- **No OmniTerm backend, no server agents** — administration traffic goes directly from your device to the hosts you configure. The Play Store flavor separately contacts Google for ads, consent, and billing; the source-available flavor omits those SDKs. If you turn on alert forwarding, alerts also go to the ntfy, Gotify or webhook address you enter, and nowhere else.
+- **No OmniTerm backend, no server agents** — administration traffic goes directly from your device to the hosts you configure. The Play Store flavor separately contacts Google for ads, consent, and billing; the open-source flavor omits those SDKs. If you turn on alert forwarding, alerts also go to the ntfy, Gotify or webhook address you enter, and nowhere else.
 - **On-device encryption** — credentials, private keys, sudo passwords, and proxy passwords use AES-GCM with an Android Keystore-managed key (hardware-backed where the device supports it).
 - **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it. If you reject a host's key, OmniTerm stops asking about it from background checks; it asks again when you connect to that host, tap **Retry** on it, or test its connection.
 - **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust. When a program on that host asks to use a security key through it, OmniTerm says so, and the user it is signing in as; cancel unless you started it. Such a request waits 20 seconds for the touch, including when the security key uses an SSH certificate.
@@ -255,7 +256,7 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
 - **AI assistants are opt-in** — the MCP server runs only after you turn it on under **Tools → AI assistants**, listens only on the phone's own address, needs its token on every request, sees only the hosts you tick, and runs nothing you have not approved on the phone.
 - **Links and shares wait for you** — an `ssh://` link or a share from another app only opens a screen. Nothing connects, is saved or is uploaded until you tap, and a password in a link is never kept.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
-- **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The source-available build has no ads SDK and accesses no advertising ID.
+- **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The open-source build has no ads SDK and accesses no advertising ID.
 
 ## Troubleshooting
 - **Host offline** — check hostname/IP, SSH port, network route, and firewalls.
@@ -292,7 +293,7 @@ bug reports that shaped features here:
 - Tell other developers and homelab enthusiasts.
 
 ## Build from source
-Build the source-available variant and run its unit tests:
+Build the open-source variant and run its unit tests:
 ```bash
 ./gradlew assembleOpenSourceDebug testOpenSourceDebugUnitTest --no-daemon
 ```
