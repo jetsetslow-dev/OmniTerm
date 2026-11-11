@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -305,11 +306,15 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     // from another tab or screen finds every card collapsed again. Only the user tapping a card
     // header writes to it.
     val expandedOutputs = remember { mutableStateMapOf<Int, Boolean>() }
+    // Which cards show: every host, or the ones a text or "Failed only" leaves.
+    var outputFilter by remember { mutableStateOf(FleetOutputFilter()) }
+    val shownResults by remember { derivedStateOf { outputFilter.apply(viewModel.broadcastResults) } }
 
-    // A new broadcast, or cleared outputs, starts every card collapsed again.
+    // A new broadcast, or cleared outputs, starts every card collapsed again, and shows every host.
     LaunchedEffect(viewModel.isBroadcastExecuting, viewModel.broadcastResults.isEmpty()) {
         if (viewModel.isBroadcastExecuting || viewModel.broadcastResults.isEmpty()) {
             expandedOutputs.clear()
+            outputFilter = FleetOutputFilter()
         }
     }
 
@@ -616,6 +621,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
     }
     val context = LocalContext.current
     val outputsHeader = @Composable {
+        Column {
         // Once a run ends: retry the hosts that did not succeed, share every card as text, or clear.
         Row(
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -656,13 +662,18 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>, all
             }
             }
         }
+        // With one host there is nothing to narrow down.
+        if (viewModel.broadcastResults.size > 1) {
+            FleetOutputFilterBar(outputFilter, { outputFilter = it }, shown = shownResults.size, total = viewModel.broadcastResults.size)
+        }
+        }
     }
     val outputs = @Composable { modifier: Modifier ->
         OverflowLazyColumn(
             modifier = modifier.fillMaxWidth().padding(top = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(FleetOutputGroups.group(viewModel.broadcastResults), key = { it.first().serverId }) { same ->
+            items(FleetOutputGroups.group(shownResults), key = { it.first().serverId }) { same ->
                 val item = same.first()
                 BroadcastResultCard(
                     hosts = same,
@@ -1331,6 +1342,49 @@ private fun broadcastAccent(status: BroadcastStatus): Color = when (status) {
 }
 
 /**
+ * Narrows a run's result cards, in Broadcast and in the run history: a text to find in a host's
+ * name, output or note, and the hosts that did not succeed only. Says how many of the hosts show.
+ */
+@Composable
+private fun FleetOutputFilterBar(filter: FleetOutputFilter, onChange: (FleetOutputFilter) -> Unit, shown: Int, total: Int) {
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = filter.query,
+                onValueChange = { onChange(filter.copy(query = it)) },
+                placeholder = { Text(stringResource(R.string.fleet_outputs_search), fontSize = 13.sp) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (filter.query.isNotEmpty()) {
+                        IconButton(onClick = { onChange(filter.copy(query = "")) }) {
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear))
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                colors = omniTextFieldColors(),
+                modifier = Modifier.weight(1f).testTag("fleet.outputs.search"),
+            )
+            FilterChip(
+                selected = filter.failedOnly,
+                onClick = { onChange(filter.copy(failedOnly = !filter.failedOnly)) },
+                label = { Text(stringResource(R.string.fleet_outputs_failed_only), fontSize = 12.sp) },
+                modifier = Modifier.testTag("fleet.outputs.failed"),
+            )
+        }
+        if (filter.isOn) {
+            Text(
+                if (shown == 0) stringResource(R.string.fleet_outputs_none_match) else pluralStringResource(R.plurals.fleet_outputs_showing, total, shown, total),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp).testTag("fleet.outputs.showing"),
+            )
+        }
+    }
+}
+
+/**
  * A result, in Broadcast and in the run history: the host's name, or for [hosts] that ended the
  * same way ([FleetOutputGroups]) their count and each name in its host colour; the status; the
  * output when [expanded] (at most [keptChars] of it kept); and [footer] in the status colour below.
@@ -1592,6 +1646,7 @@ private fun FleetRunDetailsDialog(
     val hosts by remember(run.id) { viewModel.fleetRunResultsFlow(run.id) }.collectAsStateWithLifecycle<List<BroadcastResultItem>?>(null)
     val running = summary.running > 0
     val expanded = remember(run.id) { mutableStateMapOf<Int, Boolean>() }
+    var filter by remember(run.id) { mutableStateOf(FleetOutputFilter()) }
     var confirmDelete by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onBack,
@@ -1637,7 +1692,11 @@ private fun FleetRunDetailsDialog(
                 if (loaded == null) {
                     item { CircularProgressIndicator(modifier = Modifier.size(20.dp)) }
                 } else {
-                    items(FleetOutputGroups.group(loaded), key = { it.first().serverId }) { same ->
+                    val shown = filter.apply(loaded)
+                    if (loaded.size > 1) {
+                        item { FleetOutputFilterBar(filter, { filter = it }, shown = shown.size, total = loaded.size) }
+                    }
+                    items(FleetOutputGroups.group(shown), key = { it.first().serverId }) { same ->
                         val item = same.first()
                         BroadcastResultCard(
                             hosts = same,

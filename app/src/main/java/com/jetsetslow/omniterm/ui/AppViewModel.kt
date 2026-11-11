@@ -13783,7 +13783,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Hosts on the cards that did not succeed: failed, or not run after a failure or a stop. */
     val broadcastRetryableIds: List<Int>
-        get() = broadcastResults.filter { it.status == BroadcastStatus.Failure || it.status == BroadcastStatus.NotRun }.map { it.serverId }
+        get() = broadcastResults.filter { it.didNotSucceed }.map { it.serverId }
 
     /**
      * Runs the last command again, with the same values, on [ids] (the hosts that did not succeed,

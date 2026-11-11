@@ -42,7 +42,7 @@ import java.util.UUID
  * host at a time, the first fails, so the second is not run; Retry runs both again, and the two,
  * ending the same way, share one card, in Broadcast and in History, and one section of the report
  * that Share hands to the share sheet as a file. Allowing half the hosts to fail, the second runs
- * after the first fails.
+ * after the first fails, and the cards can be narrowed to the failed host or to a text.
  */
 class E2eRollingFleetTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -192,6 +192,27 @@ class E2eRollingFleetTest {
             withTimeout(90_000) { while (vm.isBroadcastExecuting) delay(50) }
             val allowed = vm.broadcastResults.toList()
             assertEquals(allowed.toString(), listOf(BroadcastStatus.Failure, BroadcastStatus.Success), allowed.map { it.status })
+
+            // One failed and one did not: "Failed only" leaves the first, a text from the other's
+            // output leaves that one, and nothing is hidden once both are off again.
+            val failedCard = "fleet.output.${allowed[0].serverId}"
+            val doneCard = "fleet.output.${allowed[1].serverId}"
+            composeRule.onAllNodesWithTag(failedCard).assertCountEquals(1)
+            composeRule.onAllNodesWithTag(doneCard).assertCountEquals(1)
+            composeRule.onNodeWithTag("fleet.outputs.failed").performClick()
+            composeRule.waitForIdle()
+            composeRule.onAllNodesWithTag(failedCard).assertCountEquals(1)
+            composeRule.onAllNodesWithTag(doneCard).assertCountEquals(0)
+            composeRule.onNodeWithTag("fleet.outputs.showing").assertTextEquals("Showing 1 of 2 hosts")
+            composeRule.onNodeWithTag("fleet.outputs.failed").performClick()
+            composeRule.onNodeWithTag("fleet.outputs.search").performTextInput("AGAIN")
+            composeRule.waitForIdle()
+            composeRule.onAllNodesWithTag(failedCard).assertCountEquals(0)
+            composeRule.onAllNodesWithTag(doneCard).assertCountEquals(1)
+            composeRule.onNodeWithTag("fleet.outputs.search").performTextClearance()
+            composeRule.waitForIdle()
+            composeRule.onAllNodesWithTag(failedCard).assertCountEquals(1)
+            composeRule.onAllNodesWithTag(doneCard).assertCountEquals(1)
         } finally {
             // Android's monitor list is null until one is added: removing first would hide the failure.
             if (monitoring) instrumentation.removeMonitor(chooser)

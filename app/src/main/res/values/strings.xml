@@ -1490,6 +1490,13 @@
     <string name="broadcast_status_waiting">"waiting"</string>
     <string name="broadcast_status_not_run">"not run"</string>
     <string name="broadcast_output_truncated">"[Output truncated; showing latest %1$d characters]"</string>
+    <string name="fleet_outputs_search">"Find in outputs"</string>
+    <string name="fleet_outputs_failed_only">"Failed only"</string>
+    <string name="fleet_outputs_none_match">"No host matches."</string>
+    <plurals name="fleet_outputs_showing">
+        <item quantity="one">"Showing %1$d of %2$d host"</item>
+        <item quantity="other">"Showing %1$d of %2$d hosts"</item>
+    </plurals>
     <plurals name="broadcast_same_result">
         <item quantity="one">"%1$d host"</item>
         <item quantity="other">"%1$d hosts, same result"</item>

@@ -11,6 +11,10 @@ after #136 and #137. Independent review and merge remain the user's.
 The private audit (sources per finding, designs, order) is in the internal docs as
 `COMPETITOR_AUDIT_2026-11-08.md`.
 
+Continuation (user, Nov 11): Claude Code sessions no longer run the 30-minute `continue` loop,
+because Claude Code resumes by itself when a usage limit resets. This is for Claude Code only.
+Codex has no such resume and keeps its schedule, as `AGENTS.md` requires.
+
 ## Checkpoint A — scripts and Fleet defects (82702ea)
 
 - Script values: `{{name}}` and `{{name=default}}` in a saved script ask for a value when it runs
@@ -935,8 +939,23 @@ there is one full gate when the bundle is complete, and targeted tests per piece
       `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1, `E2eScriptParamsFleetTest` 1,
       `E2eFleetScheduleTest` 1, `E2eScriptCheckTest` 1, all 0 failed. Guard: with the share
       ignored, the second host was left not run and the test failed.
-  - Next: an output filter and search, sudo in Fleet (pushes to protected paths too), and
-    broadcast typing last.
+  - An output filter and search: done (commit "Narrow a Fleet run's cards to a text or the failed
+    hosts").
+    - Above the cards of a run with more than one host: **Find in outputs** (name, output or
+      note, any case) and **Failed only** (failed or not run: what Retry runs again, now one
+      shared test, `didNotSucceed`). A line says how many hosts show. `FleetOutputFilter` runs
+      before the grouping, in Broadcast and in History. It clears when a run starts; the shared
+      report always has every host.
+    - Tests: `FleetOutputFilterTest` 4, `FleetOutputGroupsTest` 3, `FleetRollingRunRobolectricTest`
+      6, `FleetRunHistoryRobolectricTest` 7, all 0 failed. Four guards seen failing: running
+      hosts counted as failed, a text matched by case only, notes not searched, spaces searched.
+    - Devices (API 35, repository fixtures): `E2eRollingFleetTest` 1 (in its last run, where
+      one host fails and one does not, "Failed only" leaves the failed host's card and says
+      "Showing 1 of 2 hosts", a text from the other's output in other capitals leaves that one,
+      and both show again once cleared), `E2eScriptCheckTest` 1, `E2eFleetScheduleTest` 1,
+      `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1, `E2eAlertRunbookTest` 1, all 0 failed. Guard:
+      with the cards ignoring the filter, the rolling test failed at its count of cards.
+  - Next: sudo in Fleet (pushes to protected paths too), and broadcast typing last.
 - Piece 4, Tunnels (in progress):
   - Tunnels follow the network (user, Nov 11): done (commit "Let a tunnel be skipped on the Wi-Fi
     networks it is not needed on").
