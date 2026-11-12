@@ -553,4 +553,46 @@ class AppDatabaseMigrationTest {
         }
         context.deleteDatabase(databaseName)
     }
+
+    /**
+     * Homelab checks: a rule from before keeps everything and holds no password; a Backup Age
+     * rule's (encrypted) password then saves and reads back.
+     */
+    @Test
+    fun migrationToThirtyGivesExistingRulesNoPassword() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-29-homelab-checks"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 29).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey, target) " +
+                    "VALUES (7, 2, 'Script Check', '/', 0.0, 'WARNING', '2m', 1, 'backups', NULL, '4')"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT serverId, metricName, target, enabled, secret FROM alert_rules WHERE id = 7").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
+                assertEquals("Script Check", cursor.getString(1))
+                assertEquals("4", cursor.getString(2))
+                assertEquals(1, cursor.getInt(3))
+                assertEquals("an upgraded rule holds no password", "", cursor.getString(4))
+            }
+            db.execSQL(
+                "INSERT INTO alert_rules (serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, target, " +
+                    "runbookAuto, runbookNotify, secret) VALUES (2, 'Backup Age', '/', 26.0, 'WARNING', '0m', 1, '', 'restic\n/srv/restic', 0, 'failures', 'enc:v1:x')"
+            )
+            db.query("SELECT secret FROM alert_rules WHERE metricName = 'Backup Age'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("enc:v1:x", cursor.getString(0))
+            }
+        }
+        context.deleteDatabase(databaseName)
+    }
 }

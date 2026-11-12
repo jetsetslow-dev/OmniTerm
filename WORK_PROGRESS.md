@@ -1102,6 +1102,26 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     x86, compressed native libraries.
   - Licences: `check-licenses.py` passes, 54 Go modules. Tailscale's `PATENTS` naming in
     Dependency review is still to be seen on the PR.
+- Homelab F (Nov 12, `kotlin-homelab-bundle`), in the audit's order: backup freshness, image
+  updates, SNMP, Proxmox VE. Each part is its own commit.
+  - Part 1, backup freshness: a **Backup Age** host check (`BackupChecks`) rather than script-check
+    presets, so the repository password can stay encrypted and travel on the command's stdin,
+    and each tool's errors can be told apart. restic (`snapshots --json --no-lock --latest 1`,
+    exit 10/11/12), Borg (`list --json --last 1 --bypass-lock`, `TZ=UTC0` because its JSON times
+    are local without an offset, `BORG_EXIT_CODES=modern`: 13/15/52), PBS
+    (`proxmox-backup-client snapshot list --output-format json`, `PBS_PASSWORD`,
+    `PBS_FINGERPRINT`) and vzdump folders (file-name times converted with the host's own `date`,
+    as Proxmox's `archive_info` reads them). Hours since the newest backup; below 0 for no
+    backups, no tool, no repository, wrong password, other errors, all alerting; a locked
+    repository or a 90 s timeout is unknown. Read every 15 minutes per rule and host.
+  - New column `alert_rules.secret` in the 29→30 step, encrypted at the repository boundary. In
+    backups (always encrypted); a restored Backup Age rule comes back off, so rule cards got an
+    on/off switch.
+  - Fixture: `runtime-docker` now has restic 0.18.0 and Borg 1.4.3 with repositories and a vzdump
+    folder dated 2026-01-01 00:00 UTC, password `OMNITERM_TEST_BACKUP_PASSWORD` in `.env`.
+    `./scripts/test-hosts.sh rebuild <service>` rebuilds one fixture without touching the others.
+    PBS has no fixture (its client is Proxmox-repository only): its parsing is unit-tested from
+    the documented JSON and error lines, and its command against a stand-in client.
 
 ## Decision pivot — 2026-11-08
 

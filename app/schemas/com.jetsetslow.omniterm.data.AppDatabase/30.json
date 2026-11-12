@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 30,
-    "identityHash": "c161ff75a89a596f12a6488223963a42",
+    "identityHash": "7e3ff7ebe0edcd9b05805f5b8f3f60dc",
     "entities": [
       {
         "tableName": "servers",
@@ -392,7 +392,7 @@
       },
       {
         "tableName": "alert_rules",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `serverId` INTEGER NOT NULL, `metricName` TEXT NOT NULL, `mountPoint` TEXT NOT NULL, `thresholdValue` REAL NOT NULL, `severity` TEXT NOT NULL, `triggerWindow` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `notes` TEXT NOT NULL, `presetKey` TEXT, `target` TEXT NOT NULL, `runbookScriptId` INTEGER, `runbookAuto` INTEGER NOT NULL, `runbookNotify` TEXT NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `serverId` INTEGER NOT NULL, `metricName` TEXT NOT NULL, `mountPoint` TEXT NOT NULL, `thresholdValue` REAL NOT NULL, `severity` TEXT NOT NULL, `triggerWindow` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `notes` TEXT NOT NULL, `presetKey` TEXT, `target` TEXT NOT NULL, `runbookScriptId` INTEGER, `runbookAuto` INTEGER NOT NULL, `runbookNotify` TEXT NOT NULL, `secret` TEXT NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -473,6 +473,12 @@
           {
             "fieldPath": "runbookNotify",
             "columnName": "runbookNotify",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "secret",
+            "columnName": "secret",
             "affinity": "TEXT",
             "notNull": true
           }
@@ -1770,7 +1776,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c161ff75a89a596f12a6488223963a42')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7e3ff7ebe0edcd9b05805f5b8f3f60dc')"
     ]
   }
 }

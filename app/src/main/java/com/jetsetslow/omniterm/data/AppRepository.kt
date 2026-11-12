@@ -111,10 +111,10 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun getCredentialProfileById(id: Int): CredentialProfileEntity? = db.credentialProfileDao().getProfileById(id)?.let(::decryptProfile)
 
     // Alert Rule functions
-    val rulesFlow: Flow<List<AlertRuleEntity>> = db.alertRuleDao().getAllRulesFlow()
-    suspend fun getAllRules(): List<AlertRuleEntity> = db.alertRuleDao().getAllRules()
-    suspend fun getRulesForServer(serverId: Int): List<AlertRuleEntity> = db.alertRuleDao().getRulesForServer(serverId)
-    suspend fun insertRule(rule: AlertRuleEntity) = db.alertRuleDao().insertRule(rule)
+    val rulesFlow: Flow<List<AlertRuleEntity>> = db.alertRuleDao().getAllRulesFlow().map { list -> list.map(::decryptRule) }
+    suspend fun getAllRules(): List<AlertRuleEntity> = db.alertRuleDao().getAllRules().map(::decryptRule)
+    suspend fun getRulesForServer(serverId: Int): List<AlertRuleEntity> = db.alertRuleDao().getRulesForServer(serverId).map(::decryptRule)
+    suspend fun insertRule(rule: AlertRuleEntity) = db.alertRuleDao().insertRule(encryptRule(rule))
     suspend fun deleteRule(rule: AlertRuleEntity) = db.alertRuleDao().deleteRule(rule)
 
     // Active Alert functions
@@ -466,6 +466,12 @@ class AppRepository(private val db: AppDatabase) {
         sudoPassword = SecretStore.encrypt(server.sudoPassword) ?: "",
         proxyPassword = SecretStore.encrypt(server.proxyPassword) ?: "",
     )
+
+    // A rule's password is kept only encrypted: one that cannot be encrypted is not saved.
+    private fun encryptRule(rule: AlertRuleEntity): AlertRuleEntity = rule.copy(
+        secret = requireNotNull(SecretStore.encrypt(rule.secret)) { "The rule's password could not be encrypted on this phone." },
+    )
+    private fun decryptRule(rule: AlertRuleEntity): AlertRuleEntity = rule.copy(secret = SecretStore.decrypt(rule.secret).orEmpty())
 
     private fun decryptKey(key: SshKeyEntity): SshKeyEntity =
         key.copy(privateKey = SecretStore.decrypt(key.privateKey) ?: "")

@@ -37,6 +37,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -68,6 +70,7 @@ private fun alertMetricUnit(metricName: String, system: MeasurementSystem): Stri
     "Latency", EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK -> "ms"
     "Temperature" -> temperatureUnit(system)
     EndpointChecks.TLS_EXPIRY, HostChecks.SCRUB_AGE -> "days"
+    HostChecks.BACKUP_AGE -> "hours"
     in HostChecks.ALL -> "count"
     else -> "%"
 }
@@ -103,6 +106,7 @@ internal fun alertThresholdError(
             val celsius = displayTemperatureToCelsius(value, system)
             if (celsius <= -273.15f) "Below absolute zero" else null
         }
+        HostChecks.BACKUP_AGE -> if (value < 1f) "Must be 1 hour or more" else null
         in HostChecks.ALL -> if (value < 0f) "Must be 0 or more" else null
         else -> when {
             value < 0f -> "Must be 0 or more"
@@ -176,6 +180,7 @@ private fun alertMetricDisplay(
     HostChecks.isHostCheck(metricName) -> when {
         !threshold -> HostChecks.describe(metricName, canonicalValue)
         metricName == HostChecks.SCRUB_AGE -> "${canonicalValue.roundToInt()} days"
+        metricName == HostChecks.BACKUP_AGE -> BackupChecks.age(canonicalValue)
         else -> canonicalValue.roundToInt().toString()
     }
     else -> "$canonicalValue${alertMetricUnit(metricName, system)}"
@@ -830,6 +835,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK ->
                                                 stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
                                             HostChecks.SCRUB_AGE -> stringResource(R.string.host_check_rule_summary_scrub, targetName, shownThreshold)
+                                            HostChecks.BACKUP_AGE -> stringResource(R.string.host_check_rule_summary_backup, targetName, shownThreshold)
                                             in HostChecks.ALL -> when {
                                                 !HostChecks.isYesNo(r.metricName) -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
                                                 r.triggerWindow == "0m" -> stringResource(R.string.host_check_rule_summary_now, targetName)
@@ -855,16 +861,25 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
-                                    if (EndpointChecks.isEndpointMetric(r.metricName)) {
+                                    if (!r.enabled) {
+                                        Text(stringResource(R.string.alert_rule_off_note), fontSize = 11.sp, color = OmniColors.amber)
+                                    } else if (EndpointChecks.isEndpointMetric(r.metricName)) {
                                         RuleCheckLines(r, serversList, viewModel.endpointCheckResults) { EndpointChecks.breached(r, it) }
                                     } else if (HostChecks.isHostCheck(r.metricName)) {
-                                        RuleCheckLines(r, serversList, viewModel.hostCheckResults) { it > r.thresholdValue }
+                                        RuleCheckLines(r, serversList, viewModel.hostCheckResults) { HostChecks.breached(r.metricName, it, r.thresholdValue) }
                                     }
                                     if (r.notes.isNotBlank()) {
                                         Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                                     }
                                 }
-                                Row {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // A rule can be paused, and one restored switched off turned on.
+                                    val onLabel = stringResource(R.string.alert_rule_on)
+                                    Switch(
+                                        checked = r.enabled,
+                                        onCheckedChange = { viewModel.updateAlertRule(r.copy(enabled = it)) },
+                                        modifier = Modifier.testTag("alertRule.enabled.${r.id}").semantics { contentDescription = onLabel },
+                                    )
                                     IconButton(onClick = { editRule = r }) {
                                         Icon(Icons.Filled.Edit, "Edit rule", tint = OmniColors.cyan)
                                     }
@@ -957,6 +972,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var checkScriptId by remember(existing) {
             mutableStateOf(existing?.takeIf { it.metricName == HostChecks.SCRIPT_CHECK }?.let(ScriptChecks::scriptId))
         }
+        var backupTarget by remember(existing) {
+            mutableStateOf(
+                existing?.takeIf { it.metricName == HostChecks.BACKUP_AGE }?.let { BackupChecks.decode(it.target) }
+                    ?: BackupChecks.Target(BackupChecks.Tool.RESTIC, "")
+            )
+        }
+        var backupSecret by remember(existing) { mutableStateOf(existing?.secret.orEmpty()) }
         var runbookId by remember(existing) { mutableStateOf(existing?.runbookScriptId) }
         var runbookAuto by remember(existing) { mutableStateOf(existing?.runbookAuto ?: false) }
         var runbookNotify by remember(existing) { mutableStateOf(RunNotify.of(existing?.runbookNotify)) }
@@ -975,6 +997,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
         } else {
             null
         }
+        val backupError = if (metricSelect == HostChecks.BACKUP_AGE) BackupChecks.problem(backupTarget) else null
         // Likewise a runbook the alert runs on its own.
         val runbookError = runbook?.takeIf { runbookAuto }
             ?.let { UnattendedScripts.problem(it, commandDangerHits(it.command), UnattendedScripts.Runner.ALERT) }
@@ -1066,6 +1089,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             onClick = { pickingCheckScript = true },
                         )
                     }
+                    if (metricSelect == HostChecks.BACKUP_AGE) {
+                        BackupTargetFields(backupTarget, { backupTarget = it }, backupSecret, { backupSecret = it }, backupError)
+                    }
                     if (EndpointChecks.isEndpointMetric(metricSelect)) {
                         val field = endpointTargetField(metricSelect)
                         OutlinedTextField(
@@ -1144,7 +1170,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null && scriptError == null && runbookError == null,
+                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null && scriptError == null &&
+                        runbookError == null && backupError == null,
                     onClick = {
                         val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
@@ -1155,7 +1182,14 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         val target = when {
                             EndpointChecks.isEndpointMetric(metricSelect) -> targetInput.trim()
                             metricSelect == HostChecks.SCRIPT_CHECK -> checkScriptId?.toString().orEmpty()
+                            metricSelect == HostChecks.BACKUP_AGE -> BackupChecks.encode(backupTarget)
                             else -> ""
+                        }
+                        // Only a backup check keeps a password; vzdump files need none.
+                        val secret = if (metricSelect == HostChecks.BACKUP_AGE && backupTarget.tool != BackupChecks.Tool.VZDUMP) {
+                            backupSecret.substringBefore('\n')
+                        } else {
+                            ""
                         }
                         // A runbook deleted while the dialog was open is not saved.
                         val runbookToSave = runbook?.id
@@ -1164,10 +1198,10 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave, autoToSave, runbookNotify)
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave, autoToSave, runbookNotify, secret)
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave, runbookAuto = autoToSave, runbookNotify = runbookNotify))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave, runbookAuto = autoToSave, runbookNotify = runbookNotify, secret = secret))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -1257,7 +1291,92 @@ private fun hostCheckHint(metricName: String): Int? = when (metricName) {
     HostChecks.UPS_ON_BATTERY -> R.string.host_check_hint_ups
     HostChecks.REBOOT_REQUIRED -> R.string.host_check_hint_reboot
     HostChecks.SCRIPT_CHECK -> R.string.host_check_hint_script
+    HostChecks.BACKUP_AGE -> R.string.host_check_hint_backup
     else -> null
+}
+
+/** What a Backup Age rule reads, as its rule line names it: "restic: /srv/restic". */
+internal fun backupRuleLabel(rule: AlertRuleEntity): String? {
+    if (rule.metricName != HostChecks.BACKUP_AGE) return null
+    val target = BackupChecks.decode(rule.target) ?: return null
+    val where = target.repository.ifBlank { target.settingsFile }
+    return listOf(target.tool.label + if (where.isNotBlank()) ": $where" else "", target.filter).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+/**
+ * The fields of a Backup Age rule: the tool, then what it reads and the password, each labelled
+ * for that tool. [error] is why the rule cannot be saved yet.
+ */
+@Composable
+private fun BackupTargetFields(
+    target: BackupChecks.Target,
+    onTarget: (BackupChecks.Target) -> Unit,
+    secret: String,
+    onSecret: (String) -> Unit,
+    error: String?,
+) {
+    val tool = target.tool
+    Text(stringResource(R.string.backup_tool))
+    @OptIn(ExperimentalLayoutApi::class)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        BackupChecks.Tool.entries.forEach { t ->
+            FilterChip(selected = tool == t, onClick = { onTarget(target.copy(tool = t)) }, label = { Text(t.label) })
+        }
+    }
+    val (placeholder, filterLabel, filterPlaceholder) = when (tool) {
+        BackupChecks.Tool.RESTIC -> Triple("/srv/restic or sftp:nas:/restic", R.string.backup_filter_restic, "nas")
+        BackupChecks.Tool.BORG -> Triple("/srv/borg or ssh://nas/./borg", R.string.backup_filter_borg, "nas-*")
+        BackupChecks.Tool.PBS -> Triple("backup@pbs@pbs.lan:store", R.string.backup_filter_pbs, "vm/100")
+        BackupChecks.Tool.VZDUMP -> Triple("/var/lib/vz/dump", R.string.backup_filter_vzdump, "100")
+    }
+    OutlinedTextField(
+        value = target.repository,
+        onValueChange = { onTarget(target.copy(repository = it.replace("\n", ""))) },
+        label = { Text(stringResource(if (tool == BackupChecks.Tool.VZDUMP) R.string.backup_dump_folder else R.string.backup_repository)) },
+        placeholder = { Text(placeholder) },
+        singleLine = true,
+        isError = error != null,
+        supportingText = error?.let { { Text(it) } },
+        modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.repository"),
+    )
+    OutlinedTextField(
+        value = target.filter,
+        onValueChange = { onTarget(target.copy(filter = it.replace("\n", ""))) },
+        label = { Text(stringResource(filterLabel)) },
+        placeholder = { Text(filterPlaceholder) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.filter"),
+    )
+    if (tool != BackupChecks.Tool.VZDUMP) {
+        OutlinedTextField(
+            value = target.settingsFile,
+            onValueChange = { onTarget(target.copy(settingsFile = it.replace("\n", ""))) },
+            label = { Text(stringResource(R.string.backup_settings_file)) },
+            placeholder = { Text("/etc/restic/env") },
+            singleLine = true,
+            supportingText = { Text(stringResource(R.string.backup_settings_file_hint)) },
+            modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.settings"),
+        )
+    }
+    if (tool == BackupChecks.Tool.PBS) {
+        OutlinedTextField(
+            value = target.fingerprint,
+            onValueChange = { onTarget(target.copy(fingerprint = it.replace("\n", ""))) },
+            label = { Text(stringResource(R.string.backup_fingerprint)) },
+            singleLine = true,
+            supportingText = { Text(stringResource(R.string.backup_fingerprint_hint)) },
+            modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.fingerprint"),
+        )
+    }
+    if (tool != BackupChecks.Tool.VZDUMP) {
+        OmniPasswordField(
+            value = secret,
+            onValueChange = { onSecret(it.replace("\n", "")) },
+            label = stringResource(if (tool == BackupChecks.Tool.PBS) R.string.backup_password_pbs else R.string.backup_password),
+            modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.password"),
+        )
+        Text(stringResource(R.string.backup_password_hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 /**
@@ -1277,7 +1396,10 @@ private fun RuleCheckLines(
     Column(Modifier.testTag("alertRule.check.${rule.id}")) {
         if (seen.isEmpty()) {
             Text(
-                listOfNotNull(rule.target.ifBlank { null }, stringResource(R.string.endpoint_not_checked_yet)).joinToString(" · "),
+                listOfNotNull(
+                    if (rule.metricName == HostChecks.BACKUP_AGE) backupRuleLabel(rule) else rule.target.ifBlank { null },
+                    stringResource(R.string.endpoint_not_checked_yet),
+                ).joinToString(" · "),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

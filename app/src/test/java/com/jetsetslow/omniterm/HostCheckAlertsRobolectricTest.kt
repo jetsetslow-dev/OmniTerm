@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.jetsetslow.omniterm.automation.AlertRunbooks
 import com.jetsetslow.omniterm.data.AppDatabase
+import com.jetsetslow.omniterm.data.BackupChecks
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.HostChecks
 import com.jetsetslow.omniterm.data.QuickScriptEntity
@@ -15,6 +16,7 @@ import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshTransport
 import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.AppViewModel
+import com.jetsetslow.omniterm.ui.BackupSelection
 import com.jetsetslow.omniterm.ui.FleetTargetMode
 import com.jetsetslow.omniterm.ui.Screen
 import kotlinx.coroutines.Dispatchers
@@ -27,8 +29,10 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -45,6 +49,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Config(sdk = [35])
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HostCheckAlertsRobolectricTest {
+    // A Backup Age rule's password is encrypted with the phone's key store.
+    @get:Rule val keyStore = TestAndroidKeyStore()
 
     @Test
     fun anUnreachableHostOpensAHostOfflineIncident() = withModel(Unreachable()) { repository, model, hostId ->
@@ -279,12 +285,96 @@ class HostCheckAlertsRobolectricTest {
         }
     }
 
+    /**
+     * A Backup Age rule reads its repository with the password on the command's input, opens an
+     * incident for a backup older than its limit, and reads the repository once in 15 minutes
+     * however often the host is polled. The password is kept only encrypted.
+     */
+    @Test
+    fun anOldBackupOpensAnIncidentAndThePasswordTravelsOnlyOnInput() {
+        val host = AnsweringHost()
+        withModel(host) { repository, model, hostId ->
+            val target = BackupChecks.encode(BackupChecks.Target(BackupChecks.Tool.RESTIC, "/srv/restic"))
+            withContext(main) {
+                model.addAlertRule(hostId, HostChecks.BACKUP_AGE, "/", 26f, "WARNING", "0m", target = target, secret = BACKUP_PASSWORD)
+            }
+            val alert = withTimeout(15_000) {
+                while (repository.getActiveAlerts().isEmpty()) {
+                    withContext(main) { model.refreshServer(hostId) }
+                    delay(200)
+                }
+                repository.getActiveAlerts().single()
+            }
+            assertEquals(HostChecks.BACKUP_AGE, alert.metricName)
+            assertTrue("the fixture snapshot is from 2026-01-01", alert.currentValue > 26f)
+            val ruleId = repository.getAllRules().single().id
+            assertTrue(model.hostCheckResults.getValue(ruleId to hostId).summary.endsWith("old (snapshot 718e5335)"))
+            assertEquals(listOf("$BACKUP_PASSWORD\n"), host.backupInputs.toList())
+            assertTrue("never in a command", host.commands.none { BACKUP_PASSWORD in it })
+            val stored = withContext(Dispatchers.IO) { AppDatabase.getDatabase(ApplicationProvider.getApplicationContext()).alertRuleDao().getAllRules() }.single()
+            assertTrue("stored encrypted", stored.secret.startsWith("enc:v1:") && BACKUP_PASSWORD !in stored.secret)
+            assertEquals("and read back as typed", BACKUP_PASSWORD, repository.getAllRules().single().secret)
+
+            val polled = host.metricsRuns.get()
+            withTimeout(15_000) {
+                while (host.metricsRuns.get() < polled + 6) {
+                    withContext(main) { model.refreshServer(hostId) }
+                    delay(100)
+                }
+            }
+            assertEquals("the repository is read once in 15 minutes", 1, host.backupInputs.size)
+            assertEquals(1, repository.getActiveAlerts().size)
+        }
+    }
+
+    /**
+     * A Backup Age rule comes back from a backup with its repository and password, switched off:
+     * it runs a command on the host by itself, so it waits until it is turned on again.
+     */
+    @Test
+    fun aRestoredBackupCheckKeepsItsPasswordAndComesBackOff() = withModel(Unreachable()) { repository, model, _ ->
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val target = BackupChecks.encode(BackupChecks.Target(BackupChecks.Tool.BORG, "/srv/borg", "nas-*"))
+        withContext(main) {
+            model.addAlertRule(0, HostChecks.BACKUP_AGE, "/", 30f, "WARNING", "0m", target = target, secret = BACKUP_PASSWORD)
+            model.addAlertRule(0, HostChecks.FAILED_SERVICES, "/", 0f, "WARNING", "0m")
+        }
+        withTimeout(5_000) { while (repository.getAllRules().size < 2) delay(20) }
+        val selection = BackupSelection.NONE.copy(alertRules = true)
+        val uri = android.net.Uri.parse("content://backup-fixture/backup-age.json")
+        val bytes = java.io.ByteArrayOutputStream()
+        shadowOf(application.contentResolver).registerOutputStream(uri, bytes)
+        val exported = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        withContext(main) { model.exportBackup(uri, "backup-age-passphrase", application, selection) { ok, _ -> exported.complete(ok) } }
+        assertTrue(withTimeout(10_000) { exported.await() })
+        waitWhileOnMain(main) { model.backupExportRunning }
+        val backup = bytes.toString(Charsets.UTF_8)
+        assertFalse("the backup file is encrypted", BACKUP_PASSWORD in backup)
+
+        withContext(Dispatchers.IO) { AppDatabase.getDatabase(application).alertRuleDao().getAllRules().forEach { repository.deleteRule(it) } }
+        val restored = kotlinx.coroutines.CompletableDeferred<Pair<Boolean, String>>()
+        withContext(main) { model.restoreEncryptedBackup(backup, "backup-age-passphrase", selection) { ok, message -> restored.complete(ok to message) } }
+        val (ok, message) = withTimeout(10_000) { restored.await() }
+        assertTrue(message, ok)
+        waitWhileOnMain(main) { model.backupRestoreRunning }
+        val rules = repository.getAllRules()
+        val backupRule = rules.single { it.metricName == HostChecks.BACKUP_AGE }
+        assertEquals(target, backupRule.target)
+        assertEquals(BACKUP_PASSWORD, backupRule.secret)
+        assertFalse("restored switched off", backupRule.enabled)
+        assertTrue("other rules keep their state", rules.single { it.metricName == HostChecks.FAILED_SERVICES }.enabled)
+    }
+
     private suspend fun saveScript(repository: AppRepository, name: String, command: String): Int {
         repository.insertScript(QuickScriptEntity(emoji = "LIN", name = name, command = command, color = "cyan"))
         return repository.getAllScripts().single { it.name == name }.id
     }
 
     private lateinit var main: ExecutorCoroutineDispatcher
+
+    private companion object {
+        const val BACKUP_PASSWORD = "correct horse battery"
+    }
 
     private fun withModel(transport: SshTransport, body: suspend (AppRepository, AppViewModel, Int) -> Unit) = runBlocking {
         // Real time: AppViewModel deliberately does database work on Dispatchers.IO.
@@ -346,10 +436,19 @@ class HostCheckAlertsRobolectricTest {
         val metricsRuns = AtomicInteger()
         val scriptRuns = AtomicInteger()
         val commands = ConcurrentLinkedQueue<String>()
+        val backupInputs = ConcurrentLinkedQueue<String>()
 
         override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String {
             commands.add(command)
             return when {
+                "echo '@BACKUP'" in command -> {
+                    backupInputs.add(stdin.orEmpty())
+                    if (stdin == "$BACKUP_PASSWORD\n") {
+                        "@BACKUP\n[{\"time\":\"2026-01-01T00:00:00Z\",\"short_id\":\"718e5335\"}]\n\n!RC 0\n@ERR\n"
+                    } else {
+                        "@BACKUP\n\n!RC 12\n@ERR\n{\"message_type\":\"exit_error\",\"code\":12,\"message\":\"Fatal: wrong password or no key found\"}\n"
+                    }
+                }
                 "check-backups" in command -> {
                     scriptRuns.incrementAndGet()
                     "SSH Error: command failed (2): nas is 3 days old"

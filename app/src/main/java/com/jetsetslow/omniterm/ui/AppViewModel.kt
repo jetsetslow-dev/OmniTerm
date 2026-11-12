@@ -229,7 +229,8 @@ internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRu
         previous.severity != next.severity ||
         previous.triggerWindow != next.triggerWindow ||
         previous.enabled != next.enabled ||
-        previous.target != next.target
+        previous.target != next.target ||
+        previous.secret != next.secret
 
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
 internal val ANDROID_TRACEROUTE_BINARIES = listOf(
@@ -4003,6 +4004,7 @@ class AppViewModel @JvmOverloads constructor(
     /** Forget a rule's check pace and results, so an edited or new rule is checked at once. */
     private fun resetEndpointChecks(ruleId: Int) {
         endpointChecksDueAt.keys.removeIf { it.first == ruleId }
+        backupChecksDueAt.keys.removeIf { it.first == ruleId }
         // Host checks share one probe per host, so any rule change makes every host due again.
         hostChecksDueAt.clear()
         viewModelScope.launch(Dispatchers.Main) {
@@ -4055,9 +4057,55 @@ class AppViewModel @JvmOverloads constructor(
             hostChecksDueAt.remove(srv.id, dueAt)
             return
         }
-        val (probed, scripted) = rules.partition { HostChecks.needsProbe(it.metricName) }
+        val (probed, own) = rules.partition { HostChecks.needsProbe(it.metricName) }
         if (probed.isNotEmpty()) runHostProbe(srv, probed, disks)
-        for (rule in scripted) runScriptCheck(srv, rule)
+        for (rule in own) {
+            if (rule.metricName == HostChecks.BACKUP_AGE) runBackupCheck(srv, rule) else runScriptCheck(srv, rule)
+        }
+    }
+
+    /** When each (rule, host) Backup Age check is next due: repositories are read every 15 minutes. */
+    private val backupChecksDueAt = java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Long>()
+
+    /**
+     * Reads a [HostChecks.BACKUP_AGE] rule's repository on [srv] when it is due. The password goes
+     * on the command's standard input, never in the command. A check that never ran (no
+     * connection) leaves any incident as it is; a busy repository reads as unknown.
+     */
+    private suspend fun runBackupCheck(srv: ServerEntity, rule: AlertRuleEntity) {
+        val key = rule.id to srv.id
+        val now = System.currentTimeMillis()
+        if (now < (backupChecksDueAt[key] ?: 0L)) return
+        backupChecksDueAt[key] = now + BackupChecks.INTERVAL_MS
+        val app = getApplication<Application>()
+        suspend fun show(result: EndpointChecks.Result) = withContext(Dispatchers.Main) { hostCheckResults[key] = result }
+        val target = BackupChecks.decode(rule.target)
+        BackupChecks.problem(target)?.let { return show(EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, it), "")) }
+        target!!
+        if (hostOs(srv) == "Windows") return show(EndpointChecks.Result(null, app.getString(R.string.host_check_unknown), ""))
+        val raw = executeSshCommand(srv, BackupChecks.command(target), stdin = rule.secret.substringBefore('\n') + "\n")
+        val outcome = BackupChecks.parse(target, raw, System.currentTimeMillis() / 1000)
+        if (outcome == null) {
+            // Never ran: try again at the next poll rather than in 15 minutes.
+            backupChecksDueAt.remove(key)
+            return
+        }
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            // The rule may have been edited or deleted while the repository was read.
+            if (repository.getAllRules().find { it.id == rule.id } != rule) return@withLock
+            val value = outcome.value
+            if (value == null) {
+                show(EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, outcome.detail.ifBlank { "the repository is busy" }), ""))
+                return@withLock
+            }
+            show(EndpointChecks.Result(value, BackupChecks.summary(value, outcome.detail), ""))
+            applyAlertSample(
+                rule, srv, value, BackupChecks.breached(value, rule.thresholdValue), repository.getActiveAlerts(), System.currentTimeMillis(),
+                staleGapMs = BackupChecks.INTERVAL_MS * 3,
+                notificationText = BackupChecks.alertText(target, value, rule.thresholdValue, outcome.detail),
+            )
+        }
     }
 
     /** Reads every [HostChecks.PROBE] check in [rules] on [srv] with one command. */
@@ -5866,9 +5914,11 @@ class AppViewModel @JvmOverloads constructor(
         runbookScriptId: Int? = null,
         runbookAuto: Boolean = false,
         runbookNotify: String = RunNotify.FAILURES,
+        secret: String = "",
     ) {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
+                secret = secret,
                 serverId = serverId,
                 metricName = metricName,
                 mountPoint = mountPoint,
@@ -15886,6 +15936,8 @@ class AppViewModel @JvmOverloads constructor(
                 scriptRef(r.runbookScriptId)?.let { put("runbookScript", it) }
                 // Whether it runs on its own is not kept: a restored rule only offers its runbook.
                 put("runbookNotify", RunNotify.of(r.runbookNotify))
+                // A backup check's repository password; the backup file itself is encrypted.
+                if (r.secret.isNotEmpty()) put("secret", r.secret)
             })
         }
         val historyArr = org.json.JSONArray()
@@ -16833,7 +16885,10 @@ class AppViewModel @JvmOverloads constructor(
                                     serverId = mappedServerId, metricName = metric,
                                     mountPoint = o.optString("mountPoint", "/"), thresholdValue = threshold,
                                     severity = o.optString("severity", "WARNING"), triggerWindow = window,
-                                    enabled = o.optBoolean("enabled", true),
+                                    // A backup check runs a command with a password on the host by
+                                    // itself, so it comes back switched off until turned on here.
+                                    enabled = o.optBoolean("enabled", true) && metric != HostChecks.BACKUP_AGE,
+                                    secret = o.optString("secret", "").substringBefore('\n'),
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
                                     target = target,

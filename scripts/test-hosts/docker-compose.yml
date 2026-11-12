@@ -147,6 +147,8 @@ services:
     environment:
       OMNITERM_TEST_USER: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
       OMNITERM_TEST_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      # The fixture backup repositories' password; without it they are not made.
+      OMNITERM_TEST_BACKUP_PASSWORD: "${OMNITERM_TEST_BACKUP_PASSWORD:-}"
     volumes:
       - runtime-docker-run:/var/run
       - ./fixtures/runtime-stack:/fixtures/runtime-stack:ro

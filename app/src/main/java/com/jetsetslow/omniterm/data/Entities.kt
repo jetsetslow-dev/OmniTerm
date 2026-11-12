@@ -239,6 +239,9 @@ data class AlertRuleEntity(
     val runbookAuto: Boolean = false,
     // RunNotify: what that run's notification shows.
     val runbookNotify: String = RunNotify.FAILURES,
+    // A Backup Age rule's repository password, encrypted here and decrypted by AppRepository;
+    // sent to the host on the check's standard input only. Blank for every other rule.
+    val secret: String = "",
 )
 
 @Entity(

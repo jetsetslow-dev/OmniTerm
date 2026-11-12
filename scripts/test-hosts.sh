@@ -11,6 +11,7 @@
 #
 #   ./scripts/test-hosts.sh up       # generate keys if needed, start, wait until SSH answers
 #   ./scripts/test-hosts.sh tailnet  # start only headscale and the tailnet router, with fresh keys
+#   ./scripts/test-hosts.sh rebuild <service> # rebuild and recreate one fixture only
 #   ./scripts/test-hosts.sh down     # stop and remove (host keys and volumes discarded)
 #   ./scripts/test-hosts.sh status   # container state and port mapping
 #   ./scripts/test-hosts.sh verify   # prove every auth mode and proxy path actually works
@@ -69,6 +70,15 @@ ensure_env() {
     umask "$old_umask"
     echo "added WireGuard fixture keys to $ENV_FILE"
   fi
+  # Fixture passwords added after the first .env was made, each generated once: the backup
+  # repositories' password.
+  local name
+  for name in OMNITERM_TEST_BACKUP_PASSWORD; do
+    if ! grep -q "^$name=" "$ENV_FILE"; then
+      (umask 077; echo "$name=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)" >>"$ENV_FILE")
+      echo "added $name to $ENV_FILE"
+    fi
+  done
   # shellcheck disable=SC1090
   set -a; . "$ENV_FILE"; set +a
 }
@@ -280,6 +290,14 @@ case "${1:-}" in
     [ -f "$DIR/.tailnet/derp.yaml" ] || tailnet_map || true
     compose up -d --no-deps headscale
     tailnet_up || exit 1
+    ;;
+
+  rebuild)
+    # One fixture, rebuilt and recreated, without touching the others: e.g. `rebuild runtime-docker`
+    # after its Dockerfile changed. Its host key changes, so trust it again in the app.
+    require_docker
+    [ -n "${2:-}" ] || { echo "usage: $0 rebuild <service>" >&2; exit 1; }
+    compose up -d --build --no-deps --force-recreate "$2"
     ;;
 
   down)
