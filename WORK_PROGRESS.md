@@ -1046,6 +1046,62 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     - `tailscale.com/license_test.go` was read as a licence file. The script should skip source files.
   - Still open: Android blocks netlink, so interfaces must come from Kotlin, as tailscale-android
     does.
+- Tailscale/Headscale tunnels (Nov 12, `kotlin-homelab-bundle`):
+  - A second tunnel kind: the phone joins the tailnet inside the app with tsnet (`tailscale.com`
+    v1.104.5), against Tailscale's control server or a Headscale one. The node's keys live in the
+    app database, encrypted, for that tunnel alone, and are never backed up: a restored tunnel signs
+    in again as a new device. An auth key signs in by itself; without one the card shows **Sign
+    in**, which opens the control server's page. A host on the tunnel never goes direct: addresses
+    the tailnet does not cover are refused ("is not in this tailnet"), and so is everything while
+    the tunnel is not signed in.
+  - Interfaces come from Kotlin (`TailscaleNetwork`), as tailscale-android does: Android blocks
+    netlink. `TS_LOGS_DIR` is set before start; without it Android panicked ("no safe place found
+    to store log state", from `logpolicy.LogsDir` via `ipnlocal`'s sockstatlog). Found on device.
+  - Routes: `RouteAll` is set explicitly, so subnet routes other nodes offer are used on every
+    platform. Names the tailnet's DNS covers (MagicDNS, split DNS) are asked of the tailnet's DNS
+    only, never the phone's; other names use tsdial's dial plan.
+  - Errors: only the control server's refusal fails a start. "rate limited" is a note and the
+    tunnel retries; "IPN bus consumer fell behind" re-watches. A state the app cannot save is
+    reported to the node; a saved state that cannot be read signs in again and says why.
+  - Lifecycle as WireGuard: starts on the first dial or **Connect**, stops after 5 idle minutes.
+    `SetNetwork` before the first start, `NetworkChanged` on every default-network change.
+    Counters are read on demand, cached 2 s; status is polled every second only until running.
+    A key that expires mid-run needs Stop and Connect; an in-run re-login ask was left out
+    untested.
+  - The library leans on tsdial internals: `UserDialPlan`, `UseNetstackForIP`, `NetstackDialTCP`
+    and `DNSManager.Query`. A Tailscale upgrade must keep
+    `TestOnlyTheTailnetIsDialledNeverTheDirectAddress` passing unchanged, and dependency updates
+    must not auto-accept `tailscale.com` bumps.
+  - Plain-HTTP control servers are warned about (not on loopback): the node key is fetched from
+    `/key` on every start, so a path attacker could pose as the control server. The warning is one
+    shared `PlainHttpWarning`, also used by the WebDAV warning.
+  - Fixture (`scripts/test-hosts`): `headscale` (0.27.1, digest-pinned, 127.0.0.1:8085) and, in
+    the `tailnet` profile, `tailnet-router` (tailscale v1.104.4, digest-pinned), a subnet router
+    for the internal network. `./scripts/test-hosts.sh tailnet` writes a relay map naming
+    headscale's own STUN server (`.tailnet/`, ignored); without STUN both ends looped "Rebinding"
+    and no path formed. It mints a reusable router key and an ephemeral phone key into `.env`.
+  - Tests: Go `tailscale_test.go` 16 (`scripts/test-tunnel.sh`, build tags minus
+    `ts_omit_tailnetlock` and `ts_omit_advertiseroutes`). In-process, the subnet router accepted
+    the TCP handshake but passed no data, so the Go test asserts the routing decision; data through
+    a subnet route is proven on device. JVM: `TunnelRoutingTest` 10, `TailscaleSettingsTest` 3,
+    `VpnTunnelBackupRobolectricTest` 2, `TunnelNetworksTest` 5,
+    `TunnelNetworkRouteRobolectricTest` 4, all 0 failed.
+  - Guards seen failing: Go 13 (dials direct, dials while signed out, state not loaded or not
+    saved, no sign-in page, refusal ignored, interface-up ignored, routes refused, "busy" taken as
+    refusal, tailnet DNS skipped, save error swallowed, unreadable state unsaid, no place for logs);
+    Kotlin 4 (signed-out tunnel dials, node state leaks into the entity, node save dropped, loopback
+    warned); device 1 (a signed-out tunnel reported running never showed the sign-in).
+  - Devices (API 35, clean install): `E2eTailscaleTunnelTest` 1 (`-e omniterm_e2e_tailscale yes`
+    with `ts_key`, `ts_behind`, `user`, `pass` from `.env`): editor checks, a host behind the subnet
+    router reached, keys stored encrypted, a direct-only host refused, an unsigned tunnel waiting
+    with **Sign in** and its host refused. `E2eVpnTunnelTest` 1, `AppDatabaseMigrationTest` 13,
+    all 0 failed.
+  - Size: the AAR grew from 10.5 MB to 30.0 MB. `libgojni.so` (stored uncompressed) per ABI:
+    arm64 18.97 MB, armv7 18.17 MB, x86 18.27 MB, x86_64 20.35 MB, from about 6.1-7.0 MB. The
+    universal debug APK is 137.9 MB, about +49.9 MB. Options for the user: ABI splits, dropping
+    x86, compressed native libraries.
+  - Licences: `check-licenses.py` passes, 54 Go modules. Tailscale's `PATENTS` naming in
+    Dependency review is still to be seen on the PR.
 
 ## Decision pivot — 2026-11-08
 

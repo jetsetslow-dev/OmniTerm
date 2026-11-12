@@ -62,6 +62,8 @@ test.txt
 # Generated SSH keys for the local test fleet (scripts/test-hosts.sh)
 /scripts/test-hosts/keys/
 /scripts/test-hosts/.env
+# The tailnet fixture's relay map, written with headscale's address by scripts/test-hosts.sh
+/scripts/test-hosts/.tailnet/
 
 # Repo-local Go toolchain, modules and build cache (scripts/go-toolchain.sh), and the CodeQL Go
 # bundle scripts/local-codeql.sh fetches beside it.

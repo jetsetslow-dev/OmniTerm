@@ -1,0 +1,54 @@
+# Headscale for the Tailscale tunnel suite (E2eTailscaleTunnelTest). A throwaway control server:
+# its keys and nodes live in the container and go with it. The emulator reaches it at
+# 10.0.2.2:8085 (the host's 127.0.0.1:8085); the router node reaches it on the edge network.
+server_url: http://10.0.2.2:8085
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 127.0.0.1:9090
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
+# The phone and the router reach each other directly: the emulator through the host, which can
+# reach the router's address on the edge network. Headscale answers STUN on that network, so both
+# learn their addresses and keep their sockets; its relay is not reachable (no TLS), so nothing is
+# relayed, and nothing is fetched from Tailscale's public relay map. The map (scripts/test-hosts.sh
+# writes it with headscale's address) is scripts/test-hosts/.tailnet/derp.yaml.
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: fixture
+    region_name: Fixture
+    stun_listen_addr: 0.0.0.0:3478
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: false
+  urls: []
+  paths:
+    - /etc/headscale/tailnet/derp.yaml
+  auto_update_enabled: false
+  update_frequency: 24h
+disable_check_updates: true
+ephemeral_node_inactivity_timeout: 30m
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+log:
+  level: info
+  format: text
+dns:
+  magic_dns: true
+  base_domain: tailnet.test
+  override_local_dns: false
+  nameservers:
+    global: []
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+logtail:
+  enabled: false
+randomize_client_port: false

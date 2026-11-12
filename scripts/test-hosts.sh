@@ -10,6 +10,7 @@
 # CI's instrumentation coverage is the emulator-based Room migration matrix, which needs no hosts.
 #
 #   ./scripts/test-hosts.sh up       # generate keys if needed, start, wait until SSH answers
+#   ./scripts/test-hosts.sh tailnet  # start only headscale and the tailnet router, with fresh keys
 #   ./scripts/test-hosts.sh down     # stop and remove (host keys and volumes discarded)
 #   ./scripts/test-hosts.sh status   # container state and port mapping
 #   ./scripts/test-hosts.sh verify   # prove every auth mode and proxy path actually works
@@ -139,6 +140,82 @@ certificate_current() {
   [ -n "$until" ] && [ "$(date -d "$until" +%s 2>/dev/null || echo 0)" -gt "$(date -d '+7 days' +%s)" ]
 }
 
+# Sets NAME=value in $ENV_FILE, replacing an older value; prints neither.
+set_env() {
+  local name="$1" value="$2" tmp
+  tmp=$(mktemp "$ENV_FILE.XXXXXX")
+  grep -v "^$name=" "$ENV_FILE" >"$tmp" || true
+  printf '%s=%s\n' "$name" "$value" >>"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$ENV_FILE"
+}
+
+# The tailnet for the Tailscale tunnel suite: a user and two auth keys on headscale (the phone's,
+# ephemeral, into .env; the router's, only to start it), then the router, whose route to the
+# internal network is approved here. .env also gets that route and internal-a's address in it.
+# Keys are made again every time, as headscale keeps nothing across a restart.
+# The relay map headscale reads: one region whose STUN is headscale itself, at [address] (its own
+# address on the edge network, which the emulator and the router both reach), and whose relay
+# port is closed. Before headscale has an address, a placeholder at loopback.
+tailnet_map() {
+  local address="${1:-127.0.0.1}"
+  mkdir -p "$DIR/.tailnet"
+  cat >"$DIR/.tailnet/derp.yaml.new" <<EOF_MAP
+# Written by scripts/test-hosts.sh: the tailnet fixture's relay map (STUN only).
+regions:
+  999:
+    regionid: 999
+    regioncode: fixture
+    regionname: Fixture
+    nodes:
+      - name: 999a
+        regionid: 999
+        hostname: $address
+        ipv4: $address
+        ipv6: none
+        stunport: 3478
+        derpport: 9
+EOF_MAP
+  if cmp -s "$DIR/.tailnet/derp.yaml.new" "$DIR/.tailnet/derp.yaml"; then
+    rm "$DIR/.tailnet/derp.yaml.new"
+    return 1
+  fi
+  mv "$DIR/.tailnet/derp.yaml.new" "$DIR/.tailnet/derp.yaml"
+}
+
+tailnet_up() {
+  local hs=(docker exec omniterm-test-headscale headscale) i uid router_key phone_key node routes behind address
+  address=$(docker inspect omniterm-test-headscale --format '{{(index .NetworkSettings.Networks "omniterm-test-edge").IPAddress}}')
+  [ -n "$address" ] || { echo "headscale has no address on the edge network" >&2; return 1; }
+  # A new address in the map takes a restart, which also forgets headscale's nodes and keys.
+  if tailnet_map "$address"; then docker restart omniterm-test-headscale >/dev/null; fi
+  wait_for_port 8085 || return 1
+  for i in $(seq 1 30); do "${hs[@]}" users list >/dev/null 2>&1 && break; sleep 1; done
+  "${hs[@]}" users create lab >/dev/null 2>&1 || true
+  uid=$("${hs[@]}" users list -o json | python3 -I -c 'import json,sys; print(next(u["id"] for u in json.load(sys.stdin) if u["name"] == "lab"))') || return 1
+  key() { "${hs[@]}" preauthkeys create --user "$uid" --reusable --expiration 24h "$@" -o json |
+    python3 -I -c 'import json,sys; print(json.load(sys.stdin)["key"])'; }
+  router_key=$(key) || return 1
+  phone_key=$(key --ephemeral) || return 1
+  routes=$(docker network inspect omniterm-test-internal --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | awk '{print $1}')
+  behind=$(docker inspect omniterm-test-internal-a --format '{{(index .NetworkSettings.Networks "omniterm-test-internal").IPAddress}}')
+  [ -n "$routes" ] && [ -n "$behind" ] || { echo "the internal network has no range, or internal-a no address" >&2; return 1; }
+  set_env OMNITERM_TEST_TS_PHONE_KEY "$phone_key"
+  set_env OMNITERM_TEST_TS_ROUTES "$routes"
+  set_env OMNITERM_TEST_TS_BEHIND "$behind"
+  OMNITERM_TEST_TS_ROUTER_KEY="$router_key" OMNITERM_TEST_TS_ROUTES="$routes" \
+    compose --profile tailnet up -d --no-deps --force-recreate tailnet-router
+  for i in $(seq 1 60); do
+    node=$("${hs[@]}" nodes list -o json 2>/dev/null |
+      python3 -I -c 'import json,sys; ids=[n["id"] for n in json.load(sys.stdin) or [] if n.get("given_name", "").startswith("router") and n.get("online")]; print(max(ids) if ids else "")')
+    [ -n "$node" ] && break
+    sleep 2
+  done
+  [ -n "$node" ] || { echo "the tailnet router did not join headscale" >&2; return 1; }
+  "${hs[@]}" nodes approve-routes --identifier "$node" --routes "$routes" >/dev/null
+  echo "tailnet ready: headscale at 10.0.2.2:8085 (emulator), router offering $routes"
+}
+
 wait_for_port() {
   local port="$1" i
   for i in $(seq 1 60); do
@@ -169,6 +246,7 @@ case "${1:-}" in
   up)
     require_docker
     ensure_keys
+    [ -f "$DIR/.tailnet/derp.yaml" ] || tailnet_map || true
     # Fail loudly on a port owned by something else -- this machine may also run a real homelab.
     for entry in "${EDGE_HOSTS[@]}"; do
       p="${entry#*:}"; p="${p%%:*}"
@@ -192,12 +270,21 @@ case "${1:-}" in
     wait_for_auth 2203 || exit 1
     wait_for_auth 2205 || exit 1
     wait_for_auth 2206 || exit 1
+    tailnet_up || exit 1
     echo "test fleet ready. Run './scripts/test-hosts.sh fleet' for the settings to enter."
+    ;;
+
+  tailnet)
+    # Only the tailnet, without touching the other fixtures.
+    require_docker
+    [ -f "$DIR/.tailnet/derp.yaml" ] || tailnet_map || true
+    compose up -d --no-deps headscale
+    tailnet_up || exit 1
     ;;
 
   down)
     require_docker
-    compose down -v --remove-orphans
+    compose --profile tailnet down -v --remove-orphans
     echo "test fleet removed"
     ;;
 
