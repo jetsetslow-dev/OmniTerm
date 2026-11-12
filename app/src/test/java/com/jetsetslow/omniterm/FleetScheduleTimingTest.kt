@@ -8,6 +8,7 @@ import org.junit.Test
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.TimeZone
 
 /** When a schedule runs next, in the phone's local time, through the clock changes too. */
 class FleetScheduleTimingTest {
@@ -59,7 +60,7 @@ class FleetScheduleTimingTest {
         assertEquals("00:00", FleetScheduleTiming.formatTime(0))
     }
 
-    private fun next(schedule: FleetScheduleEntity, after: Long) = FleetScheduleTiming.nextRun(schedule, after, london)
+    private fun next(schedule: FleetScheduleEntity, after: Long) = FleetScheduleTiming.nextRun(schedule, after, TimeZone.getTimeZone(london))
 
     private fun at(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
         ZonedDateTime.of(LocalDateTime.of(year, month, day, hour, minute), london).toInstant().toEpochMilli()

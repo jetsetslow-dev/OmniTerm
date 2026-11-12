@@ -51,8 +51,7 @@ import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.UnattendedScripts
 import com.jetsetslow.omniterm.ui.theme.OmniColors
-import java.time.DayOfWeek
-import java.time.format.TextStyle
+import java.text.DateFormatSymbols
 import java.util.Locale
 
 /**
@@ -189,12 +188,16 @@ internal fun scheduleTiming(schedule: FleetScheduleEntity): String {
             if (minutes % 60 == 0) pluralStringResource(R.plurals.fleet_schedule_every_hours, minutes / 60, minutes / 60)
             else pluralStringResource(R.plurals.fleet_schedule_every_minutes, minutes, minutes)
         }
-        FleetScheduleTiming.WEEKLY -> stringResource(R.string.fleet_schedule_weekly_at, dayName(schedule.dayOfWeek, TextStyle.FULL), time)
+        FleetScheduleTiming.WEEKLY -> stringResource(R.string.fleet_schedule_weekly_at, dayName(schedule.dayOfWeek, short = false), time)
         else -> stringResource(R.string.fleet_schedule_daily_at, time)
     }
 }
 
-private fun dayName(day: Int, style: TextStyle): String = DayOfWeek.of(day.coerceIn(1, 7)).getDisplayName(style, Locale.getDefault())
+/** Day [day], 1 Monday to 7 Sunday, in the phone's language. DateFormatSymbols counts from Sunday, 1. */
+private fun dayName(day: Int, short: Boolean): String {
+    val symbols = DateFormatSymbols.getInstance(Locale.getDefault())
+    return (if (short) symbols.shortWeekdays else symbols.weekdays)[day.coerceIn(1, 7) % 7 + 1]
+}
 
 /**
  * A schedule's editor: its name, its script (one that may run with nobody there), its hosts
@@ -334,7 +337,7 @@ private fun FleetScheduleEditor(
                                 FilterChip(
                                     selected = dayOfWeek == day,
                                     onClick = { dayOfWeek = day },
-                                    label = { Text(dayName(day, TextStyle.SHORT), fontSize = 12.sp) },
+                                    label = { Text(dayName(day, short = true), fontSize = 12.sp) },
                                     modifier = Modifier.testTag("fleet.schedule.day.$day"),
                                 )
                             }
