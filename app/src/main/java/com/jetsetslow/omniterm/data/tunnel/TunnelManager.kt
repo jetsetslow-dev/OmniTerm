@@ -1,7 +1,9 @@
 package com.jetsetslow.omniterm.data.tunnel
 
+import android.content.Context
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.TunnelEntity
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,6 +25,14 @@ data class TunnelStatus(
     val lastHandshake: Long,
     val bytesIn: Long,
     val bytesOut: Long,
+    /** One of [TunnelStates]; a tunnel that is up but not running (signing in) carries nothing. */
+    val state: String = TunnelStates.RUNNING,
+    /** The page to sign the tunnel in at, while it needs that. */
+    val authUrl: String = "",
+    /** The phone's own addresses inside the tunnel. */
+    val addresses: String = "",
+    /** What the user should know about the tunnel now, or "". */
+    val problem: String = "",
 )
 
 /**
@@ -34,18 +44,44 @@ object TunnelManager {
     @Volatile internal var engine: TunnelEngine = GoTunnelEngine
     @Volatile internal var clock: () -> Long = System::currentTimeMillis
     @Volatile private var source: (suspend (Int) -> TunnelEntity?) = { null }
+    @Volatile private var nodes: NodeStates = NodeStates.NONE
     private var watcher: Job? = null
 
-    private class Running(val tunnel: RunningTunnel, val fingerprint: String) {
+    private class Running(val tunnel: RunningTunnel, val fingerprint: String, val name: String = "") {
         @Volatile var lastUsed: Long = 0
     }
 
     private val running = ConcurrentHashMap<Int, Running>()
     private val locks = ConcurrentHashMap<Int, Any>()
     private val _statuses = MutableStateFlow<Map<Int, TunnelStatus>>(emptyMap())
+    private val _problems = MutableStateFlow<Map<Int, String>>(emptyMap())
 
     /** The tunnels that are up, by id. */
     val statuses: StateFlow<Map<Int, TunnelStatus>> = _statuses.asStateFlow()
+
+    /** Why each tunnel that last failed to start did, by id, until it starts or is stopped. */
+    val problems: StateFlow<Map<Int, String>> = _problems.asStateFlow()
+
+    /** Where a tunnel's node state is read and kept: the database, or a test's own. */
+    internal class NodeStates(
+        val load: suspend (Int) -> String,
+        val save: suspend (Int, String) -> Unit,
+        val scratch: (Int) -> File = TailscaleNetwork::scratch,
+    ) {
+        companion object {
+            val NONE = NodeStates({ "" }, { _, _ -> })
+        }
+    }
+
+    /**
+     * Follows what tunnels depend on as the phone moves between networks: the Wi-Fi it is on
+     * ([CurrentWifi]) and the interface its connections go over ([TailscaleNetwork]). Called from
+     * every way into the app.
+     */
+    fun follow(context: Context) {
+        CurrentWifi.start(context)
+        TailscaleNetwork.start(context)
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -57,6 +93,7 @@ object TunnelManager {
     @Synchronized
     fun attach(repository: AppRepository) {
         source = { repository.getTunnel(it) }
+        nodes = NodeStates(repository::tunnelNodeState, repository::saveTunnelNodeState)
         if (watcher?.isActive == true) return
         watcher = scope.launch {
             while (isActive) {
@@ -67,8 +104,9 @@ object TunnelManager {
         }
     }
 
-    internal fun attachSource(lookup: suspend (Int) -> TunnelEntity?) {
+    internal fun attachSource(lookup: suspend (Int) -> TunnelEntity?, states: NodeStates = NodeStates.NONE) {
         source = lookup
+        nodes = states
     }
 
     /** What is wrong with [config], or null when it can be used. */
@@ -82,11 +120,32 @@ object TunnelManager {
         val run = runningFor(tunnelId)
         run.lastUsed = clock()
         try {
+            // A tunnel that is up but not signed in fails closed here, whatever its kind.
+            notRunning(run)?.let { throw IOException(it) }
             return run.tunnel.dial(host, port, timeoutMs)
         } finally {
             run.lastUsed = clock()
             refresh()
         }
+    }
+
+    /**
+     * Brings tunnel [id] up without a connection, so a Tailscale tunnel can be signed in before a
+     * host needs it. Blocks; throws what a dial would. Returns its status.
+     */
+    fun start(id: Int): TunnelStatus {
+        val run = runningFor(id)
+        run.lastUsed = clock()
+        refresh()
+        return status(run)
+    }
+
+    /** Why [run] carries no connection now, or null when it does. */
+    private fun notRunning(run: Running): String? = when (run.tunnel.state) {
+        TunnelStates.RUNNING -> null
+        TunnelStates.NEEDS_LOGIN -> "Tunnel \"${run.name}\" is not signed in. Sign it in under Tools, VPN tunnels."
+        TunnelStates.NEEDS_APPROVAL -> "Tunnel \"${run.name}\" is waiting for its tailnet's admin to approve this device."
+        else -> "Tunnel \"${run.name}\" is not connected yet."
     }
 
     private fun runningFor(id: Int): Running = synchronized(locks.getOrPut(id) { Any() }) {
@@ -98,12 +157,21 @@ object TunnelManager {
             running.remove(id)
             current.tunnel.close()
         }
-        val tunnel = try {
-            engine.start(entity.kind, entity.config, ::systemResolve)
-        } catch (e: IOException) {
-            throw IOException("Tunnel \"${entity.name}\" could not start: ${e.message}", e)
+        val states = nodes
+        val node = object : TunnelNode {
+            override val scratch: File get() = states.scratch(id)
+            override fun load(): String = runBlocking(Dispatchers.IO) { states.load(id) }
+            override fun save(state: String) = runBlocking(Dispatchers.IO) { states.save(id, state) }
         }
-        Running(tunnel, fingerprint).also {
+        val tunnel = try {
+            engine.start(entity.kind, entity.config, ::systemResolve, node)
+        } catch (e: IOException) {
+            val message = "Tunnel \"${entity.name}\" could not start: ${e.message}"
+            _problems.value = _problems.value + (id to message)
+            throw IOException(message, e)
+        }
+        _problems.value = _problems.value - id
+        Running(tunnel, fingerprint, entity.name).also {
             it.lastUsed = clock()
             running[id] = it
             refresh()
@@ -115,6 +183,7 @@ object TunnelManager {
         synchronized(locks.getOrPut(id) { Any() }) {
             running.remove(id)?.tunnel?.close()
         }
+        _problems.value = _problems.value - id
         refresh()
     }
 
@@ -138,10 +207,12 @@ object TunnelManager {
     }
 
     internal fun refresh() {
-        _statuses.value = running.mapValues { (_, run) ->
-            val t = run.tunnel
-            TunnelStatus(t.connections, t.lastHandshake, t.bytesIn, t.bytesOut)
-        }
+        _statuses.value = running.mapValues { (_, run) -> status(run) }
+    }
+
+    private fun status(run: Running): TunnelStatus {
+        val t = run.tunnel
+        return TunnelStatus(t.connections, t.lastHandshake, t.bytesIn, t.bytesOut, t.state, t.authUrl, t.addresses, t.problem)
     }
 
     private fun fingerprint(entity: TunnelEntity): String =

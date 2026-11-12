@@ -524,9 +524,11 @@ class AppDatabaseMigrationTest {
                 assertTrue(cursor.moveToFirst())
                 assertEquals("an upgraded host has no tags", "", cursor.getString(0))
             }
-            db.query("SELECT directWifi FROM tunnels WHERE name = 'Home'").use { cursor ->
+            db.query("SELECT directWifi, nodeState, kind FROM tunnels WHERE name = 'Home'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("an upgraded tunnel is needed on every network, as before", "", cursor.getString(0))
+                assertEquals("an upgraded tunnel has no node state", "", cursor.getString(1))
+                assertEquals("and stays a WireGuard tunnel", "wireguard", cursor.getString(2))
             }
             db.query("SELECT COUNT(*) FROM fleet_target_sets").use { cursor ->
                 assertTrue(cursor.moveToFirst())

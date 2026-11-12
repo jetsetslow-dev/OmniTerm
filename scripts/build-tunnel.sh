@@ -44,8 +44,11 @@ RETRY="$ROOT/scripts/retry-network.sh"
 
 tmp="$OUT.tmp.aar"
 rm -f "$tmp" "${tmp%.aar}-sources.jar"
+# The tags that ship (tunnel/build-tags.txt): gomobile is given them itself too, not only in GOFLAGS.
+TAGS="$(grep -v '^#' "$ROOT/tunnel/build-tags.txt" | tr -d '[:space:]')"
 "$RETRY" gomobile bind \
   -target="$TARGETS" \
+  -tags="$TAGS" \
   -androidapi 24 \
   -javapkg com.jetsetslow.omniterm.gotunnel \
   -trimpath \

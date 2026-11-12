@@ -39,14 +39,17 @@ if [[ ! -x "$GOROOT_DIR/bin/go" ]]; then
 fi
 
 # Everything Go writes stays under .go-toolchain/ too. GOTOOLCHAIN=local stops Go fetching another
-# toolchain on its own; modules are checked against go.sum and the public checksum database.
+# toolchain on its own; modules are checked against go.sum and the public checksum database. Every
+# build, test and vet of tunnel/ uses its build tags (tunnel/build-tags.txt), so what is tested and
+# analysed is what ships.
+TAGS="$(grep -v '^#' "$ROOT/tunnel/build-tags.txt" | tr -d '[:space:]')"
 ENV=(
   "GOROOT=$GOROOT_DIR"
   "GOPATH=$DEST/gopath"
   "GOMODCACHE=$DEST/gopath/pkg/mod"
   "GOCACHE=$DEST/cache"
   "GOTOOLCHAIN=local"
-  "GOFLAGS=-mod=readonly"
+  "GOFLAGS=-mod=readonly -tags=$TAGS"
 )
 BIN=("$GOROOT_DIR/bin" "$DEST/gopath/bin")
 

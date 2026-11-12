@@ -41,7 +41,9 @@ features. No code from them is included; see the README's Acknowledgements for w
 The VPN tunnel library (`tunnel/`) is built from these, each under its own licence; the full module list with versions is in `tunnel/go.mod`:
 
 - wireguard-go (MIT) — https://git.zx2c4.com/wireguard-go
+- Tailscale's `tsnet` and the libraries it is built on (BSD-3-Clause, with Tailscale's patent grant in its PATENTS file) — https://github.com/tailscale/tailscale
 - gVisor network stack (Apache-2.0) — https://github.com/google/gvisor
 - Go extended libraries golang.org/x/crypto, net, sys, time (BSD-3-Clause) — https://go.googlesource.com
 - gomobile (BSD-3-Clause), used to build the Android library — https://pkg.go.dev/golang.org/x/mobile
 - google/btree (Apache-2.0) — https://github.com/google/btree
+- The other modules Tailscale needs, each listed in `tunnel/go.mod`, are under BSD-2-Clause, BSD-3-Clause, MIT, ISC or Apache-2.0; `scripts/check-licenses.py` reads every one

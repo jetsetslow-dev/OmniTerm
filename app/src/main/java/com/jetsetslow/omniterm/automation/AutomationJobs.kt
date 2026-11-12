@@ -80,7 +80,7 @@ object AutomationJobs {
 
     fun repository(context: Context): AppRepository {
         // A background run follows the tunnels' Wi-Fi rule too, from what the app last saw.
-        com.jetsetslow.omniterm.data.tunnel.CurrentWifi.start(context)
+        com.jetsetslow.omniterm.data.tunnel.TunnelManager.follow(context)
         return AppRepository(AppDatabase.getDatabase(context.applicationContext))
     }
 

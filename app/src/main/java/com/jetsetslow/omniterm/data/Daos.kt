@@ -602,6 +602,13 @@ interface TunnelDao {
     @Query("SELECT directWifi FROM tunnels WHERE id = :id")
     suspend fun directWifi(id: Int): String?
 
+    /** A Tailscale tunnel's node state, as stored (encrypted); null when there is no such tunnel. */
+    @Query("SELECT nodeState FROM tunnels WHERE id = :id")
+    suspend fun nodeState(id: Int): String?
+
+    @Query("UPDATE tunnels SET nodeState = :state WHERE id = :id")
+    suspend fun setNodeState(id: Int, state: String)
+
     @Insert
     suspend fun insert(tunnel: TunnelEntity): Long
 

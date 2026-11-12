@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -33,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -43,8 +45,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.TunnelEntity
+import com.jetsetslow.omniterm.data.TunnelKinds
 import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
+import com.jetsetslow.omniterm.data.tunnel.TailscaleSettings
 import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
+import com.jetsetslow.omniterm.data.tunnel.TunnelStates
 import com.jetsetslow.omniterm.data.tunnel.TunnelStatus
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
@@ -53,18 +58,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Tools → VPN tunnels: WireGuard tunnels the user sets up once and picks per host. A tunnel runs
- * inside OmniTerm only, starts when a host needs it and stops when nothing has used it for a while;
- * the phone's own VPN is never used, and nothing else on the phone goes through it.
+ * Tools → VPN tunnels: WireGuard and Tailscale (or Headscale) tunnels the user sets up once and
+ * picks per host. A tunnel runs inside OmniTerm only, starts when a host needs it and stops when
+ * nothing has used it for a while; the phone's own VPN is never used, and nothing else on the phone
+ * goes through it.
  */
 @Composable
 fun VpnTunnelsToolView(viewModel: AppViewModel) {
     val tunnels by viewModel.tunnels.collectAsStateWithLifecycle()
     val statuses by viewModel.tunnelStatuses.collectAsStateWithLifecycle()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
+    val problems by viewModel.tunnelProblems.collectAsStateWithLifecycle()
     val wifi by CurrentWifi.state.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<TunnelEntity?>(null) }
-    var adding by remember { mutableStateOf(false) }
+    // The kind of tunnel being added, or null.
+    var adding by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<TunnelEntity?>(null) }
 
     ToolScaffold(viewModel, stringResource(R.string.vpn_title)) {
@@ -73,8 +81,13 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.vpn_intro), fontSize = 13.sp)
                     Text(stringResource(R.string.vpn_never_direct), fontSize = 12.sp, color = OmniColors.amber)
-                    Button(onClick = { adding = true }, modifier = Modifier.testTag("vpn.add")) {
-                        Text(stringResource(R.string.vpn_add_wireguard))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = { adding = TunnelKinds.WIREGUARD }, modifier = Modifier.testTag("vpn.add")) {
+                            Text(stringResource(R.string.vpn_add_wireguard))
+                        }
+                        Button(onClick = { adding = TunnelKinds.TAILSCALE }, modifier = Modifier.testTag("vpn.add.tailscale")) {
+                            Text(stringResource(R.string.vpn_add_tailscale))
+                        }
                     }
                 }
             }
@@ -86,8 +99,10 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
                 TunnelCard(
                     tunnel = tunnel,
                     status = statuses[tunnel.id],
+                    problem = problems[tunnel.id],
                     users = users,
                     wifi = wifi.name,
+                    onConnect = { viewModel.connectTunnel(tunnel.id) },
                     onEdit = { editing = tunnel },
                     onStop = { viewModel.stopTunnelNow(tunnel.id) },
                     onDelete = { deleting = tunnel },
@@ -96,11 +111,13 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
         }
     }
 
-    if (adding || editing != null) {
-        TunnelEditDialog(viewModel, editing) {
-            adding = false
+    val kind = editing?.kind ?: adding
+    if (kind != null) {
+        val done = {
+            adding = null
             editing = null
         }
+        if (kind == TunnelKinds.TAILSCALE) TailscaleEditDialog(viewModel, editing, done) else TunnelEditDialog(viewModel, editing, done)
     }
     deleting?.let { tunnel ->
         var problem by remember(tunnel.id) { mutableStateOf<String?>(null) }
@@ -108,7 +125,10 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
             onDismissRequest = { deleting = null },
             title = { Text(stringResource(R.string.vpn_delete_title, tunnel.name)) },
             text = {
-                Text(problem ?: stringResource(R.string.vpn_delete_body), modifier = Modifier.testTag("vpn.delete.message"))
+                Text(
+                    problem ?: stringResource(if (tunnel.kind == TunnelKinds.TAILSCALE) R.string.vpn_ts_delete_body else R.string.vpn_delete_body),
+                    modifier = Modifier.testTag("vpn.delete.message"),
+                )
             },
             confirmButton = {
                 if (problem == null) {
@@ -127,17 +147,32 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
 private fun TunnelCard(
     tunnel: TunnelEntity,
     status: TunnelStatus?,
+    problem: String?,
     users: List<String>,
     wifi: String?,
+    onConnect: () -> Unit,
     onEdit: () -> Unit,
     onStop: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val tailscale = tunnel.kind == TunnelKinds.TAILSCALE
     OmniCard(modifier = Modifier.fillMaxWidth().testTag("vpn.item.${tunnel.id}")) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(tunnel.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            Text(stringResource(R.string.vpn_kind_wireguard), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(tunnelStatusText(status), fontSize = 12.sp, modifier = Modifier.testTag("vpn.status.${tunnel.id}"))
+            Text(
+                stringResource(if (tailscale) R.string.vpn_kind_tailscale else R.string.vpn_kind_wireguard),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("vpn.kind.${tunnel.id}"),
+            )
+            Text(
+                if (tailscale) tailscaleStatusText(status) else tunnelStatusText(status),
+                fontSize = 12.sp,
+                modifier = Modifier.testTag("vpn.status.${tunnel.id}"),
+            )
+            (problem ?: status?.problem?.takeIf { it.isNotEmpty() })?.let {
+                Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.problem.${tunnel.id}"))
+            }
             Text(
                 if (users.isEmpty()) stringResource(R.string.vpn_used_by_none) else stringResource(R.string.vpn_used_by, users.joinToString(", ")),
                 fontSize = 12.sp,
@@ -159,7 +194,19 @@ private fun TunnelCard(
                     Text(stringResource(R.string.vpn_direct_wifi_blocked), fontSize = 12.sp, color = OmniColors.amber)
                 }
             }
-            Row {
+            FlowRow {
+                val signIn = status?.authUrl.orEmpty()
+                if (tailscale && signIn.isNotEmpty()) {
+                    val uri = LocalUriHandler.current
+                    TextButton(onClick = { runCatching { uri.openUri(signIn) } }, modifier = Modifier.testTag("vpn.signin.${tunnel.id}")) {
+                        Text(stringResource(R.string.vpn_ts_sign_in))
+                    }
+                }
+                if (tailscale && status == null) {
+                    TextButton(onClick = onConnect, modifier = Modifier.testTag("vpn.connect.${tunnel.id}")) {
+                        Text(stringResource(R.string.vpn_ts_connect))
+                    }
+                }
                 TextButton(onClick = onEdit, modifier = Modifier.testTag("vpn.edit.${tunnel.id}")) { Text(stringResource(R.string.vpn_edit)) }
                 if (status != null) {
                     TextButton(onClick = onStop, modifier = Modifier.testTag("vpn.stop.${tunnel.id}")) { Text(stringResource(R.string.vpn_stop)) }
@@ -179,6 +226,22 @@ private fun tunnelStatusText(status: TunnelStatus?): String {
     if (status.lastHandshake <= 0) return stringResource(R.string.vpn_status_no_handshake, connections)
     val ago = ((System.currentTimeMillis() / 1000 - status.lastHandshake).coerceAtLeast(0))
     return stringResource(R.string.vpn_status_up, connections, formatAgo(ago))
+}
+
+@Composable
+private fun tailscaleStatusText(status: TunnelStatus?): String {
+    if (status == null) return stringResource(R.string.vpn_ts_status_down)
+    return when (status.state) {
+        TunnelStates.NEEDS_LOGIN ->
+            stringResource(if (status.authUrl.isEmpty()) R.string.vpn_ts_status_signed_out else R.string.vpn_ts_status_needs_login)
+        TunnelStates.NEEDS_APPROVAL -> stringResource(R.string.vpn_ts_status_needs_approval)
+        TunnelStates.RUNNING -> stringResource(
+            R.string.vpn_ts_status_up,
+            status.addresses.substringBefore(',').ifEmpty { "…" },
+            pluralStringResource(R.plurals.vpn_connections, status.connections, status.connections),
+        )
+        else -> stringResource(R.string.vpn_ts_status_starting)
+    }
 }
 
 private fun formatAgo(seconds: Long): String = when {
@@ -215,50 +278,159 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
     LaunchedEffect(config) {
         checkMessage = if (config.isBlank()) null else withContext(Dispatchers.Default) { viewModel.checkTunnelConfig(config) }
     }
+    TunnelEditorFrame(
+        title = stringResource(if (existing == null) R.string.vpn_add_title else R.string.vpn_edit_title),
+        name = name,
+        onName = { name = it },
+        saving = saving,
+        canSave = !saving && checkMessage == null,
+        onSave = {
+            saving = true
+            problem = null
+            viewModel.saveTunnel(existing?.id, name, config.takeIf { it.isNotBlank() }, directWifi) { err ->
+                saving = false
+                if (err == null) onDone() else problem = err
+            }
+        },
+        onDone = onDone,
+    ) {
+        OutlinedTextField(
+            value = config,
+            onValueChange = { config = it },
+            label = { Text(stringResource(R.string.vpn_config)) },
+            placeholder = {
+                Text(stringResource(if (existing == null) R.string.vpn_config_hint else R.string.vpn_config_keep), fontSize = 12.sp)
+            },
+            textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 11.sp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).testTag("vpn.config"),
+        )
+        TextButton(onClick = { importLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.testTag("vpn.import")) {
+            Text(stringResource(R.string.vpn_import))
+        }
+        checkMessage?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.check")) }
+        problem?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.problem")) }
+        TunnelDirectWifiEditor(directWifi) { directWifi = it }
+        Text(stringResource(R.string.vpn_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * Adds a Tailscale tunnel ([existing] null) or edits one: its control server (Tailscale's own, or a
+ * Headscale server), an optional auth key, which an edit keeps unless a new one is typed, the
+ * device name the phone has in the tailnet, and the Wi-Fi networks it is not needed on.
+ */
+@Composable
+private fun TailscaleEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, onDone: () -> Unit) {
+    var name by remember { mutableStateOf(existing?.name.orEmpty()) }
+    var control by remember { mutableStateOf("") }
+    var authKey by remember { mutableStateOf("") }
+    var device by remember { mutableStateOf(if (existing == null) TailscaleSettings.deviceName(android.os.Build.MODEL.orEmpty()) else "") }
+    var hasKey by remember { mutableStateOf(false) }
+    var before by remember { mutableStateOf<TailscaleSettings?>(null) }
+    var loaded by remember { mutableStateOf(existing == null) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    var checkMessage by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    var directWifi by remember { mutableStateOf(TunnelNetworks.names(existing?.directWifi.orEmpty())) }
+    LaunchedEffect(existing?.id) {
+        val id = existing?.id ?: return@LaunchedEffect
+        viewModel.loadTailscaleSettings(id) { settings, key ->
+            settings?.let {
+                control = it.controlUrl
+                device = it.hostname
+                before = it
+            }
+            hasKey = key
+            loaded = true
+        }
+    }
+    val settings = TailscaleSettings(control, authKey, device)
+    LaunchedEffect(control, authKey, device) {
+        checkMessage = withContext(Dispatchers.Default) { viewModel.checkTunnelConfig(settings.toConfig(), TunnelKinds.TAILSCALE) }
+    }
+    TunnelEditorFrame(
+        title = stringResource(if (existing == null) R.string.vpn_ts_add_title else R.string.vpn_edit_title),
+        name = name,
+        onName = { name = it },
+        saving = saving,
+        canSave = loaded && !saving && checkMessage == null,
+        onSave = {
+            saving = true
+            problem = null
+            viewModel.saveTailscaleTunnel(existing?.id, name, settings, directWifi) { err ->
+                saving = false
+                if (err == null) onDone() else problem = err
+            }
+        },
+        onDone = onDone,
+    ) {
+        OutlinedTextField(
+            value = control,
+            onValueChange = { control = it },
+            label = { Text(stringResource(R.string.vpn_ts_control)) },
+            supportingText = { Text(stringResource(R.string.vpn_ts_control_help), fontSize = 11.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("vpn.ts.control"),
+        )
+        if (settings.plainHttp()) {
+            PlainHttpWarning(stringResource(R.string.vpn_ts_plain_http), Modifier.testTag("vpn.ts.plainhttp"))
+        }
+        before?.let { old ->
+            if (!old.sameServerAs(settings)) {
+                Text(stringResource(R.string.vpn_ts_server_change), fontSize = 12.sp, color = OmniColors.amber, modifier = Modifier.testTag("vpn.ts.newnode"))
+            }
+        }
+        OmniPasswordField(
+            value = authKey,
+            onValueChange = { authKey = it },
+            label = stringResource(if (hasKey) R.string.vpn_ts_auth_key_keep else R.string.vpn_ts_auth_key),
+            modifier = Modifier.fillMaxWidth().testTag("vpn.ts.authkey"),
+        )
+        Text(stringResource(R.string.vpn_ts_auth_key_help), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(
+            value = device,
+            onValueChange = { device = it },
+            label = { Text(stringResource(R.string.vpn_ts_device)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("vpn.ts.device"),
+        )
+        checkMessage?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.check")) }
+        problem?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.problem")) }
+        Text(stringResource(R.string.vpn_ts_routes), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TunnelDirectWifiEditor(directWifi) { directWifi = it }
+        Text(stringResource(R.string.vpn_ts_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** What both tunnel editors share: the title, the tunnel's name above [fields], and Save and Cancel. */
+@Composable
+private fun TunnelEditorFrame(
+    title: String,
+    name: String,
+    onName: (String) -> Unit,
+    saving: Boolean,
+    canSave: Boolean,
+    onSave: () -> Unit,
+    onDone: () -> Unit,
+    fields: @Composable ColumnScope.() -> Unit,
+) {
     AlertDialog(
         onDismissRequest = { if (!saving) onDone() },
-        title = { Text(stringResource(if (existing == null) R.string.vpn_add_title else R.string.vpn_edit_title)) },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = onName,
                     label = { Text(stringResource(R.string.vpn_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("vpn.name"),
                 )
-                OutlinedTextField(
-                    value = config,
-                    onValueChange = { config = it },
-                    label = { Text(stringResource(R.string.vpn_config)) },
-                    placeholder = {
-                        Text(stringResource(if (existing == null) R.string.vpn_config_hint else R.string.vpn_config_keep), fontSize = 12.sp)
-                    },
-                    textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 11.sp),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).testTag("vpn.config"),
-                )
-                TextButton(onClick = { importLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.testTag("vpn.import")) {
-                    Text(stringResource(R.string.vpn_import))
-                }
-                checkMessage?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.check")) }
-                problem?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.problem")) }
-                TunnelDirectWifiEditor(directWifi) { directWifi = it }
-                Text(stringResource(R.string.vpn_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                fields()
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = !saving && checkMessage == null,
-                onClick = {
-                    saving = true
-                    problem = null
-                    viewModel.saveTunnel(existing?.id, name, config.takeIf { it.isNotBlank() }, directWifi) { err ->
-                        saving = false
-                        if (err == null) onDone() else problem = err
-                    }
-                },
-                modifier = Modifier.testTag("vpn.save"),
-            ) { Text(stringResource(R.string.vpn_save)) }
+            TextButton(enabled = canSave, onClick = onSave, modifier = Modifier.testTag("vpn.save")) { Text(stringResource(R.string.vpn_save)) }
         },
         dismissButton = { TextButton(onClick = onDone, enabled = !saving) { Text(stringResource(R.string.vpn_cancel)) } },
     )

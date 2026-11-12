@@ -70,15 +70,23 @@ class TunnelRoutingTest {
     /** Dials everything at the echo, and records what it was asked for. */
     private inner class FakeEngine : TunnelEngine {
         val starts = mutableListOf<String>()
+        val kinds = mutableListOf<String>()
         val dials = mutableListOf<String>()
         var failStart: String? = null
         val open = mutableListOf<SocketLink>()
         var closed = 0
+        /** The state a started tunnel reports, as a Tailscale one signing in would. */
+        @Volatile var state = TunnelStates.RUNNING
+        var node: TunnelNode? = null
         override fun check(kind: String, config: String): String? = if (config == "bad") "Line 1: nope." else null
-        override fun start(kind: String, config: String, resolve: (String) -> List<String>): RunningTunnel {
+        override fun start(kind: String, config: String, resolve: (String) -> List<String>, node: TunnelNode): RunningTunnel {
             failStart?.let { throw IOException(it) }
             starts += config
+            kinds += kind
+            this.node = node
             return object : RunningTunnel {
+                override val state: String get() = this@FakeEngine.state
+                override val authUrl: String get() = if (this@FakeEngine.state == TunnelStates.NEEDS_LOGIN) "https://login.example/a/1" else ""
                 override fun dial(host: String, port: Int, timeoutMs: Int): TunnelLink {
                     dials += "$host:$port/$timeoutMs"
                     if (host == "refused.inside") throw IOException("Connection refused through the tunnel")
@@ -103,7 +111,7 @@ class TunnelRoutingTest {
         TunnelManager.stopAll()
         TunnelManager.engine = engine
         TunnelManager.clock = { now }
-        TunnelManager.attachSource { tunnels[it] }
+        TunnelManager.attachSource({ tunnels[it] })
         tunnels[1] = TunnelEntity(id = 1, name = "Home", kind = TunnelKinds.WIREGUARD, config = "conf-1")
     }
 
@@ -260,5 +268,53 @@ class TunnelRoutingTest {
         unset.connect(InetSocketAddress.createUnresolved("y", 1))
         assertWithMessage("no timeout given uses the dial default").that(asked!!.third).isEqualTo(TunnelSocket.DEFAULT_TIMEOUT_MS)
         unset.close()
+    }
+
+    @Test
+    fun aTailscaleTunnelThatIsNotSignedInFailsClosedAndDirectHostsAreUntouched() {
+        tunnels[2] = TunnelEntity(id = 2, name = "Tailnet", kind = TunnelKinds.TAILSCALE, config = "{}")
+        Echo().use { direct ->
+            engine.state = TunnelStates.NEEDS_LOGIN
+            val creds = SshCredentials("127.0.0.1", direct.port, "u", tunnelId = 2)
+            val e = assertThrows(JSchException::class.java) { socketFactoryFor(creds).createSocket(creds.host, creds.port) }
+            assertThat(e.message).isEqualTo("Tunnel \"Tailnet\" is not signed in. Sign it in under Tools, VPN tunnels.")
+            assertThat(engine.kinds).containsExactly(TunnelKinds.TAILSCALE)
+            assertWithMessage("nothing is dialled inside a tunnel that is not signed in").that(engine.dials).isEmpty()
+            assertThat(TunnelManager.statuses.value[2]?.authUrl).isEqualTo("https://login.example/a/1")
+
+            engine.state = TunnelStates.NEEDS_APPROVAL
+            val waiting = assertThrows(JSchException::class.java) { socketFactoryFor(creds).createSocket(creds.host, creds.port) }
+            assertThat(waiting.message).contains("waiting for its tailnet's admin")
+            assertWithMessage("a selected tunnel never goes direct").that(direct.acceptedSoFar()).isEqualTo(0)
+
+            // Once signed in, the same tunnel carries the connection, without starting again.
+            engine.state = TunnelStates.RUNNING
+            val socket = socketFactoryFor(creds).createSocket(creds.host, creds.port)
+            assertThat(roundTrip(socket)).isEqualTo("ping")
+            socket.close()
+            assertThat(engine.starts).hasSize(1)
+            assertThat(direct.acceptedSoFar()).isEqualTo(0)
+
+            // A host without a tunnel still connects directly.
+            val plain = SshCredentials("127.0.0.1", direct.port, "u")
+            socketFactoryFor(plain).createSocket(plain.host, plain.port).close()
+            assertThat(direct.acceptedOnce(1)).isEqualTo(1)
+        }
+    }
+
+    @Test
+    fun aTailscaleTunnelKeepsItsNodeInTheStoreItIsGiven() {
+        val kept = mutableMapOf(2 to "before")
+        val folder = java.nio.file.Files.createTempDirectory("omniterm-node").toFile()
+        TunnelManager.attachSource({ tunnels[it] }, TunnelManager.NodeStates({ kept[it].orEmpty() }, { id, state -> kept[id] = state }, { java.io.File(folder, "node-$it") }))
+        tunnels[2] = TunnelEntity(id = 2, name = "Tailnet", kind = TunnelKinds.TAILSCALE, config = "{}")
+        TunnelManager.start(2)
+        val node = engine.node!!
+        assertThat(node.load()).isEqualTo("before")
+        node.save("after")
+        assertThat(kept[2]).isEqualTo("after")
+        assertThat(node.scratch).isEqualTo(java.io.File(folder, "node-2"))
+        assertWithMessage("a tunnel started without a host is up").that(TunnelManager.statuses.value).containsKey(2)
+        folder.deleteRecursively()
     }
 }

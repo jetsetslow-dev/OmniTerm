@@ -149,7 +149,7 @@ val buildGoTunnel by tasks.registering(Exec::class) {
   description = "Builds tunnel/ into an Android library with gomobile."
   val root = rootProject.layout.projectDirectory
   inputs.dir(root.dir("tunnel/omnitunnel"))
-  inputs.files(root.file("tunnel/go.mod"), root.file("tunnel/go.sum"), root.file("scripts/build-tunnel.sh"), root.file("scripts/go-toolchain.sh"))
+  inputs.files(root.file("tunnel/go.mod"), root.file("tunnel/go.sum"), root.file("tunnel/build-tags.txt"), root.file("scripts/build-tunnel.sh"), root.file("scripts/go-toolchain.sh"))
   inputs.property("targets", providers.environmentVariable("OMNITUNNEL_TARGETS").orElse("all"))
   outputs.file(goTunnelAar)
   val sdk = androidComponents.sdkComponents.sdkDirectory

@@ -8,6 +8,7 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.TunnelEntity
+import com.jetsetslow.omniterm.data.TunnelKinds
 import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupSelection
@@ -120,6 +121,58 @@ class VpnTunnelBackupRobolectricTest {
         }
     }
 
+    @Test
+    fun aTailscaleTunnelIsRestoredWithItsSettingsButSignsInAgainAsANewDevice() = runBlocking {
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val store = ViewModelStore()
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val db = AppDatabase.getDatabase(application)
+        val repo = AppRepository(db)
+        try {
+            withContext(Dispatchers.IO) { db.clearAllTables() }
+            val model = withContext(main) { AppViewModel(application) }
+            store.put("backup", model)
+            val tailnet = repo.insertTunnel(TunnelEntity(name = "Tailnet", kind = TunnelKinds.TAILSCALE, config = TAILNET))
+            repo.saveTunnelNodeState(tailnet, NODE)
+            assertEquals("the node state is kept, encrypted", NODE, repo.tunnelNodeState(tailnet))
+            assertTrue("and stored encrypted", NODE !in db.tunnelDao().nodeState(tailnet).orEmpty())
+            assertEquals("nothing but the tunnel reads it", "", repo.getTunnel(tailnet)!!.nodeState)
+            repo.insertServer(host("pi", tunnelId = tailnet))
+
+            val uri = Uri.parse("content://backup-fixture/tailnet.json")
+            val bytes = ByteArrayOutputStream()
+            shadowOf(application.contentResolver).registerOutputStream(uri, bytes)
+            val exported = CompletableDeferred<Pair<Boolean, String>>()
+            withContext(main) { model.exportBackup(uri, PASSPHRASE, application, SELECTION) { ok, message -> exported.complete(ok to message) } }
+            val (exportOk, exportMessage) = withTimeout(10_000) { exported.await() }
+            assertTrue(exportMessage, exportOk)
+            waitWhileOnMain(main) { model.backupExportRunning }
+            val backup = bytes.toString(Charsets.UTF_8)
+
+            withContext(Dispatchers.IO) { db.clearAllTables() }
+            val restored = CompletableDeferred<Pair<Boolean, String>>()
+            withContext(main) { model.restoreEncryptedBackup(backup, PASSPHRASE, SELECTION) { ok, message -> restored.complete(ok to message) } }
+            val (restoreOk, restoreMessage) = withTimeout(10_000) { restored.await() }
+            assertTrue(restoreMessage, restoreOk)
+            waitWhileOnMain(main) { model.backupRestoreRunning }
+
+            val tunnel = repo.getAllTunnels().single()
+            assertEquals(TunnelKinds.TAILSCALE, tunnel.kind)
+            assertEquals("its settings, auth key included, come back", TAILNET, tunnel.config)
+            assertEquals("its device keys do not: it signs in again as a new device", "", repo.tunnelNodeState(tunnel.id))
+            assertEquals(tunnel.id, repo.getAllServers().single().tunnelId)
+        } finally {
+            try {
+                clearViewModelsAndAwaitTerminalJobs(store, main)
+                withContext(Dispatchers.IO) { db.clearAllTables() }
+            } finally {
+                Dispatchers.resetMain()
+                main.close()
+            }
+        }
+    }
+
     private fun host(name: String, tunnelId: Int?, tunnelHost: String = "") = ServerEntity(
         name = name, host = "$name.lan", port = 22, username = "admin", authType = "password",
         authPassword = "pw-$name", tunnelId = tunnelId, tunnelHost = tunnelHost,
@@ -129,6 +182,8 @@ class VpnTunnelBackupRobolectricTest {
         const val PASSPHRASE = "vpn-tunnel-passphrase"
         const val HOME = "[Interface]\nPrivateKey = home-private-key-for-the-test\n"
         const val LAB = "[Interface]\nPrivateKey = lab-private-key-for-the-test\n"
+        const val TAILNET = "{\"controlUrl\":\"https://headscale.example.com\",\"authKey\":\"tskey-auth-test\",\"hostname\":\"phone\"}"
+        const val NODE = "{\"_machinekey\":\"bWFjaGluZS1rZXktZm9yLXRoZS10ZXN0\"}"
         val SELECTION = BackupSelection.NONE.copy(servers = true)
     }
 }

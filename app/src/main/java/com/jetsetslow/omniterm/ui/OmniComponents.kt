@@ -946,6 +946,16 @@ fun OmniPasswordField(
     )
 }
 
+/**
+ * The warning an editor shows under an address that will be used over plain HTTP: what an
+ * unencrypted connection gives away there ([message]). WebDAV shares and Tailscale control servers
+ * show it.
+ */
+@Composable
+fun PlainHttpWarning(message: String, modifier: Modifier = Modifier) {
+    Text(message, fontSize = 12.sp, color = OmniColors.amber, modifier = modifier.fillMaxWidth())
+}
+
 /** Tags shown on a host's card; the rest are in its editor. */
 internal const val HOST_CARD_TAGS = 3
 

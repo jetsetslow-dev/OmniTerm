@@ -549,8 +549,11 @@ object UseOutcome {
 
 /**
  * A tunnel the user set up once and picks per host. [config] is the tunnel's own configuration
- * (for WireGuard, the wg-quick file with its private key), encrypted at the repository boundary.
- * [directWifi] names the Wi-Fi networks its hosts dial directly on (TunnelNetworks), one per line.
+ * (for WireGuard, the wg-quick file with its private key; for Tailscale, TailscaleSettings with its
+ * auth key), encrypted at the repository boundary. [directWifi] names the Wi-Fi networks its hosts
+ * dial directly on (TunnelNetworks), one per line. [nodeState] is what makes a Tailscale tunnel this
+ * phone's node in its tailnet (its keys and sign-in), encrypted too; only the tunnel itself reads
+ * it (AppRepository.tunnelNodeState), and it never leaves the phone, in a backup or otherwise.
  */
 @Entity(tableName = "tunnels")
 data class TunnelEntity(
@@ -560,8 +563,14 @@ data class TunnelEntity(
     val config: String,
     val createdAt: Long = System.currentTimeMillis(),
     val directWifi: String = "",
+    val nodeState: String = "",
 )
 
 object TunnelKinds {
     const val WIREGUARD = "wireguard"
+    /** Tailscale, or a Headscale server: the same kind with its own control server. */
+    const val TAILSCALE = "tailscale"
+
+    /** The kinds this version can run; a backup's tunnel of any other kind is not restored. */
+    val ALL = setOf(WIREGUARD, TAILSCALE)
 }

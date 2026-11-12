@@ -1441,11 +1441,7 @@ private fun NetworkShareDialog(
                         Switch(checked = useHttps, onCheckedChange = null)
                     }
                     if (!useHttps && !anonymous) {
-                        Text(stringResource(R.string.webdav_without_https_sends_password),
-                            fontSize = 12.sp,
-                            color = OmniColors.amber,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        PlainHttpWarning(stringResource(R.string.webdav_without_https_sends_password))
                     }
                 }
                 Row(

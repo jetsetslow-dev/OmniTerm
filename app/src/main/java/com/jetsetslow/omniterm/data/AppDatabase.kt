@@ -382,7 +382,8 @@ abstract class AppDatabase : RoomDatabase() {
         // notification choice and use history, and the run each AI assistant call started. Hosts'
         // tags, Fleet's saved target sets and schedules, the file a Fleet push sent, and whether a
         // Fleet run used sudo. Whether an alert rule runs its runbook on its own, and the run an
-        // incident's runbook made. The Wi-Fi networks a tunnel is not needed on.
+        // incident's runbook made. The Wi-Fi networks a tunnel is not needed on, and a Tailscale
+        // tunnel's node state.
         private val MIGRATION_29_30 = object : Migration(29, 30) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `automation_grants` ADD COLUMN `notify` TEXT NOT NULL DEFAULT 'failures'")
@@ -395,6 +396,7 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_automation_uses_grantId_at` ON `automation_uses` (`grantId`, `at`)")
                 db.execSQL("ALTER TABLE `servers` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `tunnels` ADD COLUMN `directWifi` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `tunnels` ADD COLUMN `nodeState` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `pushedFile` TEXT")
                 db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `sudo` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `alert_rules` ADD COLUMN `runbookAuto` INTEGER NOT NULL DEFAULT 0")

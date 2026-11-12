@@ -151,24 +151,37 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun clearMcpCalls() = db.mcpCallDao().clear()
 
     // Tunnels. Screens get them without their configuration, which holds the private key; only a
-    // connection being dialled ([getTunnel]) and a backup read it.
-    val tunnelsFlow: Flow<List<TunnelEntity>> = db.tunnelDao().tunnelsFlow().map { list -> list.map { it.copy(config = "") } }
+    // connection being dialled ([getTunnel]), the tunnel editor and a backup read it. A Tailscale
+    // tunnel's node state is read by the tunnel alone ([tunnelNodeState]): nothing else gets it.
+    val tunnelsFlow: Flow<List<TunnelEntity>> =
+        db.tunnelDao().tunnelsFlow().map { list -> list.map { it.copy(config = "", nodeState = "") } }
     suspend fun getTunnel(id: Int): TunnelEntity? = db.tunnelDao().get(id)?.let(::decryptTunnel)
     suspend fun getAllTunnels(): List<TunnelEntity> = db.tunnelDao().getAll().map(::decryptTunnel)
     /** The Wi-Fi networks tunnel [id]'s hosts dial directly on, read on every dial: its key is not decrypted for it. */
     suspend fun tunnelDirectWifi(id: Int): String? = db.tunnelDao().directWifi(id)
-    suspend fun insertTunnel(tunnel: TunnelEntity): Int = db.tunnelDao().insert(encryptTunnel(tunnel)).toInt()
-    /** Renames [id] and sets where it goes direct, and replaces its configuration when [config] is given. */
-    suspend fun updateTunnel(id: Int, name: String, config: String?, directWifi: String) = db.withTransaction {
+    /** Adds [tunnel], always as a new node: a node state given with it is not kept. */
+    suspend fun insertTunnel(tunnel: TunnelEntity): Int = db.tunnelDao().insert(encryptTunnel(tunnel.copy(nodeState = ""))).toInt()
+    /**
+     * Renames [id] and sets where it goes direct, and replaces its configuration when [config] is
+     * given. [newNode] forgets its node state, so it signs in again as a new device.
+     */
+    suspend fun updateTunnel(id: Int, name: String, config: String?, directWifi: String, newNode: Boolean = false) = db.withTransaction {
         val stored = db.tunnelDao().get(id) ?: return@withTransaction
         db.tunnelDao().update(
             stored.copy(
                 name = name,
                 config = config?.let { encryptTunnel(stored.copy(config = it)).config } ?: stored.config,
                 directWifi = directWifi,
+                nodeState = if (newNode) "" else stored.nodeState,
             ),
         )
     }
+    /** Tunnel [id]'s node state (a Tailscale node's keys and sign-in), or "" for none. */
+    suspend fun tunnelNodeState(id: Int): String = db.tunnelDao().nodeState(id)?.let(SecretStore::decrypt).orEmpty()
+    /** Keeps [state] as tunnel [id]'s node state, encrypted; "" forgets it. */
+    suspend fun saveTunnelNodeState(id: Int, state: String) = db.tunnelDao().setNodeState(
+        id, requireNotNull(SecretStore.encrypt(state)) { "The tunnel's state could not be encrypted on this phone." },
+    )
     /**
      * Deletes [id] unless a host still goes through it, and returns those hosts' names. A host whose
      * tunnel is selected never goes direct, so the user picks another tunnel or None for it first.
@@ -181,7 +194,7 @@ class AppRepository(private val db: AppDatabase) {
     private fun encryptTunnel(tunnel: TunnelEntity) = tunnel.copy(
         config = requireNotNull(SecretStore.encrypt(tunnel.config)) { "The tunnel could not be encrypted on this phone." },
     )
-    private fun decryptTunnel(tunnel: TunnelEntity) = tunnel.copy(config = SecretStore.decrypt(tunnel.config).orEmpty())
+    private fun decryptTunnel(tunnel: TunnelEntity) = tunnel.copy(config = SecretStore.decrypt(tunnel.config).orEmpty(), nodeState = "")
     suspend fun insertScript(script: QuickScriptEntity) = db.quickScriptDao().insertScript(script)
     /** Deletes [script] and takes it off every rule that offered it as a runbook. */
     suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {

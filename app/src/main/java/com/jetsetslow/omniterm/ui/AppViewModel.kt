@@ -30,6 +30,8 @@ import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
 import com.jetsetslow.omniterm.data.tunnel.HostRoute
+import com.jetsetslow.omniterm.data.tunnel.TailscaleNetwork
+import com.jetsetslow.omniterm.data.tunnel.TailscaleSettings
 import com.jetsetslow.omniterm.data.tunnel.TunnelManager
 import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
 import com.jetsetslow.omniterm.mcp.McpApprovals
@@ -2920,7 +2922,7 @@ class AppViewModel @JvmOverloads constructor(
     init {
         resumeMcpServer()
         TunnelManager.attach(repository)
-        CurrentWifi.start(application)
+        TunnelManager.follow(application)
         // A tunnel may not be needed on some Wi-Fi (TunnelNetworks): as the phone joins or leaves
         // one, that tunnel's hosts leave the route they were on.
         viewModelScope.launch {
@@ -15156,47 +15158,84 @@ class AppViewModel @JvmOverloads constructor(
     /** The tunnels hosts can go through, without their configurations. */
     val tunnels = repository.tunnelsFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val tunnelStatuses = TunnelManager.statuses
+    /** Why a tunnel that last failed to start did, by id. */
+    val tunnelProblems = TunnelManager.problems
 
-    /** What is wrong with a pasted configuration, or null when it can be used. */
-    fun checkTunnelConfig(config: String): String? = TunnelManager.check(TunnelKinds.WIREGUARD, config)
+    /** What is wrong with a pasted configuration, or with Tailscale settings, or null when they can be used. */
+    fun checkTunnelConfig(config: String, kind: String = TunnelKinds.WIREGUARD): String? = TunnelManager.check(kind, config)
 
     /**
      * Saves a new tunnel ([id] null) or renames one, replacing its configuration when [config] is
      * given. A tunnel whose configuration changed stops at once, so nothing keeps going through the
      * old one; its connections reconnect through the new one. [directWifi] is the Wi-Fi networks
-     * it is not needed on ([TunnelNetworks]); null keeps the ones it has.
+     * it is not needed on ([TunnelNetworks]); null keeps the ones it has. [kind] is a new tunnel's.
      */
-    fun saveTunnel(id: Int?, name: String, config: String?, directWifi: List<String>? = null, onResult: (String?) -> Unit) {
+    fun saveTunnel(
+        id: Int?,
+        name: String,
+        config: String?,
+        directWifi: List<String>? = null,
+        kind: String = TunnelKinds.WIREGUARD,
+        onResult: (String?) -> Unit,
+    ) {
+        viewModelScope.launch { onResult(storeTunnel(id, name, config, directWifi, kind, newNode = false)) }
+    }
+
+    /**
+     * Saves a Tailscale tunnel from its editor. An empty auth key keeps the one it has. Moving it to
+     * another control server makes it a new device there, which signs in again.
+     */
+    fun saveTailscaleTunnel(id: Int?, name: String, settings: TailscaleSettings, directWifi: List<String>, onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            val trimmedName = name.trim()
-            val problem = when {
-                trimmedName.isEmpty() -> "Give the tunnel a name."
-                tunnels.value.any { it.id != id && it.name.equals(trimmedName, ignoreCase = true) } -> "Another tunnel is called \"$trimmedName\"."
-                id == null && config.isNullOrBlank() -> "Paste or import the tunnel's configuration."
-                config != null && config.isNotBlank() -> withContext(Dispatchers.Default) { checkTunnelConfig(config) }
-                else -> null
-            }
-            if (problem != null) {
-                onResult(problem)
-                return@launch
-            }
-            val result = runCatching {
-                if (id == null) {
-                    repository.insertTunnel(
-                        TunnelEntity(name = trimmedName, config = config.orEmpty(), directWifi = TunnelNetworks.stored(directWifi.orEmpty())),
-                    )
-                } else {
-                    val wifi = CurrentWifi.state.value.name
-                    val before = repository.tunnelDirectWifi(id).orEmpty()
-                    val direct = directWifi?.let(TunnelNetworks::stored) ?: before
-                    repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() }, direct)
-                    if (!config.isNullOrBlank()) withContext(Dispatchers.IO) { TunnelManager.stop(id) }
-                    // Naming, or no longer naming, the Wi-Fi the phone is on moves its hosts now.
-                    if (TunnelNetworks.goesDirect(before, wifi) != TunnelNetworks.goesDirect(direct, wifi)) leaveRouteOf(setOf(id), nowDirect = TunnelNetworks.goesDirect(direct, wifi))
-                }
-            }
-            onResult(result.exceptionOrNull()?.let { it.message ?: "The tunnel could not be saved." })
+            val before = id?.let { withContext(Dispatchers.IO) { repository.getTunnel(it) } }?.let { TailscaleSettings.parse(it.config) }
+            val merged = if (before != null && settings.authKey.isBlank()) settings.copy(authKey = before.authKey) else settings
+            val config = merged.toConfig()
+            val changed = before == null || before.toConfig() != config
+            val newNode = before != null && !before.sameServerAs(merged)
+            onResult(storeTunnel(id, name, config.takeIf { changed }, directWifi, TunnelKinds.TAILSCALE, newNode))
         }
+    }
+
+    /** A Tailscale tunnel's settings for its editor, without the auth key; [hasKey] says whether it has one. */
+    fun loadTailscaleSettings(id: Int, onResult: (settings: TailscaleSettings?, hasKey: Boolean) -> Unit) {
+        viewModelScope.launch {
+            val settings = withContext(Dispatchers.IO) { repository.getTunnel(id) }?.let { TailscaleSettings.parse(it.config) }
+            onResult(settings?.copy(authKey = ""), !settings?.authKey.isNullOrBlank())
+        }
+    }
+
+    /** Brings tunnel [id] up now, so a Tailscale tunnel shows its sign-in page; a failure shows on its card. */
+    fun connectTunnel(id: Int) {
+        viewModelScope.launch(Dispatchers.IO) { runCatching { TunnelManager.start(id) } }
+    }
+
+    private suspend fun storeTunnel(id: Int?, name: String, config: String?, directWifi: List<String>?, kind: String, newNode: Boolean): String? {
+        val trimmedName = name.trim()
+        val problem = when {
+            trimmedName.isEmpty() -> "Give the tunnel a name."
+            tunnels.value.any { it.id != id && it.name.equals(trimmedName, ignoreCase = true) } -> "Another tunnel is called \"$trimmedName\"."
+            id == null && config.isNullOrBlank() -> "Paste or import the tunnel's configuration."
+            config != null && config.isNotBlank() -> withContext(Dispatchers.Default) { checkTunnelConfig(config, kind) }
+            else -> null
+        }
+        if (problem != null) return problem
+        val result = runCatching {
+            if (id == null) {
+                repository.insertTunnel(
+                    TunnelEntity(name = trimmedName, kind = kind, config = config.orEmpty(), directWifi = TunnelNetworks.stored(directWifi.orEmpty())),
+                )
+            } else {
+                val wifi = CurrentWifi.state.value.name
+                val before = repository.tunnelDirectWifi(id).orEmpty()
+                val direct = directWifi?.let(TunnelNetworks::stored) ?: before
+                repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() }, direct, newNode)
+                if (!config.isNullOrBlank()) withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+                if (newNode) TailscaleNetwork.forget(id)
+                // Naming, or no longer naming, the Wi-Fi the phone is on moves its hosts now.
+                if (TunnelNetworks.goesDirect(before, wifi) != TunnelNetworks.goesDirect(direct, wifi)) leaveRouteOf(setOf(id), nowDirect = TunnelNetworks.goesDirect(direct, wifi))
+            }
+        }
+        return result.exceptionOrNull()?.let { it.message ?: "The tunnel could not be saved." }
     }
 
     /** Deletes tunnel [id], unless a host still goes through it; then says which. */
@@ -15208,6 +15247,7 @@ class AppViewModel @JvmOverloads constructor(
                 return@launch
             }
             withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+            TailscaleNetwork.forget(id)
             onResult(null)
         }
     }
@@ -15891,7 +15931,9 @@ class AppViewModel @JvmOverloads constructor(
             })
         }
         // VPN tunnels travel with the hosts that go through them; their configurations hold private
-        // keys, which is one more reason a backup with hosts is encrypted.
+        // keys and auth keys, which is one more reason a backup with hosts is encrypted. A Tailscale
+        // tunnel's node state is not here (getAllTunnels never returns it): a restored one signs in
+        // again as a new device instead of cloning this phone's.
         val tunnelArr = org.json.JSONArray()
         for (tunnel in if (closedSelection.servers) tunnels else emptyList()) {
             tunnelArr.put(org.json.JSONObject().apply {
@@ -16606,7 +16648,9 @@ class AppViewModel @JvmOverloads constructor(
                                 val tunnelName = o.optString("name").trim()
                                 val tunnelConfig = o.optString("config")
                                 val kind = o.optString("kind", TunnelKinds.WIREGUARD)
-                                if (oldTunnelId == 0 || tunnelName.isEmpty() || tunnelConfig.isBlank() || kind != TunnelKinds.WIREGUARD) continue
+                                // A kind this version cannot run is left out: its hosts stay pointed at a
+                                // missing tunnel, so they fail closed rather than go direct.
+                                if (oldTunnelId == 0 || tunnelName.isEmpty() || tunnelConfig.isBlank() || kind !in TunnelKinds.ALL) continue
                                 tunnelIdMap[oldTunnelId] = localTunnelLike(o)?.id ?: run {
                                     val freeName = generateSequence(1) { it + 1 }
                                         .map { n -> if (n == 1) tunnelName else "$tunnelName ($n)" }
