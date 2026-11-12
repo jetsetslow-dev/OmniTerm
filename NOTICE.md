@@ -34,6 +34,8 @@ features. No code from them is included; see the README's Acknowledgements for w
 - Termux:Tasker — https://github.com/termux/termux-tasker
 - electerm — https://github.com/electerm/electerm
 - Material Files — https://github.com/zhanghai/MaterialFiles
+- Watchtower — https://github.com/containrrr/watchtower
+- Cup — https://github.com/sergi0g/cup
 - Model Context Protocol specification — https://modelcontextprotocol.io
 
 ## Bundled Go libraries (VPN tunnels)

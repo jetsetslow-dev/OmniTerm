@@ -774,6 +774,25 @@
     <string name="backup_password_hint">"Kept encrypted on this phone. The host gets it on the check’s input, never in its command line."</string>
     <string name="alert_rule_on">"Rule on"</string>
     <string name="alert_rule_off_note">"Off: not checked"</string>
+    <string name="host_check_hint_images">"Counts the images your containers run that have a newer build in their registry, asked from the host at most every 6 hours. Nothing is pulled. Images built on the host, pinned to a digest, or in a registry that needs a sign-in are not checked."</string>
+    <string name="image_updates_no_runtime">"Docker or Podman did not answer on this host"</string>
+    <string name="image_updates_no_curl">"curl is not installed on this host"</string>
+    <string name="image_updates_check">"Check for updates"</string>
+    <string name="image_updates_checking">"Checking registries…"</string>
+    <string name="image_updates_checked_ago">"Checked %1$s ago"</string>
+    <string name="image_updates_checked_just_now">"Checked just now"</string>
+    <string name="image_updates_not_checked_yet">"Image updates not checked yet. Each image’s registry is asked from the host; nothing is pulled."</string>
+    <string name="image_update_available">"Update available"</string>
+    <string name="image_up_to_date">"Up to date"</string>
+    <string name="image_not_checked">"Not checked: %1$s"</string>
+    <plurals name="image_updates_found">
+        <item quantity="one">"%1$d image has an update"</item>
+        <item quantity="other">"%1$d images have updates"</item>
+    </plurals>
+    <plurals name="image_updates_banner">
+        <item quantity="one">"%1$d image has an update. See Images."</item>
+        <item quantity="other">"%1$d images have updates. See Images."</item>
+    </plurals>
     <string name="script_check_unknown">"Not checked: %1$s"</string>
     <string name="script_check_wrong_target">"the script is for %1$s"</string>
     <string name="script_check_timed_out">"did not finish within %1$d seconds"</string>

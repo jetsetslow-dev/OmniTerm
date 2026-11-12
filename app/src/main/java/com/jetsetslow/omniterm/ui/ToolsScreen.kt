@@ -1292,6 +1292,7 @@ private fun hostCheckHint(metricName: String): Int? = when (metricName) {
     HostChecks.REBOOT_REQUIRED -> R.string.host_check_hint_reboot
     HostChecks.SCRIPT_CHECK -> R.string.host_check_hint_script
     HostChecks.BACKUP_AGE -> R.string.host_check_hint_backup
+    HostChecks.IMAGE_UPDATES -> R.string.host_check_hint_images
     else -> null
 }
 

@@ -4060,7 +4060,100 @@ class AppViewModel @JvmOverloads constructor(
         val (probed, own) = rules.partition { HostChecks.needsProbe(it.metricName) }
         if (probed.isNotEmpty()) runHostProbe(srv, probed, disks)
         for (rule in own) {
-            if (rule.metricName == HostChecks.BACKUP_AGE) runBackupCheck(srv, rule) else runScriptCheck(srv, rule)
+            when (rule.metricName) {
+                HostChecks.BACKUP_AGE -> runBackupCheck(srv, rule)
+                HostChecks.IMAGE_UPDATES -> runImageUpdateCheck(srv, rule)
+                else -> runScriptCheck(srv, rule)
+            }
+        }
+    }
+
+    /** Each host's last image-update check, for Containers → Images and the Image Updates rule. */
+    val imageUpdateReports = mutableStateMapOf<Int, ImageUpdates.Report>()
+    /** Hosts whose images are being checked now. */
+    val imageUpdatesChecking = mutableStateListOf<Int>()
+    private val imageUpdateLocks = java.util.concurrent.ConcurrentHashMap<Int, Mutex>()
+
+    /**
+     * [srv]'s image-update report, no older than [maxAgeMs]: the last one when it is that fresh,
+     * else a new check, one at a time per host. Null when the host could not be asked.
+     */
+    private suspend fun imageUpdateReport(srv: ServerEntity, maxAgeMs: Long): ImageUpdates.Report? =
+        imageUpdateLocks.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            val last = withContext(Dispatchers.Main) { imageUpdateReports[srv.id] }
+            if (last != null && System.currentTimeMillis() - last.checkedAt < maxAgeMs) return@withLock last
+            withContext(Dispatchers.Main) { imageUpdatesChecking.add(srv.id) }
+            try {
+                val app = getApplication<Application>()
+                val raw = executeSshCommand(srv, ImageUpdates.LIST)
+                if (!ranOnHost(raw)) return@withLock null
+                val listing = ImageUpdates.parseListing(raw)
+                val now = System.currentTimeMillis()
+                val report = when {
+                    listing.runtimes.isEmpty() -> ImageUpdates.Report(now, emptyList(), app.getString(R.string.image_updates_no_runtime))
+                    !listing.curl && listing.images.isNotEmpty() ->
+                        ImageUpdates.Report(now, emptyList(), app.getString(R.string.image_updates_no_curl))
+                    else -> {
+                        val refs = ImageUpdates.refsToCheck(listing)
+                        val remote = if (refs.isEmpty()) {
+                            emptyMap()
+                        } else {
+                            val answer = executeSshCommand(srv, ImageUpdates.checkCommand(refs))
+                            if (!ranOnHost(answer)) return@withLock null
+                            ImageUpdates.parseCheck(answer)
+                        }
+                        ImageUpdates.report(listing, remote, now)
+                    }
+                }
+                withContext(Dispatchers.Main) { imageUpdateReports[srv.id] = report }
+                report
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) { imageUpdatesChecking.remove(srv.id) }
+            }
+        }
+
+    /**
+     * Containers → Images: checks the selected host's images now, unless they were checked in
+     * the last 10 minutes; registries are asked no more often than that.
+     */
+    fun checkImageUpdates() {
+        val srv = selectedServer ?: return
+        if (srv.id in imageUpdatesChecking) return
+        viewModelScope.launch(Dispatchers.IO) { imageUpdateReport(srv, ImageUpdates.MANUAL_INTERVAL_MS) }
+    }
+
+    /**
+     * An [HostChecks.IMAGE_UPDATES] rule on [srv]: the number of images with an update, from a
+     * check at most 6 hours old. A host that cannot be asked, or whose images could not be
+     * compared at all, reads as unknown with the reason.
+     */
+    private suspend fun runImageUpdateCheck(srv: ServerEntity, rule: AlertRuleEntity) {
+        val key = rule.id to srv.id
+        val app = getApplication<Application>()
+        if (hostOs(srv) == "Windows") {
+            withContext(Dispatchers.Main) { hostCheckResults[key] = EndpointChecks.Result(null, app.getString(R.string.host_check_unknown), "") }
+            return
+        }
+        val report = imageUpdateReport(srv, ImageUpdates.RULE_INTERVAL_MS) ?: return
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            if (repository.getAllRules().find { it.id == rule.id } != rule) return@withLock
+            val problem = report.problem
+                ?: report.images.firstOrNull()?.reason?.takeIf { report.images.isNotEmpty() && !report.anyCompared }
+            if (problem != null) {
+                withContext(Dispatchers.Main) { hostCheckResults[key] = EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, problem), "") }
+                return@withLock
+            }
+            val value = ImageUpdates.count(report)
+            val names = ImageUpdates.names(report)
+            withContext(Dispatchers.Main) {
+                hostCheckResults[key] = EndpointChecks.Result(value, HostChecks.summary(HostChecks.IMAGE_UPDATES, value, names), "")
+            }
+            applyAlertSample(
+                rule, srv, value, value > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
+                staleGapMs = hostCheckIntervalMs() * 3,
+                notificationText = HostChecks.alertText(HostChecks.IMAGE_UPDATES, value, rule.thresholdValue, names),
+            )
         }
     }
 
@@ -16886,8 +16979,9 @@ class AppViewModel @JvmOverloads constructor(
                                     mountPoint = o.optString("mountPoint", "/"), thresholdValue = threshold,
                                     severity = o.optString("severity", "WARNING"), triggerWindow = window,
                                     // A backup check runs a command with a password on the host by
-                                    // itself, so it comes back switched off until turned on here.
-                                    enabled = o.optBoolean("enabled", true) && metric != HostChecks.BACKUP_AGE,
+                                    // itself, and an image check has the host ask registries on the
+                                    // internet, so each comes back switched off until turned on here.
+                                    enabled = o.optBoolean("enabled", true) && metric != HostChecks.BACKUP_AGE && metric != HostChecks.IMAGE_UPDATES,
                                     secret = o.optString("secret", "").substringBefore('\n'),
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },

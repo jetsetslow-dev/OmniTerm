@@ -12,6 +12,7 @@
 #   ./scripts/test-hosts.sh up       # generate keys if needed, start, wait until SSH answers
 #   ./scripts/test-hosts.sh tailnet  # start only headscale and the tailnet router, with fresh keys
 #   ./scripts/test-hosts.sh rebuild <service> # rebuild and recreate one fixture only
+#   ./scripts/test-hosts.sh registry # start the image-update registry and push its images
 #   ./scripts/test-hosts.sh down     # stop and remove (host keys and volumes discarded)
 #   ./scripts/test-hosts.sh status   # container state and port mapping
 #   ./scripts/test-hosts.sh verify   # prove every auth mode and proxy path actually works
@@ -193,6 +194,25 @@ EOF_MAP
   mv "$DIR/.tailnet/derp.yaml.new" "$DIR/.tailnet/derp.yaml"
 }
 
+# The registry fixture's CA and server certificate, made once into .registry/ (gitignored).
+registry_certs() {
+  local d="$DIR/.registry"
+  [ -s "$d/ca.crt" ] && [ -s "$d/server.crt" ] && [ -s "$d/server.key" ] && return 0
+  mkdir -p "$d" || return 1
+  local old_umask rc; old_umask=$(umask); umask 077
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj '/CN=OmniTerm test registry CA' \
+    -keyout "$d/ca.key" -out "$d/ca.crt" 2>/dev/null &&
+    openssl req -newkey rsa:2048 -nodes -subj '/CN=omniterm-test-registry' \
+      -keyout "$d/server.key" -out "$d/server.csr" 2>/dev/null &&
+    printf 'subjectAltName=DNS:omniterm-test-registry\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' >"$d/server.ext" &&
+    openssl x509 -req -in "$d/server.csr" -CA "$d/ca.crt" -CAkey "$d/ca.key" -CAcreateserial -days 3650 \
+      -extfile "$d/server.ext" -out "$d/server.crt" 2>/dev/null
+  rc=$?
+  umask "$old_umask"
+  chmod 644 "$d/ca.crt" "$d/server.crt" 2>/dev/null
+  return $rc
+}
+
 tailnet_up() {
   local hs=(docker exec omniterm-test-headscale headscale) i uid router_key phone_key node routes behind address
   address=$(docker inspect omniterm-test-headscale --format '{{(index .NetworkSettings.Networks "omniterm-test-edge").IPAddress}}')
@@ -292,6 +312,36 @@ case "${1:-}" in
     tailnet_up || exit 1
     ;;
 
+  registry)
+    # The image-update check's registry (see docker-compose.yml). Each runtime host ends with two
+    # images from it: omniterm/steady:1, current, and omniterm/app:latest, one push behind the
+    # registry. Safe to run again: it rebuilds the same state.
+    require_docker
+    registry_certs || exit 1
+    compose --profile registry up -d --no-deps registry || exit 1
+    reg=omniterm-test-registry:5000
+    # Docker reads certs.d on every connection, so no daemon restart; the check's curl uses it too.
+    for c in omniterm-test-runtime-docker-engine omniterm-test-runtime-docker; do
+      docker exec -i "$c" sh -c "mkdir -p /etc/docker/certs.d/$reg && cat >/etc/docker/certs.d/$reg/ca.crt" <"$DIR/.registry/ca.crt" || exit 1
+    done
+    docker exec -i omniterm-test-runtime-podman sh -c "mkdir -p /etc/containers/certs.d/$reg && cat >/etc/containers/certs.d/$reg/ca.crt" <"$DIR/.registry/ca.crt" || exit 1
+    # Images made with `docker import` from one small file: nothing to pull from the internet.
+    push() { # name, content
+      docker exec -i omniterm-test-runtime-docker sh -c \
+        'set -e; t=$(mktemp -d); cd "$t"; printf "%s\n" "$2" >f; tar -cf - f | docker import --change "LABEL omniterm.fixture=$2" - "$1" >/dev/null; docker push -q "$1" >/dev/null; rm -rf "$t"' \
+        sh "$reg/omniterm/$1" "$2" || return 1
+    }
+    push steady:1 steady && push app:latest "v1-$(date +%s)" || exit 1
+    v1=$(docker exec omniterm-test-runtime-docker docker image inspect --format '{{.Id}}' "$reg/omniterm/app:latest") || exit 1
+    for i in steady:1 app:latest; do
+      docker exec omniterm-test-runtime-podman podman pull -q "$reg/omniterm/$i" >/dev/null || exit 1
+    done
+    # A newer app:latest in the registry; both hosts keep the one they pulled.
+    push app:latest "v2-$(date +%s)" || exit 1
+    docker exec omniterm-test-runtime-docker docker tag "$v1" "$reg/omniterm/app:latest" || exit 1
+    echo "registry ready: $reg/omniterm/steady:1 is current, $reg/omniterm/app:latest has an update"
+    ;;
+
   rebuild)
     # One fixture, rebuilt and recreated, without touching the others: e.g. `rebuild runtime-docker`
     # after its Dockerfile changed. Its host key changes, so trust it again in the app.
@@ -302,7 +352,7 @@ case "${1:-}" in
 
   down)
     require_docker
-    compose --profile tailnet down -v --remove-orphans
+    compose --profile tailnet --profile registry down -v --remove-orphans
     echo "test fleet removed"
     ;;
 

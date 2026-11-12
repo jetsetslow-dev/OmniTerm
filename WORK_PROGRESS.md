@@ -1122,6 +1122,27 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     `./scripts/test-hosts.sh rebuild <service>` rebuilds one fixture without touching the others.
     PBS has no fixture (its client is Proxmox-repository only): its parsing is unit-tested from
     the documented JSON and error lines, and its command against a stand-in client.
+  - Part 2, image updates (`ImageUpdates`): the host lists the images its containers use with
+    their `RepoDigests` (Docker and Podman), then sends one `HEAD` per image to the registry's
+    manifest URL with the index and manifest media types. On a 401 Bearer challenge it gets an
+    anonymous token from the realm (https only) and sends it on curl's stdin (`-H @-`). A CA
+    under `/etc/docker/certs.d` or `/etc/containers/certs.d` is passed as `--cacert`. An image
+    has an update when the registry's digest is none the host recorded. References are read as
+    Docker reads them, so Podman's `docker.io/library/...` names are the same image. Images that
+    are digest-pinned, `localhost/` or without a digest are not checked, and there are at most 40
+    images and 20 s per request. Containers → Images has Check for updates (rests 10 minutes)
+    and a line per image; Stacks shows a banner that opens Images. The **Image Updates** rule
+    reuses a report up to 6 hours old, and comes back off from a restore. Reports are kept in
+    memory only.
+  - Fixture: `./scripts/test-hosts.sh registry` starts `registry:2.8.3` with TLS from a CA made
+    once into `.registry/` (gitignored), trusts it on the Docker engine, `runtime-docker` and
+    `runtime-podman`, and pushes `omniterm/steady:1` (current) and `omniterm/app:latest` (one push
+    behind on both hosts), imported from one file, so nothing comes from the internet. The device
+    suite `E2eImageUpdatesTest` (`omniterm_e2e_image_updates`, `-e user -e pass`) creates its own
+    containers. The Podman case adds and removes its own host for 2206.
+  - The rule and alert lists are `WhileSubscribed`, and the Containers screen does not collect
+    them. A device test that reads them off the Alerts screen must collect them itself, or it
+    sees an empty list and leaks the rules it meant to delete.
 
 ## Decision pivot — 2026-11-08
 

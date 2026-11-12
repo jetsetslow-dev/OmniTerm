@@ -17,6 +17,7 @@ OmniTerm stores the following data locally on the user's device when the user en
 - AI assistant (MCP) settings, if the user turns that on under Tools → AI assistants: which hosts assistants may see, whether any command may be asked for, the ports, the host the server is reached through, whether its runs show a notification, and a SHA-256 fingerprint of its token, never the token itself. The last 200 calls are kept: when, the client's own name, the tool, whether it succeeded, failed or was refused, the first line of its answer, and, for a call that ran something, which run in Fleet's history it was. App backups include these settings and the token's fingerprint unless the user unticks Automation & AI assistants; the assistant's switch is not included, and a restore leaves it off. The calls are included unless the user unticks AI assistant log, and the user can clear them.
 - Alert forwarding settings, if the user sets them up: the service, its address and topic, and an optional access token (stored encrypted).
 - For a Backup Age alert rule: the repository, filter and settings-file path the user enters, and the repository password, stored encrypted. The check runs the backup tool on that host over the host's SSH connection, so the password goes only to that host, on the command's input; the phone itself connects to no backup server.
+- For image update checks (Containers → Images, or an Image Updates alert rule): the last check's result for each host, kept in memory only until the app closes. The host is asked over SSH to list the images its containers use and to send one `HEAD` request per image to that image's registry (for example Docker Hub or GitHub's registry), with an anonymous pull token where the registry asks for one, so the registry sees that host's address. The phone itself connects to no registry, nothing is pulled, and no registry sign-in is stored or sent.
 
 ## Network Use
 
@@ -62,7 +63,7 @@ User-initiated SSH/SFTP operations send data directly to the host or proxy selec
 
 Android platform auto-backup is disabled because local app data can include SSH credentials and private keys.
 
-VPN tunnels, private keys and Tailscale auth keys included, are part of a backup that includes hosts; such a backup is always encrypted. Alert rules carry a Backup Age rule's repository password, and such a rule is restored switched off. A Tailscale tunnel's device keys are not: a restored Tailscale tunnel signs in again as a new device.
+VPN tunnels, private keys and Tailscale auth keys included, are part of a backup that includes hosts; such a backup is always encrypted. Alert rules carry a Backup Age rule's repository password, and such a rule is restored switched off, as is an Image Updates rule. A Tailscale tunnel's device keys are not: a restored Tailscale tunnel signs in again as a new device.
 
 A backup's settings include App Lock's PIN, as the salted hash the app stores, and whether the lock is on. Biometric unlock and failed PIN attempts are never included. Restoring a backup made with App Lock off never turns the restoring phone's lock off.
 

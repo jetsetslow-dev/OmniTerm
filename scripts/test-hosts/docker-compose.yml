@@ -261,6 +261,23 @@ services:
       USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
     networks: [internal]
 
+  # A private HTTPS registry for the image-update check (E2eImageUpdatesTest), reached by name on
+  # the edge network only. `./scripts/test-hosts.sh registry` makes its CA and certificate
+  # (.registry/, gitignored), starts it, hands the CA to the Docker and Podman fixtures and pushes
+  # the images the suite reads. In its own profile, so `up` does not start it without its certificate.
+  registry:
+    image: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    container_name: omniterm-test-registry
+    profiles: [registry]
+    environment:
+      REGISTRY_HTTP_ADDR: 0.0.0.0:5000
+      REGISTRY_HTTP_TLS_CERTIFICATE: /certs/server.crt
+      REGISTRY_HTTP_TLS_KEY: /certs/server.key
+    volumes:
+      - ./.registry:/certs:ro
+    networks: [edge]
+    restart: "no"
+
   # Headscale, the control server for the Tailscale tunnel suite (E2eTailscaleTunnelTest). Images
   # are pinned by digest. `./scripts/test-hosts.sh up` makes its user and auth keys (the phone's
   # goes into .env as OMNITERM_TEST_TS_PHONE_KEY), then starts the router with its own.

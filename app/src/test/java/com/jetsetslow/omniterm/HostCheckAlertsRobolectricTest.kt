@@ -328,8 +328,48 @@ class HostCheckAlertsRobolectricTest {
     }
 
     /**
+     * An Image Updates rule counts the images whose registry digest the host never pulled, and the
+     * registries are asked once however often the host is polled; Containers → Images then shows
+     * that same check, and its button asks again only after 10 minutes.
+     */
+    @Test
+    fun anImageWithANewerBuildOpensAnIncidentAndRegistriesAreAskedOnce() {
+        val host = AnsweringHost()
+        withModel(host) { repository, model, hostId ->
+            withContext(main) { model.addAlertRule(hostId, HostChecks.IMAGE_UPDATES, "/", 0f, "WARNING", "0m") }
+            val alert = withTimeout(15_000) {
+                while (repository.getActiveAlerts().isEmpty()) {
+                    withContext(main) { model.refreshServer(hostId) }
+                    delay(200)
+                }
+                repository.getActiveAlerts().single()
+            }
+            assertEquals(HostChecks.IMAGE_UPDATES, alert.metricName)
+            assertEquals(1f, alert.currentValue)
+            val ruleId = repository.getAllRules().single().id
+            assertEquals("1 image with an update: registry:5000/team/app:latest", model.hostCheckResults.getValue(ruleId to hostId).summary)
+            val polled = host.metricsRuns.get()
+            withTimeout(15_000) {
+                while (host.metricsRuns.get() < polled + 6) {
+                    withContext(main) { model.refreshServer(hostId) }
+                    delay(100)
+                }
+            }
+            assertEquals("the registries were asked once", 1, host.registryChecks.get())
+            withContext(main) {
+                model.selectedServerId = hostId
+                assertEquals(1, model.imageUpdateReports.getValue(hostId).updates.size)
+                model.checkImageUpdates()
+            }
+            delay(500)
+            assertEquals("a check minutes old is not repeated", 1, host.registryChecks.get())
+        }
+    }
+
+    /**
      * A Backup Age rule comes back from a backup with its repository and password, switched off:
-     * it runs a command on the host by itself, so it waits until it is turned on again.
+     * it runs a command on the host by itself, so it waits until it is turned on again. So does an
+     * Image Updates rule, whose host asks registries on the internet.
      */
     @Test
     fun aRestoredBackupCheckKeepsItsPasswordAndComesBackOff() = withModel(Unreachable()) { repository, model, _ ->
@@ -338,8 +378,9 @@ class HostCheckAlertsRobolectricTest {
         withContext(main) {
             model.addAlertRule(0, HostChecks.BACKUP_AGE, "/", 30f, "WARNING", "0m", target = target, secret = BACKUP_PASSWORD)
             model.addAlertRule(0, HostChecks.FAILED_SERVICES, "/", 0f, "WARNING", "0m")
+            model.addAlertRule(0, HostChecks.IMAGE_UPDATES, "/", 0f, "WARNING", "0m")
         }
-        withTimeout(5_000) { while (repository.getAllRules().size < 2) delay(20) }
+        withTimeout(5_000) { while (repository.getAllRules().size < 3) delay(20) }
         val selection = BackupSelection.NONE.copy(alertRules = true)
         val uri = android.net.Uri.parse("content://backup-fixture/backup-age.json")
         val bytes = java.io.ByteArrayOutputStream()
@@ -362,6 +403,7 @@ class HostCheckAlertsRobolectricTest {
         assertEquals(target, backupRule.target)
         assertEquals(BACKUP_PASSWORD, backupRule.secret)
         assertFalse("restored switched off", backupRule.enabled)
+        assertFalse("an image check too", rules.single { it.metricName == HostChecks.IMAGE_UPDATES }.enabled)
         assertTrue("other rules keep their state", rules.single { it.metricName == HostChecks.FAILED_SERVICES }.enabled)
     }
 
@@ -437,10 +479,18 @@ class HostCheckAlertsRobolectricTest {
         val scriptRuns = AtomicInteger()
         val commands = ConcurrentLinkedQueue<String>()
         val backupInputs = ConcurrentLinkedQueue<String>()
+        val registryChecks = AtomicInteger()
 
         override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String {
             commands.add(command)
             return when {
+                "!RUNTIME" in command -> "!RUNTIME docker\n" +
+                    "docker\tregistry:5000/team/app:latest\t[\"registry:5000/team/app@sha256:old\"]\n" +
+                    "docker\tnginx:1.27\t[\"nginx@sha256:aaa\"]\n"
+                "ck(){" in command -> {
+                    registryChecks.incrementAndGet()
+                    "!OK\tregistry:5000/team/app:latest\tsha256:new\n!OK\tdocker.io/library/nginx:1.27\tsha256:aaa\n"
+                }
                 "echo '@BACKUP'" in command -> {
                     backupInputs.add(stdin.orEmpty())
                     if (stdin == "$BACKUP_PASSWORD\n") {

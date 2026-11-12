@@ -64,6 +64,8 @@ test.txt
 /scripts/test-hosts/.env
 # The tailnet fixture's relay map, written with headscale's address by scripts/test-hosts.sh
 /scripts/test-hosts/.tailnet/
+# The image-update registry fixture's CA and certificate, made by scripts/test-hosts.sh registry
+/scripts/test-hosts/.registry/
 
 # Repo-local Go toolchain, modules and build cache (scripts/go-toolchain.sh), and the CodeQL Go
 # bundle scripts/local-codeql.sh fetches beside it.
