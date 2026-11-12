@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automation and MCP - OmniTerm documentation</title>
+<meta name="description" content="Tasker and other apps, and the opt-in local MCP server.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html" aria-current="page">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Automation and MCP</h1>
+
+<p>Both features are <strong>off until you turn them on</strong>, and turning them on asks for your App Lock PIN or fingerprint, or the phone's screen lock.</p>
+<h2>Automation (Tasker and other apps)</h2>
+<p>Under <strong>Tools &rarr; Automation</strong>, make one token per job: it runs one saved script on the hosts you pick and nothing else. The token is shown once; OmniTerm keeps only a fingerprint. Revoke stops it at once.</p>
+<ul>
+<li>Only scripts safe to run unattended are accepted: destructive-looking scripts are refused and every <code>{{value}}</code> needs a default.</li>
+<li><strong>Tasker</strong>: add an action, choose Plugin, then OmniTerm, and paste the token. It sets <code>%output</code>, <code>%exit</code> and <code>%failed_hosts</code>.</li>
+<li><strong>Other apps or adb</strong>: broadcast <code>com.jetsetslow.omniterm.action.RUN_SCRIPT</code> to the package <code>com.jetsetslow.omniterm</code> with the token in <code>com.jetsetslow.omniterm.extra.TOKEN</code>. Add <code>REPLY_PACKAGE</code> and <code>REPLY_ACTION</code> extras to get the result back at your app only.</li>
+<li>A token OmniTerm does not know gets no answer. Each run is kept in Fleet history, marked as an automation. Keep tokens private: anyone holding one can run its script.</li>
+</ul>
+<h2>AI assistants (MCP)</h2>
+<p>Under <strong>Tools &rarr; AI assistants</strong>, an assistant such as Claude Code, Gemini CLI or Codex can read the hosts you tick and ask to run your saved scripts, using the Model Context Protocol.</p>
+<ul>
+<li>The server listens only on the phone's loopback address, needs its token on every request and refuses requests that name another host or come from a web page. A notification shows while it is on.</li>
+<li>Only ticked hosts are visible (none by default): name, group, state, health, latency, recorded metrics and alerts, and containers. Addresses, user names, passwords, keys, notes and script commands are never given.</li>
+<li>Every run waits for your approval on the phone, with the full command shown. Denied or unanswered for two minutes means it does not run.</li>
+<li>To reach it from a computer, pick one of your own hosts and OmniTerm keeps a reverse SSH tunnel open to it; the screen shows the command for Claude Code, Gemini CLI and Codex.</li>
+<li>Whatever an assistant reads goes to that assistant program and may reach the company behind it. Share only what you are comfortable with.</li>
+</ul>
+<h2>Links and sharing</h2>
+<p><code>ssh://</code> links and text or files shared from other apps only open a screen. Nothing connects, saves or uploads until you tap, and a password in a link is dropped.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="fleet.html">&larr; Fleet and scripts</a><a href="vpn.html">VPN tunnels &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

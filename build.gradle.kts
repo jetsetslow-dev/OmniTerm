@@ -13,9 +13,9 @@ buildscript {
         Triple("com.google.guava:guava", "30.1.1-jre", "33.6.0-jre"),
         Triple("org.apache.commons:commons-lang3", "3.16.0", "3.19.0"),
         Triple("org.bitbucket.b_c:jose4j", "0.9.5", "0.9.6"),
-        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", "1.86"),
-        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", "1.86"),
-        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", "1.86"),
+        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", "1.87"),
+        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", "1.87"),
+        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", "1.87"),
         Triple("org.jdom:jdom2", "2.0.6", "2.0.6.1"),
       )
       patchedModules.forEach { (moduleId, vulnerableVersion, patchedVersion) ->
