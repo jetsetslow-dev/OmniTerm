@@ -1,41 +1,94 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OmniTerm</title>
-  <style>
-    :root { color-scheme: dark; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #0b0d10;
-      color: #e6e6e6;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      text-align: center;
-      padding: 24px;
-    }
-    .card { max-width: 560px; }
-    h1 { font-size: 1.6rem; margin: 0 0 0.4em; letter-spacing: 0.04em; }
-    p { line-height: 1.6; color: #9aa4af; }
-    a { color: #5c82ff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniTerm - run your homelab from your phone</title>
+<meta name="description" content="OmniTerm is an Android app for SSH, SFTP, containers, monitoring and automation of your own servers, with no cloud account and no agent on the servers.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="card">
-    <h1>OmniTerm</h1>
-    <p>
-      A privacy-first SSH/SFTP terminal console for Android. Talks directly to your
-      hosts; keeps keys and credentials on-device with no telemetry.
-    </p>
-    <p>
-      <a href="https://github.com/jetsetslow-dev/OmniTerm">Source on GitHub</a> &middot;
-      <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy Policy</a>
-    </p>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="index.html"><img src="assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="index.html#features">Features</a><a href="guide/index.html">Documentation</a><a href="index.html#privacy">Privacy</a><a href="index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
   </div>
+</header>
+<main id="main">
+<section class="hero"><div class="wrap hero-grid">
+<div>
+<h1>Run your homelab and servers from your phone</h1>
+<p class="lead">OmniTerm is an open-source, native Android app for SSH terminals, file management, containers, live monitoring, alerts and automation. It connects straight from the device to your hosts: <strong>no cloud account and no agent to install on your servers</strong>.</p>
+<p class="cta"><a class="btn" href="#get">Get OmniTerm</a> <a class="btn alt" href="guide/index.html">Read the documentation</a></p>
+</div>
+<img class="art" src="assets/feature_graphic.png" width="1024" height="500" alt="OmniTerm app icon beside the name and the words no cloud account and no server agent">
+</div></section>
+
+<section class="wrap" id="who"><h2>Who it is for</h2>
+<p>People who look after their own machines: homelab owners, self-hosters, and administrators of small fleets who want to check on a server, restart a container or run a script without reaching for a laptop. You need an Android phone or tablet and SSH access to your hosts.</p>
+</section>
+
+<section class="wrap" id="different"><h2>How it differs</h2>
+<div class="grid3">
+<div class="card"><h3>No cloud account</h3><p>There is no OmniTerm service to sign up for. The app talks to your hosts directly and runs no backend for telemetry, analytics, advertising, crash reporting or credential sync.</p></div>
+<div class="card"><h3>No agent on servers</h3><p>Monitoring and management use SSH and each host's own tools (Linux <code>/proc</code>, systemd, package managers, Docker, kubectl). Nothing is installed on your servers unless you choose to add a helper such as tmux.</p></div>
+<div class="card"><h3>Built for the phone</h3><p>Background sessions, a special-key bar, landscape layouts, biometric lock, notifications for alerts, Wake-on-LAN, and links and sharing from other apps.</p></div>
+</div></section>
+
+<section class="wrap" id="features"><h2>What it does</h2>
+<div class="grid2"><article class="card"><h3>Terminals</h3><p>SSH sessions that run in the background, split-screen for two hosts, tmux-backed sessions that survive dropped connections, a special-key bar, themes and search. Telnet and USB serial for network gear and consoles.</p><p><a href="guide/terminal.html">Read more<span class="sr"> about Terminals</span></a></p></article><article class="card"><h3>Files and shares</h3><p>An SFTP browser with an editor, archives and dual-pane transfers, plus SMB, FTP and WebDAV shares. Copy between any share and any host, streaming large files.</p><p><a href="guide/files.html">Read more<span class="sr"> about Files and shares</span></a></p></article><article class="card"><h3>Containers</h3><p>Docker and Podman containers, stacks, images and volumes with logs, stats and exec shells; a Compose builder that validates before deploying; Kubernetes pods, deployments, services and nodes.</p><p><a href="guide/containers.html">Read more<span class="sr"> about Containers</span></a></p></article><article class="card"><h3>Monitoring and alerts</h3><p>Live CPU, memory, disk, load, temperature and I/O read from standard tools, a hardware spec sheet, and alert rules for usage, TLS expiry, URLs, ping, ports, DNS, ZFS, UPS, reboots and your own script checks. Forward alerts to ntfy, Gotify or a webhook.</p><p><a href="guide/monitoring.html">Read more<span class="sr"> about Monitoring and alerts</span></a></p></article><article class="card"><h3>Fleet and scripts</h3><p>Run a command or saved script on many hosts with live output, rolling runs that stop on failure, retry on failed hosts, tmux-backed runs and a history. Scripts can ask for values safely at run time.</p><p><a href="guide/fleet.html">Read more<span class="sr"> about Fleet and scripts</span></a></p></article><article class="card"><h3>Automation and MCP</h3><p>Let Tasker or another app run one saved script with a token you made. Optionally let Claude Code, Gemini CLI or Codex read hosts you choose and ask to run scripts, with every run approved on your phone. Both are off until you turn them on.</p><p><a href="guide/automation.html">Read more<span class="sr"> about Automation and MCP</span></a></p></article><article class="card"><h3>VPN tunnels per host</h3><p>Reach hosts through WireGuard without using Android's VPN. Only OmniTerm's connections to the hosts you choose use the tunnel, and such a host never falls back to a direct connection.</p><p><a href="guide/vpn.html">Read more<span class="sr"> about VPN tunnels per host</span></a></p></article><article class="card"><h3>Network tools and backup</h3><p>Host scan, Wake-on-LAN, ping, traceroute, port scan, DNS, WHOIS and speed test. Selective AES-256-GCM encrypted backups of your app data.</p><p><a href="guide/backup.html">Read more<span class="sr"> about Network tools and backup</span></a></p></article></div></section>
+
+<section class="wrap" id="screens"><h2>In the app</h2>
+<p>Screenshots from the open-source debug build, taken against this repository's own disposable test hosts, so every name and address shown is a test fixture.</p>
+<div class="shots"><figure class="shot"><img src="assets/screenshot-host-list.png" width="540" height="1140" alt="OmniTerm host list showing three lab hosts, each with CPU, RAM, disk and temperature bars and SSH, SFTP, Docker and Ping buttons" loading="lazy"><figcaption>Host list</figcaption></figure><figure class="shot"><img src="assets/screenshot-terminal.png" width="540" height="698" alt="OmniTerm terminal on the lab-docker host with the output of uname and uptime above the special-key bar" loading="lazy"><figcaption>Terminal</figcaption></figure><figure class="shot"><img src="assets/screenshot-files.png" width="540" height="1140" alt="OmniTerm Files screen listing the folders corpus and runtime and the file large-stack.yml in a remote folder" loading="lazy"><figcaption>Files</figcaption></figure><figure class="shot"><img src="assets/screenshot-monitor.png" width="540" height="1140" alt="OmniTerm Monitor overview for lab-docker with CPU utilisation, load average and per-core usage" loading="lazy"><figcaption>Monitor</figcaption></figure><figure class="shot"><img src="assets/screenshot-containers.png" width="540" height="1140" alt="OmniTerm Containers screen listing a Compose stack and a standalone container, both running, with stack actions" loading="lazy"><figcaption>Containers</figcaption></figure><figure class="shot"><img src="assets/screenshot-fleet-broadcast.png" width="540" height="1140" alt="OmniTerm Fleet Broadcast with the uname and uptime output of lab-docker and lab-podman, both complete" loading="lazy"><figcaption>Fleet Broadcast</figcaption></figure></div>
+</section>
+
+<section class="wrap" id="privacy"><h2>Privacy and security</h2>
+<ul>
+<li>Hosts, keys, credentials and history stay on the device. Credentials and private keys are encrypted with an Android Keystore key.</li>
+<li>SSH host keys are pinned on first connect, and a changed key is rejected until you review it.</li>
+<li>Optional App Lock with biometrics or PIN; anything that runs with sudo asks for authentication every time.</li>
+<li>FIDO2 security keys, SSH certificates and per-host agent forwarding (off by default).</li>
+<li>Automation, the MCP server and alert forwarding are off until you turn them on. MCP runs only on the phone's own address, shows only the hosts you tick, and runs nothing you have not approved.</li>
+<li>Encrypted backups; Android's own auto-backup is disabled.</li>
+</ul>
+<p>Read the <a href="guide/security.html">security summary</a>, the full <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">privacy policy</a> and the <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">vulnerability reporting policy</a>. This website uses no cookies, analytics or third-party resources.</p>
+</section>
+
+<section class="wrap" id="get"><h2>Get OmniTerm</h2>
+<div class="grid2">
+<div class="card"><h3>Open-source build</h3><p>Built from this repository and published as an APK on the <a href="https://github.com/jetsetslow-dev/OmniTerm/releases">GitHub releases page</a>. No host limit, no ads, no purchases, no Google SDKs. It installs as <code>com.jetsetslow.omniterm.app.oss</code> and can sit beside the Play Store app.</p></div>
+<div class="card"><h3>Play Store build</h3><p>The Play Store package is <code>com.jetsetslow.omniterm.app</code>. Free for one saved host with a banner ad. Two one-time purchases: Remove Ads, or Unlock to lift host limits and enable Quick connect, Telnet and USB serial.</p></div>
+</div>
+<p>Both builds share the same core features. <a href="guide/getting-started.html">Getting started</a> walks through installing and adding a first host.</p>
+</section>
+
+<section class="wrap" id="docs"><h2>Documentation and community</h2>
+<ul class="links">
+<li><a href="guide/index.html">Documentation</a></li>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm">Source code</a></li>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a></li>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm/discussions">Discussions</a></li>
+<li><a href="guide/contributing.html">Contributing</a></li>
+<li><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a></li>
+</ul>
+<p>OmniTerm credits the projects whose ideas and bug reports shaped it, such as Semaphore UI, Komodo, Beszel, Uptime Kuma, ConnectBot, Termux:Tasker and electerm. No code is copied from them. See the <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/NOTICE.md">notices</a> and the README's acknowledgements.</p>
+</section>
+
+<section class="wrap" id="licence">
+<!-- LICENCE: this is the only place on the site that names the licence. Update this section (and nothing else) if the licence changes. -->
+<h2>Licence</h2>
+<p>OmniTerm is free and open-source software under the <a href="https://www.gnu.org/licenses/gpl-3.0.html">GPL-3.0</a> (see <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/LICENSE">LICENSE</a>). The Play Store build additionally includes Google's billing and ads libraries, which are not part of the repository. The OmniTerm name and logo are not covered by the licence.</p>
+</section>
+</main>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="index.html#licence">Licence</a></p>
+  </div>
+</footer>
 </body>
 </html>

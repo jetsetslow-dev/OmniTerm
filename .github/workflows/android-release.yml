@@ -503,7 +503,7 @@ jobs:
             PREV_TAG=$(gh release list --limit 50 --json tagName \
               --jq '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName' 2>/dev/null || true)
             {
-            echo "Signed Android release build. Download the .apk to install the source-available version."
+            echo "Signed Android release build. Download the .apk to install the open-source version."
               echo
               echo "## Changes${PREV_TAG:+ since $PREV_TAG}"
               if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then

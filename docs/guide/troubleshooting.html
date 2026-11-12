@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting and FAQ - OmniTerm documentation</title>
+<meta name="description" content="Common problems and short answers.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html" aria-current="page">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Troubleshooting and FAQ</h1>
+
+<h2>Common problems</h2>
+<dl>
+<dt>Host shows offline</dt><dd>Check the hostname or IP, SSH port, network route and firewalls.</dd>
+<dt>Authentication fails</dt><dd>Verify the user name, password or key, and any proxy or jump host.</dd>
+<dt>"Connection dropped during handshake"</dt><dd>The server closed the connection before sign-in. It may still be starting, or (OpenSSH 9.8 and later) it is turning your device away for a while after several failed sign-ins. Wait a minute and retry.</dd>
+<dt>"This host signs in with a security key"</dt><dd>Open a terminal to it and touch the key; its checks then use that sign-in.</dd>
+<dt>"This host asks a sign-in question"</dt><dd>The host uses two-step sign-in. Open a terminal and enter the current code.</dd>
+<dt>Monitoring is empty</dt><dd>Confirm the host has the expected platform tools. Windows hosts need OpenSSH Server and Windows PowerShell.</dd>
+<dt>Containers tab is empty</dt><dd>Confirm Docker or Podman is installed and the SSH user may run it.</dd>
+<dt>Kubernetes tab fails</dt><dd>Run <code>kubectl get pods</code> as the SSH user on the host; the tab sees what that command sees.</dd>
+<dt>A port-forward tunnel will not start</dt><dd>Confirm the bind port is free and the destination is reachable from the SSH host (<code>-L</code>) or from the phone (<code>-R</code>).</dd>
+</dl>
+<h2>FAQ</h2>
+<dl>
+<dt>Do I need an OmniTerm account?</dt><dd>No. There is no OmniTerm cloud service.</dd>
+<dt>Do I install anything on my servers?</dt><dd>No. OmniTerm uses SSH and each host's own tools.</dd>
+<dt>Do the two builds differ in features?</dt><dd>No. They differ in distribution and in the Play Store build's host limit and ads. See <a href="getting-started.html">Getting started</a>.</dd>
+<dt>Does an AI assistant see my passwords?</dt><dd>No. MCP is off by default, shows only hosts you tick, never gives credentials or addresses, and every run needs your approval on the phone.</dd>
+</dl>
+<h2>Getting help</h2>
+<p>Search <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">existing issues</a>, then use <a href="https://github.com/jetsetslow-dev/OmniTerm/discussions">Discussions</a> for questions or an issue template for a reproducible bug. Attach the diagnostics from <strong>Tools &rarr; About OmniTerm &rarr; Device &amp; diagnostics</strong> after removing host names, addresses and secrets. Support is best-effort.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="security.html">&larr; Security and privacy</a><a href="build.html">Building from source &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

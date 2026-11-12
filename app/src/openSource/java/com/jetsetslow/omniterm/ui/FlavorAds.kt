@@ -28,4 +28,4 @@ fun FlavorAdPrivacyButton(modifier: Modifier = Modifier) {
  * touching an advertising identifier in this build.
  */
 suspend fun flavorAdvertisingId(context: android.content.Context): String =
-    "N/A (source-available build, no ads SDK)"
+    "N/A (open-source build, no ads SDK)"

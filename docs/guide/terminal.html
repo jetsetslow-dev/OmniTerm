@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal - OmniTerm documentation</title>
+<meta name="description" content="SSH, split screen, tmux sessions, Telnet and USB serial.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html" aria-current="page">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Terminal</h1>
+<figure class="shot"><img src="../assets/screenshot-terminal.png" width="540" height="698" alt="OmniTerm terminal on the lab-docker host with the output of uname and uptime above the special-key bar" loading="lazy"><figcaption>Terminal, from the open-source debug build against the repository's test hosts.</figcaption></figure>
+
+<h2>Sessions</h2>
+<p>Open <strong>Term</strong> for an interactive SSH shell. Sessions run in the background and stay connected when you leave the screen. A host's sign-in banner is shown at the top, with control characters removed.</p>
+<h2>Split screen</h2>
+<p><strong>SPLIT</strong> shows two sessions side by side or stacked. The focused pane owns the keyboard and the special-key bar.</p>
+<h2>tmux-backed sessions</h2>
+<p>Where tmux is available, sessions survive network drops and app restarts and reconnect automatically. <strong>Forget</strong> drops a saved session from the phone and leaves it running; <strong>End session</strong> stops it on the server. <strong>Attach existing tmux</strong> joins a session you started elsewhere, on Linux, macOS or BSD hosts.</p>
+<h2>Using the terminal</h2>
+<ul>
+<li>Special-key bar, hardware keyboard, swipe typing, adjustable font size and reflowing scrollback.</li>
+<li>Themes: follow the app, Omni Dark, Solarized Dark, Matrix and Light.</li>
+<li><strong>Find in terminal</strong> searches the scrollback and screen and highlights matches.</li>
+<li>Long-press copy for the visible screen or the full scrollback; a <strong>Bottom</strong> button returns to the live tail.</li>
+<li>When a shell ends, its output stays on screen with the exit status until you dismiss it.</li>
+</ul>
+<h2>Quick connect, Telnet and USB serial</h2>
+<p>These three need <strong>Unlock OmniTerm</strong> in the Play Store build and are always available in the open-source build. Quick connect opens SSH to an unsaved host and writes nothing to the database. Telnet is not encrypted: anything you type, passwords included, can be read on the network. USB serial works with CDC-ACM devices and FTDI, CP210x, CH340/CH341 and PL2303 adapters over an OTG cable.</p>
+<p>The implemented xterm/VT subset and known limits are listed in the <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/docs/TERMINAL_COMPATIBILITY.md">terminal compatibility matrix</a>.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="hosts.html">&larr; Hosts and sign-in</a><a href="files.html">Files and shares &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

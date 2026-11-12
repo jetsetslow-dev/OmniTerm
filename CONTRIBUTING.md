@@ -1,8 +1,8 @@
 # Contributing to OmniTerm
 
-Contributions are welcome under the repository's PolyForm Noncommercial license. For a security vulnerability, do not open an issue; follow [SECURITY.md](SECURITY.md).
+Contributions are welcome under the GPL-3.0. For a security vulnerability, do not open an issue; follow [SECURITY.md](SECURITY.md).
 
-By submitting a contribution, you represent that you have the right to submit it and agree that it is licensed under the same terms as the repository (inbound equals outbound). The project does not currently require a CLA or DCO sign-off. A future relicensing policy would require an explicit, separately reviewed contributor-rights process; accepting a contribution today does not silently grant additional relicensing rights.
+By contributing you agree that your contribution is licensed under the GPL-3.0 and that the project owner may also license it under other terms.
 
 ## Development workflow
 

@@ -2,13 +2,15 @@
 
 Required Notice: Copyright (c) 2026 jetsetslow and OmniTerm contributors
 
-OmniTerm is licensed under the PolyForm Noncommercial License 1.0.0 unless a
-later version says otherwise.
+OmniTerm is licensed under the GNU General Public License, version 3 (GPL-3.0-only);
+see [LICENSE](LICENSE).
 
-The source-available Android flavor uses application id `com.jetsetslow.omniterm.app.oss`.
+The open-source Android flavor uses application id `com.jetsetslow.omniterm.app.oss`.
 The Play Store flavor uses application id `com.jetsetslow.omniterm.app`. This keeps
-the source-available build from replacing the Play Store paid package while
-keeping the app features the same.
+a build made from this repository from replacing the Play Store package, while
+keeping the app features the same. The Play Store flavor also includes Google's
+proprietary SDKs (billing, ads, consent, in-app review), which are not part of
+this repository.
 
 ## Acknowledgements
 

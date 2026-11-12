@@ -24,7 +24,7 @@ body:
     id: version
     attributes:
       label: OmniTerm version and distribution
-      placeholder: "1.2.3-main.1, source-available or Play Store"
+      placeholder: "1.2.3-main.1, open-source build or Play Store"
     validations:
       required: true
   - type: input

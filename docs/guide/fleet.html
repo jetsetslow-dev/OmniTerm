@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet and scripts - OmniTerm documentation</title>
+<meta name="description" content="Run commands across hosts, rolling runs and saved scripts.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html" aria-current="page">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Fleet and scripts</h1>
+<figure class="shot"><img src="../assets/screenshot-fleet-broadcast.png" width="540" height="1140" alt="OmniTerm Fleet Broadcast with the uname and uptime output of lab-docker and lab-podman, both complete" loading="lazy"><figcaption>Fleet Broadcast, from the open-source debug build against the repository's test hosts.</figcaption></figure>
+
+<h2>Broadcast</h2>
+<p><strong>Fleet &rarr; Broadcast</strong> runs a command on the online hosts or groups you pick, with live output per host. Each card shows the exit status or says the connection was lost. Destructive commands (disk wipes, prunes, deletes, firewall lockouts and similar) get a warning before they run.</p>
+<ul>
+<li><strong>Run in tmux</strong> keeps each host's command running if the connection drops and reconnects for up to 30 minutes.</li>
+<li><strong>Rolling run</strong> runs on 1, 2, 5 or 10 hosts at a time and can stop at the first failing batch.</li>
+<li><strong>Retry</strong> re-runs only on the hosts that failed or were not run.</li>
+<li><strong>Share output</strong> sends the run as text to any app.</li>
+<li><strong>History</strong> keeps your last 50 runs, with <strong>Use again</strong> to load one back without running it. Values typed for placeholders are not kept.</li>
+</ul>
+<h2>Scripts</h2>
+<p>Under <strong>Tools &rarr; Scripts</strong> save scripts and mark them for quick per-host use, Fleet, or both, and choose the OS or system each is for (Linux, FreeBSD, macOS, Windows, Proxmox, Home Assistant, TrueNAS, OpenWrt, pfSense and others). A script runs only on hosts it is meant for.</p>
+<h3>Values asked at run time</h3>
+<p>Write <code>{{name}}</code> in a script, for example <code>qm start {{vmid}}</code>, and OmniTerm asks for the value on each run; <code>{{name=default}}</code> sets a starting value. Each value reaches the host as one quoted word, so it can never run as a command of its own.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="monitoring.html">&larr; Monitoring and alerts</a><a href="automation.html">Automation and MCP &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

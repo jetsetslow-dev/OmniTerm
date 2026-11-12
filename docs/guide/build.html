@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building from source - OmniTerm documentation</title>
+<meta name="description" content="Build, test and run the repository checks.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html" aria-current="page">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Building from source</h1>
+
+<p>Requirements and exact commands are in the <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md#build-from-source">README</a> and <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>. The app is Kotlin with Jetpack Compose.</p>
+<h2>Build the open-source variant</h2>
+<pre><code>./gradlew assembleOpenSourceDebug testOpenSourceDebugUnitTest --no-daemon</code></pre>
+<h2>Before sending a change</h2>
+<pre><code>./scripts/local-pr-check.sh --full</code></pre>
+<p>This runs the release and CI contract tests, both flavour unit suites and lint gates, the release SBOM dependency graphs, an advisory check of dependencies and pinned GitHub Actions, and the CodeQL analysis CI uses. With a device or emulator attached it also runs the Room migration matrix.</p>
+<h2>Architecture in brief</h2>
+<ul>
+<li><strong>Connections</strong>: JSch (the maintained <code>com.github.mwiede</code> fork) for SSH, SFTP and port forwards; smbj, Apache Commons Net and OkHttp for shares behind a common file-system abstraction.</li>
+<li><strong>Storage</strong>: Room (SQLite) with versioned, tested migrations.</li>
+<li><strong>VPN tunnels</strong>: a Go library (<code>tunnel/</code>) built on wireguard-go and gVisor's network stack, bound with gomobile.</li>
+<li><strong>Decisions</strong>: architecture decision records are in <a href="https://github.com/jetsetslow-dev/OmniTerm/tree/main/docs/adr"><code>docs/adr</code></a>; releases follow the <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/docs/RELEASE_RUNBOOK.md">release runbook</a>.</li>
+</ul>
+<p>Dependency licences are listed in <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="troubleshooting.html">&larr; Troubleshooting and FAQ</a><a href="contributing.html">Contributing &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>

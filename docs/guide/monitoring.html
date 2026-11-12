@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring and alerts - OmniTerm documentation</title>
+<meta name="description" content="Live metrics, specs, alert rules and forwarding.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site">
+  <div class="wrap bar">
+    <a class="brand" href="../index.html"><img src="../assets/icon.png" alt="" width="32" height="32"><span>OmniTerm</span></a>
+    <nav aria-label="Site"><a href="../index.html#features">Features</a><a href="../guide/index.html" aria-current="page">Documentation</a><a href="../index.html#privacy">Privacy</a><a href="../index.html#licence">Licence</a><a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a></nav>
+  </div>
+</header>
+<div class="wrap docs">
+<nav class="side" aria-label="Documentation"><p class="side-title"><a href="index.html">Documentation</a></p><ul><li><a href="getting-started.html">Getting started</a></li><li><a href="hosts.html">Hosts and sign-in</a></li><li><a href="terminal.html">Terminal</a></li><li><a href="files.html">Files and shares</a></li><li><a href="containers.html">Containers</a></li><li><a href="monitoring.html" aria-current="page">Monitoring and alerts</a></li><li><a href="fleet.html">Fleet and scripts</a></li><li><a href="automation.html">Automation and MCP</a></li><li><a href="vpn.html">VPN tunnels</a></li><li><a href="backup.html">Backup and restore</a></li><li><a href="security.html">Security and privacy</a></li><li><a href="troubleshooting.html">Troubleshooting and FAQ</a></li><li><a href="build.html">Building from source</a></li><li><a href="contributing.html">Contributing</a></li></ul></nav>
+<main id="main" class="prose">
+<h1>Monitoring and alerts</h1>
+<figure class="shot"><img src="../assets/screenshot-monitor.png" width="540" height="1140" alt="OmniTerm Monitor overview for lab-docker with CPU utilisation, load average and per-core usage" loading="lazy"><figcaption>Monitor, from the open-source debug build against the repository's test hosts.</figcaption></figure>
+
+<h2>Live monitoring</h2>
+<p><strong>Monitor</strong> shows CPU, memory, disk, load, uptime, temperature, per-core usage, network and disk I/O, SMART health, and process, service, log and cron views. Metrics come from each host's own tools, so there is no agent. Services are managed through systemd, OpenRC, rc.d, <code>rcctl</code>, launchd or Windows services as appropriate.</p>
+<h2>Specs</h2>
+<p>The <strong>Specs</strong> tab lists hardware and software for Linux, FreeBSD, macOS and Windows hosts. Details that need administrator rights are read only when you tap <strong>Read with sudo</strong>. Where a helper program such as <code>dmidecode</code> or <code>smartmontools</code> is missing, an <strong>Install</strong> button uses the host's package manager after you authenticate.</p>
+<h2>Alert rules</h2>
+<ul>
+<li><strong>Usage</strong>: CPU, memory, disk and latency thresholds.</li>
+<li><strong>Checks the phone runs itself</strong>: TLS expiry, URL, ping, TCP port and DNS, about once a minute, so they work when a host has no SSH. Checks of a host that uses a VPN tunnel go through it where supported.</li>
+<li><strong>Host state</strong>: Host Offline, Failed Services, Container Problems, Storage Health (ZFS, mdadm, SMART), ZFS Scrub Age, UPS On Battery and Reboot Required.</li>
+<li><strong>Script checks</strong>: run one of your saved scripts on the host and alert on a non-zero exit. Destructive-looking scripts are refused.</li>
+<li><strong>Runbooks</strong>: a rule can name a saved script; its notification offers a Run button that opens Fleet and asks for confirmation first.</li>
+</ul>
+<p>Checks run from the phone while OmniTerm is running.</p>
+<h2>Alert forwarding</h2>
+<p>Off unless you set it up. Alerts can be sent to an <a href="https://ntfy.sh">ntfy</a> topic, a <a href="https://gotify.net">Gotify</a> server or any webhook you name, with <strong>Send test</strong> before you save. Only the alert's title and text go out. A plain <code>http://</code> address sends in clear text and the form says so.</p>
+<h2>Network tools</h2>
+<p>Host scan, Wake-on-LAN, ping, traceroute, port scanner, DNS lookup, WHOIS, speed test and SSH port-forward tunnels (local, remote and SOCKS).</p>
+
+<nav class="pager" aria-label="Previous and next page"><a href="containers.html">&larr; Containers</a><a href="fleet.html">Fleet and scripts &rarr;</a></nav>
+<p class="edit"><a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/README.md">The README</a> is the full reference for every feature. Found a mistake? <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Open an issue</a>.</p>
+</main>
+</div>
+<footer class="site">
+  <div class="wrap">
+    <p>OmniTerm is an Android app by jetsetslow. This site is static: no cookies, analytics, trackers, third-party fonts or embeds.</p>
+    <p><a href="../guide/index.html">Documentation</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm">Source</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/issues">Issues</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/PRIVACY.md">Privacy policy</a> &middot; <a href="https://github.com/jetsetslow-dev/OmniTerm/blob/main/SECURITY.md">Security policy</a> &middot; <a href="../index.html#licence">Licence</a></p>
+  </div>
+</footer>
+</body>
+</html>
