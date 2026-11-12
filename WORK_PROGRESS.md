@@ -1148,9 +1148,9 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     auth, DES/AES privacy, JDK crypto only). Each poll has its own dispatcher, USM and socket: a
     GET of the system group, then GETBULK walks of IF-MIB (64-bit counters), hrProcessorLoad and
     hrStorage, 25 rows a request, 512 rows a column, 3 s and one retry a request, 60 s a poll.
-    Only GET and GETBULK can be sent (`READ_ONLY_PDU_TYPES`, checked in the one `send`). The tab
-    polls every 30 s while open; rates come from two polls, 32-bit wrap handled. API 26+ only
-    (SNMP4J needs `MethodHandles`); D8 rewrites its covariant `ByteBuffer` calls and backports
+    Only GET and GETBULK can be sent (`Snmp4jEngine.READ_ONLY_PDU_TYPES`, checked in its one
+    `send`). The tab polls every 30 s while open; rates come from two polls, 32-bit wrap
+    handled. API 26+ only (SNMP4J needs `MethodHandles`); D8 rewrites its covariant `ByteBuffer` calls and backports
     `requireNonNullElse` and `parseInt(CharSequence…)` for older APIs. R8 must keep the whole
     library: it loads its value types, transports and security protocols by class name from its
     `.properties` files.
@@ -1183,7 +1183,8 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     `EndpointChecks` now takes its platform trust manager from there.
   - Through a tunnel: `TunnelHttpSocketFactory` and `TunnelDns` (no lookup on the phone; the
     tunnel resolves the name, or `tunnelHost` replaces it). Same rules as hosts: never direct,
-    except on a Wi-Fi the tunnel lists. `TunnelChoice` is the tunnel picker SNMP and Proxmox share.
+    except on a Wi-Fi the tunnel lists. SNMP and Proxmox share their form (`DeviceFormFields.kt`:
+    `DeviceFormDialog`, `NameAddressPortFields` and the tunnel picker `TunnelChoice`).
   - Table `proxmox_servers` in the 29→30 step, the token encrypted at the repository boundary, in
     backups with hosts (deduplicated by name, address and port; tunnel ids mapped, a missing
     tunnel stays missing; the trusted fingerprint is kept). A tunnel a server uses cannot be
@@ -1206,6 +1207,12 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     suite's on-device Compose assertions are the evidence the screen renders.
   - Not done: Proxmox alerts, feeding the Backup Age vzdump preset from the API, guest consoles,
     and other API calls (migrate, clone, storage).
+  - Engine adapters, so a later engine (the Go core on iOS) replaces one file per feature: SNMP4J
+    is used only in `Snmp4jEngine.kt`, behind `SnmpEngine` and `SnmpSession` (dotted OIDs as
+    strings, `SnmpValue`, `SnmpAnswer`, `SnmpFailure`). Proxmox's OkHttp, Moshi and TLS are used
+    only in `ProxmoxOkHttp.kt`, behind `ProxmoxTransport` (answers as plain maps and lists;
+    `ProxmoxUntrusted` carries the certificate to trust). `JsonTree.kt` has the readers Kube and
+    Proxmox share. `EngineAdaptersStayThinTest` scans imports and qualified names to keep it so.
 
 ## Decision pivot — 2026-11-08
 

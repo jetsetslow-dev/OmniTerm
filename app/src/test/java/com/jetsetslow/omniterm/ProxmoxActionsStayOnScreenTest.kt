@@ -21,6 +21,15 @@ class ProxmoxActionsStayOnScreenTest {
         val users = files.filterValues { "ProxmoxApi" in it }.keys
         assertWithMessage("files that use the Proxmox client").that(users)
             .containsExactly("ProxmoxApi.kt", "ProxmoxScreen.kt", "AppViewModel.kt")
+        // The transport under it could send a guest action too, so it is only built for the client.
+        val transports = files.filterValues { "ProxmoxTransport" in it }.keys
+        assertWithMessage("files that use the Proxmox transport").that(transports)
+            .containsExactly("ProxmoxApi.kt", "ProxmoxOkHttp.kt", "AppViewModel.kt")
+        assertWithMessage("the model builds a transport only to hand it to the client")
+            .that(Regex("""\w*ProxmoxTransport\(""").findAll(files.getValue("AppViewModel.kt")).map { it.value }.toList())
+            .containsExactly("OkHttpProxmoxTransport(")
+        assertWithMessage("and only inside ProxmoxApi(…)").that(files.getValue("AppViewModel.kt"))
+            .contains("ProxmoxApi(OkHttpProxmoxTransport(server, tunnelNow))")
     }
 
     @Test

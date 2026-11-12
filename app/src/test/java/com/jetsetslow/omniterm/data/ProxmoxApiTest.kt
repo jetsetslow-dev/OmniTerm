@@ -70,6 +70,7 @@ class ProxmoxApiTest {
         if (auth != "PVEAPIToken=$TOKEN_ID=$SECRET") return reply(exchange, 401, "{\"data\":null}")
         val data = when {
             path == "/api2/json/version" -> """{"version":"8.4.1"}"""
+            path == "/api2/json/behind-a-login-page" -> return reply(exchange, 200, "<html>Sign in</html>")
             path == "/api2/json/nodes" -> """[{"node":"pve1","status":"online","cpu":0.25,"maxcpu":8,"mem":2147483648,"maxmem":8589934592,"uptime":7200},{"node":"pve2","status":"offline"}]"""
             path == "/api2/json/cluster/resources" -> """[{"id":"qemu/100","vmid":100,"type":"qemu","name":"web","node":"pve1","status":"running","cpu":0.5,"maxcpu":2,"mem":1073741824,"maxmem":4294967296,"uptime":60,"template":0},
                 {"id":"lxc/200","vmid":200,"type":"lxc","name":"dns","node":"pve1","status":"stopped","template":0},
@@ -95,25 +96,27 @@ class ProxmoxApiTest {
     private fun server(fingerprint: String = FINGERPRINT, host: String = "127.0.0.1", port: Int = https.address.port, tunnelHost: String = "") =
         ProxmoxServerEntity(name = "lab", host = host, port = port, tokenId = TOKEN_ID, tokenSecret = SECRET, fingerprint = fingerprint, tunnelHost = tunnelHost)
 
+    private fun api(server: ProxmoxServerEntity, tunnelId: Int? = null) = ProxmoxApi(OkHttpProxmoxTransport(server, tunnelId))
+
     private val guest = Proxmox.Guest("pve1", 100, "qemu", "web", "running", null, null, null, null, null, false)
 
     @Test
     fun aCertificateNotTrustedYetIsRefusedWithItsFingerprintBeforeAnyRequest() = runBlocking {
-        val refused = runCatching { ProxmoxApi(server(fingerprint = ""), null).overview() }.exceptionOrNull()
-        assertThat(refused).isInstanceOf(ProxmoxApi.UntrustedServer::class.java)
-        val untrusted = (refused as ProxmoxApi.UntrustedServer).untrusted
+        val refused = runCatching { api(server(fingerprint = "")).overview() }.exceptionOrNull()
+        assertThat(refused).isInstanceOf(ProxmoxUntrusted::class.java)
+        val untrusted = refused as ProxmoxUntrusted
         assertThat(untrusted.fingerprint).isEqualTo(FINGERPRINT)
         assertThat(untrusted.changed).isFalse()
         assertWithMessage("no request reached the server, so the token went nowhere").that(seen).isEmpty()
 
-        val changed = runCatching { ProxmoxApi(server(fingerprint = "AB:".repeat(31) + "AB"), null).overview() }.exceptionOrNull()
-        assertThat((changed as ProxmoxApi.UntrustedServer).untrusted.changed).isTrue()
+        val changed = runCatching { api(server(fingerprint = "AB:".repeat(31) + "AB")).overview() }.exceptionOrNull()
+        assertThat((changed as ProxmoxUntrusted).changed).isTrue()
         assertThat(seen).isEmpty()
     }
 
     @Test
     fun theTrustedCertificateReadsTheServerWithTheTokenInItsHeaderOnly() = runBlocking {
-        val overview = ProxmoxApi(server(fingerprint = FINGERPRINT.lowercase().replace(":", "")), null).overview()
+        val overview = api(server(fingerprint = FINGERPRINT.lowercase().replace(":", ""))).overview()
         assertThat(overview.version).isEqualTo("8.4.1")
         assertThat(overview.nodes.map { it.name to it.online }).containsExactly("pve1" to true, "pve2" to false).inOrder()
         assertThat(overview.nodes[0].memTotal).isEqualTo(8589934592L)
@@ -125,14 +128,14 @@ class ProxmoxApiTest {
         assertThat(seen.map { it.auth }.toSet()).containsExactly("PVEAPIToken=$TOKEN_ID=$SECRET")
         assertThat(seen.none { SECRET in it.path || SECRET in it.query.orEmpty() || SECRET in it.body }).isTrue()
 
-        val snapshots = ProxmoxApi(server(), null).snapshots(guest)
+        val snapshots = api(server()).snapshots(guest)
         assertThat(snapshots.map { it.name }).containsExactly("newer", "older").inOrder()
         assertThat(snapshots[1].description).isEqualTo("first")
     }
 
     @Test
     fun actionsGoToTheirEndpointsAndWaitForTheirTask() = runBlocking {
-        val api = ProxmoxApi(server(), null)
+        val api = api(server())
         assertThat(api.power(guest, Proxmox.Power.STOP)).isEqualTo("OK")
         assertThat(seen.first().let { it.method to it.path }).isEqualTo("POST" to "/api2/json/nodes/pve1/qemu/100/status/stop")
         assertWithMessage("it waited for the task to end").that(taskPolls.get()).isEqualTo(2)
@@ -162,15 +165,27 @@ class ProxmoxApiTest {
 
     @Test
     fun aWrongTokenAndTheServersRefusalsSayWhy() = runBlocking {
-        val wrong = assertThrows(ProxmoxException::class.java) { runBlocking { ProxmoxApi(server().copy(tokenSecret = "nope"), null).overview() } }
+        val wrong = assertThrows(ProxmoxException::class.java) { runBlocking { api(server().copy(tokenSecret = "nope")).overview() } }
         assertThat(wrong.message).startsWith("Proxmox refused the token")
-        assertThat(Proxmox.refusal(403, "Permission check failed (/vms/100, VM.PowerMgmt)", "{\"data\":null}"))
+        val transport = OkHttpProxmoxTransport(server(), null)
+        val notProxmox = assertThrows(ProxmoxException::class.java) { runBlocking { transport.call(ProxmoxTransport.Method.GET, listOf("behind-a-login-page")) } }
+        assertThat(notProxmox.message).endsWith("did not answer as Proxmox VE does")
+        val badHost = OkHttpProxmoxTransport(server(host = "a:b:c"), null)
+        val unusable = assertThrows(ProxmoxException::class.java) { runBlocking { badHost.call(ProxmoxTransport.Method.GET, listOf("version")) } }
+        assertThat(unusable.message).isEqualTo("a:b:c is not an address OmniTerm can connect to")
+        assertThat(Proxmox.refusal(403, "Permission check failed (/vms/100, VM.PowerMgmt)", mapOf("data" to null)))
             .startsWith("The token may not do this: Permission check failed (/vms/100, VM.PowerMgmt).")
-        assertThat(Proxmox.refusal(400, "Parameter verification failed.", """{"data":null,"errors":{"snapname":"invalid format\n"}}"""))
+        assertThat(Proxmox.refusal(400, "Parameter verification failed.", mapOf("data" to null, "errors" to mapOf("snapname" to "invalid format\n"))))
             .isEqualTo("Proxmox answered 400 Parameter verification failed. (snapname: invalid format)")
         assertThat(Proxmox.problem(server().copy(tokenId = "root@pam"))).contains("user@pam!name")
         assertThat(Proxmox.problem(server().copy(tokenSecret = " "))).isNotNull()
         assertThat(Proxmox.problem(server())).isNull()
+        for (host in listOf("192.168.1.10", "pve.lan", "pve-1.home.arpa.", "münchen.lan", "fd00::1", "[fd00::1]", "::ffff:192.0.2.1")) {
+            assertWithMessage(host).that(Proxmox.problem(server(host = host))).isNull()
+        }
+        for (host in listOf("pve lan", "https://pve.lan", "pve.lan/api", "pve..lan", "-pve.lan", "pve.lan:8006", "user@pve")) {
+            assertWithMessage(host).that(Proxmox.problem(server(host = host))).startsWith("Enter the server's address")
+        }
         assertThat(Proxmox.snapshotNameProblem("current")).isNotNull()
         assertThat(Proxmox.snapshotNameProblem("pre_v2-1")).isNull()
     }
@@ -199,9 +214,9 @@ class ProxmoxApiTest {
             thread(isDaemon = true) { while (!direct.isClosed) runCatching { direct.accept().close(); accepted.incrementAndGet() } }
             // Its own name never resolves on the phone; through the tunnel it is dialled at 100.64.0.7.
             val behind = server(host = "pve.home.invalid", port = direct.localPort, tunnelHost = "100.64.0.7")
-            assertThat(ProxmoxApi(behind, 7).overview().version).isEqualTo("8.4.1")
+            assertThat(api(behind, 7).overview().version).isEqualTo("8.4.1")
             assertThat(dials.toSet()).containsExactly("100.64.0.7:${direct.localPort}")
-            val viaOwnName = ProxmoxApi(server(host = "127.0.0.1", port = direct.localPort), 7).overview()
+            val viaOwnName = api(server(host = "127.0.0.1", port = direct.localPort), 7).overview()
             assertThat(viaOwnName.guests).hasSize(2)
             assertThat(dials.last()).isEqualTo("127.0.0.1:${direct.localPort}")
             Thread.sleep(200)

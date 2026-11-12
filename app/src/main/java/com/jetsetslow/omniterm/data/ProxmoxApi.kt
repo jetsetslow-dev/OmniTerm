@@ -1,28 +1,17 @@
 package com.jetsetslow.omniterm.data
 
-import com.jetsetslow.omniterm.data.KubeApi.Companion.at
-import com.jetsetslow.omniterm.data.KubeApi.Companion.list
-import com.jetsetslow.omniterm.data.KubeApi.Companion.text
-import com.jetsetslow.omniterm.data.tunnel.HostRoute
-import com.jetsetslow.omniterm.data.tunnel.TunnelDns
-import com.jetsetslow.omniterm.data.tunnel.TunnelHttpSocketFactory
-import com.squareup.moshi.Moshi
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import okhttp3.FormBody
-import okhttp3.HttpUrl
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import java.io.IOException
-import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 
 /**
  * What OmniTerm reads from and does on a Proxmox VE server, from the documented API
  * (https://pve.proxmox.com/pve-docs/api-viewer/): nodes, guests (VMs and containers), their power
  * and snapshots, and the backup (vzdump) tasks.
+ *
+ * This file is plain Kotlin. The HTTP and TLS library sits behind [ProxmoxTransport]
+ * ([OkHttpProxmoxTransport] on Android), so another engine can replace it without touching the
+ * feature.
  */
 object Proxmox {
     data class Node(val name: String, val online: Boolean, val cpu: Float?, val memUsed: Long?, val memTotal: Long?, val uptime: Long?)
@@ -65,20 +54,23 @@ object Proxmox {
     const val BACKUP_TASKS = 10
     private val TOKEN_ID = Regex("""^[^\s@!:=]+@[^\s@!:=]+![A-Za-z][A-Za-z0-9._-]*$""")
     private val SNAPSHOT_NAME = Regex("""^[A-Za-z][A-Za-z0-9_-]{1,39}$""")
+    // A host name or IPv4 address: labels of letters (international names too), digits, hyphens
+    // and underscores, joined by single dots, none starting or ending with a hyphen. Or an IPv6
+    // address, bracketed or not.
+    private const val LABEL = """[\p{L}\p{N}_](?:[\p{L}\p{N}_-]{0,61}[\p{L}\p{N}_])?"""
+    private val HOST_NAME = Regex("""^(?=.{1,253}$)$LABEL(?:\.$LABEL)*\.?$""")
+    private val IPV6 = Regex("""^\[?[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?::\d{1,3}(?:\.\d{1,3}){3})?]?$""")
 
     /** Why [server] cannot be saved as it is, or null. */
     fun problem(server: ProxmoxServerEntity): String? = when {
         server.name.isBlank() -> "Enter a name"
-        server.host.isBlank() || server.host.any { it.isWhitespace() || it == '/' } || !hostParses(server.host) ->
+        server.host.isBlank() || !(HOST_NAME.matches(server.host.trim()) || IPV6.matches(server.host.trim())) ->
             "Enter the server's address, such as 192.168.1.10 or pve.lan"
         server.port !in 1..65535 -> "The port must be between 1 and 65535"
         !TOKEN_ID.matches(server.tokenId.trim()) -> "The token ID looks like user@pam!name, as Datacenter → Permissions → API Tokens shows it"
         server.tokenSecret.isBlank() -> "Enter the token's secret"
         else -> null
     }
-
-    private fun hostParses(host: String) =
-        runCatching { HttpUrl.Builder().scheme("https").host(host.trim().removeSurrounding("[", "]")) }.isSuccess
 
     /** Why [name] is not a snapshot name Proxmox takes, or null. */
     fun snapshotNameProblem(name: String): String? = when {
@@ -130,10 +122,11 @@ object Proxmox {
 
     /**
      * Why the server refused, in words. Proxmox puts its reason in the HTTP status line ("Permission
-     * check failed (/vms/100, VM.PowerMgmt)"), and parameter errors in the body's "errors".
+     * check failed (/vms/100, VM.PowerMgmt)"), and parameter errors in the body's "errors" ([body],
+     * the answer's JSON as maps and lists).
      */
-    internal fun refusal(code: Int, reason: String, body: String): String {
-        val errors = runCatching { json.fromJson(body) }.getOrNull().at("errors") as? Map<*, *>
+    internal fun refusal(code: Int, reason: String, body: Any?): String {
+        val errors = body.at("errors") as? Map<*, *>
         val detail = errors?.entries?.joinToString("; ") { (k, v) -> "$k: ${v.toString().trim()}" }.orEmpty()
         return when (code) {
             401 -> "Proxmox refused the token: check its ID and secret, and that it has not expired"
@@ -143,75 +136,40 @@ object Proxmox {
                 (detail.takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: "")
         }
     }
-
-    internal val json = Moshi.Builder().build().adapter(Any::class.java)
 }
 
 /** A refusal or failure the user can read. */
-class ProxmoxException(message: String, cause: Throwable? = null) : IOException(message, cause)
+open class ProxmoxException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
- * One Proxmox VE server's API, over HTTPS with its API token. [tunnelId] is the tunnel to use now
- * (from [HostRoute.tunnelNow]): then every connection goes through it, to [ProxmoxServerEntity.tunnelHost]
- * when that is set, and the phone looks nothing up itself. The token goes only in the
- * Authorization header, never in a URL or a log.
+ * The server's certificate is neither one the phone's CAs trust nor the one the user trusted
+ * ([changed] when the user trusted another); [fingerprint] is its SHA-256, for the user to compare.
+ * Nothing was sent.
  */
-class ProxmoxApi(private val server: ProxmoxServerEntity, tunnelId: Int?, base: OkHttpClient = SHARED) {
-    private val origin: HttpUrl = HttpUrl.Builder().scheme("https").host(server.host.trim().removeSurrounding("[", "]")).port(server.port).build()
-    private val trust = CertificateTrust.Pinned(server.fingerprint)
+class ProxmoxUntrusted(val fingerprint: String, val changed: Boolean) :
+    ProxmoxException(if (changed) "The server's certificate changed" else "The server's certificate is not trusted yet")
 
-    private val client: OkHttpClient = run {
-        val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
-        base.newBuilder()
-            .sslSocketFactory(context.socketFactory, trust)
-            .hostnameVerifier(trust.hostnameVerifier())
-            .followRedirects(false)
-            .followSslRedirects(false)
-            // Through a tunnel the first connection may wait for the tunnel to start, and a Tailscale
-            // one to sign in and find its peer: 15 s on the device suite's Headscale fixture.
-            .connectTimeout(if (tunnelId != null) TUNNEL_CONNECT_SECONDS else DIRECT_CONNECT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .apply {
-                if (tunnelId != null) {
-                    socketFactory(TunnelHttpSocketFactory(tunnelId, HostRoute.rename(server.host.trim(), server.tunnelHost)))
-                    dns(TunnelDns)
-                }
-            }
-            .build()
-    }
+/**
+ * The HTTP and TLS library: one API call to one server, with its token, its trusted certificate and
+ * its tunnel. Returns the answer's `data` as maps, lists, strings and numbers; throws
+ * [ProxmoxUntrusted] before sending anything to a server it cannot trust, and [ProxmoxException]
+ * with [Proxmox.refusal]'s words when the server refuses or cannot be reached.
+ */
+interface ProxmoxTransport {
+    enum class Method { GET, POST, DELETE }
 
-    private fun url(vararg segments: String, query: Map<String, String> = emptyMap()): HttpUrl = origin.newBuilder()
-        .addPathSegment("api2").addPathSegment("json")
-        .apply { segments.forEach { addPathSegment(it) } }
-        .apply { query.forEach { (k, v) -> addQueryParameter(k, v) } }
-        .build()
+    suspend fun call(method: Method, path: List<String>, query: Map<String, String> = emptyMap(), form: Map<String, String> = emptyMap()): Any?
+}
 
-    private fun request(url: HttpUrl) = Request.Builder().url(url)
-        .header("Accept", "application/json")
-        .header("Authorization", "PVEAPIToken=${server.tokenId.trim()}=${server.tokenSecret.trim()}")
+/** One Proxmox VE server's API, over [transport]. */
+class ProxmoxApi(private val transport: ProxmoxTransport) {
+    private suspend fun get(vararg path: String, query: Map<String, String> = emptyMap()) =
+        transport.call(ProxmoxTransport.Method.GET, path.toList(), query = query)
 
-    /** The `data` of [request]'s answer. */
-    private suspend fun call(request: Request): Any? = withContext(Dispatchers.IO) {
-        try {
-            client.newCall(request).execute().use { response: Response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful) throw ProxmoxException(Proxmox.refusal(response.code, response.message, body))
-                Proxmox.json.fromJson(body).at("data")
-            }
-        } catch (e: ProxmoxException) {
-            throw e
-        } catch (e: IOException) {
-            CertificateTrust.untrustedIn(e)?.let { throw it.asIOException() }
-            throw ProxmoxException("Could not reach ${server.host}:${server.port}: ${e.message ?: e.javaClass.simpleName}", e)
-        }
-    }
+    private suspend fun post(vararg path: String, form: Map<String, String> = emptyMap()) =
+        transport.call(ProxmoxTransport.Method.POST, path.toList(), form = form)
 
-    private suspend fun get(vararg segments: String, query: Map<String, String> = emptyMap()) = call(request(url(*segments, query = query)).get().build())
-
-    private suspend fun post(vararg segments: String, form: Map<String, String> = emptyMap()) =
-        call(request(url(*segments)).post(FormBody.Builder().apply { form.forEach { (k, v) -> add(k, v) } }.build()).build())
-
-    private suspend fun delete(vararg segments: String) = call(request(url(*segments)).delete().build())
+    private suspend fun delete(vararg path: String) = transport.call(ProxmoxTransport.Method.DELETE, path.toList())
 
     /** The version, nodes, guests and the newest backup tasks of the online nodes. */
     suspend fun overview(): Proxmox.Overview {
@@ -249,8 +207,8 @@ class ProxmoxApi(private val server: ProxmoxServerEntity, tunnelId: Int?, base: 
      */
     private suspend fun finish(node: String, upid: Any?): String {
         val id = upid?.toString().orEmpty().takeIf { it.startsWith("UPID:") } ?: return "OK"
-        val deadline = System.currentTimeMillis() + TASK_WAIT_MS
-        while (System.currentTimeMillis() < deadline) {
+        val started = TimeSource.Monotonic.markNow()
+        while (started.elapsedNow() < TASK_WAIT_MS.milliseconds) {
             val status = get("nodes", node, "tasks", id, "status")
             if (status.text("status") == "stopped") {
                 val exit = status.text("exitstatus")
@@ -262,16 +220,8 @@ class ProxmoxApi(private val server: ProxmoxServerEntity, tunnelId: Int?, base: 
         return "still running on the server"
     }
 
-    companion object {
-        private const val DIRECT_CONNECT_SECONDS = 10L
-        private const val TUNNEL_CONNECT_SECONDS = 30L
-        private const val TASK_WAIT_MS = 120_000L
-        private const val TASK_POLL_MS = 1_000L
-        private val SHARED = OkHttpClient()
-
-        private fun CertificateTrust.Untrusted.asIOException() = UntrustedServer(this)
+    private companion object {
+        const val TASK_WAIT_MS = 120_000L
+        const val TASK_POLL_MS = 1_000L
     }
-
-    /** The server's certificate needs the user's trust: [untrusted] has its fingerprint. */
-    class UntrustedServer(val untrusted: CertificateTrust.Untrusted) : IOException(untrusted.message, untrusted)
 }

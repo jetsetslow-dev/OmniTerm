@@ -1,9 +1,15 @@
 package com.jetsetslow.omniterm
 
+import com.jetsetslow.omniterm.data.Snmp4jEngine
+import com.jetsetslow.omniterm.data.SnmpAnswer
 import com.jetsetslow.omniterm.data.SnmpDevices
 import com.jetsetslow.omniterm.data.SnmpDevices.Access
 import com.jetsetslow.omniterm.data.SnmpDevices.Outcome
 import com.jetsetslow.omniterm.data.SnmpDevices.StorageKind
+import com.jetsetslow.omniterm.data.SnmpEngine
+import com.jetsetslow.omniterm.data.SnmpFailure
+import com.jetsetslow.omniterm.data.SnmpSession
+import com.jetsetslow.omniterm.data.SnmpValue
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -57,7 +63,7 @@ class SnmpDevicesTest {
 
     @Test
     fun aV2cDeviceIsReadIntoItsSystemInterfacesCpuAndStorage() {
-        val outcome = SnmpDevices.poll(Access("127.0.0.1", agent.port, 2, community = community), now = { 1_000L })
+        val outcome = SnmpDevices.poll(Access("127.0.0.1", agent.port, 2, community = community), Snmp4jEngine, now = { 1_000L })
         val snap = (outcome as Outcome.Answered).snapshot
         assertEquals("sw1", snap.name)
         assertEquals("Fixture switch", snap.description)
@@ -85,7 +91,7 @@ class SnmpDevicesTest {
     @Test
     fun aV3DeviceIsReadWithAuthenticationAndPrivacy() {
         val access = Access("127.0.0.1", agent.port, 3, user = "monitor", authProtocol = "SHA-256", authPassword = authPass, privProtocol = "AES", privPassword = privPass)
-        val snap = (SnmpDevices.poll(access) as Outcome.Answered).snapshot
+        val snap = (SnmpDevices.poll(access, Snmp4jEngine) as Outcome.Answered).snapshot
         assertEquals("sw1", snap.name)
         assertEquals(2, snap.interfaces.size)
         assertEquals(setOf(PDU.GET, PDU.GETBULK), agent.seen.toSet())
@@ -94,7 +100,7 @@ class SnmpDevicesTest {
 
     @Test
     fun eachWayOfBeingRefusedSaysWhy() {
-        fun reason(access: Access) = (SnmpDevices.poll(access) as Outcome.Failed).reason
+        fun reason(access: Access) = (SnmpDevices.poll(access, Snmp4jEngine) as Outcome.Failed).reason
         assertTrue(reason(Access("127.0.0.1", agent.port, 2, community = "wrong")).startsWith("no answer within 3 s: check the address, port, community"))
         val v3 = Access("127.0.0.1", agent.port, 3, user = "monitor", authProtocol = "SHA-256", authPassword = authPass, privProtocol = "AES", privPassword = privPass)
         // SNMP4J's responder drops these silently; net-snmp answers with a USM report, whose
@@ -106,6 +112,35 @@ class SnmpDevicesTest {
         assertEquals("Privacy needs authentication too", SnmpDevices.problem(v3.copy(authProtocol = "")))
         assertNull(SnmpDevices.problem(v3))
         assertFalse("a refused request is never retried as a write", PDU.SET in agent.seen)
+    }
+
+    @Test
+    fun theFeatureNeedsOnlyThePlainEngineInterface() {
+        // What another SNMP engine (the Go core on iOS, say) has to provide: plain OIDs and values.
+        val asked = mutableListOf<String>()
+        val engine = SnmpEngine {
+            object : SnmpSession {
+                override fun get(oids: List<String>): SnmpAnswer {
+                    asked += "get"
+                    return SnmpAnswer.Values(mapOf("1.3.6.1.2.1.1.5.0" to SnmpValue.Text("sw9".toByteArray()), "1.3.6.1.2.1.1.3.0" to SnmpValue.Ticks(500)))
+                }
+
+                override fun walk(column: String, maxRows: Int): Map<Int, SnmpValue> {
+                    asked += column
+                    return if (column == "1.3.6.1.2.1.2.2.1.2") mapOf(3 to SnmpValue.Text(byteArrayOf(0, 0x1b, 0x21, 0x3a, 0x4b, 0x5c))) else emptyMap()
+                }
+
+                override fun close() { asked += "close" }
+            }
+        }
+        val snap = (SnmpDevices.poll(Access("192.0.2.9", community = "c"), engine) as Outcome.Answered).snapshot
+        assertEquals("sw9", snap.name)
+        assertEquals(5L, snap.uptimeSeconds)
+        assertEquals("bytes that are not text show as hex, as a MAC does", "00:1b:21:3a:4b:5c", snap.interfaces.single().name)
+        assertEquals("one session: the system group, every column, then closed", listOf("get") + SnmpDevices.COLUMNS + "close", asked)
+        val unreachable = SnmpEngine { throw SnmpFailure("192.0.2.9 could not be resolved") }
+        assertEquals(Outcome.Failed("192.0.2.9 could not be resolved"), SnmpDevices.poll(Access("192.0.2.9", community = "c"), unreachable))
+        assertEquals("the SNMP4J engine sends nothing but reads", setOf(PDU.GET, PDU.GETBULK), Snmp4jEngine.READ_ONLY_PDU_TYPES)
     }
 
     @Test

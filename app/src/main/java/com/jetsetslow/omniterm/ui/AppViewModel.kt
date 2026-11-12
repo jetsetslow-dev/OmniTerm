@@ -6347,7 +6347,7 @@ class AppViewModel @JvmOverloads constructor(
             HostRoute.tunnelNow(repository, device.tunnelId) != null -> SnmpDevices.Outcome.Failed(SnmpDevices.NOT_THROUGH_TUNNEL)
             // A poll still running after the limit (a device that stops answering partway) is
             // interrupted, and its socket closed.
-            else -> withTimeoutOrNull(SnmpDevices.POLL_LIMIT_MS) { runInterruptible { SnmpDevices.poll(device.access()) } }
+            else -> withTimeoutOrNull(SnmpDevices.POLL_LIMIT_MS) { runInterruptible { SnmpDevices.poll(device.access(), Snmp4jEngine) } }
                 ?: SnmpDevices.Outcome.Failed(SnmpDevices.TOO_SLOW)
         }
     }
@@ -6363,7 +6363,7 @@ class AppViewModel @JvmOverloads constructor(
     data class ProxmoxView(
         val overview: Proxmox.Overview? = null,
         val error: String? = null,
-        val untrusted: CertificateTrust.Untrusted? = null,
+        val untrusted: ProxmoxUntrusted? = null,
         val loading: Boolean = false,
     )
 
@@ -6404,7 +6404,7 @@ class AppViewModel @JvmOverloads constructor(
     internal suspend fun proxmoxApi(server: ProxmoxServerEntity): ProxmoxApi {
         val tunnelNow = HostRoute.tunnelNow(repository, server.tunnelId)
         if (tunnelNow != null) TunnelManager.attach(repository)
-        return ProxmoxApi(server, tunnelNow)
+        return ProxmoxApi(OkHttpProxmoxTransport(server, tunnelNow))
     }
 
     /** Reads [server]'s nodes, guests and backup tasks again. */
@@ -6414,8 +6414,8 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             proxmoxViews[server.id] = try {
                 ProxmoxView(overview = proxmoxApi(server).overview())
-            } catch (e: ProxmoxApi.UntrustedServer) {
-                ProxmoxView(untrusted = e.untrusted)
+            } catch (e: ProxmoxUntrusted) {
+                ProxmoxView(untrusted = e)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
