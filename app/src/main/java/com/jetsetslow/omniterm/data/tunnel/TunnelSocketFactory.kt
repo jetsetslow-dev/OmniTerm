@@ -69,3 +69,33 @@ internal class TunnelSocketFactory(
         fun javaSocket(tunnelId: Int): Socket = TunnelSocket { host, port, timeout -> TunnelManager.dial(tunnelId, host, port, timeout) }
     }
 }
+
+/**
+ * An HTTP client's dialer through tunnel [tunnelId] (OkHttp's `socketFactory`), with [rename]
+ * mapping the server's own name to its tunnel address. Use it with [TunnelDns], so the phone never
+ * looks the name up itself.
+ */
+internal class TunnelHttpSocketFactory(
+    private val tunnelId: Int,
+    private val rename: (String) -> String = { it },
+) : javax.net.SocketFactory() {
+    override fun createSocket(): Socket = TunnelSocket { host, port, timeout -> TunnelManager.dial(tunnelId, rename(host), port, timeout) }
+    override fun createSocket(host: String, port: Int): Socket =
+        createSocket().apply { connect(InetSocketAddress.createUnresolved(host, port), TunnelSocket.DEFAULT_TIMEOUT_MS) }
+    override fun createSocket(host: String, port: Int, localHost: java.net.InetAddress?, localPort: Int): Socket = createSocket(host, port)
+    override fun createSocket(host: java.net.InetAddress, port: Int): Socket = createSocket(nameOf(host), port)
+    override fun createSocket(address: java.net.InetAddress, port: Int, localAddress: java.net.InetAddress?, localPort: Int): Socket =
+        createSocket(nameOf(address), port)
+
+    // The name it was made with, else its address: never a reverse lookup on the phone.
+    private fun nameOf(address: java.net.InetAddress) = address.toString().substringBefore('/').ifEmpty { address.hostAddress.orEmpty() }
+}
+
+/**
+ * Name lookups for a client that dials through a tunnel: none on the phone. Each name comes back
+ * as a placeholder address that keeps the name, which [TunnelSocket] dials by name, so the tunnel
+ * resolves it (a MagicDNS name, say) and the phone's own resolver never sees it.
+ */
+internal object TunnelDns : okhttp3.Dns {
+    override fun lookup(hostname: String): List<java.net.InetAddress> = listOf(java.net.InetAddress.getByAddress(hostname, ByteArray(4)))
+}

@@ -335,6 +335,28 @@ data class KubeClusterEntity(
 )
 
 /**
+ * A Proxmox VE server reached over its HTTPS API from the phone (Tools → Proxmox VE), with an API
+ * token: [tokenId] is `user@realm!name`, [tokenSecret] its secret, encrypted at the repository
+ * boundary. [fingerprint] is the SHA-256 of the server certificate the user trusted ("" for none
+ * yet): a certificate the phone's own CAs do not trust is accepted only when it has that
+ * fingerprint. [tunnelId] and [tunnelHost] work as a host's do: through the tunnel only, never
+ * directly, dialled at [tunnelHost] when it is set.
+ */
+@Entity(tableName = "proxmox_servers")
+data class ProxmoxServerEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val host: String,
+    val port: Int = 8006,
+    val tokenId: String = "",
+    val tokenSecret: String = "",
+    val fingerprint: String = "",
+    val tunnelId: Int? = null,
+    val tunnelHost: String = "",
+    val notes: String = "",
+)
+
+/**
  * A device polled over SNMP from the phone (Network → SNMP): a switch, router, UPS or printer.
  * [community], [authPassword] and [privPassword] are encrypted at the repository boundary.
  * [tunnelId] works as a host's does: while the tunnel is in use the device is not polled at all,

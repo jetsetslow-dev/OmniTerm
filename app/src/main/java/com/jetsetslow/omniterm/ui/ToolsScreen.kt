@@ -233,6 +233,7 @@ internal val toolsItems = listOf(
     Triple(Screen.Automation, "Automation", Icons.Filled.SmartToy),
     Triple(Screen.Mcp, "AI assistants", Icons.Filled.Hub),
     Triple(Screen.VpnTunnels, "VPN tunnels", Icons.Filled.VpnLock),
+    Triple(Screen.Proxmox, "Proxmox VE", Icons.Filled.ViewInAr),
     Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
     Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
 )
@@ -3621,6 +3622,7 @@ internal fun backupServerExtras(contents: BackupContents): String? = listOf(
     contents.telnetHosts to "Telnet connection",
     contents.kubeClusters to "Kubernetes cluster",
     contents.snmpDevices to "SNMP device",
+    contents.proxmoxServers to "Proxmox server",
     contents.tmuxSessions to "tmux session",
     contents.composeStacks to "Compose stack",
 ).filter { it.first > 0 }

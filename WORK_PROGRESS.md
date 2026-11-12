@@ -1167,6 +1167,45 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     `-e snmp_community -e snmp_pass`).
   - A compose test's `LaunchedEffect` runs on the rule's clock: a test that waits with its own
     `delay` loop never lets the tab's poll start. Wait with `composeRule.waitUntil`.
+  - Part 4, Proxmox VE (`ProxmoxApi`, Tools → Proxmox VE): the phone calls the API itself over
+    HTTPS with OkHttp (already a dependency) and an API token in `Authorization: PVEAPIToken=…`,
+    never in a URL. Reads `version`, `nodes`, `cluster/resources?type=vm` and each online node's
+    `tasks?typefilter=vzdump` (10 newest); acts with `status/{start,shutdown,reboot,stop}` and
+    `snapshot` create, rollback and delete, then polls the task's status (1 s, up to 120 s) and
+    reports its exit status. A 403's reason (Proxmox puts it in the status line) is shown with a
+    note about privilege-separated tokens. No redirects. Connect timeout 10 s, 30 s through a
+    tunnel: a cold Tailscale tunnel took about 15 s to carry its first connection on the
+    Headscale fixture, and the first device run failed on 10 s.
+  - TLS trust on first use, new and shared (`CertificateTrust`): a chain the phone's CAs trust is
+    accepted; otherwise only a leaf whose SHA-256 fingerprint the user trusted. Anything else stops
+    the handshake with the fingerprint (and whether it changed), before any request, so the token
+    is never sent to an unknown server. The host-name check is skipped only for the pinned leaf.
+    `EndpointChecks` now takes its platform trust manager from there.
+  - Through a tunnel: `TunnelHttpSocketFactory` and `TunnelDns` (no lookup on the phone; the
+    tunnel resolves the name, or `tunnelHost` replaces it). Same rules as hosts: never direct,
+    except on a Wi-Fi the tunnel lists. `TunnelChoice` is the tunnel picker SNMP and Proxmox share.
+  - Table `proxmox_servers` in the 29→30 step, the token encrypted at the repository boundary, in
+    backups with hosts (deduplicated by name, address and port; tunnel ids mapped, a missing
+    tunnel stays missing; the trusted fingerprint is kept). A tunnel a server uses cannot be
+    deleted.
+  - Guest actions run only from the screen (`proxmoxAction`). `ProxmoxActionsStayOnScreenTest`
+    scans the sources so nothing else (schedules, runbooks, Tasker, MCP) can call them. Stop,
+    Shut down, Reboot, Roll back and Delete snapshot confirm, naming the guest (and snapshot).
+    `ConfirmHost` buttons now carry `confirm.ok` and `confirm.cancel` tags.
+  - Fixture: `./scripts/test-hosts.sh proxmox` starts a contract fake of the API
+    (`fixtures/proxmox-api/fake_pve.py`, pinned Alpine, HTTPS 127.0.0.1:8006, a self-signed
+    certificate made on each start). It is not Proxmox: it answers the documented shapes and
+    proves our client only. Tokens `omniterm@pve!e2e` (`OMNITERM_TEST_PVE_TOKEN`) and the
+    read-only `audit@pve!e2e` (`OMNITERM_TEST_PVE_AUDIT_TOKEN`). It is also on the internal
+    network, so the tailnet router reaches it. State lives in memory: `rebuild proxmox-api`
+    starts it afresh. No real Proxmox VE was run (no VM this round).
+  - Device suite `E2eProxmoxTest`: `omniterm_e2e_proxmox` (`-e pve_token -e pve_audit_token
+    -e pve_fingerprint`, the last from `openssl x509 -fingerprint -sha256`), and
+    `omniterm_e2e_proxmox_tailnet` (`-e pve_token -e pve_fingerprint -e ts_key -e pve_behind`,
+    the fake's internal address). The app sets `FLAG_SECURE`, so `screencap` shows black; the
+    suite's on-device Compose assertions are the evidence the screen renders.
+  - Not done: Proxmox alerts, feeding the Backup Age vzdump preset from the API, guest consoles,
+    and other API calls (migrate, clone, storage).
 
 ## Decision pivot — 2026-11-08
 

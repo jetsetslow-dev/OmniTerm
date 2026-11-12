@@ -497,6 +497,15 @@ class AppRepository(private val db: AppDatabase) {
     private fun encryptKubeCluster(cluster: KubeClusterEntity): KubeClusterEntity =
         cluster.copy(clientKeyPem = SecretStore.encrypt(cluster.clientKeyPem) ?: "", token = SecretStore.encrypt(cluster.token) ?: "")
 
+    val proxmoxServersFlow: Flow<List<ProxmoxServerEntity>> =
+        db.proxmoxServerDao().getAllFlow().map { list -> list.map(::decryptProxmoxServer) }
+    suspend fun getAllProxmoxServers(): List<ProxmoxServerEntity> = db.proxmoxServerDao().getAll().map(::decryptProxmoxServer)
+    suspend fun insertProxmoxServer(server: ProxmoxServerEntity): Long = db.proxmoxServerDao().insert(
+        server.copy(tokenSecret = requireNotNull(SecretStore.encrypt(server.tokenSecret)) { "The token could not be encrypted on this phone." }),
+    )
+    suspend fun deleteProxmoxServer(id: Int) = db.proxmoxServerDao().delete(id)
+    private fun decryptProxmoxServer(server: ProxmoxServerEntity) = server.copy(tokenSecret = SecretStore.decrypt(server.tokenSecret).orEmpty())
+
     // A device's community and passwords are kept only encrypted: one that cannot be encrypted is not saved.
     private fun encryptSnmpDevice(device: SnmpDeviceEntity): SnmpDeviceEntity {
         fun enc(value: String) = requireNotNull(SecretStore.encrypt(value)) { "The device's community or password could not be encrypted on this phone." }

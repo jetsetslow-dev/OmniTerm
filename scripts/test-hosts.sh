@@ -14,6 +14,7 @@
 #   ./scripts/test-hosts.sh rebuild <service> # rebuild and recreate one fixture only
 #   ./scripts/test-hosts.sh registry # start the image-update registry and push its images
 #   ./scripts/test-hosts.sh snmp     # start the SNMP device (net-snmp on UDP 127.0.0.1:1161)
+#   ./scripts/test-hosts.sh proxmox  # start the Proxmox VE API contract fake (HTTPS 127.0.0.1:8006)
 #   ./scripts/test-hosts.sh down     # stop and remove (host keys and volumes discarded)
 #   ./scripts/test-hosts.sh status   # container state and port mapping
 #   ./scripts/test-hosts.sh verify   # prove every auth mode and proxy path actually works
@@ -73,9 +74,11 @@ ensure_env() {
     echo "added WireGuard fixture keys to $ENV_FILE"
   fi
   # Fixture passwords added after the first .env was made, each generated once: the backup
-  # repositories' password, and the SNMP device's v2c community and v3 password.
+  # repositories' password, the SNMP device's v2c community and v3 password, and the Proxmox
+  # fake's two token secrets.
   local name
-  for name in OMNITERM_TEST_BACKUP_PASSWORD OMNITERM_TEST_SNMP_COMMUNITY OMNITERM_TEST_SNMP_PASSWORD; do
+  for name in OMNITERM_TEST_BACKUP_PASSWORD OMNITERM_TEST_SNMP_COMMUNITY OMNITERM_TEST_SNMP_PASSWORD \
+    OMNITERM_TEST_PVE_TOKEN OMNITERM_TEST_PVE_AUDIT_TOKEN; do
     if ! grep -q "^$name=" "$ENV_FILE"; then
       (umask 077; echo "$name=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)" >>"$ENV_FILE")
       echo "added $name to $ENV_FILE"
@@ -352,6 +355,14 @@ case "${1:-}" in
     echo "snmp device ready: udp 127.0.0.1:1161 (v2c community and v3 user 'omniterm' from .env)"
     ;;
 
+  proxmox)
+    # The Proxmox VE API contract fake for E2eProxmoxTest (see docker-compose.yml). The emulator
+    # reaches it at 10.0.2.2:8006; its certificate is made on start, so trust it again in the app.
+    require_docker
+    compose --profile proxmox up -d --build --no-deps proxmox-api || exit 1
+    echo "proxmox api ready: https://127.0.0.1:8006 (tokens omniterm@pve!e2e and audit@pve!e2e from .env)"
+    ;;
+
   rebuild)
     # One fixture, rebuilt and recreated, without touching the others: e.g. `rebuild runtime-docker`
     # after its Dockerfile changed. Its host key changes, so trust it again in the app.
@@ -362,7 +373,7 @@ case "${1:-}" in
 
   down)
     require_docker
-    compose --profile tailnet --profile registry --profile snmp down -v --remove-orphans
+    compose --profile tailnet --profile registry --profile snmp --profile proxmox down -v --remove-orphans
     echo "test fleet removed"
     ;;
 

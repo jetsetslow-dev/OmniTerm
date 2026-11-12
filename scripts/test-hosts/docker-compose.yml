@@ -295,6 +295,26 @@ services:
     networks: [edge]
     restart: "no"
 
+  # A contract fake of the Proxmox VE API for the Proxmox suite (E2eProxmoxTest): the documented
+  # shapes of the calls OmniTerm makes, over HTTPS with its own self-signed certificate, on
+  # 127.0.0.1:8006 only. Not Proxmox: it proves OmniTerm's client. Tokens' secrets from .env.
+  # Also on the internal network, which the tailnet router serves, so the suite can reach it
+  # through a Tailscale tunnel at its internal address.
+  # `./scripts/test-hosts.sh proxmox` builds and starts it; in its own profile, so `up` does not.
+  proxmox-api:
+    build:
+      context: ./fixtures/proxmox-api
+    image: omniterm-test-proxmox-api:local
+    container_name: omniterm-test-proxmox-api
+    profiles: [proxmox]
+    environment:
+      PVE_TOKEN_SECRET: "${OMNITERM_TEST_PVE_TOKEN:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      PVE_AUDIT_TOKEN_SECRET: "${OMNITERM_TEST_PVE_AUDIT_TOKEN:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    ports:
+      - "127.0.0.1:8006:8006"
+    networks: [edge, internal]
+    restart: "no"
+
   # Headscale, the control server for the Tailscale tunnel suite (E2eTailscaleTunnelTest). Images
   # are pinned by digest. `./scripts/test-hosts.sh up` makes its user and auth keys (the phone's
   # goes into .env as OMNITERM_TEST_TS_PHONE_KEY), then starts the router with its own.

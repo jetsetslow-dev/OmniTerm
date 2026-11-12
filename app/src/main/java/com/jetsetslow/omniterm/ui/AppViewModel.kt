@@ -589,6 +589,7 @@ enum class Screen {
     Automation,
     Mcp,
     VpnTunnels,
+    Proxmox,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -1025,6 +1026,7 @@ data class BackupContents(
     val telnetHosts: Int = 0,
     val kubeClusters: Int = 0,
     val snmpDevices: Int = 0,
+    val proxmoxServers: Int = 0,
     val tmuxSessions: Int = 0,
     val composeStacks: Int = 0,
     val fleetRuns: Int = 0,
@@ -6347,6 +6349,110 @@ class AppViewModel @JvmOverloads constructor(
             // interrupted, and its socket closed.
             else -> withTimeoutOrNull(SnmpDevices.POLL_LIMIT_MS) { runInterruptible { SnmpDevices.poll(device.access()) } }
                 ?: SnmpDevices.Outcome.Failed(SnmpDevices.TOO_SLOW)
+        }
+    }
+
+    // ── Proxmox VE (Tools → Proxmox VE) ──
+
+    val proxmoxServers = repository.proxmoxServersFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * A server's last read: its overview, or why it failed, or the certificate that needs the user's
+     * trust first. Kept in memory only.
+     */
+    data class ProxmoxView(
+        val overview: Proxmox.Overview? = null,
+        val error: String? = null,
+        val untrusted: CertificateTrust.Untrusted? = null,
+        val loading: Boolean = false,
+    )
+
+    val proxmoxViews = mutableStateMapOf<Int, ProxmoxView>()
+
+    /** The action running now on a guest ("Stopping VM 100 (web)…"), one at a time; null when none. */
+    var proxmoxBusy by mutableStateOf<String?>(null)
+        private set
+
+    /** Saves [server] (new when its id is 0); [onResult] gets its id, or why it was not saved. */
+    fun saveProxmoxServer(server: ProxmoxServerEntity, onResult: (Result<Int>) -> Unit) {
+        val clean = server.copy(name = server.name.trim(), host = server.host.trim(), tokenId = server.tokenId.trim(), tokenSecret = server.tokenSecret.trim(), tunnelHost = server.tunnelHost.trim())
+        Proxmox.problem(clean)?.let { onResult(Result.failure(IllegalArgumentException(it))); return }
+        viewModelScope.launch {
+            val saved = runCatching { withContext(Dispatchers.IO) { repository.insertProxmoxServer(clean).toInt() } }
+            saved.onSuccess { proxmoxViews.remove(it) }
+            onResult(saved)
+        }
+    }
+
+    fun deleteProxmoxServer(server: ProxmoxServerEntity) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repository.deleteProxmoxServer(server.id) }
+            proxmoxViews.remove(server.id)
+        }
+    }
+
+    /** The user compared and trusted [fingerprint] for [server]: kept with it, then read again. */
+    fun trustProxmoxCertificate(server: ProxmoxServerEntity, fingerprint: String) {
+        viewModelScope.launch {
+            val trusted = server.copy(fingerprint = fingerprint)
+            withContext(Dispatchers.IO) { repository.insertProxmoxServer(trusted) }
+            refreshProxmox(trusted)
+        }
+    }
+
+    /** The client for [server] now: through its tunnel when one applies, never directly instead. */
+    internal suspend fun proxmoxApi(server: ProxmoxServerEntity): ProxmoxApi {
+        val tunnelNow = HostRoute.tunnelNow(repository, server.tunnelId)
+        if (tunnelNow != null) TunnelManager.attach(repository)
+        return ProxmoxApi(server, tunnelNow)
+    }
+
+    /** Reads [server]'s nodes, guests and backup tasks again. */
+    fun refreshProxmox(server: ProxmoxServerEntity) {
+        if (proxmoxViews[server.id]?.loading == true) return
+        proxmoxViews[server.id] = (proxmoxViews[server.id] ?: ProxmoxView()).copy(loading = true)
+        viewModelScope.launch {
+            proxmoxViews[server.id] = try {
+                ProxmoxView(overview = proxmoxApi(server).overview())
+            } catch (e: ProxmoxApi.UntrustedServer) {
+                ProxmoxView(untrusted = e.untrusted)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ProxmoxView(overview = proxmoxViews[server.id]?.overview, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** [guest]'s snapshots, or why they could not be read. */
+    fun proxmoxSnapshots(server: ProxmoxServerEntity, guest: Proxmox.Guest, onResult: (Result<List<Proxmox.Snapshot>>) -> Unit) {
+        viewModelScope.launch {
+            onResult(runCatching { proxmoxApi(server).snapshots(guest) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it })
+        }
+    }
+
+    /**
+     * Runs one action on a guest that the user started and, for the destructive ones, confirmed on
+     * the screen naming it: a power action or a snapshot change. Nothing else in the app calls this:
+     * not schedules, alert runbooks, automation or the AI assistants. [onDone] gets null, or why it
+     * failed; the server is read again after.
+     */
+    fun proxmoxAction(server: ProxmoxServerEntity, busy: String, action: suspend ProxmoxApi.() -> String, onDone: (String?) -> Unit) {
+        if (proxmoxBusy != null) { onDone("Another action is still running"); return }
+        proxmoxBusy = busy
+        viewModelScope.launch {
+            val failed = try {
+                proxmoxApi(server).action()
+                null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                e.message ?: e.javaClass.simpleName
+            } finally {
+                proxmoxBusy = null
+            }
+            onDone(failed)
+            refreshProxmox(server)
         }
     }
 
@@ -15980,6 +16086,7 @@ class AppViewModel @JvmOverloads constructor(
         telnetHosts: List<TelnetHostEntity> = emptyList(),
         kubeClusters: List<KubeClusterEntity> = emptyList(),
         snmpDevices: List<SnmpDeviceEntity> = emptyList(),
+        proxmoxServers: List<ProxmoxServerEntity> = emptyList(),
         tunnels: List<TunnelEntity> = emptyList(),
         history: BackupHistoryRows = BackupHistoryRows(),
         fleetTargetSets: List<FleetTargetSetEntity> = emptyList(),
@@ -16150,6 +16257,15 @@ class AppViewModel @JvmOverloads constructor(
                 put("tunnelId", d.tunnelId ?: 0); put("notes", d.notes)
             })
         }
+        // Proxmox servers too, with their API tokens and the certificate fingerprint the user trusted.
+        val proxmoxArr = org.json.JSONArray()
+        for (p in if (closedSelection.servers) proxmoxServers else emptyList()) {
+            proxmoxArr.put(org.json.JSONObject().apply {
+                put("name", p.name); put("host", p.host); put("port", p.port); put("tokenId", p.tokenId)
+                put("tokenSecret", p.tokenSecret); put("fingerprint", p.fingerprint)
+                put("tunnelId", p.tunnelId ?: 0); put("tunnelHost", p.tunnelHost); put("notes", p.notes)
+            })
+        }
         // VPN tunnels travel with the hosts that go through them; their configurations hold private
         // keys and auth keys, which is one more reason a backup with hosts is encrypted. A Tailscale
         // tunnel's node state is not here (getAllTunnels never returns it): a restored one signs in
@@ -16288,6 +16404,7 @@ class AppViewModel @JvmOverloads constructor(
             .put("telnetHosts", telnetArr)
             .put("kubeClusters", kubeArr)
             .put("snmpDevices", snmpArr)
+            .put("proxmoxServers", proxmoxArr)
             .put("vpnTunnels", tunnelArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
@@ -16415,7 +16532,7 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs", "telnetHosts", "kubeClusters", "snmpDevices", "vpnTunnels",
+            "crashLogs", "telnetHosts", "kubeClusters", "snmpDevices", "proxmoxServers", "vpnTunnels",
             "tmuxSessions", "composeStacks", "monitoringHistory", "fleetRuns", "assistantCalls",
             "fleetTargetSets", "fleetSchedules",
         )
@@ -16464,6 +16581,67 @@ class AppViewModel @JvmOverloads constructor(
         false
     }
 
+    /**
+     * Restores a backup's SNMP devices (dedup by name and address). A device whose tunnel was not
+     * restored keeps a missing one, so it is never polled directly. Returns how many were added.
+     */
+    private suspend fun restoreSnmpDevices(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>): Int {
+        val existingSnmp = repository.getAllSnmpDevices().mapTo(mutableSetOf()) { "${it.name}|${it.host}|${it.port}" }
+        val snmpArr = root.optJSONArray("snmpDevices") ?: return 0
+        var importedSnmp = 0
+        for (i in 0 until snmpArr.length()) {
+            val o = snmpArr.getJSONObject(i)
+            val device = SnmpDeviceEntity(
+                name = o.optString("name").trim(),
+                host = o.optString("host").trim(),
+                port = o.optInt("port", SnmpDevices.DEFAULT_PORT),
+                version = o.optInt("version", 2),
+                community = o.optString("community"),
+                user = o.optString("user"),
+                authProtocol = o.optString("authProtocol").takeIf { it in SnmpDevices.AUTH_PROTOCOLS }.orEmpty(),
+                authPassword = o.optString("authPassword"),
+                privProtocol = o.optString("privProtocol").takeIf { it in SnmpDevices.PRIV_PROTOCOLS }.orEmpty(),
+                privPassword = o.optString("privPassword"),
+                tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
+                notes = o.optString("notes"),
+            )
+            if (device.name.isEmpty() || SnmpDevices.problem(device.access()) != null) continue
+            if (!existingSnmp.add("${device.name}|${device.host}|${device.port}")) continue
+            repository.insertSnmpDevice(device)
+            importedSnmp++
+        }
+        return importedSnmp
+    }
+
+    /**
+     * Restores a backup's Proxmox servers the same way (dedup by name and address; a tunnel that was
+     * not restored stays missing, so the server is never reached directly). Returns how many were added.
+     */
+    private suspend fun restoreProxmoxServers(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>): Int {
+        val existingProxmox = repository.getAllProxmoxServers().mapTo(mutableSetOf()) { "${it.name}|${it.host}|${it.port}" }
+        val proxmoxArr = root.optJSONArray("proxmoxServers") ?: return 0
+        var importedProxmox = 0
+        for (i in 0 until proxmoxArr.length()) {
+            val o = proxmoxArr.getJSONObject(i)
+            val server = ProxmoxServerEntity(
+                name = o.optString("name").trim(),
+                host = o.optString("host").trim(),
+                port = o.optInt("port", Proxmox.DEFAULT_PORT),
+                tokenId = o.optString("tokenId").trim(),
+                tokenSecret = o.optString("tokenSecret"),
+                fingerprint = o.optString("fingerprint"),
+                tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
+                tunnelHost = o.optString("tunnelHost").trim(),
+                notes = o.optString("notes"),
+            )
+            if (Proxmox.problem(server) != null) continue
+            if (!existingProxmox.add("${server.name}|${server.host}|${server.port}")) continue
+            repository.insertProxmoxServer(server)
+            importedProxmox++
+        }
+        return importedProxmox
+    }
+
     private fun backupContents(root: org.json.JSONObject): BackupContents {
         val settingsObj = root.optJSONObject("settings")
         return BackupContents(
@@ -16483,6 +16661,7 @@ class AppViewModel @JvmOverloads constructor(
             telnetHosts = root.optJSONArray("telnetHosts")?.length() ?: 0,
             kubeClusters = root.optJSONArray("kubeClusters")?.length() ?: 0,
             snmpDevices = root.optJSONArray("snmpDevices")?.length() ?: 0,
+            proxmoxServers = root.optJSONArray("proxmoxServers")?.length() ?: 0,
             tmuxSessions = root.optJSONArray("tmuxSessions")?.length() ?: 0,
             composeStacks = root.optJSONArray("composeStacks")?.length() ?: 0,
             fleetRuns = root.optJSONArray("fleetRuns")?.length() ?: 0,
@@ -16608,6 +16787,7 @@ class AppViewModel @JvmOverloads constructor(
                             telnetHosts = repository.getAllTelnetHosts(),
                             kubeClusters = repository.getAllKubeClusters(),
                             snmpDevices = repository.getAllSnmpDevices(),
+                            proxmoxServers = repository.getAllProxmoxServers(),
                             tunnels = repository.getAllTunnels(),
                             history = history,
                             fleetTargetSets = repository.fleetTargetSets(),
@@ -17213,32 +17393,10 @@ class AppViewModel @JvmOverloads constructor(
                             importedKube++
                         }
 
-                        // SNMP devices, with the hosts (dedup by name and address). A device whose
-                        // tunnel was not restored keeps a missing one, so it is never polled directly.
-                        val existingSnmp = repository.getAllSnmpDevices().mapTo(mutableSetOf()) { "${it.name}|${it.host}|${it.port}" }
-                        val snmpArr = root.optJSONArray("snmpDevices") ?: org.json.JSONArray()
-                        var importedSnmp = 0
-                        for (i in 0 until if (closedSelection.servers) snmpArr.length() else 0) {
-                            val o = snmpArr.getJSONObject(i)
-                            val device = SnmpDeviceEntity(
-                                name = o.optString("name").trim(),
-                                host = o.optString("host").trim(),
-                                port = o.optInt("port", SnmpDevices.DEFAULT_PORT),
-                                version = o.optInt("version", 2),
-                                community = o.optString("community"),
-                                user = o.optString("user"),
-                                authProtocol = o.optString("authProtocol").takeIf { it in SnmpDevices.AUTH_PROTOCOLS }.orEmpty(),
-                                authPassword = o.optString("authPassword"),
-                                privProtocol = o.optString("privProtocol").takeIf { it in SnmpDevices.PRIV_PROTOCOLS }.orEmpty(),
-                                privPassword = o.optString("privPassword"),
-                                tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
-                                notes = o.optString("notes"),
-                            )
-                            if (device.name.isEmpty() || SnmpDevices.problem(device.access()) != null) continue
-                            if (!existingSnmp.add("${device.name}|${device.host}|${device.port}")) continue
-                            repository.insertSnmpDevice(device)
-                            importedSnmp++
-                        }
+                        // SNMP devices and Proxmox servers, with the hosts (in functions of their own:
+                        // this one is at the JVM's size limit for a method).
+                        val importedSnmp = if (closedSelection.servers) restoreSnmpDevices(root, tunnelIdMap) else 0
+                        val importedProxmox = if (closedSelection.servers) restoreProxmoxServers(root, tunnelIdMap) else 0
 
                         // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
                         // shareIdMap tracks old id → restored/existing id so per-share settings
@@ -17475,6 +17633,7 @@ class AppViewModel @JvmOverloads constructor(
                                 (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
                                 (if (importedKube > 0) "$importedKube Kubernetes cluster(s), " else "") +
                                 (if (importedSnmp > 0) "$importedSnmp SNMP device(s), " else "") +
+                                (if (importedProxmox > 0) "$importedProxmox Proxmox server(s), " else "") +
                                 (if (importedSessions > 0) "$importedSessions tmux session(s), " else "") +
                                 (if (importedStacks > 0) "$importedStacks Compose stack(s), " else "") +
                                 (if (importedFleetRuns > 0) "$importedFleetRuns Fleet run(s), " else "") +

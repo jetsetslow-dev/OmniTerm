@@ -26,6 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TelnetHostEntity::class,
         KubeClusterEntity::class,
         SnmpDeviceEntity::class,
+        ProxmoxServerEntity::class,
         FleetRunEntity::class,
         FleetRunHostEntity::class,
         AutomationGrantEntity::class,
@@ -61,6 +62,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun telnetHostDao(): TelnetHostDao
     abstract fun kubeClusterDao(): KubeClusterDao
     abstract fun snmpDeviceDao(): SnmpDeviceDao
+    abstract fun proxmoxServerDao(): ProxmoxServerDao
     abstract fun fleetRunDao(): FleetRunDao
     abstract fun automationGrantDao(): AutomationGrantDao
     abstract fun mcpCallDao(): McpCallDao
@@ -424,6 +426,12 @@ abstract class AppDatabase : RoomDatabase() {
                         "`community` TEXT NOT NULL, `user` TEXT NOT NULL, `authProtocol` TEXT NOT NULL, " +
                         "`authPassword` TEXT NOT NULL, `privProtocol` TEXT NOT NULL, `privPassword` TEXT NOT NULL, " +
                         "`tunnelId` INTEGER, `notes` TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `proxmox_servers` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `tokenId` TEXT NOT NULL, " +
+                        "`tokenSecret` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, `tunnelId` INTEGER, " +
+                        "`tunnelHost` TEXT NOT NULL, `notes` TEXT NOT NULL)"
                 )
             }
         }

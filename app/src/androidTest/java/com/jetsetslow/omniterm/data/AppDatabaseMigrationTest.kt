@@ -607,6 +607,22 @@ class AppDatabaseMigrationTest {
                 assertEquals("monitor", cursor.getString(1))
                 assertEquals(4, cursor.getInt(2))
             }
+            // Proxmox servers start empty too, and take a server with its token and tunnel.
+            db.query("SELECT COUNT(*) FROM proxmox_servers").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.execSQL(
+                "INSERT INTO proxmox_servers (name, host, port, tokenId, tokenSecret, fingerprint, tunnelId, tunnelHost, notes) " +
+                    "VALUES ('Lab', '192.0.2.20', 8006, 'monitor@pve!phone', 'enc:v1:t', 'AB:CD', 4, '100.64.0.9', '')"
+            )
+            db.query("SELECT port, tokenId, tunnelId, tunnelHost FROM proxmox_servers").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(8006, cursor.getInt(0))
+                assertEquals("monitor@pve!phone", cursor.getString(1))
+                assertEquals(4, cursor.getInt(2))
+                assertEquals("100.64.0.9", cursor.getString(3))
+            }
         }
         context.deleteDatabase(databaseName)
     }

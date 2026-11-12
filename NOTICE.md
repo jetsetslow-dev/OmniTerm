@@ -37,6 +37,7 @@ features. No code from them is included; see the README's Acknowledgements for w
 - Watchtower — https://github.com/containrrr/watchtower
 - Cup — https://github.com/sergi0g/cup
 - LibreNMS — https://github.com/librenms/librenms
+- Proxmox VE API documentation — https://pve.proxmox.com/pve-docs/api-viewer/
 - Model Context Protocol specification — https://modelcontextprotocol.io
 
 ## Bundled Go libraries (VPN tunnels)

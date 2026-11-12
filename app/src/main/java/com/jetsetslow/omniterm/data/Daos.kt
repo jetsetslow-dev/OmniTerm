@@ -374,6 +374,21 @@ interface KubeClusterDao {
 }
 
 @Dao
+interface ProxmoxServerDao {
+    @Query("SELECT * FROM proxmox_servers ORDER BY name COLLATE NOCASE ASC")
+    fun getAllFlow(): Flow<List<ProxmoxServerEntity>>
+
+    @Query("SELECT * FROM proxmox_servers ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAll(): List<ProxmoxServerEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(server: ProxmoxServerEntity): Long
+
+    @Query("DELETE FROM proxmox_servers WHERE id = :id")
+    suspend fun delete(id: Int)
+}
+
+@Dao
 interface SnmpDeviceDao {
     @Query("SELECT * FROM snmp_devices ORDER BY name COLLATE NOCASE ASC")
     fun getAllSnmpDevicesFlow(): Flow<List<SnmpDeviceEntity>>
@@ -633,8 +648,11 @@ interface TunnelDao {
     @Query("DELETE FROM tunnels WHERE id = :id")
     suspend fun delete(id: Int)
 
-    /** The hosts and SNMP devices that go through tunnel [id]: while there are any, it cannot be deleted. */
-    @Query("SELECT name FROM servers WHERE tunnelId = :id UNION ALL SELECT name FROM snmp_devices WHERE tunnelId = :id ORDER BY name COLLATE NOCASE")
+    /** The hosts, SNMP devices and Proxmox servers that go through tunnel [id]: while there are any, it cannot be deleted. */
+    @Query(
+        "SELECT name FROM servers WHERE tunnelId = :id UNION ALL SELECT name FROM snmp_devices WHERE tunnelId = :id " +
+            "UNION ALL SELECT name FROM proxmox_servers WHERE tunnelId = :id ORDER BY name COLLATE NOCASE"
+    )
     suspend fun hostsUsing(id: Int): List<String>
 }
 

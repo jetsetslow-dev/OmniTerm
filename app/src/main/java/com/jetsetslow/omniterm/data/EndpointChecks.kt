@@ -9,14 +9,12 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.net.URI
-import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -476,7 +474,7 @@ object EndpointChecks {
      * matters here. Nothing is sent after the handshake.
      */
     fun serverCertificate(host: String, port: Int, timeoutMs: Int, open: (() -> Socket)? = null, dialHost: String = host): X509Certificate {
-        val recorder = RecordingTrustManager(platformTrustManager())
+        val recorder = RecordingTrustManager(CertificateTrust.platformTrustManager())
         val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(recorder), null) }
         val plain = open?.invoke() ?: Socket()
         try {
@@ -497,12 +495,6 @@ object EndpointChecks {
             plain.close()
         }
         return recorder.leaf ?: throw IOException("The server sent no certificate")
-    }
-
-    private fun platformTrustManager(): X509TrustManager {
-        val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        factory.init(null as KeyStore?)
-        return factory.trustManagers.filterIsInstance<X509TrustManager>().first()
     }
 
     /** Remembers the server's leaf certificate, then leaves the trust decision to [platform]. */

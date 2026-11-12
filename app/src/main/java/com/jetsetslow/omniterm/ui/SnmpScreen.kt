@@ -11,9 +11,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -32,7 +29,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -206,77 +202,55 @@ private fun SnmpDeviceDialog(viewModel: AppViewModel, start: SnmpDeviceEntity, o
     var portText by remember { mutableStateOf(start.port.toString()) }
     var error by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
-    val tunnels by viewModel.tunnels.collectAsStateWithLifecycle()
-    AlertDialog(
-        onDismissRequest = onDone,
-        title = { Text(stringResource(if (start.id == 0) R.string.snmp_add_title else R.string.snmp_edit_title)) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(d.name, { d = d.copy(name = it) }, label = { Text(stringResource(R.string.snmp_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("snmp.field.name"))
-                OutlinedTextField(d.host, { d = d.copy(host = it.trim()) }, label = { Text(stringResource(R.string.snmp_address)) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("snmp.field.host"))
-                OutlinedTextField(
-                    portText, { portText = it.filter(Char::isDigit).take(5) }, label = { Text(stringResource(R.string.snmp_port)) }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().testTag("snmp.field.port"),
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(d.version == 2, { d = d.copy(version = 2) }, label = { Text("v2c") }, modifier = Modifier.testTag("snmp.version.2"))
-                    FilterChip(d.version == 3, { d = d.copy(version = 3) }, label = { Text("v3") }, modifier = Modifier.testTag("snmp.version.3"))
+    fun save() {
+        val port = portText.toIntOrNull() ?: 0
+        // Only the chosen version's secrets are kept.
+        val toSave = if (d.version == 2) d.copy(port = port, user = "", authProtocol = "", authPassword = "", privProtocol = "", privPassword = "")
+        else d.copy(port = port, community = "", authPassword = d.authPassword.takeIf { d.authProtocol.isNotEmpty() }.orEmpty(),
+            privPassword = d.privPassword.takeIf { d.privProtocol.isNotEmpty() }.orEmpty())
+        saving = true
+        viewModel.saveSnmpDevice(toSave) { problem ->
+            saving = false
+            if (problem == null) onDone() else error = problem
+        }
+    }
+    DeviceFormDialog(
+        stringResource(if (start.id == 0) R.string.snmp_add_title else R.string.snmp_edit_title), "snmp", error, saving, ::save, onDone,
+    ) {
+        NameAddressPortFields(
+            d.name, { d = d.copy(name = it) }, d.host, { d = d.copy(host = it) }, portText, { portText = it },
+            stringResource(R.string.snmp_address), stringResource(R.string.snmp_port), "snmp",
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(d.version == 2, { d = d.copy(version = 2) }, label = { Text("v2c") }, modifier = Modifier.testTag("snmp.version.2"))
+            FilterChip(d.version == 3, { d = d.copy(version = 3) }, label = { Text("v3") }, modifier = Modifier.testTag("snmp.version.3"))
+        }
+        if (d.version == 2) {
+            OmniPasswordField(d.community, { d = d.copy(community = it) }, stringResource(R.string.snmp_community), Modifier.fillMaxWidth().testTag("snmp.field.community"))
+        } else {
+            OutlinedTextField(d.user, { d = d.copy(user = it.trim()) }, label = { Text(stringResource(R.string.snmp_user)) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("snmp.field.user"))
+            Text(stringResource(R.string.snmp_auth), fontSize = 12.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                (listOf("") + SnmpDevices.AUTH_PROTOCOLS).forEach { p ->
+                    FilterChip(d.authProtocol == p, { d = d.copy(authProtocol = p, privProtocol = if (p.isEmpty()) "" else d.privProtocol) },
+                        label = { Text(p.ifEmpty { stringResource(R.string.snmp_none_protocol) }) }, modifier = Modifier.testTag("snmp.auth.${p.ifEmpty { "none" }}"))
                 }
-                if (d.version == 2) {
-                    OmniPasswordField(d.community, { d = d.copy(community = it) }, stringResource(R.string.snmp_community), Modifier.fillMaxWidth().testTag("snmp.field.community"))
-                } else {
-                    OutlinedTextField(d.user, { d = d.copy(user = it.trim()) }, label = { Text(stringResource(R.string.snmp_user)) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("snmp.field.user"))
-                    Text(stringResource(R.string.snmp_auth), fontSize = 12.sp)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        (listOf("") + SnmpDevices.AUTH_PROTOCOLS).forEach { p ->
-                            FilterChip(d.authProtocol == p, { d = d.copy(authProtocol = p, privProtocol = if (p.isEmpty()) "" else d.privProtocol) },
-                                label = { Text(p.ifEmpty { stringResource(R.string.snmp_none_protocol) }) }, modifier = Modifier.testTag("snmp.auth.${p.ifEmpty { "none" }}"))
-                        }
-                    }
-                    if (d.authProtocol.isNotEmpty()) {
-                        OmniPasswordField(d.authPassword, { d = d.copy(authPassword = it) }, stringResource(R.string.snmp_auth_password), Modifier.fillMaxWidth().testTag("snmp.field.authPassword"))
-                        Text(stringResource(R.string.snmp_priv), fontSize = 12.sp)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            (listOf("") + SnmpDevices.PRIV_PROTOCOLS).forEach { p ->
-                                FilterChip(d.privProtocol == p, { d = d.copy(privProtocol = p) },
-                                    label = { Text(p.ifEmpty { stringResource(R.string.snmp_none_protocol) }) }, modifier = Modifier.testTag("snmp.priv.${p.ifEmpty { "none" }}"))
-                            }
-                        }
-                        if (d.privProtocol.isNotEmpty()) {
-                            OmniPasswordField(d.privPassword, { d = d.copy(privPassword = it) }, stringResource(R.string.snmp_priv_password), Modifier.fillMaxWidth().testTag("snmp.field.privPassword"))
-                        }
-                    }
-                }
-                if (tunnels.isNotEmpty()) {
-                    Text(stringResource(R.string.snmp_tunnel), fontSize = 12.sp)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(d.tunnelId == null, { d = d.copy(tunnelId = null) }, label = { Text(stringResource(R.string.snmp_direct)) })
-                        tunnels.forEach { t -> FilterChip(d.tunnelId == t.id, { d = d.copy(tunnelId = t.id) }, label = { Text(t.name) }) }
-                    }
-                    if (d.tunnelId != null) Text(stringResource(R.string.snmp_tunnel_note), fontSize = 11.sp, color = OmniColors.amber)
-                }
-                OutlinedTextField(d.notes, { d = d.copy(notes = it) }, label = { Text(stringResource(R.string.notes_optional)) }, modifier = Modifier.fillMaxWidth())
-                error?.let { Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.testTag("snmp.error")) }
             }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = !saving,
-                onClick = {
-                    val port = portText.toIntOrNull() ?: 0
-                    // Only the chosen version's secrets are kept.
-                    val toSave = if (d.version == 2) d.copy(port = port, user = "", authProtocol = "", authPassword = "", privProtocol = "", privPassword = "")
-                    else d.copy(port = port, community = "", authPassword = d.authPassword.takeIf { d.authProtocol.isNotEmpty() }.orEmpty(),
-                        privPassword = d.privPassword.takeIf { d.privProtocol.isNotEmpty() }.orEmpty())
-                    saving = true
-                    viewModel.saveSnmpDevice(toSave) { problem ->
-                        saving = false
-                        if (problem == null) onDone() else error = problem
+            if (d.authProtocol.isNotEmpty()) {
+                OmniPasswordField(d.authPassword, { d = d.copy(authPassword = it) }, stringResource(R.string.snmp_auth_password), Modifier.fillMaxWidth().testTag("snmp.field.authPassword"))
+                Text(stringResource(R.string.snmp_priv), fontSize = 12.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (listOf("") + SnmpDevices.PRIV_PROTOCOLS).forEach { p ->
+                        FilterChip(d.privProtocol == p, { d = d.copy(privProtocol = p) },
+                            label = { Text(p.ifEmpty { stringResource(R.string.snmp_none_protocol) }) }, modifier = Modifier.testTag("snmp.priv.${p.ifEmpty { "none" }}"))
                     }
-                },
-                modifier = Modifier.testTag("snmp.save"),
-            ) { Text(stringResource(R.string.save)) }
-        },
-        dismissButton = { TextButton(onClick = onDone) { Text(stringResource(R.string.cancel)) } },
-    )
+                }
+                if (d.privProtocol.isNotEmpty()) {
+                    OmniPasswordField(d.privPassword, { d = d.copy(privPassword = it) }, stringResource(R.string.snmp_priv_password), Modifier.fillMaxWidth().testTag("snmp.field.privPassword"))
+                }
+            }
+        }
+        TunnelChoice(viewModel, d.tunnelId, { d = d.copy(tunnelId = it) }, stringResource(R.string.snmp_tunnel_note), "snmp")
+        OutlinedTextField(d.notes, { d = d.copy(notes = it) }, label = { Text(stringResource(R.string.notes_optional)) }, modifier = Modifier.fillMaxWidth())
+    }
 }

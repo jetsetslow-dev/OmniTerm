@@ -521,11 +521,11 @@ fun ConfirmHost(controller: ConfirmController) {
         confirmButton = {
             TextButton(onClick = {
                 controller.confirm()
-            }) {
+            }, modifier = Modifier.testTag("confirm.ok")) {
                 Text(req.confirmLabel, color = if (req.destructive) OmniColors.red else MaterialTheme.colorScheme.primary)
             }
         },
-        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { TextButton(onClick = { controller.dismiss() }, modifier = Modifier.testTag("confirm.cancel")) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -1300,6 +1300,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         Screen.Automation -> AutomationToolView(viewModel)
                         Screen.Mcp -> McpToolView(viewModel)
                         Screen.VpnTunnels -> VpnTunnelsToolView(viewModel)
+                        Screen.Proxmox -> ProxmoxToolView(viewModel)
                     }
 
                     // In a landscape terminal the IME intentionally hides both global bars to preserve
@@ -1978,7 +1979,7 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
 fun isToolSubScreen(screen: Screen): Boolean {
     return screen in listOf(
         Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.Network,
-        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp, Screen.VpnTunnels,
+        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp, Screen.VpnTunnels, Screen.Proxmox,
     )
 }
 
