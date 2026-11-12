@@ -1,12 +1,12 @@
 module github.com/jetsetslow-dev/omniterm/tunnel
 
-go 1.27.3
+go 1.27.4
 
 require (
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
 	golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
-	tailscale.com v1.104.5
+	tailscale.com v1.104.7
 )
 
 require (
@@ -43,7 +43,7 @@ require (
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f // indirect
 	github.com/tailscale/peercred v0.0.0-20250107143737-35a0c7bd7edc // indirect
 	github.com/tailscale/web-client-prebuilt v0.0.0-20260917222731-e0ed2d0d0fea // indirect
-	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226 // indirect
+	github.com/tailscale/wireguard-go v0.0.0-20261106233718-9e0ab45c16ca // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
