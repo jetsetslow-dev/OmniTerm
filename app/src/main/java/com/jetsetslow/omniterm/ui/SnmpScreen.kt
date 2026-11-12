@@ -46,7 +46,8 @@ private const val SNMP_TAB_POLL_MS = 30_000L
 
 /**
  * Network → SNMP: saved devices, each polled from the phone while this tab is open, every 30
- * seconds, for its name, uptime, CPU, memory, disks and interfaces with their traffic.
+ * seconds, for its name, uptime, CPU, memory, disks, interfaces with their traffic, errors and
+ * discards, and a UPS's power source and battery.
  */
 @Composable
 internal fun SnmpTab(viewModel: AppViewModel) {
@@ -115,7 +116,11 @@ private fun SnmpDeviceCard(
 ) {
     val outcome = reading?.outcome
     val accent = when (outcome) {
-        is SnmpDevices.Outcome.Answered -> if (outcome.snapshot.interfacesDown.isEmpty()) OmniColors.green else OmniColors.amber
+        is SnmpDevices.Outcome.Answered -> when {
+            outcome.snapshot.ups?.batteryLow == true -> OmniColors.red
+            outcome.snapshot.ups?.onBattery == true || outcome.snapshot.interfacesDown.isNotEmpty() -> OmniColors.amber
+            else -> OmniColors.green
+        }
         is SnmpDevices.Outcome.Failed -> OmniColors.red
         null -> MaterialTheme.colorScheme.outlineVariant
     }
@@ -140,14 +145,73 @@ private fun SnmpDeviceCard(
                 null -> Text(stringResource(if (polling) R.string.snmp_polling else R.string.snmp_not_polled), fontSize = 12.sp, modifier = Modifier.testTag("snmp.status.${device.id}"))
                 is SnmpDevices.Outcome.Failed ->
                     Text(outcome.reason, fontSize = 12.sp, color = OmniColors.red, modifier = Modifier.testTag("snmp.status.${device.id}"))
-                is SnmpDevices.Outcome.Answered -> SnmpSnapshotView(device.id, outcome.snapshot, reading.rates)
+                is SnmpDevices.Outcome.Answered -> SnmpSnapshotView(device.id, outcome.snapshot, reading.rates, reading.problems)
             }
         }
     }
 }
 
+/** A UPS's state: its source, battery and time left, then its lines; amber on battery, red when low. */
 @Composable
-private fun SnmpSnapshotView(id: Int, snap: SnmpDevices.Snapshot, rates: Map<Int, Pair<Long, Long>>) {
+private fun UpsLines(id: Int, ups: SnmpDevices.Ups) {
+    val source = when (ups.source) {
+        SnmpDevices.PowerSource.MAINS -> R.string.snmp_ups_mains
+        SnmpDevices.PowerSource.BATTERY -> R.string.snmp_ups_battery
+        SnmpDevices.PowerSource.BYPASS -> R.string.snmp_ups_bypass
+        SnmpDevices.PowerSource.OTHER -> R.string.snmp_ups_other
+        null -> R.string.snmp_ups_source_unknown
+    }
+    val battery = when (ups.battery) {
+        SnmpDevices.BatteryState.NORMAL -> R.string.snmp_battery_normal
+        SnmpDevices.BatteryState.LOW -> R.string.snmp_battery_low
+        SnmpDevices.BatteryState.DEPLETED -> R.string.snmp_battery_depleted
+        SnmpDevices.BatteryState.FAULT -> R.string.snmp_battery_fault
+        SnmpDevices.BatteryState.UNKNOWN -> null
+    }
+    val state = listOfNotNull(
+        stringResource(source),
+        ups.secondsOnBattery?.takeIf { ups.onBattery && it > 0 }?.let { stringResource(R.string.snmp_ups_on_battery_for, formatUptime(it)) },
+        battery?.let { stringResource(it) },
+        ups.chargePercent?.let { stringResource(R.string.snmp_ups_charge, it) },
+        ups.minutesLeft?.let { stringResource(R.string.snmp_ups_minutes, it) },
+    ).joinToString(" · ")
+    Text(
+        stringResource(R.string.snmp_ups_line, ups.model.ifBlank { "UPS" }, state),
+        fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+        color = when {
+            ups.batteryLow -> OmniColors.red
+            ups.onBattery -> OmniColors.amber
+            else -> MaterialTheme.colorScheme.onSurface
+        },
+        modifier = Modifier.testTag("snmp.ups.$id"),
+    )
+    val lines = listOfNotNull(
+        ups.inputVolts.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.snmp_ups_input, it.joinToString(" / ")) },
+        ups.outputVolts.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.snmp_ups_output, it.joinToString(" / ")) },
+        ups.loadPercent.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.snmp_ups_load, it.joinToString(" / ")) },
+    )
+    if (lines.isNotEmpty()) {
+        Text(lines.joinToString(" · "), fontSize = 11.sp, fontFamily = OmniFonts.mono, modifier = Modifier.testTag("snmp.ups.lines.$id"))
+    }
+}
+
+/** Errors and discards on an interface that has any, each with what was added since the last poll. */
+@Composable
+private fun InterfaceProblems(id: Int, i: SnmpDevices.Interface, new: SnmpDevices.NewProblems?) {
+    val counts = listOf(i.inErrors, i.outErrors, i.inDiscards, i.outDiscards)
+    if (counts.all { (it ?: 0L) == 0L }) return
+    val added = listOf(new?.inErrors, new?.outErrors, new?.inDiscards, new?.outDiscards)
+    val shown = counts.zip(added) { total, plus -> (total?.toString() ?: "–") + if ((plus ?: 0L) > 0L) " (+$plus)" else "" }
+    Text(
+        stringResource(R.string.snmp_if_problems, shown[0], shown[1], shown[2], shown[3]),
+        fontSize = 10.sp, fontFamily = OmniFonts.mono,
+        color = if ((new?.errors ?: 0L) > 0L) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 12.dp).testTag("snmp.ifproblems.$id.${i.index}"),
+    )
+}
+
+@Composable
+private fun SnmpSnapshotView(id: Int, snap: SnmpDevices.Snapshot, rates: Map<Int, Pair<Long, Long>>, problems: Map<Int, SnmpDevices.NewProblems>) {
     val headline = listOfNotNull(
         snap.name.ifBlank { null },
         snap.uptimeSeconds?.let { stringResource(R.string.snmp_up, formatUptime(it)) },
@@ -158,6 +222,7 @@ private fun SnmpSnapshotView(id: Int, snap: SnmpDevices.Snapshot, rates: Map<Int
         Text(snap.description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
     if (snap.location.isNotBlank()) Text(stringResource(R.string.snmp_location, snap.location), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    snap.ups?.let { UpsLines(id, it) }
     for (s in snap.storage) {
         val pct = s.usedPercent ?: continue
         Text(
@@ -191,6 +256,7 @@ private fun SnmpSnapshotView(id: Int, snap: SnmpDevices.Snapshot, rates: Map<Int
                 color = if (i.down) OmniColors.amber else MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.testTag("snmp.if.$id.${i.index}"),
             )
+            InterfaceProblems(id, i, problems[i.index])
         }
     }
 }

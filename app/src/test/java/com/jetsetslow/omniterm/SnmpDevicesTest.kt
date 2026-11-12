@@ -81,11 +81,60 @@ class SnmpDevicesTest {
         assertTrue("switched on, no link", spare.down)
         assertEquals(100L, spare.speedMbps)
         assertEquals(listOf(spare), snap.interfacesDown)
+        assertEquals(listOf(3L, 2L, 7L, 1L), listOf(uplink.inErrors, uplink.outErrors, uplink.inDiscards, uplink.outDiscards))
+        assertEquals(listOf(0L, 0L, 0L, 0L), listOf(spare.inErrors, spare.outErrors, spare.inDiscards, spare.outDiscards))
         assertEquals(listOf(StorageKind.RAM, StorageKind.DISK), snap.storage.map { it.kind })
         assertEquals(50f, snap.storage[0].usedPercent)
         assertEquals(4096L * 100, snap.storage[1].totalBytes)
+        val ups = requireNotNull(snap.ups)
+        assertEquals(SnmpDevices.Ups(
+            mib = "UPS-MIB", model = "Acme Rack 3000", source = SnmpDevices.PowerSource.MAINS, battery = SnmpDevices.BatteryState.NORMAL,
+            chargePercent = 100, minutesLeft = 41, secondsOnBattery = 0, inputVolts = listOf(231), outputVolts = listOf(230, 231, 232),
+            loadPercent = listOf(10, 20, 30),
+        ), ups)
         assertEquals("only reads", setOf(PDU.GET, PDU.GETBULK), agent.seen.toSet())
-        assertTrue("reads whole columns over several bulk requests", agent.seen.count { it == PDU.GETBULK } >= SnmpDevices.COLUMNS.size)
+        assertTrue("reads whole columns over several bulk requests", agent.seen.count { it == PDU.GETBULK } >= SnmpDevices.COLUMNS.size + SnmpDevices.UPS_COLUMNS.size)
+    }
+
+    @Test
+    fun aUpsIsReadFromTheUpsMibOrFromApcsPowerNet() {
+        fun ups(vararg values: Pair<String, SnmpValue>) = SnmpDevices.snapshot(0L, emptyMap(), emptyMap(), mapOf(*values)).ups
+        // On battery, low, by the UPS-MIB.
+        val onBattery = requireNotNull(ups(
+            "1.3.6.1.2.1.33.1.2.1.0" to SnmpValue.Integer(3), "1.3.6.1.2.1.33.1.4.1.0" to SnmpValue.Integer(5),
+            "1.3.6.1.2.1.33.1.2.2.0" to SnmpValue.Integer(420), "1.3.6.1.2.1.33.1.2.4.0" to SnmpValue.Integer(18),
+        ))
+        assertTrue(onBattery.onBattery && onBattery.batteryLow)
+        assertEquals(18, onBattery.chargePercent)
+        // No output source: the time on battery decides.
+        assertEquals(SnmpDevices.PowerSource.BATTERY, ups("1.3.6.1.2.1.33.1.2.1.0" to SnmpValue.Integer(2), "1.3.6.1.2.1.33.1.2.2.0" to SnmpValue.Integer(5))?.source)
+        assertEquals("a booster still runs on the mains", SnmpDevices.PowerSource.MAINS, ups("1.3.6.1.2.1.33.1.4.1.0" to SnmpValue.Integer(6))?.source)
+        // Only APC's PowerNet-MIB answers: on battery, run time in TimeTicks.
+        val apc = requireNotNull(ups(
+            "1.3.6.1.4.1.318.1.1.1.1.1.1.0" to SnmpValue.Text("Smart-UPS 1500".toByteArray()),
+            "1.3.6.1.4.1.318.1.1.1.4.1.1.0" to SnmpValue.Integer(3), "1.3.6.1.4.1.318.1.1.1.2.1.1.0" to SnmpValue.Integer(2),
+            "1.3.6.1.4.1.318.1.1.1.2.2.1.0" to SnmpValue.Counter(64), "1.3.6.1.4.1.318.1.1.1.2.2.3.0" to SnmpValue.Ticks(90_000),
+            "1.3.6.1.4.1.318.1.1.1.3.2.1.0" to SnmpValue.Counter(0), "1.3.6.1.4.1.318.1.1.1.4.2.3.0" to SnmpValue.Counter(22),
+        ))
+        assertEquals(SnmpDevices.Ups(mib = "PowerNet-MIB", model = "Smart-UPS 1500", source = SnmpDevices.PowerSource.BATTERY,
+            battery = SnmpDevices.BatteryState.NORMAL, chargePercent = 64, minutesLeft = 15, inputVolts = listOf(0), loadPercent = listOf(22)), apc)
+        assertEquals("SmartTrim is on the mains", SnmpDevices.PowerSource.MAINS, ups("1.3.6.1.4.1.318.1.1.1.4.1.1.0" to SnmpValue.Integer(12))?.source)
+        // A switch answers neither.
+        assertNull(ups("1.3.6.1.2.1.33.1.2.1.0" to SnmpValue.Missing, "1.3.6.1.4.1.318.1.1.1.4.1.1.0" to SnmpValue.Missing))
+        assertNull(SnmpDevices.snapshot(0L, emptyMap(), emptyMap()).ups)
+    }
+
+    @Test
+    fun errorsAndDiscardsAreCountedSinceTheLastPollAndForgottenAfterAReboot() {
+        fun at(uptime: Long, inErrors: Long, outDiscards: Long) = SnmpDevices.Snapshot(
+            uptime * 1000, "d", "d", uptimeSeconds = uptime,
+            interfaces = listOf(SnmpDevices.Interface(1, "a", inErrors = inErrors, outErrors = 0, inDiscards = 0, outDiscards = outDiscards), SnmpDevices.Interface(2, "b")),
+        )
+        val new = SnmpDevices.newProblems(at(100, 10, 4_294_967_290L), at(160, 13, 4))
+        assertEquals("a 32-bit counter wraps", mapOf(1 to SnmpDevices.NewProblems(3, 0, 0, 10)), new)
+        assertTrue("an interface that counts none is left out", 2 !in new)
+        assertTrue("after a reboot every counter started again", SnmpDevices.newProblems(at(1000, 50, 0), at(30, 2, 0)).isEmpty())
+        assertTrue(SnmpDevices.newProblems(null, at(1, 1, 1)).isEmpty())
     }
 
     @Test
@@ -137,7 +186,7 @@ class SnmpDevicesTest {
         assertEquals("sw9", snap.name)
         assertEquals(5L, snap.uptimeSeconds)
         assertEquals("bytes that are not text show as hex, as a MAC does", "00:1b:21:3a:4b:5c", snap.interfaces.single().name)
-        assertEquals("one session: the system group, every column, then closed", listOf("get") + SnmpDevices.COLUMNS + "close", asked)
+        assertEquals("one session: the system group, every column, the UPS question, then closed", listOf("get") + SnmpDevices.COLUMNS + "get" + "close", asked)
         val unreachable = SnmpEngine { throw SnmpFailure("192.0.2.9 could not be resolved") }
         assertEquals(Outcome.Failed("192.0.2.9 could not be resolved"), SnmpDevices.poll(Access("192.0.2.9", community = "c"), unreachable))
         assertEquals("the SNMP4J engine sends nothing but reads", setOf(PDU.GET, PDU.GETBULK), Snmp4jEngine.READ_ONLY_PDU_TYPES)
@@ -179,6 +228,19 @@ class SnmpDevicesTest {
             put(OID("1.3.6.1.2.1.2.2.1.8.1"), Integer32(1)); put(OID("1.3.6.1.2.1.2.2.1.8.2"), Integer32(2))
             put(OID("1.3.6.1.2.1.2.2.1.10.1"), Counter32(705_032_704)); put(OID("1.3.6.1.2.1.2.2.1.10.2"), Counter32(10))
             put(OID("1.3.6.1.2.1.2.2.1.16.1"), Counter32(5)); put(OID("1.3.6.1.2.1.2.2.1.16.2"), Counter32(20))
+            // Errors and discards (32-bit only, in IF-MIB): the uplink has some, the spare none.
+            put(OID("1.3.6.1.2.1.2.2.1.13.1"), Counter32(7)); put(OID("1.3.6.1.2.1.2.2.1.13.2"), Counter32(0))
+            put(OID("1.3.6.1.2.1.2.2.1.14.1"), Counter32(3)); put(OID("1.3.6.1.2.1.2.2.1.14.2"), Counter32(0))
+            put(OID("1.3.6.1.2.1.2.2.1.19.1"), Counter32(1)); put(OID("1.3.6.1.2.1.2.2.1.19.2"), Counter32(0))
+            put(OID("1.3.6.1.2.1.2.2.1.20.1"), Counter32(2)); put(OID("1.3.6.1.2.1.2.2.1.20.2"), Counter32(0))
+            // A UPS on mains (UPS-MIB, RFC 1628), three-phase output.
+            put(OID("1.3.6.1.2.1.33.1.1.1.0"), OctetString("Acme")); put(OID("1.3.6.1.2.1.33.1.1.2.0"), OctetString("Rack 3000"))
+            put(OID("1.3.6.1.2.1.33.1.2.1.0"), Integer32(2)); put(OID("1.3.6.1.2.1.33.1.2.2.0"), Integer32(0))
+            put(OID("1.3.6.1.2.1.33.1.2.3.0"), Integer32(41)); put(OID("1.3.6.1.2.1.33.1.2.4.0"), Integer32(100))
+            put(OID("1.3.6.1.2.1.33.1.3.3.1.3.1"), Integer32(231))
+            put(OID("1.3.6.1.2.1.33.1.4.1.0"), Integer32(3))
+            for (line in 1..3) put(OID("1.3.6.1.2.1.33.1.4.4.1.2.$line"), Integer32(229 + line))
+            for (line in 1..3) put(OID("1.3.6.1.2.1.33.1.4.4.1.5.$line"), Integer32(10 * line))
             put(OID("1.3.6.1.2.1.31.1.1.1.1.1"), OctetString("ge-0/0/1")); put(OID("1.3.6.1.2.1.31.1.1.1.1.2"), OctetString(""))
             put(OID("1.3.6.1.2.1.31.1.1.1.6.1"), Counter64(5_000_000_000L))
             put(OID("1.3.6.1.2.1.31.1.1.1.10.1"), Counter64(7_000_000_000L))

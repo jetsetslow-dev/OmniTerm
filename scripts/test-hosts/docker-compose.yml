@@ -280,6 +280,8 @@ services:
 
   # A read-only SNMP agent for the SNMP device suite (E2eSnmpDevicesTest): net-snmp on Alpine,
   # with a v2c community and a v3 user (SHA-256 and AES) from .env, on UDP 127.0.0.1:1161 only.
+  # It also reports a UPS on battery (UPS-MIB) and has an interface with no link, for those readings.
+  # NET_ADMIN only to make that interface (a veth pair) inside its own network namespace.
   # `./scripts/test-hosts.sh snmp` builds and starts it; in its own profile, so `up` does not.
   snmp-device:
     build:
@@ -287,6 +289,7 @@ services:
     image: omniterm-test-snmp-device:local
     container_name: omniterm-test-snmp-device
     profiles: [snmp]
+    cap_add: [NET_ADMIN]
     environment:
       SNMP_COMMUNITY: "${OMNITERM_TEST_SNMP_COMMUNITY:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
       SNMP_PASSWORD: "${OMNITERM_TEST_SNMP_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"

@@ -30,7 +30,8 @@ import org.junit.Test
  * which the emulator reaches at 10.0.2.2:1161 over UDP. Its community and v3 password are passed
  * as `snmp_community` and `snmp_pass`, never committed.
  * - A v2c device added in the dialog is polled and shows the fixture's name, uptime, memory and
- *   interfaces; its community is stored encrypted.
+ *   interfaces with their error counters, an interface switched on with no link among them, and
+ *   its UPS on a low battery (UPS-MIB); its community is stored encrypted.
  * - A v3 device (SHA-256, AES) answers too.
  * - A wrong community, an unknown user and a wrong password each say what to check: the unknown
  *   user from the agent's USM report; a wrong password as no answer, since net-snmp reports it
@@ -83,6 +84,23 @@ class E2eSnmpDevicesTest {
             val lo = snap.interfaces.first { it.name == "lo" }
             composeRule.onNodeWithTag("snmp.if.${v2c.id}.${lo.index}", useUnmergedTree = true).performScrollTo()
             composeRule.onNode(hasTestTag("snmp.if.${v2c.id}.${lo.index}") and hasText("lo: up", substring = true), useUnmergedTree = true).assertExists()
+            assertTrue("error and discard counters are read", lo.countsProblems)
+
+            // An interface switched on with no link, and one switched off, which is not down.
+            val unplugged = snap.interfaces.single { it.name == "omni-up" }
+            assertTrue(unplugged.toString(), unplugged.down)
+            assertTrue(snap.interfaces.single { it.name == "omni-down" }.let { it.adminUp == false && !it.down })
+            composeRule.onNodeWithTag("snmp.if.${v2c.id}.${unplugged.index}", useUnmergedTree = true).performScrollTo()
+            composeRule.onNode(hasTestTag("snmp.if.${v2c.id}.${unplugged.index}") and hasText("omni-up: down", substring = true), useUnmergedTree = true).assertExists()
+
+            // Its UPS, from UPS-MIB: on battery, battery low.
+            val ups = requireNotNull(snap.ups) { "no UPS read" }
+            assertEquals(listOf<Any?>("OmniTerm Fixture UPS 1500", SnmpDevices.PowerSource.BATTERY, SnmpDevices.BatteryState.LOW, 18, 7, 420L),
+                listOf(ups.model, ups.source, ups.battery, ups.chargePercent, ups.minutesLeft, ups.secondsOnBattery))
+            assertEquals(ups.toString(), listOf(1, 1, 1), listOf(ups.inputVolts.size, ups.outputVolts.size, ups.loadPercent.size))
+            composeRule.onNodeWithTag("snmp.ups.${v2c.id}", useUnmergedTree = true).performScrollTo()
+            composeRule.onNode(hasTestTag("snmp.ups.${v2c.id}") and hasText("OmniTerm Fixture UPS 1500: on battery", substring = true), useUnmergedTree = true).assertExists()
+            composeRule.onNode(hasTestTag("snmp.ups.lines.${v2c.id}") and hasText("output 230 V", substring = true), useUnmergedTree = true).assertExists()
 
             // A second poll gives each interface its traffic rate.
             delay(1_500)

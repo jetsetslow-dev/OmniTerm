@@ -6293,8 +6293,15 @@ class AppViewModel @JvmOverloads constructor(
 
     val snmpDevices = repository.snmpDevicesFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** What a device last answered, with each interface's bytes per second since the poll before. */
-    data class SnmpReading(val outcome: SnmpDevices.Outcome, val rates: Map<Int, Pair<Long, Long>> = emptyMap())
+    /**
+     * What a device last answered, with each interface's bytes per second, and its new errors and
+     * discards, since the poll before.
+     */
+    data class SnmpReading(
+        val outcome: SnmpDevices.Outcome,
+        val rates: Map<Int, Pair<Long, Long>> = emptyMap(),
+        val problems: Map<Int, SnmpDevices.NewProblems> = emptyMap(),
+    )
 
     /** Each device's last poll, by id, kept in memory only. */
     val snmpReadings = mutableStateMapOf<Int, SnmpReading>()
@@ -6329,8 +6336,10 @@ class AppViewModel @JvmOverloads constructor(
             try {
                 val outcome = snmpOutcome(device)
                 val previous = (snmpReadings[device.id]?.outcome as? SnmpDevices.Outcome.Answered)?.snapshot
-                val rates = (outcome as? SnmpDevices.Outcome.Answered)?.let { SnmpDevices.rates(previous, it.snapshot) }.orEmpty()
-                snmpReadings[device.id] = SnmpReading(outcome, rates)
+                val answered = outcome as? SnmpDevices.Outcome.Answered
+                val rates = answered?.let { SnmpDevices.rates(previous, it.snapshot) }.orEmpty()
+                val problems = answered?.let { SnmpDevices.newProblems(previous, it.snapshot) }.orEmpty()
+                snmpReadings[device.id] = SnmpReading(outcome, rates, problems)
             } finally {
                 snmpPolling.remove(device.id)
             }

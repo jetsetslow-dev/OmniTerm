@@ -1213,6 +1213,19 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     only in `ProxmoxOkHttp.kt`, behind `ProxmoxTransport` (answers as plain maps and lists;
     `ProxmoxUntrusted` carries the certificate to trust). `JsonTree.kt` has the readers Kube and
     Proxmox share. `EngineAdaptersStayThinTest` scans imports and qualified names to keep it so.
+  - SNMP UPS and interface errors (after the main merge, Nov 13): `SnmpDevices.poll` adds one GET
+    of the UPS-MIB (RFC 1628) and APC PowerNet scalars; only when UPS-MIB answers does it walk the
+    per-phase input/output tables. A device that refuses or lacks them is simply not a UPS.
+    Source mapping: UPS-MIB 3/6/7 mains, 5 battery, 4 bypass; APC 2/4/12 mains, 3 battery,
+    6/9/10 bypass; APC runtime is in ticks (/6000 for minutes). IF-MIB error and discard counters
+    (.13 .14 .19 .20) are read with the other columns; `newProblems` gives the per-poll increase,
+    32-bit wrap handled, nothing after a reboot (sysUpTime went back). The SNMP card shows the UPS
+    line (amber on battery, red when low) and an errors/discards line only for interfaces with any.
+    Fixture: snmpd `override` lines answer the UPS-MIB values (on battery, battery low, 18 %,
+    7 min); a veth pair (`omni-up` up with no link, `omni-down` off) needs `cap_add: NET_ADMIN`.
+    Guards seen failing with the fix removed: `aUpsIsReadFromTheUpsMibOrFromApcsPowerNet` (battery
+    mapped to mains), `errorsAndDiscardsAreCountedSinceTheLastPollAndForgottenAfterAReboot` (reboot
+    check removed). Credit: LibreNMS (which UPS and IF-MIB values to read).
 
 ## Decision pivot — 2026-11-08
 

@@ -10,8 +10,10 @@ package com.jetsetslow.omniterm.data
  * it without touching the feature.
  *
  * What is read follows the standard MIBs a monitoring tool such as LibreNMS reads first: the
- * system group, the interface tables (IF-MIB, 64-bit counters where the device has them) and the
- * host resources CPU and storage tables.
+ * system group, the interface tables (IF-MIB, 64-bit traffic counters where the device has them,
+ * and the error and discard counters, which IF-MIB defines as 32-bit only), the host resources CPU
+ * and storage tables, and a UPS's state from the UPS-MIB (RFC 1628), or from APC's PowerNet-MIB
+ * when only that answers.
  */
 object SnmpDevices {
     const val DEFAULT_PORT = 161
@@ -72,9 +74,49 @@ object SnmpDevices {
         val outOctets: Long? = null,
         /** Whether the octet counters are 64-bit (ifHC*), which do not wrap in practice. */
         val wide: Boolean = false,
+        /** Packets that arrived or left with errors, and error-free ones dropped (ifIn/OutErrors, ifIn/OutDiscards). */
+        val inErrors: Long? = null,
+        val outErrors: Long? = null,
+        val inDiscards: Long? = null,
+        val outDiscards: Long? = null,
     ) {
         /** Switched on but not passing traffic: what an "interface down" alert means. */
         val down: Boolean get() = adminUp == true && operUp == false
+
+        /** Whether the device counts errors or discards here at all. */
+        val countsProblems: Boolean get() = listOf(inErrors, outErrors, inDiscards, outDiscards).any { it != null }
+    }
+
+    /** Errors and discards counted on one interface since the previous poll. */
+    data class NewProblems(val inErrors: Long, val outErrors: Long, val inDiscards: Long, val outDiscards: Long) {
+        val errors: Long get() = inErrors + outErrors
+        val discards: Long get() = inDiscards + outDiscards
+    }
+
+    /** Where a UPS's output comes from. */
+    enum class PowerSource { MAINS, BATTERY, BYPASS, OTHER }
+
+    /** The battery's state as the UPS reports it. */
+    enum class BatteryState { NORMAL, LOW, DEPLETED, FAULT, UNKNOWN }
+
+    /**
+     * A UPS's state: where its output comes from, its battery, and its input and output lines (one
+     * value per phase). [mib] names what answered: "UPS-MIB" or "PowerNet-MIB".
+     */
+    data class Ups(
+        val mib: String,
+        val model: String = "",
+        val source: PowerSource? = null,
+        val battery: BatteryState = BatteryState.UNKNOWN,
+        val chargePercent: Int? = null,
+        val minutesLeft: Int? = null,
+        val secondsOnBattery: Long? = null,
+        val inputVolts: List<Int> = emptyList(),
+        val outputVolts: List<Int> = emptyList(),
+        val loadPercent: List<Int> = emptyList(),
+    ) {
+        val onBattery: Boolean get() = source == PowerSource.BATTERY
+        val batteryLow: Boolean get() = battery == BatteryState.LOW || battery == BatteryState.DEPLETED
     }
 
     enum class StorageKind { RAM, DISK, OTHER }
@@ -93,6 +135,8 @@ object SnmpDevices {
         val cpuPercent: Float? = null,
         val interfaces: List<Interface> = emptyList(),
         val storage: List<Storage> = emptyList(),
+        /** The UPS this device is, or null for a device that is not one. */
+        val ups: Ups? = null,
     ) {
         val interfacesDown: List<Interface> get() = interfaces.filter { it.down }
     }
@@ -113,7 +157,11 @@ object SnmpDevices {
     private const val IF_ADMIN = "1.3.6.1.2.1.2.2.1.7"
     private const val IF_OPER = "1.3.6.1.2.1.2.2.1.8"
     private const val IF_IN = "1.3.6.1.2.1.2.2.1.10"
+    private const val IF_IN_DISCARDS = "1.3.6.1.2.1.2.2.1.13"
+    private const val IF_IN_ERRORS = "1.3.6.1.2.1.2.2.1.14"
     private const val IF_OUT = "1.3.6.1.2.1.2.2.1.16"
+    private const val IF_OUT_DISCARDS = "1.3.6.1.2.1.2.2.1.19"
+    private const val IF_OUT_ERRORS = "1.3.6.1.2.1.2.2.1.20"
     private const val IF_NAME = "1.3.6.1.2.1.31.1.1.1.1"
     private const val IF_HC_IN = "1.3.6.1.2.1.31.1.1.1.6"
     private const val IF_HC_OUT = "1.3.6.1.2.1.31.1.1.1.10"
@@ -129,12 +177,52 @@ object SnmpDevices {
     private const val HR_STORAGE_FIXED_DISK = "1.3.6.1.2.1.25.2.1.4"
     private const val HR_STORAGE_NETWORK_DISK = "1.3.6.1.2.1.25.2.1.10"
 
+    // RFC 1628 UPS-MIB: identity, battery and output scalars, then the per-phase input and output
+    // tables, walked only on a device that answered the scalars.
+    private const val UPS_MANUFACTURER = "1.3.6.1.2.1.33.1.1.1.0"
+    private const val UPS_MODEL = "1.3.6.1.2.1.33.1.1.2.0"
+    private const val UPS_BATTERY_STATUS = "1.3.6.1.2.1.33.1.2.1.0"
+    private const val UPS_SECONDS_ON_BATTERY = "1.3.6.1.2.1.33.1.2.2.0"
+    private const val UPS_MINUTES_LEFT = "1.3.6.1.2.1.33.1.2.3.0"
+    private const val UPS_CHARGE = "1.3.6.1.2.1.33.1.2.4.0"
+    private const val UPS_OUTPUT_SOURCE = "1.3.6.1.2.1.33.1.4.1.0"
+    private const val UPS_INPUT_VOLTAGE = "1.3.6.1.2.1.33.1.3.3.1.3"
+    private const val UPS_OUTPUT_VOLTAGE = "1.3.6.1.2.1.33.1.4.4.1.2"
+    private const val UPS_OUTPUT_LOAD = "1.3.6.1.2.1.33.1.4.4.1.5"
+    // APC's PowerNet-MIB (upsBasic and upsAdv): many APC cards answer only this.
+    private const val APC_MODEL = "1.3.6.1.4.1.318.1.1.1.1.1.1.0"
+    private const val APC_BATTERY_STATUS = "1.3.6.1.4.1.318.1.1.1.2.1.1.0"
+    private const val APC_CAPACITY = "1.3.6.1.4.1.318.1.1.1.2.2.1.0"
+    private const val APC_RUN_TIME = "1.3.6.1.4.1.318.1.1.1.2.2.3.0"
+    private const val APC_INPUT_VOLTAGE = "1.3.6.1.4.1.318.1.1.1.3.2.1.0"
+    private const val APC_OUTPUT_STATUS = "1.3.6.1.4.1.318.1.1.1.4.1.1.0"
+    private const val APC_OUTPUT_VOLTAGE = "1.3.6.1.4.1.318.1.1.1.4.2.1.0"
+    private const val APC_OUTPUT_LOAD = "1.3.6.1.4.1.318.1.1.1.4.2.3.0"
+
     /** The columns walked, in the order [snapshot] reads them. */
     val COLUMNS: List<String> = listOf(
         IF_DESCR, IF_SPEED, IF_ADMIN, IF_OPER, IF_IN, IF_OUT, IF_NAME, IF_HC_IN, IF_HC_OUT, IF_HIGH_SPEED, IF_ALIAS,
+        IF_IN_ERRORS, IF_OUT_ERRORS, IF_IN_DISCARDS, IF_OUT_DISCARDS,
         HR_PROCESSOR_LOAD, HR_STORAGE_TYPE, HR_STORAGE_DESCR, HR_STORAGE_UNITS, HR_STORAGE_SIZE, HR_STORAGE_USED,
     )
     val SYSTEM: List<String> = listOf(SYS_DESCR, SYS_UPTIME, SYS_CONTACT, SYS_NAME, SYS_LOCATION)
+
+    /** One GET after the columns: does the device report a UPS, by either MIB? */
+    val UPS_SCALARS: List<String> = listOf(
+        UPS_MANUFACTURER, UPS_MODEL, UPS_BATTERY_STATUS, UPS_SECONDS_ON_BATTERY, UPS_MINUTES_LEFT, UPS_CHARGE, UPS_OUTPUT_SOURCE,
+        APC_MODEL, APC_BATTERY_STATUS, APC_CAPACITY, APC_RUN_TIME, APC_INPUT_VOLTAGE, APC_OUTPUT_STATUS, APC_OUTPUT_VOLTAGE, APC_OUTPUT_LOAD,
+    )
+
+    /** The UPS-MIB's per-phase columns, walked only when the device answered its scalars. */
+    val UPS_COLUMNS: List<String> = listOf(UPS_INPUT_VOLTAGE, UPS_OUTPUT_VOLTAGE, UPS_OUTPUT_LOAD)
+
+    private val UPS_MIB_SIGNS = listOf(UPS_BATTERY_STATUS, UPS_OUTPUT_SOURCE, UPS_CHARGE)
+    private val APC_SIGNS = listOf(APC_BATTERY_STATUS, APC_OUTPUT_STATUS, APC_CAPACITY)
+
+    /** Whether [scalars] (the answer to [UPS_SCALARS]) shows a UPS-MIB agent, whose tables are then walked. */
+    fun answersUpsMib(scalars: Map<String, SnmpValue>): Boolean = UPS_MIB_SIGNS.any { present(scalars[it]) }
+
+    private fun present(v: SnmpValue?) = v != null && v != SnmpValue.Missing
 
     // USM's report counters (RFC 3414): what a v3 agent answers instead when it refuses a request.
     // An agent sends them unauthenticated, and SNMP4J keeps to RFC 3412 §7.2.11 and drops such a
@@ -155,16 +243,25 @@ object SnmpDevices {
     fun noAnswer(access: Access): String =
         "no answer within ${TIMEOUT_MS / 1000} s: check the address, port, ${if (access.version == 3) "user and passwords" else "community"} and that UDP reaches it"
 
-    /** What the device answered to [SYSTEM] and each walked column, as [snapshot] reads it. */
-    fun snapshot(at: Long, system: Map<String, SnmpValue>, columns: Map<String, Map<Int, SnmpValue>>): Snapshot {
+    private fun long(v: SnmpValue?): Long? = when (v) {
+        is SnmpValue.Counter -> v.value
+        is SnmpValue.Integer -> v.value.toLong()
+        is SnmpValue.Ticks -> v.hundredths
+        else -> null
+    }
+
+    /**
+     * What the device answered to [SYSTEM], each walked column ([UPS_COLUMNS] among them when it
+     * is a UPS) and [UPS_SCALARS], as [snapshot] reads it.
+     */
+    fun snapshot(
+        at: Long,
+        system: Map<String, SnmpValue>,
+        columns: Map<String, Map<Int, SnmpValue>>,
+        upsScalars: Map<String, SnmpValue> = emptyMap(),
+    ): Snapshot {
         fun text(oid: String) = system[oid]?.let(::readable).orEmpty()
         fun col(oid: String) = columns[oid].orEmpty()
-        fun long(v: SnmpValue?): Long? = when (v) {
-            is SnmpValue.Counter -> v.value
-            is SnmpValue.Integer -> v.value.toLong()
-            is SnmpValue.Ticks -> v.hundredths
-            else -> null
-        }
         fun status(v: SnmpValue?): Boolean? = (v as? SnmpValue.Integer)?.value?.let { it == 1 }
         val indexes = (col(IF_DESCR).keys + col(IF_NAME).keys).toSortedSet()
         val interfaces = indexes.map { i ->
@@ -182,6 +279,10 @@ object SnmpDevices {
                 inOctets = if (wide) hcIn else long(col(IF_IN)[i]),
                 outOctets = if (wide) hcOut else long(col(IF_OUT)[i]),
                 wide = wide,
+                inErrors = long(col(IF_IN_ERRORS)[i]),
+                outErrors = long(col(IF_OUT_ERRORS)[i]),
+                inDiscards = long(col(IF_IN_DISCARDS)[i]),
+                outDiscards = long(col(IF_OUT_DISCARDS)[i]),
             )
         }
         val loads = col(HR_PROCESSOR_LOAD).values.mapNotNull { (it as? SnmpValue.Integer)?.value }
@@ -206,6 +307,69 @@ object SnmpDevices {
             cpuPercent = loads.takeIf { it.isNotEmpty() }?.average()?.toFloat(),
             interfaces = interfaces,
             storage = storage.filter { it.kind != StorageKind.OTHER },
+            ups = ups(upsScalars, columns),
+        )
+    }
+
+    /**
+     * The UPS [scalars] and [columns] describe, from the UPS-MIB, or from APC's PowerNet-MIB when
+     * only that answered; null for a device that is not a UPS.
+     */
+    private fun ups(scalars: Map<String, SnmpValue>, columns: Map<String, Map<Int, SnmpValue>>): Ups? {
+        fun int(oid: String) = long(scalars[oid])?.toInt()
+        fun text(oid: String) = scalars[oid]?.takeIf(::present)?.let(::readable).orEmpty()
+        fun lines(oid: String) = columns[oid].orEmpty().toSortedMap().values.mapNotNull { long(it)?.toInt() }
+        if (answersUpsMib(scalars)) {
+            val secondsOnBattery = long(scalars[UPS_SECONDS_ON_BATTERY])
+            val source = when (int(UPS_OUTPUT_SOURCE)) {
+                3, 6, 7 -> PowerSource.MAINS // normal, booster and reducer: still on the mains
+                5 -> PowerSource.BATTERY
+                4 -> PowerSource.BYPASS
+                1, 2 -> PowerSource.OTHER
+                // No output source reported: the time on battery says whether it is.
+                else -> secondsOnBattery?.let { if (it > 0) PowerSource.BATTERY else PowerSource.MAINS }
+            }
+            return Ups(
+                mib = "UPS-MIB",
+                model = listOf(text(UPS_MANUFACTURER), text(UPS_MODEL)).filter { it.isNotBlank() }.joinToString(" "),
+                source = source,
+                battery = when (int(UPS_BATTERY_STATUS)) {
+                    2 -> BatteryState.NORMAL
+                    3 -> BatteryState.LOW
+                    4 -> BatteryState.DEPLETED
+                    else -> BatteryState.UNKNOWN
+                },
+                chargePercent = int(UPS_CHARGE)?.takeIf { it in 0..100 },
+                minutesLeft = int(UPS_MINUTES_LEFT)?.takeIf { it >= 0 },
+                secondsOnBattery = secondsOnBattery,
+                inputVolts = lines(UPS_INPUT_VOLTAGE),
+                outputVolts = lines(UPS_OUTPUT_VOLTAGE),
+                loadPercent = lines(UPS_OUTPUT_LOAD),
+            )
+        }
+        if (APC_SIGNS.none { present(scalars[it]) }) return null
+        return Ups(
+            mib = "PowerNet-MIB",
+            model = text(APC_MODEL),
+            source = when (int(APC_OUTPUT_STATUS)) {
+                2, 4, 12 -> PowerSource.MAINS // on line, SmartBoost and SmartTrim
+                3 -> PowerSource.BATTERY
+                6, 9, 10 -> PowerSource.BYPASS
+                null -> null
+                else -> PowerSource.OTHER
+            },
+            battery = when (int(APC_BATTERY_STATUS)) {
+                2 -> BatteryState.NORMAL
+                3 -> BatteryState.LOW
+                4 -> BatteryState.FAULT
+                else -> BatteryState.UNKNOWN
+            },
+            chargePercent = int(APC_CAPACITY)?.takeIf { it in 0..100 },
+            // Run time is in TimeTicks (hundredths of a second).
+            minutesLeft = (scalars[APC_RUN_TIME] as? SnmpValue.Ticks)?.hundredths?.let { (it / 6_000).toInt() },
+            inputVolts = listOfNotNull(int(APC_INPUT_VOLTAGE)),
+            outputVolts = listOfNotNull(int(APC_OUTPUT_VOLTAGE)),
+            loadPercent = listOfNotNull(int(APC_OUTPUT_LOAD)),
         )
     }
 
@@ -251,7 +415,33 @@ object SnmpDevices {
         }.toMap()
     }
 
-    /** Polls one device with [engine]: its system group, then each column, in one session. */
+    /**
+     * Errors and discards counted on each interface since [previous], by index. The counters are
+     * 32-bit, so one that went down wrapped once; after a reboot (uptime went down) nothing is
+     * compared, since every counter started again from 0.
+     */
+    fun newProblems(previous: Snapshot?, current: Snapshot): Map<Int, NewProblems> {
+        previous ?: return emptyMap()
+        val before = previous.uptimeSeconds
+        val now = current.uptimeSeconds
+        if (before != null && now != null && now < before) return emptyMap()
+        val then = previous.interfaces.associateBy { it.index }
+        return current.interfaces.mapNotNull { i ->
+            val p = then[i.index] ?: return@mapNotNull null
+            fun delta(a: Long?, b: Long?): Long {
+                a ?: return 0; b ?: return 0
+                return if (b >= a) b - a else b + (1L shl 32) - a
+            }
+            if (!i.countsProblems) return@mapNotNull null
+            i.index to NewProblems(delta(p.inErrors, i.inErrors), delta(p.outErrors, i.outErrors), delta(p.inDiscards, i.inDiscards), delta(p.outDiscards, i.outDiscards))
+        }.toMap()
+    }
+
+    /**
+     * Polls one device with [engine]: its system group, then each column, then whether it is a UPS
+     * (and, on a UPS-MIB agent, its per-phase tables), in one session. A device that does not
+     * answer the UPS request is simply not a UPS: the rest of the poll stands.
+     */
     fun poll(access: Access, engine: SnmpEngine, now: () -> Long = System::currentTimeMillis): Outcome {
         problem(access)?.let { return Outcome.Failed(it) }
         return try {
@@ -264,7 +454,9 @@ object SnmpDevices {
                     return Outcome.Failed("the device answered, but has no system information (an SNMP view without MIB-2?)")
                 }
                 val columns = COLUMNS.associateWith { session.walk(it, MAX_ROWS) }
-                Outcome.Answered(snapshot(now(), system, columns))
+                val ups = (session.get(UPS_SCALARS) as? SnmpAnswer.Values)?.values.orEmpty()
+                val upsColumns = if (answersUpsMib(ups)) UPS_COLUMNS.associateWith { session.walk(it, MAX_ROWS) } else emptyMap()
+                Outcome.Answered(snapshot(now(), system, columns + upsColumns, ups))
             }
         } catch (e: SnmpFailure) {
             Outcome.Failed(e.message.orEmpty())
