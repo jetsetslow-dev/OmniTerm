@@ -59,3 +59,9 @@ dt{font-weight:700;margin-top:1rem}dd{margin:.2rem 0 0}
 .edit{color:var(--muted);font-size:.95rem}
 footer.site{border-top:1px solid var(--line);margin-top:2rem;padding:1.5rem 0;color:var(--muted);font-size:.95rem}
 @media(prefers-reduced-motion:no-preference){a,.btn{transition:border-color .15s,background .15s}}
+
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1.25rem;align-items:start}
+figure.shot{margin:1rem 0;max-width:270px}
+.shots figure.shot{margin:0;justify-self:center;width:100%}
+figure.shot img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+figure.shot figcaption{font-size:.85rem;color:var(--muted);margin-top:.4rem}
