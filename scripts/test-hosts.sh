@@ -13,6 +13,7 @@
 #   ./scripts/test-hosts.sh tailnet  # start only headscale and the tailnet router, with fresh keys
 #   ./scripts/test-hosts.sh rebuild <service> # rebuild and recreate one fixture only
 #   ./scripts/test-hosts.sh registry # start the image-update registry and push its images
+#   ./scripts/test-hosts.sh snmp     # start the SNMP device (net-snmp on UDP 127.0.0.1:1161)
 #   ./scripts/test-hosts.sh down     # stop and remove (host keys and volumes discarded)
 #   ./scripts/test-hosts.sh status   # container state and port mapping
 #   ./scripts/test-hosts.sh verify   # prove every auth mode and proxy path actually works
@@ -72,9 +73,9 @@ ensure_env() {
     echo "added WireGuard fixture keys to $ENV_FILE"
   fi
   # Fixture passwords added after the first .env was made, each generated once: the backup
-  # repositories' password.
+  # repositories' password, and the SNMP device's v2c community and v3 password.
   local name
-  for name in OMNITERM_TEST_BACKUP_PASSWORD; do
+  for name in OMNITERM_TEST_BACKUP_PASSWORD OMNITERM_TEST_SNMP_COMMUNITY OMNITERM_TEST_SNMP_PASSWORD; do
     if ! grep -q "^$name=" "$ENV_FILE"; then
       (umask 077; echo "$name=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)" >>"$ENV_FILE")
       echo "added $name to $ENV_FILE"
@@ -342,6 +343,15 @@ case "${1:-}" in
     echo "registry ready: $reg/omniterm/steady:1 is current, $reg/omniterm/app:latest has an update"
     ;;
 
+  snmp)
+    # The SNMP device for E2eSnmpDevicesTest (see docker-compose.yml): net-snmp, read-only, with
+    # the v2c community and a v3 user from .env. The emulator reaches it at 10.0.2.2:1161 (UDP,
+    # which adb reverse cannot carry).
+    require_docker
+    compose --profile snmp up -d --build --no-deps snmp-device || exit 1
+    echo "snmp device ready: udp 127.0.0.1:1161 (v2c community and v3 user 'omniterm' from .env)"
+    ;;
+
   rebuild)
     # One fixture, rebuilt and recreated, without touching the others: e.g. `rebuild runtime-docker`
     # after its Dockerfile changed. Its host key changes, so trust it again in the app.
@@ -352,7 +362,7 @@ case "${1:-}" in
 
   down)
     require_docker
-    compose --profile tailnet --profile registry down -v --remove-orphans
+    compose --profile tailnet --profile registry --profile snmp down -v --remove-orphans
     echo "test fleet removed"
     ;;
 

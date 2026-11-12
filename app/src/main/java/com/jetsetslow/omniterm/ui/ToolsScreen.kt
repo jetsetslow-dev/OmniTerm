@@ -1719,7 +1719,7 @@ fun NetworkToolView(viewModel: AppViewModel) {
     // Subtab index lives in the VM so the app's global horizontal-swipe gesture (swipeNavigate) can
     // page between these tabs the same way it does Monitor/Infra/SFTP/Fleet.
     val tab = viewModel.activeNetworkTab
-    val tabs = listOf("Host Scan", "Wake-on-LAN", "Ping", "Traceroute", "Port Scan", "DNS Lookup", "WHOIS", "Speed Test", "Tunnels")
+    val tabs = listOf("Host Scan", "Wake-on-LAN", "Ping", "Traceroute", "Port Scan", "DNS Lookup", "WHOIS", "Speed Test", "Tunnels", "SNMP")
 
     ToolScaffold(viewModel, "Network tools") {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -1738,7 +1738,8 @@ fun NetworkToolView(viewModel: AppViewModel) {
                     5 -> DnsLookupTab(viewModel)
                     6 -> WhoisTab(viewModel)
                     7 -> SpeedTestTab(viewModel)
-                    else -> TunnelsTab(viewModel)
+                    8 -> TunnelsTab(viewModel)
+                    else -> SnmpTab(viewModel)
                 }
             }
         }
@@ -3619,6 +3620,7 @@ internal fun backupServerExtras(contents: BackupContents): String? = listOf(
     contents.vpnTunnels to "VPN tunnel",
     contents.telnetHosts to "Telnet connection",
     contents.kubeClusters to "Kubernetes cluster",
+    contents.snmpDevices to "SNMP device",
     contents.tmuxSessions to "tmux session",
     contents.composeStacks to "Compose stack",
 ).filter { it.first > 0 }

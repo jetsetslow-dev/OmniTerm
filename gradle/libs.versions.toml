@@ -48,6 +48,7 @@ userMessagingPlatform = "3.2.0"
 smbj = "0.15.0"
 smbjrpc = "0.11.1.1"
 commonsNet = "3.13.0"
+snmp4j = "3.13.2"
 jsch = "0.2.26"
 bcprov = "1.86"
 yubikit = "3.3.0"
@@ -114,6 +115,7 @@ user-messaging-platform = { group = "com.google.android.ump", name = "user-messa
 smbj = { group = "com.hierynomus", name = "smbj", version.ref = "smbj" }
 smbjrpc = { group = "io.github.daveboy", name = "smbj-rpc", version.ref = "smbjrpc" }
 commons-net = { group = "commons-net", name = "commons-net", version.ref = "commonsNet" }
+snmp4j = { group = "org.snmp4j", name = "snmp4j", version.ref = "snmp4j" }
 jsch = { group = "com.github.mwiede", name = "jsch", version.ref = "jsch" }
 bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bcprov" }
 yubikit-android = { group = "com.yubico.yubikit", name = "android", version.ref = "yubikit" }

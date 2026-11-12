@@ -25,6 +25,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StackRegistryEntity::class,
         TelnetHostEntity::class,
         KubeClusterEntity::class,
+        SnmpDeviceEntity::class,
         FleetRunEntity::class,
         FleetRunHostEntity::class,
         AutomationGrantEntity::class,
@@ -59,6 +60,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun stackRegistryDao(): StackRegistryDao
     abstract fun telnetHostDao(): TelnetHostDao
     abstract fun kubeClusterDao(): KubeClusterDao
+    abstract fun snmpDeviceDao(): SnmpDeviceDao
     abstract fun fleetRunDao(): FleetRunDao
     abstract fun automationGrantDao(): AutomationGrantDao
     abstract fun mcpCallDao(): McpCallDao
@@ -415,6 +417,13 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS `fleet_target_sets` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
                         "`name` TEXT NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, `groups` TEXT NOT NULL, " +
                         "`tags` TEXT NOT NULL, `allTags` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `snmp_devices` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `version` INTEGER NOT NULL, " +
+                        "`community` TEXT NOT NULL, `user` TEXT NOT NULL, `authProtocol` TEXT NOT NULL, " +
+                        "`authPassword` TEXT NOT NULL, `privProtocol` TEXT NOT NULL, `privPassword` TEXT NOT NULL, " +
+                        "`tunnelId` INTEGER, `notes` TEXT NOT NULL)"
                 )
             }
         }

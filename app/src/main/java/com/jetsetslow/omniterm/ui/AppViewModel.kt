@@ -1024,6 +1024,7 @@ data class BackupContents(
     val vpnTunnels: Int = 0,
     val telnetHosts: Int = 0,
     val kubeClusters: Int = 0,
+    val snmpDevices: Int = 0,
     val tmuxSessions: Int = 0,
     val composeStacks: Int = 0,
     val fleetRuns: Int = 0,
@@ -4649,7 +4650,7 @@ class AppViewModel @JvmOverloads constructor(
         Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) INFRA_TAB_COUNT else 0
         Screen.Fleet -> FLEET_TAB_COUNT
         Screen.SFTP -> 4
-        Screen.Network -> 9
+        Screen.Network -> 10
         Screen.Alerts -> 3
         Screen.QuickScripts -> 2
         else -> 0
@@ -6283,6 +6284,69 @@ class AppViewModel @JvmOverloads constructor(
     fun deleteWolTarget(target: WolTargetEntity) {
         viewModelScope.launch {
             repository.deleteWolTarget(target)
+        }
+    }
+
+    // ── SNMP devices (Network → SNMP) ──
+
+    val snmpDevices = repository.snmpDevicesFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** What a device last answered, with each interface's bytes per second since the poll before. */
+    data class SnmpReading(val outcome: SnmpDevices.Outcome, val rates: Map<Int, Pair<Long, Long>> = emptyMap())
+
+    /** Each device's last poll, by id, kept in memory only. */
+    val snmpReadings = mutableStateMapOf<Int, SnmpReading>()
+    /** Devices being polled now. */
+    val snmpPolling = mutableStateListOf<Int>()
+
+    /** Saves [device] (new when its id is 0); [onResult] gets null, or why it was not saved. */
+    fun saveSnmpDevice(device: SnmpDeviceEntity, onResult: (String?) -> Unit) {
+        val problem = if (device.name.isBlank()) "Enter a name" else SnmpDevices.problem(device.access())
+        if (problem != null) { onResult(problem); return }
+        viewModelScope.launch {
+            val failed = runCatching {
+                withContext(Dispatchers.IO) { repository.insertSnmpDevice(device.copy(name = device.name.trim(), host = device.host.trim())) }
+            }.exceptionOrNull()
+            if (failed == null) snmpReadings.remove(device.id)
+            onResult(failed?.let { it.message ?: "The device could not be saved." })
+        }
+    }
+
+    fun deleteSnmpDevice(device: SnmpDeviceEntity) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repository.deleteSnmpDevice(device.id) }
+            snmpReadings.remove(device.id)
+        }
+    }
+
+    /** Polls [device] now, unless it is being polled already. */
+    fun pollSnmpDevice(device: SnmpDeviceEntity) {
+        if (device.id in snmpPolling) return
+        snmpPolling.add(device.id)
+        viewModelScope.launch {
+            try {
+                val outcome = snmpOutcome(device)
+                val previous = (snmpReadings[device.id]?.outcome as? SnmpDevices.Outcome.Answered)?.snapshot
+                val rates = (outcome as? SnmpDevices.Outcome.Answered)?.let { SnmpDevices.rates(previous, it.snapshot) }.orEmpty()
+                snmpReadings[device.id] = SnmpReading(outcome, rates)
+            } finally {
+                snmpPolling.remove(device.id)
+            }
+        }
+    }
+
+    /**
+     * One poll of [device] from this phone. A device with a tunnel in use is not polled at all:
+     * SNMP is UDP, tunnels carry only TCP, and it is never polled directly instead.
+     */
+    internal suspend fun snmpOutcome(device: SnmpDeviceEntity): SnmpDevices.Outcome = withContext(Dispatchers.IO) {
+        when {
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.O -> SnmpDevices.Outcome.Failed(SnmpDevices.NEEDS_ANDROID_8)
+            HostRoute.tunnelNow(repository, device.tunnelId) != null -> SnmpDevices.Outcome.Failed(SnmpDevices.NOT_THROUGH_TUNNEL)
+            // A poll still running after the limit (a device that stops answering partway) is
+            // interrupted, and its socket closed.
+            else -> withTimeoutOrNull(SnmpDevices.POLL_LIMIT_MS) { runInterruptible { SnmpDevices.poll(device.access()) } }
+                ?: SnmpDevices.Outcome.Failed(SnmpDevices.TOO_SLOW)
         }
     }
 
@@ -15915,6 +15979,7 @@ class AppViewModel @JvmOverloads constructor(
         selection: BackupSelection = BackupSelection(),
         telnetHosts: List<TelnetHostEntity> = emptyList(),
         kubeClusters: List<KubeClusterEntity> = emptyList(),
+        snmpDevices: List<SnmpDeviceEntity> = emptyList(),
         tunnels: List<TunnelEntity> = emptyList(),
         history: BackupHistoryRows = BackupHistoryRows(),
         fleetTargetSets: List<FleetTargetSetEntity> = emptyList(),
@@ -16075,6 +16140,16 @@ class AppViewModel @JvmOverloads constructor(
                 put("clientKeyPem", c.clientKeyPem); put("token", c.token); put("namespace", c.namespace)
             })
         }
+        // SNMP devices too: their communities and passwords make the backup one to encrypt.
+        val snmpArr = org.json.JSONArray()
+        for (d in if (closedSelection.servers) snmpDevices else emptyList()) {
+            snmpArr.put(org.json.JSONObject().apply {
+                put("name", d.name); put("host", d.host); put("port", d.port); put("version", d.version)
+                put("community", d.community); put("user", d.user); put("authProtocol", d.authProtocol)
+                put("authPassword", d.authPassword); put("privProtocol", d.privProtocol); put("privPassword", d.privPassword)
+                put("tunnelId", d.tunnelId ?: 0); put("notes", d.notes)
+            })
+        }
         // VPN tunnels travel with the hosts that go through them; their configurations hold private
         // keys and auth keys, which is one more reason a backup with hosts is encrypted. A Tailscale
         // tunnel's node state is not here (getAllTunnels never returns it): a restored one signs in
@@ -16212,6 +16287,7 @@ class AppViewModel @JvmOverloads constructor(
             .put("wolTargets", wolArr)
             .put("telnetHosts", telnetArr)
             .put("kubeClusters", kubeArr)
+            .put("snmpDevices", snmpArr)
             .put("vpnTunnels", tunnelArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
@@ -16339,7 +16415,7 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs", "telnetHosts", "kubeClusters", "vpnTunnels",
+            "crashLogs", "telnetHosts", "kubeClusters", "snmpDevices", "vpnTunnels",
             "tmuxSessions", "composeStacks", "monitoringHistory", "fleetRuns", "assistantCalls",
             "fleetTargetSets", "fleetSchedules",
         )
@@ -16406,6 +16482,7 @@ class AppViewModel @JvmOverloads constructor(
             vpnTunnels = root.optJSONArray("vpnTunnels")?.length() ?: 0,
             telnetHosts = root.optJSONArray("telnetHosts")?.length() ?: 0,
             kubeClusters = root.optJSONArray("kubeClusters")?.length() ?: 0,
+            snmpDevices = root.optJSONArray("snmpDevices")?.length() ?: 0,
             tmuxSessions = root.optJSONArray("tmuxSessions")?.length() ?: 0,
             composeStacks = root.optJSONArray("composeStacks")?.length() ?: 0,
             fleetRuns = root.optJSONArray("fleetRuns")?.length() ?: 0,
@@ -16530,6 +16607,7 @@ class AppViewModel @JvmOverloads constructor(
                             networkShares, portForwards, activeAlerts, settings, closedSelection,
                             telnetHosts = repository.getAllTelnetHosts(),
                             kubeClusters = repository.getAllKubeClusters(),
+                            snmpDevices = repository.getAllSnmpDevices(),
                             tunnels = repository.getAllTunnels(),
                             history = history,
                             fleetTargetSets = repository.fleetTargetSets(),
@@ -17135,6 +17213,33 @@ class AppViewModel @JvmOverloads constructor(
                             importedKube++
                         }
 
+                        // SNMP devices, with the hosts (dedup by name and address). A device whose
+                        // tunnel was not restored keeps a missing one, so it is never polled directly.
+                        val existingSnmp = repository.getAllSnmpDevices().mapTo(mutableSetOf()) { "${it.name}|${it.host}|${it.port}" }
+                        val snmpArr = root.optJSONArray("snmpDevices") ?: org.json.JSONArray()
+                        var importedSnmp = 0
+                        for (i in 0 until if (closedSelection.servers) snmpArr.length() else 0) {
+                            val o = snmpArr.getJSONObject(i)
+                            val device = SnmpDeviceEntity(
+                                name = o.optString("name").trim(),
+                                host = o.optString("host").trim(),
+                                port = o.optInt("port", SnmpDevices.DEFAULT_PORT),
+                                version = o.optInt("version", 2),
+                                community = o.optString("community"),
+                                user = o.optString("user"),
+                                authProtocol = o.optString("authProtocol").takeIf { it in SnmpDevices.AUTH_PROTOCOLS }.orEmpty(),
+                                authPassword = o.optString("authPassword"),
+                                privProtocol = o.optString("privProtocol").takeIf { it in SnmpDevices.PRIV_PROTOCOLS }.orEmpty(),
+                                privPassword = o.optString("privPassword"),
+                                tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
+                                notes = o.optString("notes"),
+                            )
+                            if (device.name.isEmpty() || SnmpDevices.problem(device.access()) != null) continue
+                            if (!existingSnmp.add("${device.name}|${device.host}|${device.port}")) continue
+                            repository.insertSnmpDevice(device)
+                            importedSnmp++
+                        }
+
                         // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
                         // shareIdMap tracks old id → restored/existing id so per-share settings
                         // (share_bookmarks_{id}) can follow their share, mirroring serverIdMap.
@@ -17369,6 +17474,7 @@ class AppViewModel @JvmOverloads constructor(
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
                                 (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
                                 (if (importedKube > 0) "$importedKube Kubernetes cluster(s), " else "") +
+                                (if (importedSnmp > 0) "$importedSnmp SNMP device(s), " else "") +
                                 (if (importedSessions > 0) "$importedSessions tmux session(s), " else "") +
                                 (if (importedStacks > 0) "$importedStacks Compose stack(s), " else "") +
                                 (if (importedFleetRuns > 0) "$importedFleetRuns Fleet run(s), " else "") +

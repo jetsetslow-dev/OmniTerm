@@ -407,6 +407,12 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun insertKubeCluster(cluster: KubeClusterEntity): Long = db.kubeClusterDao().insertKubeCluster(encryptKubeCluster(cluster))
     suspend fun deleteKubeCluster(id: Int) = db.kubeClusterDao().deleteKubeCluster(id)
 
+    val snmpDevicesFlow: Flow<List<SnmpDeviceEntity>> =
+        db.snmpDeviceDao().getAllSnmpDevicesFlow().map { list -> list.map(::decryptSnmpDevice) }
+    suspend fun getAllSnmpDevices(): List<SnmpDeviceEntity> = db.snmpDeviceDao().getAllSnmpDevices().map(::decryptSnmpDevice)
+    suspend fun insertSnmpDevice(device: SnmpDeviceEntity): Long = db.snmpDeviceDao().insertSnmpDevice(encryptSnmpDevice(device))
+    suspend fun deleteSnmpDevice(id: Int) = db.snmpDeviceDao().deleteSnmpDevice(id)
+
     val wolTargetsFlow: Flow<List<WolTargetEntity>> = db.wolTargetDao().getAllWolTargetsFlow()
     suspend fun getAllWolTargets(): List<WolTargetEntity> = db.wolTargetDao().getAllWolTargets()
     suspend fun insertWolTarget(target: WolTargetEntity) = db.wolTargetDao().insertWolTarget(target)
@@ -490,6 +496,18 @@ class AppRepository(private val db: AppDatabase) {
 
     private fun encryptKubeCluster(cluster: KubeClusterEntity): KubeClusterEntity =
         cluster.copy(clientKeyPem = SecretStore.encrypt(cluster.clientKeyPem) ?: "", token = SecretStore.encrypt(cluster.token) ?: "")
+
+    // A device's community and passwords are kept only encrypted: one that cannot be encrypted is not saved.
+    private fun encryptSnmpDevice(device: SnmpDeviceEntity): SnmpDeviceEntity {
+        fun enc(value: String) = requireNotNull(SecretStore.encrypt(value)) { "The device's community or password could not be encrypted on this phone." }
+        return device.copy(community = enc(device.community), authPassword = enc(device.authPassword), privPassword = enc(device.privPassword))
+    }
+
+    private fun decryptSnmpDevice(device: SnmpDeviceEntity): SnmpDeviceEntity = device.copy(
+        community = SecretStore.decrypt(device.community).orEmpty(),
+        authPassword = SecretStore.decrypt(device.authPassword).orEmpty(),
+        privPassword = SecretStore.decrypt(device.privPassword).orEmpty(),
+    )
 
     private fun decryptNetworkShare(share: NetworkShareEntity): NetworkShareEntity =
         share.copy(password = SecretStore.decrypt(share.password) ?: "")

@@ -374,6 +374,21 @@ interface KubeClusterDao {
 }
 
 @Dao
+interface SnmpDeviceDao {
+    @Query("SELECT * FROM snmp_devices ORDER BY name COLLATE NOCASE ASC")
+    fun getAllSnmpDevicesFlow(): Flow<List<SnmpDeviceEntity>>
+
+    @Query("SELECT * FROM snmp_devices ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAllSnmpDevices(): List<SnmpDeviceEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSnmpDevice(device: SnmpDeviceEntity): Long
+
+    @Query("DELETE FROM snmp_devices WHERE id = :id")
+    suspend fun deleteSnmpDevice(id: Int)
+}
+
+@Dao
 interface TelnetHostDao {
     @Query("SELECT * FROM telnet_hosts ORDER BY name COLLATE NOCASE ASC")
     fun getAllTelnetHostsFlow(): Flow<List<TelnetHostEntity>>
@@ -618,8 +633,8 @@ interface TunnelDao {
     @Query("DELETE FROM tunnels WHERE id = :id")
     suspend fun delete(id: Int)
 
-    /** The hosts that go through tunnel [id]: while there are any, it cannot be deleted. */
-    @Query("SELECT name FROM servers WHERE tunnelId = :id ORDER BY name COLLATE NOCASE")
+    /** The hosts and SNMP devices that go through tunnel [id]: while there are any, it cannot be deleted. */
+    @Query("SELECT name FROM servers WHERE tunnelId = :id UNION ALL SELECT name FROM snmp_devices WHERE tunnelId = :id ORDER BY name COLLATE NOCASE")
     suspend fun hostsUsing(id: Int): List<String>
 }
 

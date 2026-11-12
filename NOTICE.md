@@ -36,6 +36,7 @@ features. No code from them is included; see the README's Acknowledgements for w
 - Material Files — https://github.com/zhanghai/MaterialFiles
 - Watchtower — https://github.com/containrrr/watchtower
 - Cup — https://github.com/sergi0g/cup
+- LibreNMS — https://github.com/librenms/librenms
 - Model Context Protocol specification — https://modelcontextprotocol.io
 
 ## Bundled Go libraries (VPN tunnels)

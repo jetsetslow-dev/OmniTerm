@@ -16,6 +16,7 @@ OmniTerm uses open-source libraries and assets. Third-party copyrights remain wi
 - Moshi and Moshi Kotlin codegen: Apache License 2.0.
 - smbj and smbj-rpc: Apache License 2.0.
 - Apache Commons Net: Apache License 2.0.
+- SNMP4J (`org.snmp4j:snmp4j`, Network → SNMP): Apache License 2.0.
 - AndroidX Browser: Apache License 2.0.
 - Google Play Billing, In-App Review, Mobile Ads, and User Messaging Platform libraries are distributed under their respective Google SDK terms and only ship in the Play Store flavor.
 
@@ -48,6 +49,7 @@ OmniTerm uses open-source libraries and assets. Third-party copyrights remain wi
 - smbj: https://github.com/hierynomus/smbj
 - smbj-rpc: https://github.com/daveboy001/smbj-rpc
 - Apache Commons Net: https://commons.apache.org/proper/commons-net/
+- SNMP4J: https://www.snmp4j.org/
 - Robolectric: https://robolectric.org/
 - Roborazzi: https://github.com/takahirom/roborazzi
 - JetBrains Mono: https://www.jetbrains.com/lp/mono/

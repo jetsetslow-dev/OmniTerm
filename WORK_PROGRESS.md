@@ -1143,6 +1143,30 @@ there is one full gate when the bundle is complete, and targeted tests per piece
   - The rule and alert lists are `WhileSubscribed`, and the Containers screen does not collect
     them. A device test that reads them off the Alerts screen must collect them itself, or it
     sees an empty list and leaks the rules it meant to delete.
+  - Part 3, SNMP (`SnmpDevices`, Network → SNMP tab): SNMP4J 3.13.2 (Apache-2.0, no runtime
+    dependencies, about 600 KB of dex), polled from the phone over UDP, v2c or v3 (MD5/SHA/SHA-2
+    auth, DES/AES privacy, JDK crypto only). Each poll has its own dispatcher, USM and socket: a
+    GET of the system group, then GETBULK walks of IF-MIB (64-bit counters), hrProcessorLoad and
+    hrStorage, 25 rows a request, 512 rows a column, 3 s and one retry a request, 60 s a poll.
+    Only GET and GETBULK can be sent (`READ_ONLY_PDU_TYPES`, checked in the one `send`). The tab
+    polls every 30 s while open; rates come from two polls, 32-bit wrap handled. API 26+ only
+    (SNMP4J needs `MethodHandles`); D8 rewrites its covariant `ByteBuffer` calls and backports
+    `requireNonNullElse` and `parseInt(CharSequence…)` for older APIs. R8 must keep the whole
+    library: it loads its value types, transports and security protocols by class name from its
+    `.properties` files.
+  - Table `snmp_devices` in the 29→30 step, secrets encrypted at the repository boundary, in
+    backups with hosts (deduplicated by name, address and port; tunnel ids mapped, a missing
+    tunnel stays missing). A tunnel a device uses cannot be deleted. Tunnels carry TCP only, so a
+    device behind a tunnel in use gets "not polled" and nothing is sent, never directly. No SNMP
+    alert rules yet.
+  - net-snmp reports a wrong v3 digest unauthenticated and SNMP4J drops that report (RFC 3412
+    §7.2.11), so a wrong auth password reads as no answer; an unknown user is reported.
+  - Fixture: `./scripts/test-hosts.sh snmp` (net-snmp on pinned Alpine, UDP 127.0.0.1:1161,
+    `OMNITERM_TEST_SNMP_COMMUNITY`, v3 user `omniterm` SHA-256/AES with
+    `OMNITERM_TEST_SNMP_PASSWORD`). Device suite `E2eSnmpDevicesTest` (`omniterm_e2e_snmp`,
+    `-e snmp_community -e snmp_pass`).
+  - A compose test's `LaunchedEffect` runs on the rule's clock: a test that waits with its own
+    `delay` loop never lets the tab's poll start. Wait with `composeRule.waitUntil`.
 
 ## Decision pivot — 2026-11-08
 

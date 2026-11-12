@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 30,
-    "identityHash": "7e3ff7ebe0edcd9b05805f5b8f3f60dc",
+    "identityHash": "f0f330727a96780e028d1d61cc0f986c",
     "entities": [
       {
         "tableName": "servers",
@@ -1227,6 +1227,95 @@
         }
       },
       {
+        "tableName": "snmp_devices",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `version` INTEGER NOT NULL, `community` TEXT NOT NULL, `user` TEXT NOT NULL, `authProtocol` TEXT NOT NULL, `authPassword` TEXT NOT NULL, `privProtocol` TEXT NOT NULL, `privPassword` TEXT NOT NULL, `tunnelId` INTEGER, `notes` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "port",
+            "columnName": "port",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "version",
+            "columnName": "version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "community",
+            "columnName": "community",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "user",
+            "columnName": "user",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authProtocol",
+            "columnName": "authProtocol",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authPassword",
+            "columnName": "authPassword",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "privProtocol",
+            "columnName": "privProtocol",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "privPassword",
+            "columnName": "privPassword",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tunnelId",
+            "columnName": "tunnelId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
         "tableName": "fleet_runs",
         "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runKey` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER NOT NULL, `command` TEXT NOT NULL, `scriptName` TEXT, `source` TEXT NOT NULL, `pushedFile` TEXT, `sudo` INTEGER NOT NULL)",
         "fields": [
@@ -1776,7 +1865,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7e3ff7ebe0edcd9b05805f5b8f3f60dc')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f0f330727a96780e028d1d61cc0f986c')"
     ]
   }
 }

@@ -592,6 +592,21 @@ class AppDatabaseMigrationTest {
                 assertTrue(cursor.moveToFirst())
                 assertEquals("enc:v1:x", cursor.getString(0))
             }
+            // SNMP devices start empty, and take a device with its tunnel.
+            db.query("SELECT COUNT(*) FROM snmp_devices").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.execSQL(
+                "INSERT INTO snmp_devices (name, host, port, version, community, user, authProtocol, authPassword, privProtocol, privPassword, tunnelId, notes) " +
+                    "VALUES ('Core switch', '192.0.2.10', 161, 3, '', 'monitor', 'SHA-256', 'enc:v1:a', 'AES', 'enc:v1:p', 4, '')"
+            )
+            db.query("SELECT version, user, tunnelId FROM snmp_devices").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(3, cursor.getInt(0))
+                assertEquals("monitor", cursor.getString(1))
+                assertEquals(4, cursor.getInt(2))
+            }
         }
         context.deleteDatabase(databaseName)
     }

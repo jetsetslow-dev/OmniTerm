@@ -278,6 +278,23 @@ services:
     networks: [edge]
     restart: "no"
 
+  # A read-only SNMP agent for the SNMP device suite (E2eSnmpDevicesTest): net-snmp on Alpine,
+  # with a v2c community and a v3 user (SHA-256 and AES) from .env, on UDP 127.0.0.1:1161 only.
+  # `./scripts/test-hosts.sh snmp` builds and starts it; in its own profile, so `up` does not.
+  snmp-device:
+    build:
+      context: ./fixtures/snmp-device
+    image: omniterm-test-snmp-device:local
+    container_name: omniterm-test-snmp-device
+    profiles: [snmp]
+    environment:
+      SNMP_COMMUNITY: "${OMNITERM_TEST_SNMP_COMMUNITY:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      SNMP_PASSWORD: "${OMNITERM_TEST_SNMP_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    ports:
+      - "127.0.0.1:1161:1161/udp"
+    networks: [edge]
+    restart: "no"
+
   # Headscale, the control server for the Tailscale tunnel suite (E2eTailscaleTunnelTest). Images
   # are pinned by digest. `./scripts/test-hosts.sh up` makes its user and auth keys (the phone's
   # goes into .env as OMNITERM_TEST_TS_PHONE_KEY), then starts the router with its own.
