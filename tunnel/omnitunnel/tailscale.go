@@ -101,15 +101,18 @@ type tailscale struct {
 	changed chan struct{}
 	wake    chan struct{}
 
-	mu      sync.Mutex
-	st      ipn.State
-	url     string
-	refused string // the control server's refusal: the tunnel has failed
-	note    string // what the user should know that does not stop the tunnel
-	ips     string
-	rx, tx  int64
-	shake   int64
-	readAt  time.Time
+	mu sync.Mutex
+	st ipn.State
+	// busStates counts the states the bus reported. A status read that began before one of them
+	// carries older news, and must not undo it: a node the bus called Running read as Starting.
+	busStates uint64
+	url       string
+	refused   string // the control server's refusal: the tunnel has failed
+	note      string // what the user should know that does not stop the tunnel
+	ips       string
+	rx, tx    int64
+	shake     int64
+	readAt    time.Time
 }
 
 // StartTailscale brings a Tailscale node up from its settings ([CheckTailscale]), keeping its state
@@ -229,7 +232,7 @@ func (ts *tailscale) watchOnce(ctx context.Context) {
 		lost := false
 		ts.mu.Lock()
 		if n.State != nil {
-			ts.setState(*n.State)
+			ts.busState(*n.State)
 		}
 		if n.BrowseToURL != nil {
 			ts.url = *n.BrowseToURL
@@ -249,6 +252,20 @@ func (ts *tailscale) watchOnce(ctx context.Context) {
 		if lost {
 			return
 		}
+	}
+}
+
+// busState records a state the bus reported; ts.mu is held.
+func (ts *tailscale) busState(st ipn.State) {
+	ts.busStates++
+	ts.setState(st)
+}
+
+// statusState records the state a status read found, unless the bus reported a state after the
+// read began ([tailscale.busStates] was then before): that one is newer. ts.mu is held.
+func (ts *tailscale) statusState(before uint64, st ipn.State) {
+	if st != ts.st && ts.busStates == before {
+		ts.setState(st)
 	}
 }
 
@@ -301,6 +318,9 @@ func (ts *tailscale) poll(ctx context.Context) {
 
 // read asks the node for its status: its state, its addresses and its traffic.
 func (ts *tailscale) read(ctx context.Context) {
+	ts.mu.Lock()
+	before := ts.busStates
+	ts.mu.Unlock()
 	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	status, err := ts.lc.Status(qctx)
 	cancel()
@@ -320,8 +340,8 @@ func (ts *tailscale) read(ctx context.Context) {
 		}
 	}
 	ts.mu.Lock()
-	if st, ok := ipn.StateFromString(status.BackendState); ok && st != ts.st {
-		ts.setState(st)
+	if st, ok := ipn.StateFromString(status.BackendState); ok {
+		ts.statusState(before, st)
 	}
 	if ts.st == ipn.NeedsLogin && status.AuthURL != "" {
 		ts.url = status.AuthURL

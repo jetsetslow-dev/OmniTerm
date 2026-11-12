@@ -570,6 +570,25 @@ func TestOnlyTheControlServersRefusalEndsAStart(t *testing.T) {
 	}
 }
 
+// A status read asked before the bus said Running, and answered after, said Starting: applied, it
+// made a tunnel that had just started refuse its first dial as not connected yet.
+func TestAStatusReadOlderThanTheBusDoesNotUndoIt(t *testing.T) {
+	ts := &tailscale{changed: make(chan struct{}, 1), wake: make(chan struct{}, 1)}
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	before := ts.busStates
+	ts.busState(ipn.Running)
+	ts.statusState(before, ipn.Starting)
+	if ts.st != ipn.Running {
+		t.Fatalf("an older status read undid the bus: %v", ts.st)
+	}
+	// With no news from the bus since it began, a status read is the newest word.
+	ts.statusState(ts.busStates, ipn.NeedsLogin)
+	if ts.st != ipn.NeedsLogin {
+		t.Fatalf("a current status read was ignored: %v", ts.st)
+	}
+}
+
 func TestAStateTheAppCannotKeepIsReportedToTheNode(t *testing.T) {
 	app := &memoryStore{full: true}
 	if err := newAppStore(app).WriteState("k", []byte("x")); err == nil {
