@@ -15,7 +15,7 @@ months of Claude Ultra (some third-party articles say Max 20x; the official page
 | Natural person, 18+, eligible region | Applicant-specific | Unknown |
 | GitHub account in good standing, at least two years old | `jetsetslow-dev` was created 2026-06-12 (about 5 months) | No, unless another account of the applicant is older |
 | Public open-source activity within the last 90 days | Last push 2026-11-09; many commits | Yes |
-| At least one project under an OSI-approved licence (MIT, Apache 2.0, BSD and GPL are the named examples) | GPL-3.0 (OSI-approved; GPL is a named example) | Yes (after merge; PolyForm Noncommercial, the current licence on `main`, would not qualify) |
+| At least one project under an OSI-approved licence (MIT, Apache 2.0, BSD and GPL are the named examples) | GPL-3.0 (OSI-approved; GPL is a named example) | Yes (relicensed to GPL-3.0 in #150) |
 | Not an Anthropic employee, contractor or family member | Applicant-specific | Unknown |
 
 Terms also say activity judged trivial or automated may be discounted and that decisions are final.

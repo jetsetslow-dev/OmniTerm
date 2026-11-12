@@ -29,8 +29,9 @@
 </ol>
 <h2>Behaviour to know</h2>
 <ul>
-<li><strong>Never direct</strong>: a host with a tunnel always goes through it. If the tunnel cannot connect, the connection fails and says why. Choose <strong>None (direct)</strong> to connect directly again.</li>
-<li>To use one machine both at home and away, save it twice: once with the tunnel, once with None (direct).</li>
+<li><strong>Never direct</strong>: a host with a tunnel always goes through it, except on a Wi-Fi you list on the tunnel (next). If the tunnel cannot connect, the connection fails and says why. Choose <strong>None (direct)</strong> to connect directly everywhere again.</li>
+<li><strong>Not needed on your own Wi-Fi</strong>: edit the tunnel and list your home Wi-Fi under <strong>Not needed on these Wi-Fi networks</strong>. On a listed Wi-Fi its hosts connect directly; on any other network, on mobile data, and whenever OmniTerm cannot tell which Wi-Fi the phone is on, they go through the tunnel. So one saved host works at home and away.</li>
+<li>Android gives an app the Wi-Fi's name only with the <strong>Location</strong> permission, which OmniTerm asks for when you list a Wi-Fi. It reads the name and nothing else; your location is never read, and the name stays on the phone.</li>
 <li>The tunnel runs only inside the app; the rest of the phone and other VPN apps are unaffected. It starts when needed and stops after five minutes unused.</li>
 <li>TCP port and certificate checks of a tunnelled host use the tunnel; ping, DNS and web checks of its own address do not run yet and say so.</li>
 <li>A tunnel a host still uses cannot be deleted.</li>
