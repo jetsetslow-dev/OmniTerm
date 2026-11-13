@@ -6881,17 +6881,14 @@ class AppViewModel @JvmOverloads constructor(
             var setupComplete = false
             try {
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = open(termCols, termRows)
+                val session = open(emulator.cols, emulator.rows)
                 openedSession = session
                 currentCoroutineContext().ensureActive()
                 check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
                 val shellSession = ShellSession(shown.id, shown.name, session, emulator)
                 shellSession.transport = transport
                 shellSession.unsavedHost = shown
-                shellSession.termCols = termCols
-                shellSession.termRows = termRows
-                shellSession.lastCols = termCols
-                shellSession.lastRows = termRows
+                shellSession.matchGridTo(emulator)
                 activeSessions.add(shellSession)
                 openedSession = null // owned by the registered session now
                 showConnectedShell(shellSession, attemptGeneration, targetMultiSshPane = null)
@@ -7014,7 +7011,7 @@ class AppViewModel @JvmOverloads constructor(
                 }
 
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = openTerminalChannel(creds, srv.name, attemptGeneration)
+                val session = openTerminalChannel(creds, srv.name, attemptGeneration, emulator.cols, emulator.rows)
                 openedSession = session
                 val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = usePersistence
@@ -7209,7 +7206,7 @@ class AppViewModel @JvmOverloads constructor(
                     val before = emulator.scrollbackRowCount()
                     emulator.adoptScrollbackFrom(scratch)
                     val d = emulator.scrollbackRowCount() - before
-                    session.viewportFirstRow = (session.viewportFirstRow + d).coerceAtLeast(0)
+                    session.viewport.updateAndGet { it.copy(firstRow = (it.firstRow + d).coerceAtLeast(0)) }
                     true to d
                 }
             }
@@ -7502,8 +7499,14 @@ class AppViewModel @JvmOverloads constructor(
      * [attemptGeneration] is still the current attempt. The caller owns the channel until a
      * registered shell takes it over.
      */
-    private suspend fun openTerminalChannel(creds: SshCredentials, hostName: String, attemptGeneration: Long): TerminalSession =
-        sshTransport.openShell(creds, termCols, termRows, interactiveAuthFor(hostName)) { phase ->
+    private suspend fun openTerminalChannel(
+        creds: SshCredentials,
+        hostName: String,
+        attemptGeneration: Long,
+        cols: Int,
+        rows: Int,
+    ): TerminalSession =
+        sshTransport.openShell(creds, cols, rows, interactiveAuthFor(hostName)) { phase ->
             viewModelScope.launch(Dispatchers.Main) {
                 if (attemptGeneration == terminalConnectGeneration) {
                     val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
@@ -7525,10 +7528,7 @@ class AppViewModel @JvmOverloads constructor(
         check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
         val shellSession = ShellSession(srv.id, srv.name, channel, emulator)
         shellSession.creds = creds
-        shellSession.termCols = termCols
-        shellSession.termRows = termRows
-        shellSession.lastCols = termCols
-        shellSession.lastRows = termRows
+        shellSession.matchGridTo(emulator)
         return shellSession
     }
 
@@ -7616,7 +7616,7 @@ class AppViewModel @JvmOverloads constructor(
                     true -> Unit
                 }
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = openTerminalChannel(creds, srv.name, attemptGeneration)
+                val session = openTerminalChannel(creds, srv.name, attemptGeneration, emulator.cols, emulator.rows)
                 openedSession = session
                 val shellSession = newShellSession(srv, creds, session, emulator, attemptGeneration)
                 shellSession.persistent = true
@@ -7764,8 +7764,10 @@ class AppViewModel @JvmOverloads constructor(
 
         shellSession.terminalOutputJob = TerminalSessionManager.scope.launch(Dispatchers.Default) {
             var cleanExit = false
-            var lastSnapshotMs = 0L
-            var pendingSnapshotJob: Job? = null
+            // A child of this job: it ends with the output it shows.
+            val publisher = TerminalSnapshotPublisher(this) {
+                TerminalSessionManager.publishTerminalSnapshot(shellSession)
+            }
             try {
                 // Control mode: the channel carries the tmux control protocol, not rendered ANSI.
                 // Only the active pane's %output bytes reach the emulator; command replies and
@@ -7831,23 +7833,10 @@ class AppViewModel @JvmOverloads constructor(
                             ?.let { inputQueue.enqueueBatch(listOf(it), TERMINAL_INPUT_QUEUE_MAX_BYTES) }
                         if (shellSession.persistent) shellSession.scrollbackDirty = true
                     }
-                    val now = System.currentTimeMillis()
-                    val elapsed = now - lastSnapshotMs
-                    if (elapsed >= 16L) {
-                        pendingSnapshotJob?.cancel(); pendingSnapshotJob = null
-                        lastSnapshotMs = now
-                        TerminalSessionManager.publishTerminalSnapshot(shellSession)
-                    } else if (pendingSnapshotJob?.isActive != true) {
-                        pendingSnapshotJob = launch {
-                            delay(16L - elapsed)
-                            lastSnapshotMs = System.currentTimeMillis()
-                            TerminalSessionManager.publishTerminalSnapshot(shellSession)
-                            pendingSnapshotJob = null
-                        }
-                    }
+                    publisher.markDirty()
                 }
                 synchronized(emulator) { emulator.finishInput() }
-                pendingSnapshotJob?.cancel()
+                publisher.stop()
                 TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 // remoteExited is the authoritative "the user ended the shell/tmux" signal (genuine
                 // remote channel-EOF). It's only ever true for a deliberate exit, never a socket drop.
@@ -7867,7 +7856,10 @@ class AppViewModel @JvmOverloads constructor(
                         "persistent=${shellSession.persistent} userClosed=${shellSession.userClosed}"
                 )
             } catch (e: Exception) {
+                publisher.stop()
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                // Show what arrived before the connection broke.
+                TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 // Non-cancellation: connection lost unexpectedly → fall through to reconnect.
                 cleanExit = session.remoteExited.value
                 android.util.Log.i(
@@ -8191,11 +8183,13 @@ class AppViewModel @JvmOverloads constructor(
                 delay(delayMs)
                 delayMs = (delayMs * 2).coerceAtMost(RECONNECT_MAX_DELAY_MS)
                 val creds = reconnectCredentials(shellSession) ?: return@launch
+                val openedCols = shellSession.lastCols
+                val openedRows = shellSession.lastRows
                 val newSession = try {
                     sshTransport.openShell(
                         creds,
-                        shellSession.lastCols,
-                        shellSession.lastRows,
+                        openedCols,
+                        openedRows,
                         if (askUser) interactiveAuthFor(shellSession.serverName) else null,
                     )
                 } catch (e: Exception) {
@@ -8311,6 +8305,10 @@ class AppViewModel @JvmOverloads constructor(
                         // immediately must be able to schedule another reconnect.
                         shellSession.reconnectJob = null
                         wireSessionIo(shellSession)
+                        // A resize while this channel was opening went to the dropped one.
+                        if (shellSession.lastCols != openedCols || shellSession.lastRows != openedRows) {
+                            requestRemoteResize(shellSession, shellSession.lastCols, shellSession.lastRows)
+                        }
                         if (shellSession.controlMode) {
                             // Output during the drop never streamed — the one gap control mode has.
                             shellSession.scrollbackDirty = true
@@ -8455,7 +8453,10 @@ class AppViewModel @JvmOverloads constructor(
     fun resizeTerminalFor(session: ShellSession?, cols: Int, rows: Int) {
         if (cols < 1 || rows < 1) return
         val s = session ?: return
-        if (cols == s.termCols && rows == s.termRows) return
+        // Compared with the grid the emulator really has, not only the session's note of it: a
+        // session that opened while the pane changed size must still take the first measure.
+        val sameGrid = synchronized(s.emulator) { cols == s.emulator.cols && rows == s.emulator.rows }
+        if (sameGrid && cols == s.termCols && rows == s.termRows) return
         s.termCols = cols; s.termRows = rows
         s.lastCols = cols; s.lastRows = rows
         if (s.id == currentSessionId) { termCols = cols; termRows = rows }
@@ -8464,16 +8465,7 @@ class AppViewModel @JvmOverloads constructor(
             s.terminalGeometryGeneration.incrementAndGet()
         }
         TerminalSessionManager.publishTerminalSnapshot(s)
-        // Remote resize goes through the session's conflated channel + single consumer so a burst
-        // of resizes (layout flip, IME churn) can never land out of order and strand the remote at
-        // a stale size (see ShellSession.resizeChannel). `s.session` is read at send time so the
-        // consumer follows a reconnect's channel swap, same as the input job.
-        s.resizeChannel.trySend(cols to rows)
-        if (s.resizeJob?.isActive != true) {
-            s.resizeJob = TerminalSessionManager.scope.launchTerminalResizeConsumer(s.resizeChannel) { c, r ->
-                s.session.resize(c, r)
-            }
-        }
+        requestRemoteResize(s, cols, rows)
         // Control clients aren't sized by their PTY — tmux takes the size from refresh-client.
         if (s.controlMode && s.controlReady) sendControlLine(s, TmuxControlCommands.refreshClientSize(cols, rows))
         // Any grid change makes the locally reflowed scrollback diverge from the pane's real
@@ -8485,17 +8477,28 @@ class AppViewModel @JvmOverloads constructor(
         if (s.persistent) s.scrollbackDirty = true
     }
 
+    /**
+     * Remote resize goes through the session's conflated channel + single consumer so a burst of
+     * resizes (layout flip, IME churn) can never land out of order and strand the remote at a stale
+     * size (see ShellSession.resizeChannel). `s.session` is read at send time so the consumer follows
+     * a reconnect's channel swap, same as the input job.
+     */
+    private fun requestRemoteResize(s: ShellSession, cols: Int, rows: Int) {
+        s.resizeChannel.trySend(cols to rows)
+        if (s.resizeJob?.isActive != true) {
+            s.resizeJob = TerminalSessionManager.scope.launchTerminalResizeConsumer(s.resizeChannel) { c, r ->
+                s.session.resize(c, r)
+            }
+        }
+    }
+
     fun updateTerminalViewport(firstRow: Int, rowCount: Int, followTail: Boolean) =
         updateTerminalViewportFor(currentSession, firstRow, rowCount, followTail)
 
     fun updateTerminalViewportFor(session: ShellSession?, firstRow: Int, rowCount: Int, followTail: Boolean) {
         val s = session ?: return
-        val count = rowCount.coerceIn(1, 300)
-        val changed = s.viewportFirstRow != firstRow || s.viewportRowCount != count || s.followTail != followTail
-        s.viewportFirstRow = firstRow.coerceAtLeast(0)
-        s.viewportRowCount = count
-        s.followTail = followTail
-        if (changed) TerminalSessionManager.publishTerminalSnapshot(s)
+        val next = TerminalViewport(firstRow.coerceAtLeast(0), rowCount.coerceIn(1, 300), followTail)
+        if (s.viewport.getAndSet(next) != next) TerminalSessionManager.publishTerminalSnapshot(s)
     }
 
     fun terminalBufferText(full: Boolean, firstRow: Int = 0, rowCount: Int = Int.MAX_VALUE): String =
@@ -8540,8 +8543,7 @@ class AppViewModel @JvmOverloads constructor(
             synchronized(s.emulator) {
                 s.emulator.clearScrollback()
             }
-            s.viewportFirstRow = 0
-            s.followTail = true
+            s.viewport.updateAndGet { it.copy(firstRow = 0, followTail = true) }
             TerminalSessionManager.publishTerminalSnapshot(s)
         }
 
