@@ -176,7 +176,7 @@ interface AlertRuleDao {
     @Delete
     suspend fun deleteRule(rule: AlertRuleEntity)
 
-    @Query("DELETE FROM alert_rules WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
+    @Query("DELETE FROM alert_rules WHERE serverId > 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 
     @Query("DELETE FROM alert_rules WHERE serverId = :serverId")
@@ -217,7 +217,7 @@ interface ActiveAlertDao {
     @Query("UPDATE active_alerts SET runbookRunKey = :runKey WHERE id = :id")
     suspend fun setRunbookRunKey(id: Int, runKey: String)
 
-    @Query("DELETE FROM active_alerts WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
+    @Query("DELETE FROM active_alerts WHERE serverId > 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 
     @Query("DELETE FROM active_alerts WHERE serverId = :serverId")
@@ -269,7 +269,7 @@ interface AlertHistoryDao {
     @Query("DELETE FROM alert_history")
     suspend fun clearHistory()
 
-    @Query("DELETE FROM alert_history WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
+    @Query("DELETE FROM alert_history WHERE serverId > 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 
     @Query("DELETE FROM alert_history WHERE serverId = :serverId")

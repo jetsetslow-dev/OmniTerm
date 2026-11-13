@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.FlowRow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jetsetslow.omniterm.R
+import com.jetsetslow.omniterm.data.AlertSubjects
 import com.jetsetslow.omniterm.data.SnmpDeviceEntity
 import com.jetsetslow.omniterm.data.SnmpDevices
 import com.jetsetslow.omniterm.ui.theme.OmniColors
@@ -83,6 +84,7 @@ internal fun SnmpTab(viewModel: AppViewModel) {
                     onPoll = { viewModel.pollSnmpDevice(device) },
                     onEdit = { editing = device },
                     onDelete = { deleting = device },
+                    alerts = { DeviceAlertsLine(viewModel, AlertSubjects.snmp(device.id), "snmp.alerts.${device.id}") },
                 )
             }
         }
@@ -113,6 +115,7 @@ private fun SnmpDeviceCard(
     onPoll: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    alerts: @Composable () -> Unit = {},
 ) {
     val outcome = reading?.outcome
     val accent = when (outcome) {
@@ -140,6 +143,7 @@ private fun SnmpDeviceCard(
                 Spacer(Modifier.width(6.dp))
                 OmniButton(stringResource(R.string.delete), onDelete, small = true, color = OmniColors.red, modifier = Modifier.testTag("snmp.delete.${device.id}"))
             }
+            alerts()
             Spacer(Modifier.size(6.dp))
             when (outcome) {
                 null -> Text(stringResource(if (polling) R.string.snmp_polling else R.string.snmp_not_polled), fontSize = 12.sp, modifier = Modifier.testTag("snmp.status.${device.id}"))

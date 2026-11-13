@@ -136,6 +136,9 @@ class E2ePhoneChecksTest {
             dns.close()
             responder.join(2_000)
             vm.alertRules.value.filter { it.notes == NOTE }.forEach(vm::deleteAlertRule)
+            // Deleting runs on the view model's scope (closing a rule's incidents first): wait, or the
+            // activity closing cancels it and the firing rules stay behind for the next suite.
+            runCatching { composeRule.waitUntil(10_000) { vm.alertRules.value.none { it.notes == NOTE } } }
             vm.saveAlertsEnabled(originalAlertsEnabled)
             composeRule.runOnUiThread {
                 vm.activeAlertsTab = originalTab

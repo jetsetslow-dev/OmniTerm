@@ -1,20 +1,35 @@
 package com.jetsetslow.omniterm
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import com.jetsetslow.omniterm.data.AlertRuleEntity
+import com.jetsetslow.omniterm.data.AlertSubjects
 import com.jetsetslow.omniterm.data.AppDatabase
+import com.jetsetslow.omniterm.data.DeviceChecks
 import com.jetsetslow.omniterm.data.SnmpDeviceEntity
 import com.jetsetslow.omniterm.data.SnmpDevices
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
+import com.jetsetslow.omniterm.ui.alertNotificationId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -36,7 +51,10 @@ import org.junit.Test
  * - A wrong community, an unknown user and a wrong password each say what to check: the unknown
  *   user from the agent's USM report; a wrong password as no answer, since net-snmp reports it
  *   unauthenticated and SNMP4J ignores that report (RFC 3412 §7.2.11).
- * - Delete asks first and removes it.
+ * - Alert rules read it from the phone: Interface Down for an interface picked in the editor, UPS
+ *   On Battery and UPS Battery Low each alert, with the device named on the incident, the rule
+ *   list and the device's card.
+ * - Delete asks first and removes it, with its alert rules, incidents and their notifications.
  */
 class E2eSnmpDevicesTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -50,8 +68,9 @@ class E2eSnmpDevicesTest {
         composeRule.runOnUiThread { vm.isAppLocked = false }
         val db = AppDatabase.getDatabase(composeRule.activity)
         suspend fun mine() = vm.snmpDevices.value.filter { it.name.startsWith(PREFIX) }
+        val originalAlertsEnabled = vm.alertsEnabled
         try {
-            for (d in db.snmpDeviceDao().getAllSnmpDevices().filter { it.name.startsWith(PREFIX) }) db.snmpDeviceDao().deleteSnmpDevice(d.id)
+            forgetMine(vm, db)
             composeRule.runOnUiThread {
                 vm.navigateTo(Screen.Network)
                 vm.activeNetworkTab = SNMP_TAB
@@ -127,14 +146,90 @@ class E2eSnmpDevicesTest {
             val wrongPriv = reason(vm.snmpOutcome(v3.copy(privPassword = "not-$password")))
             assertTrue(wrongPriv, password !in wrongPriv && community !in wrongPriv)
 
-            // Delete asks first.
+            // Alert rules on the v2c device: an interface picked in the editor, then the UPS.
+            val subject = AlertSubjects.snmp(v2c.id)
+            fun rules() = runBlocking { db.alertRuleDao().getAllRules() }.filter { it.notes == NOTE }
+            fun firing() = runBlocking { db.activeAlertDao().getActiveAlerts() }.filter { it.serverId == subject }
+            TestNotifications.allow()
+            vm.saveAlertsEnabled(true)
+            composeRule.runOnUiThread {
+                vm.activeAlertsTab = 1
+                vm.navigateTo(Screen.Alerts)
+            }
+            composeRule.onNodeWithContentDescription("Add").performClick()
+            await("the rule editor", 10_000) { composeRule.onAllNodes(hasText("Add Alert Rule Trigger")).fetchSemanticsNodes().isNotEmpty() }
+            composeRule.onNode(hasText(DeviceChecks.SNMP_INTERFACE_DOWN) and hasClickAction()).performScrollTo().performClick()
+            assertTrue("a device rule picks no hosts", composeRule.onAllNodes(hasContentDescription("Choose hosts")).fetchSemanticsNodes().isEmpty())
+            composeRule.onNodeWithTag("alertRule.device.$subject").performScrollTo().performClick()
+            await("its interfaces", 10_000) { composeRule.onAllNodes(hasTestTag("alertRule.item.omni-up")).fetchSemanticsNodes().isNotEmpty() }
+            composeRule.onNodeWithTag("alertRule.device.problem").performScrollTo().assertTextEquals("Pick the interfaces to watch")
+            composeRule.onNodeWithTag("alertRule.item.omni-up").performScrollTo().performClick()
+            composeRule.onNodeWithText("Notes (optional)", substring = true).performScrollTo().performTextReplacement(NOTE)
+            composeRule.onNodeWithText("Confirm").performClick()
+            await("the interface rule saved", 10_000) { rules().size == 1 }
+            val down = rules().single()
+            assertEquals(listOf<Any>(subject, DeviceChecks.SNMP_INTERFACE_DOWN, "omni-up", "2m"), listOf(down.serverId, down.metricName, down.target, down.triggerWindow))
+            // From the first reading rather than after two minutes, to keep the suite short.
+            vm.updateAlertRule(down.copy(triggerWindow = "0m"))
+            vm.addAlertRule(subject, DeviceChecks.SNMP_UPS_ON_BATTERY, "/", 0f, "CRITICAL", "0m", NOTE)
+            vm.addAlertRule(subject, DeviceChecks.SNMP_UPS_BATTERY_LOW, "/", DeviceChecks.DEFAULT_CHARGE_PERCENT, "WARNING", "0m", NOTE)
+            await("three rules", 10_000) { rules().size == 3 && rules().all { it.triggerWindow == "0m" } }
+            fun rule(metric: String): AlertRuleEntity = rules().single { it.metricName == metric }
+            val onBattery = rule(DeviceChecks.SNMP_UPS_ON_BATTERY)
+            val low = rule(DeviceChecks.SNMP_UPS_BATTERY_LOW)
+            val all = listOf(down, onBattery, low)
+            // Devices are read once a minute for their rules; adding one reads it at once.
+            await("each rule alerts", 150_000, { firing().map { it.ruleId } }) { firing().map { it.ruleId }.toSet() == all.map { it.id }.toSet() }
+            fun summary(r: AlertRuleEntity) = vm.hostCheckResults[r.id to subject]?.summary
+            assertEquals("1 interface down: omni-up", summary(down))
+            assertEquals("on battery: 7 min left, 18% charged", summary(onBattery))
+            assertEquals("battery low: 18% charged, 7 min left", summary(low))
+            fun notification(r: AlertRuleEntity) = TestNotifications.text(alertNotificationId(r.id, subject))
+            await("the notifications", 10_000, { all.map(::notification) }) {
+                all.map(::notification) == listOf("Down: omni-up", "UPS on battery: 7 min left, 18% charged", "The UPS reports a low battery: 18% charged, 7 min left")
+            }
+
+            // The rule list says what each last saw; the incident names the device.
+            val ruleList = composeRule.onNode(hasScrollToNodeAction() and hasAnyDescendant(isRuleSwitch()))
+            ruleList.performScrollToNode(hasTestTag("alertRule.enabled.${down.id}"))
+            composeRule.onNode(hasTestTag("alertRule.check.${down.id}") and hasText("1 interface down: omni-up", substring = true), useUnmergedTree = true).assertExists()
+            composeRule.runOnUiThread { vm.activeAlertsTab = 0 }
+            await("the incident", 10_000) { composeRule.onAllNodes(hasText("Device: $PREFIX v2c", substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+
+            // And its card says what is alerting.
+            composeRule.runOnUiThread {
+                vm.navigateTo(Screen.Network)
+                vm.activeNetworkTab = SNMP_TAB
+            }
+            await("the card's alerts", 10_000) {
+                composeRule.onAllNodes(hasTestTag("snmp.alerts.${v2c.id}") and hasText(DeviceChecks.SNMP_INTERFACE_DOWN, substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // Delete asks first, and takes its rules, incidents and their notifications with it.
             composeRule.onNodeWithTag("snmp.delete.${v2c.id}").performScrollTo().performClick()
             composeRule.onNodeWithTag("snmp.delete.confirm").performClick()
             await("v2c device deleted", 10_000) { vm.snmpDevices.value.none { it.id == v2c.id } }
             assertTrue(mine().map { it.name } == listOf("$PREFIX v3"))
+            await("its rules and incidents", 10_000, { rules() to firing() }) { rules().isEmpty() && firing().isEmpty() }
+            assertTrue("its alert history", db.alertHistoryDao().getAlertHistory().none { it.serverId == subject })
+            await("its notifications", 10_000) { all.all { TestNotifications.posted(alertNotificationId(it.id, subject)) == null } }
         } finally {
-            for (d in db.snmpDeviceDao().getAllSnmpDevices().filter { it.name.startsWith(PREFIX) }) db.snmpDeviceDao().deleteSnmpDevice(d.id)
+            forgetMine(vm, db)
+            vm.saveAlertsEnabled(originalAlertsEnabled)
         }
+    }
+
+    /** Deletes this suite's devices with their alert rows, and any rule of its left without one. */
+    private suspend fun forgetMine(vm: AppViewModel, db: AppDatabase) {
+        for (d in db.snmpDeviceDao().getAllSnmpDevices().filter { it.name.startsWith(PREFIX) }) vm.deleteSnmpDevice(d)
+        db.alertRuleDao().getAllRules().filter { it.notes == NOTE }.forEach(vm::deleteAlertRule)
+        await("this suite's devices and rules deleted", 10_000) {
+            runBlocking { db.snmpDeviceDao().getAllSnmpDevices().none { it.name.startsWith(PREFIX) } && db.alertRuleDao().getAllRules().none { it.notes == NOTE } }
+        }
+    }
+
+    private fun isRuleSwitch() = SemanticsMatcher("an alert rule's switch") {
+        it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("alertRule.enabled.") == true
     }
 
     /**
@@ -151,6 +246,7 @@ class E2eSnmpDevicesTest {
 
     private companion object {
         const val PREFIX = "E2E SNMP"
+        const val NOTE = "E2E SNMP device rule"
         const val HOST = "10.0.2.2"
         const val SNMP_TAB = 9
     }

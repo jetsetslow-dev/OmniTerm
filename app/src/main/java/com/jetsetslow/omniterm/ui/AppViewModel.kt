@@ -993,9 +993,23 @@ internal fun BackupSelection.withPortForwardsSelected(enabled: Boolean): BackupS
 internal fun BackupSelection.withAlertHistorySelected(enabled: Boolean): BackupSelection =
     copy(alertHistory = enabled).withReferentialClosure()
 
-/** Preserve the global server id while requiring a concrete mapping for server-scoped records. */
-internal fun remapBackupServerId(oldServerId: Int, serverIdMap: Map<Int, Int>): Int? =
-    if (oldServerId == 0) 0 else serverIdMap[oldServerId]
+/**
+ * Preserve the global server id while requiring a concrete mapping for server-scoped records: a
+ * host's through [serverIdMap], a device's ([AlertSubjects], below 0) through [deviceSubjects].
+ */
+internal fun remapBackupServerId(oldServerId: Int, serverIdMap: Map<Int, Int>, deviceSubjects: Map<Int, Int> = emptyMap()): Int? = when {
+    oldServerId == 0 -> 0
+    oldServerId < 0 -> deviceSubjects[oldServerId]
+    else -> serverIdMap[oldServerId]
+}
+
+/**
+ * Whether a restored alert rule comes back on. A backup check runs a command with a password on the
+ * host by itself, an image check has the host ask registries on the internet, and a device check has
+ * this phone read the device every minute, so each comes back switched off until turned on here.
+ */
+internal fun restoredRuleEnabled(enabled: Boolean, metric: String, serverId: Int): Boolean =
+    enabled && metric != HostChecks.BACKUP_AGE && metric != HostChecks.IMAGE_UPDATES && !AlertSubjects.isDevice(serverId)
 
 /** Rule ids that must be serialized for the selected alert rows to remain resolvable on restore. */
 internal fun backupRuleIdsForSelection(
@@ -3390,11 +3404,13 @@ class AppViewModel @JvmOverloads constructor(
                 // emits a non-empty list), so the timer comes alive on its own without burning a
                 // DB read on a tick. addServer() also explicitly restarts polling as a belt-and-braces.
                 if (servers.value.isEmpty()) {
-                    servers.first { it.isNotEmpty() }
+                    // Device alert rules need no host: with one, the devices are still read.
+                    combine(servers, repository.rulesFlow) { hosts, rules -> hosts.isNotEmpty() || rules.any { AlertSubjects.isDevice(it.serverId) } }
+                        .first { it }
                 }
 
                 val currentServers = repository.getAllServers()
-                if (currentServers.isEmpty()) { delay(telemetryIntervalMs); continue }
+                if (currentServers.isEmpty()) { startDeviceChecks(); delay(deviceCheckIntervalMs()); continue }
 
                 // Mark the cycle start so the UI countdown timers can sync to the real cadence.
                 withContext(Dispatchers.Main) { lastTelemetryStartMs = System.currentTimeMillis() }
@@ -3414,6 +3430,7 @@ class AppViewModel @JvmOverloads constructor(
                 }
 
                 startEndpointChecks()
+                startDeviceChecks()
 
                 val cutoff = System.currentTimeMillis() - (metricsRetentionDays * 24L * 60 * 60 * 1000)
                 repository.pruneMetrics(cutoff)
@@ -3839,7 +3856,7 @@ class AppViewModel @JvmOverloads constructor(
                 else -> null
             }
             val overThreshold = currentValue != null && currentValue > r.thresholdValue
-            applyAlertSample(r, srv, currentValue, overThreshold, activeAlerts, now, staleGapMs)
+            applyAlertSample(r, srv.alertSubject(), currentValue, overThreshold, activeAlerts, now, staleGapMs)
         }
     }
 
@@ -3849,23 +3866,23 @@ class AppViewModel @JvmOverloads constructor(
      */
     private suspend fun applyAlertSample(
         r: AlertRuleEntity,
-        srv: ServerEntity,
+        subject: AlertSubject,
         currentValue: Float?,
         overThreshold: Boolean,
         activeAlerts: List<ActiveAlertEntity>,
         now: Long,
         staleGapMs: Long,
-        notificationTarget: String = srv.host,
+        notificationTarget: String = subject.host,
         notificationText: String? = null,
     ) {
-        val breachKey = r.id to srv.id
+        val breachKey = r.id to subject.id
         val triggered = alertBreachTracker.onSample(
             breachKey, overThreshold, now,
             windowMs = triggerWindowMs(r.triggerWindow),
             staleGapMs = staleGapMs,
         )
 
-        val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
+        val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == subject.id }
         val currentAlert = existing?.let { alert ->
             if (currentValue != null && alert.currentValue != currentValue) {
                 // Refresh the reading without replacing the incident row. Re-inserting it
@@ -3886,7 +3903,7 @@ class AppViewModel @JvmOverloads constructor(
             if (!currentlyActive && !isMuted) {
                 val alert = ActiveAlertEntity(
                     ruleId = r.id,
-                    serverId = srv.id,
+                    serverId = subject.id,
                     metricName = r.metricName,
                     currentValue = currentValue ?: 0f,
                     thresholdValue = r.thresholdValue,
@@ -3894,14 +3911,14 @@ class AppViewModel @JvmOverloads constructor(
                     triggeredTime = now
                 )
                 repository.insertAlert(alert)
-                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget, notificationText)
+                postAlertNotification(subject, r, currentValue ?: 0f, notificationTarget, notificationText)
                 // Opt-in per rule: its runbook runs on this host, in the background, once.
-                if (r.runbookAuto && r.runbookScriptId != null) AlertRunbooks.start(getApplication(), r.id, srv.id, now)
+                if (r.runbookAuto && r.runbookScriptId != null && subject.id > 0) AlertRunbooks.start(getApplication(), r.id, subject.id, now)
                 forwardAlert(
                     AlertForwarding.Event(
-                        resolved = false, severity = r.severity, host = srv.name, rule = r.metricName,
-                        title = alertNotificationTitle(r, srv),
-                        text = alertNotificationText(srv, r, currentValue ?: 0f, notificationTarget, notificationText),
+                        resolved = false, severity = r.severity, host = subject.name, rule = r.metricName,
+                        title = alertNotificationTitle(r, subject),
+                        text = alertNotificationText(subject, r, currentValue ?: 0f, notificationTarget, notificationText),
                         value = currentValue ?: 0f, threshold = r.thresholdValue, timeMs = now,
                     ),
                 )
@@ -3910,15 +3927,15 @@ class AppViewModel @JvmOverloads constructor(
             // Recovered — but only after enough consecutive clean samples (hysteresis),
             // so one jittery dip doesn't flap an incident closed and re-open.
             if (currentAlert != null) {
-                recordAlertHistory(currentAlert, "resolved", srv.name)
+                recordAlertHistory(currentAlert, "resolved", subject.name)
                 repository.deleteAlert(currentAlert.id)
-                clearAlertNotification(r.id, srv.id)
+                clearAlertNotification(r.id, subject.id)
                 // A muted incident stays quiet everywhere, its recovery included.
                 if (currentAlert.mutedUntil <= now) {
                     forwardAlert(
                         AlertForwarding.Event(
-                            resolved = true, severity = r.severity, host = srv.name, rule = r.metricName,
-                            title = "Resolved: ${srv.name}", text = "${r.metricName} on ${srv.name} is back to normal",
+                            resolved = true, severity = r.severity, host = subject.name, rule = r.metricName,
+                            title = "Resolved: ${subject.name}", text = "${r.metricName} on ${subject.name} is back to normal",
                             value = currentValue ?: currentAlert.currentValue, threshold = r.thresholdValue, timeMs = now,
                         ),
                     )
@@ -3997,7 +4014,7 @@ class AppViewModel @JvmOverloads constructor(
             val current = repository.getAllRules().find { it.id == rule.id }
             if (current != rule) return@withLock
             applyAlertSample(
-                rule, srv, value, EndpointChecks.breached(rule, value), repository.getActiveAlerts(),
+                rule, srv.alertSubject(), value, EndpointChecks.breached(rule, value), repository.getActiveAlerts(),
                 now = System.currentTimeMillis(),
                 staleGapMs = endpointCheckIntervalMs(rule, result, breached = true) * 3,
                 notificationTarget = result.target,
@@ -4153,7 +4170,7 @@ class AppViewModel @JvmOverloads constructor(
                 hostCheckResults[key] = EndpointChecks.Result(value, HostChecks.summary(HostChecks.IMAGE_UPDATES, value, names), "")
             }
             applyAlertSample(
-                rule, srv, value, value > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
+                rule, srv.alertSubject(), value, value > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
                 staleGapMs = hostCheckIntervalMs() * 3,
                 notificationText = HostChecks.alertText(HostChecks.IMAGE_UPDATES, value, rule.thresholdValue, names),
             )
@@ -4197,7 +4214,7 @@ class AppViewModel @JvmOverloads constructor(
             }
             show(EndpointChecks.Result(value, BackupChecks.summary(value, outcome.detail), ""))
             applyAlertSample(
-                rule, srv, value, BackupChecks.breached(value, rule.thresholdValue), repository.getActiveAlerts(), System.currentTimeMillis(),
+                rule, srv.alertSubject(), value, BackupChecks.breached(value, rule.thresholdValue), repository.getActiveAlerts(), System.currentTimeMillis(),
                 staleGapMs = BackupChecks.INTERVAL_MS * 3,
                 notificationText = BackupChecks.alertText(target, value, rule.thresholdValue, outcome.detail),
             )
@@ -4230,7 +4247,7 @@ class AppViewModel @JvmOverloads constructor(
                 withContext(Dispatchers.Main) { hostCheckResults[key] = result }
                 if (sample == null) continue
                 applyAlertSample(
-                    rule, srv, sample.first, sample.first > rule.thresholdValue, activeAlerts, now,
+                    rule, srv.alertSubject(), sample.first, sample.first > rule.thresholdValue, activeAlerts, now,
                     staleGapMs = hostCheckIntervalMs() * 3,
                     notificationText = HostChecks.alertText(rule.metricName, sample.first, rule.thresholdValue, sample.second),
                 )
@@ -4280,7 +4297,7 @@ class AppViewModel @JvmOverloads constructor(
                 hostCheckResults[key] = EndpointChecks.Result(status, HostChecks.summary(HostChecks.SCRIPT_CHECK, status, names), "")
             }
             applyAlertSample(
-                rule, srv, status, status > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
+                rule, srv.alertSubject(), status, status > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
                 staleGapMs = hostCheckIntervalMs() * 3,
                 notificationText = HostChecks.alertText(HostChecks.SCRIPT_CHECK, status, rule.thresholdValue, names),
             )
@@ -4321,12 +4338,128 @@ class AppViewModel @JvmOverloads constructor(
                     hostCheckResults[rule.id to srv.id] = EndpointChecks.Result(value, HostChecks.describe(HostChecks.HOST_OFFLINE, value), "")
                 }
                 applyAlertSample(
-                    rule, srv, value, value > rule.thresholdValue, activeAlerts, now,
+                    rule, srv.alertSubject(), value, value > rule.thresholdValue, activeAlerts, now,
                     staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L),
                     notificationText = HostChecks.alertText(HostChecks.HOST_OFFLINE, value, rule.thresholdValue, emptyList()),
                 )
             }
         }
+    }
+
+    /** When each device's rules are next read, by subject ([AlertSubjects]). */
+    private val deviceChecksDueAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    private val deviceCheckRounds = LatestRun(viewModelScope, Dispatchers.IO)
+
+    /** At most once a minute, and never more often than hosts are polled. */
+    private fun deviceCheckIntervalMs() = telemetryIntervalMs.coerceAtLeast(DeviceChecks.MIN_INTERVAL_MS)
+
+    /**
+     * Reads every SNMP device and Proxmox VE server an alert rule watches, when it is due: one poll
+     * per device for all its rules, from this phone. Called each telemetry cycle, so it pauses with
+     * polling (battery saver). Only reads: nothing here changes a device or a guest.
+     */
+    private fun startDeviceChecks() = deviceCheckRounds.request { runDeviceChecks() }
+
+    private suspend fun runDeviceChecks() {
+        if (!alertsEnabled) return
+        // From a phone with no network every device fails to answer, which says nothing about it.
+        if (!phoneHasNetwork()) return
+        val rules = repository.getAllRules().filter { it.enabled && DeviceChecks.isDeviceCheck(it.metricName) && AlertSubjects.isDevice(it.serverId) }
+        if (rules.isEmpty()) return
+        val interval = deviceCheckIntervalMs()
+        coroutineScope {
+            for ((subject, subjectRules) in rules.groupBy { it.serverId }) {
+                val now = System.currentTimeMillis()
+                if (now < (deviceChecksDueAt[subject] ?: 0L)) continue
+                deviceChecksDueAt[subject] = now + interval
+                launch { checkDevice(subject, subjectRules, interval) }
+            }
+        }
+    }
+
+    /**
+     * One read of device [subject] for its [rules]: a poll younger than half the pace (the screen's,
+     * say) is used as it is. A device that cannot be read leaves every incident as it is.
+     */
+    private suspend fun checkDevice(subject: Int, rules: List<AlertRuleEntity>, interval: Long) {
+        val id = AlertSubjects.deviceId(subject)
+        when (AlertSubjects.kind(subject)) {
+            AlertSubjects.Kind.SNMP -> {
+                val device = repository.getAllSnmpDevices().find { it.id == id } ?: return
+                val outcome = readSnmpDevice(device, maxAgeMs = interval / 2).outcome
+                val snapshot = (outcome as? SnmpDevices.Outcome.Answered)?.snapshot
+                val failure = (outcome as? SnmpDevices.Outcome.Failed)?.reason
+                evaluateDeviceRules(AlertSubject(subject, device.name, device.host), rules, failure, interval) { rule ->
+                    snapshot?.let { DeviceChecks.snmpReading(rule.metricName, rule.target, it) }
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * Feeds each of [rules] what [read] gives it, or shows why it was not checked ([failure], or the
+     * device does not report it), for the rule list.
+     */
+    private suspend fun evaluateDeviceRules(
+        subject: AlertSubject,
+        rules: List<AlertRuleEntity>,
+        failure: String?,
+        interval: Long,
+        read: (AlertRuleEntity) -> DeviceChecks.Reading?,
+    ) {
+        val app = getApplication<Application>()
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            // A rule may have been edited or deleted while the device was read.
+            val current = repository.getAllRules().associateBy { it.id }
+            val activeAlerts = repository.getActiveAlerts()
+            val now = System.currentTimeMillis()
+            for (rule in rules) {
+                if (current[rule.id] != rule) continue
+                val key = rule.id to subject.id
+                val reading = if (failure == null) read(rule) else null
+                if (reading == null) {
+                    val why = failure?.let { app.getString(R.string.script_check_unknown, it) } ?: app.getString(R.string.device_check_not_reported)
+                    withContext(Dispatchers.Main) { hostCheckResults[key] = EndpointChecks.Result(null, why, "") }
+                    continue
+                }
+                withContext(Dispatchers.Main) {
+                    hostCheckResults[key] = EndpointChecks.Result(reading.value, DeviceChecks.summary(rule.metricName, reading.value, reading.names), "")
+                }
+                applyAlertSample(
+                    rule, subject, reading.value, DeviceChecks.breached(rule.metricName, reading.value, rule.thresholdValue), activeAlerts, now,
+                    staleGapMs = interval * 3,
+                    notificationText = DeviceChecks.alertText(rule.metricName, reading.value, rule.thresholdValue, reading.names),
+                )
+            }
+        }
+    }
+
+    /** Reads device [subject]'s rules now (the incident popup's Refresh). */
+    private fun checkDeviceNow(subject: Int) {
+        deviceChecksDueAt.remove(subject)
+        startDeviceChecks()
+    }
+
+    /** Refresh from an incident: probes its host again, or reads its device again. */
+    fun refreshAlertSubject(serverId: Int) {
+        when {
+            serverId > 0 -> refreshServer(serverId)
+            AlertSubjects.isDevice(serverId) -> checkDeviceNow(serverId)
+        }
+    }
+
+    /**
+     * Deletes device [subject] with [delete], and with it its alert rules, incidents (and their
+     * notifications) and history.
+     */
+    private suspend fun forgetAlertSubject(subject: Int, delete: suspend () -> Unit) = alertStateMutex.withLock {
+        val rules = repository.getAllRules().filter { it.serverId == subject }
+        repository.getActiveAlerts().filter { it.serverId == subject }.forEach { clearAlertNotification(it.ruleId, it.serverId) }
+        withContext(Dispatchers.IO) { delete() }
+        rules.forEach { alertBreachTracker.forgetRule(it.id); resetEndpointChecks(it.id) }
+        deviceChecksDueAt.remove(subject)
     }
 
     /**
@@ -4347,14 +4480,29 @@ class AppViewModel @JvmOverloads constructor(
     }
 
 
-    private fun alertNotificationTitle(rule: AlertRuleEntity, srv: ServerEntity) = "${rule.severity}: ${srv.name}"
+    /** Who an alert is about, by name and address: a host, or a device read from this phone ([AlertSubjects]). */
+    data class AlertSubject(val id: Int, val name: String, val host: String)
+
+    private fun ServerEntity.alertSubject() = AlertSubject(id, name, host)
+
+    /** Who incident or rule [serverId] is about now, or null when it is gone (or is "All hosts"). */
+    private suspend fun alertSubject(serverId: Int): AlertSubject? = when (AlertSubjects.kind(serverId)) {
+        AlertSubjects.Kind.HOST -> repository.getServerById(serverId)?.alertSubject()
+        AlertSubjects.Kind.SNMP -> repository.getAllSnmpDevices().find { it.id == AlertSubjects.deviceId(serverId) }
+            ?.let { AlertSubject(serverId, it.name, it.host) }
+        AlertSubjects.Kind.PROXMOX -> repository.getAllProxmoxServers().find { it.id == AlertSubjects.deviceId(serverId) }
+            ?.let { AlertSubject(serverId, it.name, it.host) }
+        AlertSubjects.Kind.ALL_HOSTS -> null
+    }
+
+    private fun alertNotificationTitle(rule: AlertRuleEntity, subject: AlertSubject) = "${rule.severity}: ${subject.name}"
 
     /** An alert's notification line; forwarded alerts carry the same words. */
     private fun alertNotificationText(
-        srv: ServerEntity,
+        subject: AlertSubject,
         rule: AlertRuleEntity,
         value: Float,
-        target: String = srv.host,
+        target: String = subject.host,
         detail: String? = null,
     ): String {
         val mountSuffix = if (rule.metricName == "Disk Usage" && rule.mountPoint.isNotBlank()) " on ${rule.mountPoint}" else ""
@@ -4376,6 +4524,7 @@ class AppViewModel @JvmOverloads constructor(
             EndpointChecks.isEndpointMetric(rule.metricName) -> EndpointChecks.alertText(rule, target, value)
             // Re-posted later (after a mute ends) without the names the probe found.
             HostChecks.isHostCheck(rule.metricName) -> HostChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
+            DeviceChecks.isDeviceCheck(rule.metricName) -> DeviceChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
             else -> "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
         }
     }
@@ -4434,10 +4583,10 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
     private suspend fun postAlertNotification(
-        srv: ServerEntity,
+        subject: AlertSubject,
         rule: AlertRuleEntity,
         value: Float,
-        target: String = srv.host,
+        target: String = subject.host,
         detail: String? = null,
     ) {
         val app = getApplication<Application>()
@@ -4445,15 +4594,15 @@ class AppViewModel @JvmOverloads constructor(
         val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
         val openAppIntent = Intent(app, MainActivity::class.java)
         openAppIntent.setClass(app, MainActivity::class.java)
-        openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
+        openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${subject.id}")
         openAppIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         val contentIntent = PendingIntent.getActivity(
-            app, alertNotificationId(rule.id, srv.id), openAppIntent,
+            app, alertNotificationId(rule.id, subject.id), openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val builder = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
-            .setContentTitle(alertNotificationTitle(rule, srv))
-            .setContentText(alertNotificationText(srv, rule, value, target, detail))
+            .setContentTitle(alertNotificationTitle(rule, subject))
+            .setContentText(alertNotificationText(subject, rule, value, target, detail))
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)
@@ -4462,19 +4611,19 @@ class AppViewModel @JvmOverloads constructor(
         // The runbook opens Fleet with it ready to run on this host; the user still confirms there.
         if (runbook != null) {
             val runIntent = Intent(app, MainActivity::class.java)
-                .setData(Uri.parse(NotificationLinks.runbook(rule.id, srv.id)))
+                .setData(Uri.parse(NotificationLinks.runbook(rule.id, subject.id)))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             builder.addAction(
                 0,
                 app.getString(R.string.alert_runbook_run, runbook.name),
                 // Same request code as the tap: a different URI makes it a different PendingIntent.
                 PendingIntent.getActivity(
-                    app, alertNotificationId(rule.id, srv.id), runIntent,
+                    app, alertNotificationId(rule.id, subject.id), runIntent,
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 ),
             )
         }
-        nm.notify(alertNotificationId(rule.id, srv.id), builder.build())
+        nm.notify(alertNotificationId(rule.id, subject.id), builder.build())
     }
 
     /**
@@ -6031,6 +6180,8 @@ class AppViewModel @JvmOverloads constructor(
             if (EndpointChecks.isEndpointMetric(metricName)) {
                 // Check it now rather than at the next poll, so the rule list shows a result.
                 startEndpointChecks()
+            } else if (DeviceChecks.isDeviceCheck(metricName)) {
+                checkDeviceNow(serverId)
             } else if (HostChecks.isHostCheck(metricName)) {
                 hostChecksDueAt.clear()
                 evaluateCachedAlertTargets(serverId)
@@ -6301,6 +6452,7 @@ class AppViewModel @JvmOverloads constructor(
         val outcome: SnmpDevices.Outcome,
         val rates: Map<Int, Pair<Long, Long>> = emptyMap(),
         val problems: Map<Int, SnmpDevices.NewProblems> = emptyMap(),
+        val at: Long = System.currentTimeMillis(),
     )
 
     /** Each device's last poll, by id, kept in memory only. */
@@ -6321,9 +6473,10 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** Deletes [device], with its alert rules, incidents and their history. */
     fun deleteSnmpDevice(device: SnmpDeviceEntity) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { repository.deleteSnmpDevice(device.id) }
+            forgetAlertSubject(AlertSubjects.snmp(device.id)) { repository.deleteSnmpDevice(device.id) }
             snmpReadings.remove(device.id)
         }
     }
@@ -6334,17 +6487,31 @@ class AppViewModel @JvmOverloads constructor(
         snmpPolling.add(device.id)
         viewModelScope.launch {
             try {
-                val outcome = snmpOutcome(device)
-                val previous = (snmpReadings[device.id]?.outcome as? SnmpDevices.Outcome.Answered)?.snapshot
-                val answered = outcome as? SnmpDevices.Outcome.Answered
-                val rates = answered?.let { SnmpDevices.rates(previous, it.snapshot) }.orEmpty()
-                val problems = answered?.let { SnmpDevices.newProblems(previous, it.snapshot) }.orEmpty()
-                snmpReadings[device.id] = SnmpReading(outcome, rates, problems)
+                readSnmpDevice(device)
             } finally {
                 snmpPolling.remove(device.id)
             }
         }
     }
+
+    private val snmpPollLocks = java.util.concurrent.ConcurrentHashMap<Int, Mutex>()
+
+    /**
+     * Polls [device], or gives its kept reading when that is younger than [maxAgeMs]; one poll of a
+     * device at a time, so the screen and the alert checks share it. The reading is kept for the
+     * screen, with rates and new errors against the one before.
+     */
+    internal suspend fun readSnmpDevice(device: SnmpDeviceEntity, maxAgeMs: Long = 0L): SnmpReading =
+        snmpPollLocks.computeIfAbsent(device.id) { Mutex() }.withLock {
+            val kept = withContext(Dispatchers.Main) { snmpReadings[device.id] }
+            if (kept != null && System.currentTimeMillis() - kept.at < maxAgeMs) return@withLock kept
+            val outcome = snmpOutcome(device)
+            val previous = (kept?.outcome as? SnmpDevices.Outcome.Answered)?.snapshot
+            val answered = outcome as? SnmpDevices.Outcome.Answered
+            val rates = answered?.let { SnmpDevices.rates(previous, it.snapshot) }.orEmpty()
+            val problems = answered?.let { SnmpDevices.newProblems(previous, it.snapshot) }.orEmpty()
+            SnmpReading(outcome, rates, problems).also { withContext(Dispatchers.Main) { snmpReadings[device.id] = it } }
+        }
 
     /**
      * One poll of [device] from this phone. A device with a tunnel in use is not polled at all:
@@ -6393,9 +6560,10 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** Deletes [server], with its alert rules, incidents and their history. */
     fun deleteProxmoxServer(server: ProxmoxServerEntity) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { repository.deleteProxmoxServer(server.id) }
+            forgetAlertSubject(AlertSubjects.proxmox(server.id)) { repository.deleteProxmoxServer(server.id) }
             proxmoxViews.remove(server.id)
         }
     }
@@ -15645,11 +15813,10 @@ class AppViewModel @JvmOverloads constructor(
                 } else {
                     val now = System.currentTimeMillis()
                     val rules = repository.getAllRules().associateBy { it.id }
-                    val servers = repository.getAllServers().associateBy { it.id }
                     active.filter { !it.acknowledged && it.mutedUntil < now }.forEach { alert ->
                         val rule = rules[alert.ruleId]
-                        val server = servers[alert.serverId]
-                        if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                        val subject = alertSubject(alert.serverId)
+                        if (rule != null && subject != null) postAlertNotification(subject, rule, alert.currentValue)
                     }
                 }
             }
@@ -15986,15 +16153,15 @@ class AppViewModel @JvmOverloads constructor(
                 recordAlertHistory(alert.copy(mutedUntil = 0L), "unmuted")
                 if (alertsEnabled && !alert.acknowledged) {
                     val rule = repository.getAllRules().find { it.id == alert.ruleId }
-                    val server = repository.getServerById(alert.serverId)
-                    if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                    val subject = alertSubject(alert.serverId)
+                    if (rule != null && subject != null) postAlertNotification(subject, rule, alert.currentValue)
                 }
             }
         }
     }
 
     private suspend fun recordAlertHistory(alert: ActiveAlertEntity, status: String, knownServerName: String? = null) {
-        val serverName = knownServerName ?: repository.getServerById(alert.serverId)?.name ?: "server"
+        val serverName = knownServerName ?: alertSubject(alert.serverId)?.name ?: "server"
         repository.insertAlertHistory(
             AlertHistoryEntity(
                 activeAlertId = alert.id,
@@ -16030,6 +16197,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (evaluationChanged) resetEndpointChecks(rule.id)
             }
             if (EndpointChecks.isEndpointMetric(rule.metricName)) startEndpointChecks()
+            if (DeviceChecks.isDeviceCheck(rule.metricName)) checkDeviceNow(rule.serverId)
         }
     }
 
@@ -16178,15 +16346,19 @@ class AppViewModel @JvmOverloads constructor(
         // include it so the alert's old rule id can be mapped to the seeded/restored rule on import.
         val customRules = customRulesOnly(rules)
         val exportedServerIds = srvs.mapTo(mutableSetOf()) { it.id }
+        // Alert rows are about a host, or a device that goes with the hosts ([AlertSubjects]).
+        val exportedSubjectIds = exportedServerIds + if (closedSelection.servers) {
+            snmpDevices.map { AlertSubjects.snmp(it.id) } + proxmoxServers.map { AlertSubjects.proxmox(it.id) }
+        } else emptyList()
         val ruleIdsForBackup = backupRuleIdsForSelection(
             customRuleIds = customRules.mapTo(mutableSetOf()) { it.id },
             activeAlertRuleIds = activeAlerts
-                .filter { it.serverId == 0 || it.serverId in exportedServerIds }
+                .filter { it.serverId == 0 || it.serverId in exportedSubjectIds }
                 .mapTo(mutableSetOf()) { it.ruleId },
             selection = closedSelection,
         )
         val rulesForBackup = rules.filter {
-            it.id in ruleIdsForBackup && (it.serverId == 0 || it.serverId in exportedServerIds)
+            it.id in ruleIdsForBackup && (it.serverId == 0 || it.serverId in exportedSubjectIds)
         }
         val exportedRuleIds = rulesForBackup.mapTo(mutableSetOf()) { it.id }
         // Script ids differ from device to device, so a rule names its scripts by category and
@@ -16216,7 +16388,7 @@ class AppViewModel @JvmOverloads constructor(
         }
         val historyArr = org.json.JSONArray()
         val historyForBackup = if (closedSelection.alertHistory) {
-            alertHistories.filter { it.serverId == 0 || it.serverId in exportedServerIds }
+            alertHistories.filter { it.serverId == 0 || it.serverId in exportedSubjectIds }
         } else emptyList()
         for (h in historyForBackup) {
             historyArr.put(org.json.JSONObject().apply {
@@ -16260,7 +16432,7 @@ class AppViewModel @JvmOverloads constructor(
         val snmpArr = org.json.JSONArray()
         for (d in if (closedSelection.servers) snmpDevices else emptyList()) {
             snmpArr.put(org.json.JSONObject().apply {
-                put("name", d.name); put("host", d.host); put("port", d.port); put("version", d.version)
+                put("id", d.id); put("name", d.name); put("host", d.host); put("port", d.port); put("version", d.version)
                 put("community", d.community); put("user", d.user); put("authProtocol", d.authProtocol)
                 put("authPassword", d.authPassword); put("privProtocol", d.privProtocol); put("privPassword", d.privPassword)
                 put("tunnelId", d.tunnelId ?: 0); put("notes", d.notes)
@@ -16270,7 +16442,7 @@ class AppViewModel @JvmOverloads constructor(
         val proxmoxArr = org.json.JSONArray()
         for (p in if (closedSelection.servers) proxmoxServers else emptyList()) {
             proxmoxArr.put(org.json.JSONObject().apply {
-                put("name", p.name); put("host", p.host); put("port", p.port); put("tokenId", p.tokenId)
+                put("id", p.id); put("name", p.name); put("host", p.host); put("port", p.port); put("tokenId", p.tokenId)
                 put("tokenSecret", p.tokenSecret); put("fingerprint", p.fingerprint)
                 put("tunnelId", p.tunnelId ?: 0); put("tunnelHost", p.tunnelHost); put("notes", p.notes)
             })
@@ -16312,7 +16484,7 @@ class AppViewModel @JvmOverloads constructor(
         val activeAlertArr = org.json.JSONArray()
         val activeAlertsForBackup = if (closedSelection.activeAlerts) {
             activeAlerts.filter { alert ->
-                alert.ruleId in exportedRuleIds && (alert.serverId == 0 || alert.serverId in exportedServerIds)
+                alert.ruleId in exportedRuleIds && (alert.serverId == 0 || alert.serverId in exportedSubjectIds)
             }
         } else emptyList()
         for (a in activeAlertsForBackup) {
@@ -16594,8 +16766,19 @@ class AppViewModel @JvmOverloads constructor(
      * Restores a backup's SNMP devices (dedup by name and address). A device whose tunnel was not
      * restored keeps a missing one, so it is never polled directly. Returns how many were added.
      */
-    private suspend fun restoreSnmpDevices(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>): Int {
-        val existingSnmp = repository.getAllSnmpDevices().mapTo(mutableSetOf()) { "${it.name}|${it.host}|${it.port}" }
+    /** How many devices a restore added, and each backed-up device's alert subject → its subject here. */
+    private class RestoredDevices(val snmp: Int = 0, val proxmox: Int = 0, val subjects: Map<Int, Int> = emptyMap())
+
+    /** Restores a backup's SNMP devices and Proxmox servers, before the alert rules about them. */
+    private suspend fun restoreDevices(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>): RestoredDevices {
+        val subjects = mutableMapOf<Int, Int>()
+        val snmp = restoreSnmpDevices(root, tunnelIdMap, subjects)
+        val proxmox = restoreProxmoxServers(root, tunnelIdMap, subjects)
+        return RestoredDevices(snmp, proxmox, subjects)
+    }
+
+    private suspend fun restoreSnmpDevices(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>, subjects: MutableMap<Int, Int>): Int {
+        val existingSnmp = repository.getAllSnmpDevices().associateTo(mutableMapOf()) { "${it.name}|${it.host}|${it.port}" to it.id }
         val snmpArr = root.optJSONArray("snmpDevices") ?: return 0
         var importedSnmp = 0
         for (i in 0 until snmpArr.length()) {
@@ -16615,9 +16798,13 @@ class AppViewModel @JvmOverloads constructor(
                 notes = o.optString("notes"),
             )
             if (device.name.isEmpty() || SnmpDevices.problem(device.access()) != null) continue
-            if (!existingSnmp.add("${device.name}|${device.host}|${device.port}")) continue
-            repository.insertSnmpDevice(device)
-            importedSnmp++
+            val oldId = o.optInt("id", 0)
+            val key = "${device.name}|${device.host}|${device.port}"
+            val id = existingSnmp[key] ?: repository.insertSnmpDevice(device).toInt().also {
+                existingSnmp[key] = it
+                importedSnmp++
+            }
+            if (oldId > 0) subjects[AlertSubjects.snmp(oldId)] = AlertSubjects.snmp(id)
         }
         return importedSnmp
     }
@@ -16626,8 +16813,8 @@ class AppViewModel @JvmOverloads constructor(
      * Restores a backup's Proxmox servers the same way (dedup by name and address; a tunnel that was
      * not restored stays missing, so the server is never reached directly). Returns how many were added.
      */
-    private suspend fun restoreProxmoxServers(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>): Int {
-        val existingProxmox = repository.getAllProxmoxServers().mapTo(mutableSetOf()) { "${it.name}|${it.host}|${it.port}" }
+    private suspend fun restoreProxmoxServers(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>, subjects: MutableMap<Int, Int>): Int {
+        val existingProxmox = repository.getAllProxmoxServers().associateTo(mutableMapOf()) { "${it.name}|${it.host}|${it.port}" to it.id }
         val proxmoxArr = root.optJSONArray("proxmoxServers") ?: return 0
         var importedProxmox = 0
         for (i in 0 until proxmoxArr.length()) {
@@ -16644,9 +16831,13 @@ class AppViewModel @JvmOverloads constructor(
                 notes = o.optString("notes"),
             )
             if (Proxmox.problem(server) != null) continue
-            if (!existingProxmox.add("${server.name}|${server.host}|${server.port}")) continue
-            repository.insertProxmoxServer(server)
-            importedProxmox++
+            val oldId = o.optInt("id", 0)
+            val key = "${server.name}|${server.host}|${server.port}"
+            val id = existingProxmox[key] ?: repository.insertProxmoxServer(server).toInt().also {
+                existingProxmox[key] = it
+                importedProxmox++
+            }
+            if (oldId > 0) subjects[AlertSubjects.proxmox(oldId)] = AlertSubjects.proxmox(id)
         }
         return importedProxmox
     }
@@ -17203,6 +17394,10 @@ class AppViewModel @JvmOverloads constructor(
                             importedScripts++
                         }
 
+                        // SNMP devices and Proxmox servers, with the hosts, before the alert rules about
+                        // them (in functions of their own: this one is at the JVM's size limit for a method).
+                        val restoredDevices = if (closedSelection.servers) restoreDevices(root, tunnelIdMap) else RestoredDevices()
+
                         // Alert rules (re-point serverId; dedup by server+metric+threshold+window+target).
                         fun sameRule(rule: AlertRuleEntity, serverId: Int, metric: String, threshold: Float, window: String, target: String) =
                             rule.serverId == serverId && rule.metricName == metric && rule.thresholdValue == threshold &&
@@ -17223,7 +17418,7 @@ class AppViewModel @JvmOverloads constructor(
                             val o = ruleArr.getJSONObject(i)
                             val oldRuleId = o.optInt("id", 0)
                             val oldServerId = o.optInt("serverId", 0)
-                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
+                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap, restoredDevices.subjects) ?: continue
                             val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
                             val window = o.optString("triggerWindow", "5m")
                             val metric = o.optString("metricName")
@@ -17245,10 +17440,7 @@ class AppViewModel @JvmOverloads constructor(
                                     serverId = mappedServerId, metricName = metric,
                                     mountPoint = o.optString("mountPoint", "/"), thresholdValue = threshold,
                                     severity = o.optString("severity", "WARNING"), triggerWindow = window,
-                                    // A backup check runs a command with a password on the host by
-                                    // itself, and an image check has the host ask registries on the
-                                    // internet, so each comes back switched off until turned on here.
-                                    enabled = o.optBoolean("enabled", true) && metric != HostChecks.BACKUP_AGE && metric != HostChecks.IMAGE_UPDATES,
+                                    enabled = restoredRuleEnabled(o.optBoolean("enabled", true), metric, mappedServerId),
                                     secret = o.optString("secret", "").substringBefore('\n'),
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
@@ -17273,7 +17465,7 @@ class AppViewModel @JvmOverloads constructor(
                             val o = activeAlertArr.getJSONObject(i)
                             val oldActiveAlertId = o.optInt("id", 0)
                             val oldServerId = o.optInt("serverId", 0)
-                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
+                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap, restoredDevices.subjects) ?: continue
                             val mappedRuleId = ruleIdMap[o.optInt("ruleId", 0)] ?: continue
                             val metric = o.optString("metricName")
                             val key = "$mappedRuleId|$mappedServerId|$metric"
@@ -17316,7 +17508,7 @@ class AppViewModel @JvmOverloads constructor(
                         var importedHistory = 0
                         for (i in 0 until if (closedSelection.alertHistory) historyArr.length() else 0) {
                             val o = historyArr.getJSONObject(i)
-                            val mappedServerId = remapBackupServerId(o.optInt("serverId", 0), serverIdMap) ?: continue
+                            val mappedServerId = remapBackupServerId(o.optInt("serverId", 0), serverIdMap, restoredDevices.subjects) ?: continue
                             val historyTime = o.optLong("historyTime", System.currentTimeMillis())
                             val triggeredTime = o.optLong("triggeredTime", historyTime)
                             val metricName = o.optString("metricName")
@@ -17402,10 +17594,6 @@ class AppViewModel @JvmOverloads constructor(
                             importedKube++
                         }
 
-                        // SNMP devices and Proxmox servers, with the hosts (in functions of their own:
-                        // this one is at the JVM's size limit for a method).
-                        val importedSnmp = if (closedSelection.servers) restoreSnmpDevices(root, tunnelIdMap) else 0
-                        val importedProxmox = if (closedSelection.servers) restoreProxmoxServers(root, tunnelIdMap) else 0
 
                         // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
                         // shareIdMap tracks old id → restored/existing id so per-share settings
@@ -17641,8 +17829,8 @@ class AppViewModel @JvmOverloads constructor(
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
                                 (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
                                 (if (importedKube > 0) "$importedKube Kubernetes cluster(s), " else "") +
-                                (if (importedSnmp > 0) "$importedSnmp SNMP device(s), " else "") +
-                                (if (importedProxmox > 0) "$importedProxmox Proxmox server(s), " else "") +
+                                (if (restoredDevices.snmp > 0) "${restoredDevices.snmp} SNMP device(s), " else "") +
+                                (if (restoredDevices.proxmox > 0) "${restoredDevices.proxmox} Proxmox server(s), " else "") +
                                 (if (importedSessions > 0) "$importedSessions tmux session(s), " else "") +
                                 (if (importedStacks > 0) "$importedStacks Compose stack(s), " else "") +
                                 (if (importedFleetRuns > 0) "$importedFleetRuns Fleet run(s), " else "") +

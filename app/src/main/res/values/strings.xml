@@ -753,6 +753,18 @@
     <string name="host_check_hint_containers">"Counts Docker and Podman containers that are unhealthy, restarting, or exited with an error. Containers you stopped do not count."</string>
     <string name="host_check_hint_storage">"Counts ZFS pools that are not ONLINE, degraded or inactive mdadm arrays, and drives whose SMART health is failing (SMART needs smartctl and root)."</string>
     <string name="host_check_hint_scrub">"Days since the last finished scrub of the host’s least recently scrubbed ZFS pool."</string>
+    <string name="device_check_hint_interface">"Alerts when an interface you pick is switched on with no link, or is no longer listed. Read from this phone over SNMP, once a minute."</string>
+    <string name="device_check_hint_on_battery">"Alerts when the UPS runs on its battery, as UPS-MIB (RFC 1628) or APC's PowerNet MIB reports it. Read from this phone over SNMP."</string>
+    <string name="device_check_hint_battery_low">"Alerts when the UPS's charge falls below the threshold, or the UPS itself reports a low battery. Read from this phone over SNMP."</string>
+    <string name="device_check_not_reported">"Not reported by this device"</string>
+    <string name="device_rule_summary_battery">"%1$s · Alerts below %2$s, or when the UPS reports a low battery, for %3$s"</string>
+    <string name="alert_device_subject">"Device: %1$s"</string>
+    <string name="device_alerts_firing">"Alerting: %1$s"</string>
+    <string name="alert_rule_device">"Device"</string>
+    <string name="alert_rule_pick_device">"Pick the device"</string>
+    <string name="alert_rule_items_interfaces">"Interfaces to watch"</string>
+    <string name="alert_rule_items_guests">"Guests that should be running"</string>
+    <string name="alert_rule_device_reading">"Reading the device…"</string>
     <string name="host_check_hint_ups">"Alerts when a UPS that NUT (upsc) can read is on battery or low battery."</string>
     <string name="host_check_hint_reboot">"Alerts when installed updates need a reboot: Debian, Ubuntu and Proxmox, the Red Hat family, Arch and FreeBSD."</string>
     <string name="host_check_hint_script">"Runs a saved script on the host once a minute and alerts when it exits with anything but 0. It runs without asking, so it must only read; a script that looks destructive, or has a {{value}} without a default, is refused."</string>
@@ -788,7 +800,7 @@
     <string name="proxmox_tunnel_host">"Address in the tunnel (optional)"</string>
     <string name="proxmox_tunnel_note">"Reached only through this tunnel, never directly; on a Wi-Fi the tunnel goes direct on, at the address above."</string>
     <string name="proxmox_delete_title">"Remove %1$s?"</string>
-    <string name="proxmox_delete_text">"Its address and token are removed from this phone. Nothing changes on the server."</string>
+    <string name="proxmox_delete_text">"Its address and token are removed from this phone, with its alert rules and their incidents. Nothing changes on the server."</string>
     <string name="proxmox_refresh">"Refresh"</string>
     <string name="proxmox_loading">"Reading…"</string>
     <string name="proxmox_trust_title">"Trust this server\'s certificate?"</string>
@@ -841,7 +853,7 @@
     <string name="snmp_add">"Add device"</string>
     <string name="snmp_none">"No SNMP devices yet."</string>
     <string name="snmp_delete_title">"Delete %1$s?"</string>
-    <string name="snmp_delete_text">"Its address, community and passwords are removed from this phone."</string>
+    <string name="snmp_delete_text">"Its address, community and passwords are removed from this phone, with its alert rules and their incidents."</string>
     <string name="snmp_poll">"Poll"</string>
     <string name="snmp_polling">"Polling…"</string>
     <string name="snmp_not_polled">"Not polled yet"</string>

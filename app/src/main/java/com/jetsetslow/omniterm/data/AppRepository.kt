@@ -63,7 +63,8 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun keepOnlyServers(keepServerIds: Set<Int>) {
         // Room expands an empty IN-list inconsistently across SQLite versions. A server ID is an
         // auto-generated positive integer, so this impossible sentinel makes the "keep none" case
-        // explicit while still preserving fleet-wide rule/alert/history rows with serverId == 0.
+        // explicit while still preserving fleet-wide rule/alert/history rows with serverId == 0,
+        // and those about a device (below 0, see AlertSubjects), which no host owns.
         val ids = keepServerIds.ifEmpty { setOf(Int.MIN_VALUE) }.toList()
         db.withTransaction {
             db.metricHistoryDao().deleteExceptServers(ids)
@@ -411,7 +412,10 @@ class AppRepository(private val db: AppDatabase) {
         db.snmpDeviceDao().getAllSnmpDevicesFlow().map { list -> list.map(::decryptSnmpDevice) }
     suspend fun getAllSnmpDevices(): List<SnmpDeviceEntity> = db.snmpDeviceDao().getAllSnmpDevices().map(::decryptSnmpDevice)
     suspend fun insertSnmpDevice(device: SnmpDeviceEntity): Long = db.snmpDeviceDao().insertSnmpDevice(encryptSnmpDevice(device))
-    suspend fun deleteSnmpDevice(id: Int) = db.snmpDeviceDao().deleteSnmpDevice(id)
+    suspend fun deleteSnmpDevice(id: Int) = db.withTransaction {
+        deleteAlertRowsOf(AlertSubjects.snmp(id))
+        db.snmpDeviceDao().deleteSnmpDevice(id)
+    }
 
     val wolTargetsFlow: Flow<List<WolTargetEntity>> = db.wolTargetDao().getAllWolTargetsFlow()
     suspend fun getAllWolTargets(): List<WolTargetEntity> = db.wolTargetDao().getAllWolTargets()
@@ -503,7 +507,17 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun insertProxmoxServer(server: ProxmoxServerEntity): Long = db.proxmoxServerDao().insert(
         server.copy(tokenSecret = requireNotNull(SecretStore.encrypt(server.tokenSecret)) { "The token could not be encrypted on this phone." }),
     )
-    suspend fun deleteProxmoxServer(id: Int) = db.proxmoxServerDao().delete(id)
+    suspend fun deleteProxmoxServer(id: Int) = db.withTransaction {
+        deleteAlertRowsOf(AlertSubjects.proxmox(id))
+        db.proxmoxServerDao().delete(id)
+    }
+
+    /** A device's alert rules, incidents and history ([AlertSubjects]); callers hold a transaction. */
+    private suspend fun deleteAlertRowsOf(subject: Int) {
+        db.alertRuleDao().deleteForServer(subject)
+        db.activeAlertDao().deleteForServer(subject)
+        db.alertHistoryDao().deleteForServer(subject)
+    }
     private fun decryptProxmoxServer(server: ProxmoxServerEntity) = server.copy(tokenSecret = SecretStore.decrypt(server.tokenSecret).orEmpty())
 
     // A device's community and passwords are kept only encrypted: one that cannot be encrypted is not saved.

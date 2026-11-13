@@ -1226,6 +1226,36 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     Guards seen failing with the fix removed: `aUpsIsReadFromTheUpsMibOrFromApcsPowerNet` (battery
     mapped to mains), `errorsAndDiscardsAreCountedSinceTheLastPollAndForgottenAfterAReboot` (reboot
     check removed). Credit: LibreNMS (which UPS and IF-MIB values to read).
+  - SNMP alert rules (Nov 13): `DeviceChecks` adds SNMP Interface Down (picked interfaces, kept one
+    per line in the rule's target; admin up with no link, or gone, is down), SNMP UPS On Battery and
+    SNMP UPS Battery Low (the UPS's own low flag reads -1, else the charge against a limit, 30 %).
+    A device rule's `serverId` is an `AlertSubjects` code below 0 (SNMP -2·id, Proxmox -(2·id+1)),
+    so no host query matches it; `keepOnlyServers` keeps those rows (`serverId > 0` in its three
+    DAO deletes) and deleting a device deletes its rules, incidents (with their notifications) and
+    history in one transaction. `runDeviceChecks` runs each telemetry cycle (also with no hosts),
+    reads each watched device at most once a minute for all its rules (`readSnmpDevice`, one poll
+    per device under a per-device lock, a poll younger than half the pace reused), and feeds the
+    usual `applyAlertSample`, so incidents, notifications, mutes, forwarding and history are the
+    host checks'. Adding or editing a device rule reads it at once; a phone without a network
+    reads nothing. Editor: device chips instead of the host picker, interface chips from the
+    device's last reading, no runbook. Backups export device subjects, remap them to the restored
+    device ids and restore device rules switched off (`restoredRuleEnabled`). The incident, the
+    rule list and the SNMP card name the device and what it saw. Credit: LibreNMS's alert rules.
+    Guards seen failing with the fix removed: `aDeviceSubjectIsNeverAHostIdAndKeepsItsKind`
+    (Proxmox code collided with SNMP's), `onlyThePickedInterfacesAlertAndOneThatIsGoneCountsAsDown`
+    (a vanished interface not counted), `aUpsOnBatteryAndALowBatteryAlert...` (the UPS's own low
+    flag ignored), `aBackedUpDeviceRuleComesBackAboutTheRestoredDeviceSwitchedOff` and
+    `aDeviceIdIsMappedThroughTheRestoredDevices...` (device rules restored on),
+    `deletingADeviceTakesItsAlertRowsAndCuttingHostsDownKeepsThem` (once without `serverId > 0`,
+    once without the delete's alert rows). Device: `E2eSnmpDevicesTest` (29 s) adds Interface Down
+    in the editor and both UPS rules, waits for the three incidents and notifications, and checks
+    the rule list, the incident's device name, the card's alert line and the delete. Host alert
+    suites still pass: HostChecks, AlertRunbook, AlertForwarding, AlertPopupQuickActions,
+    GlobalAlertsPopup, PhoneChecks. `E2ePhoneChecksTest` now waits for its rules to be deleted:
+    the activity closing cancelled the deletes and its two firing rules stayed for the next suite.
+    `E2eAlertLifecycleStressTest` passes through mute, recreate and unmute, then waits for the
+    host to go offline with Wi-Fi off; on the emulator the lab host is reached over adb reverse
+    and cellular stays up, so it never does (a lab assumption, not this change; to fix separately).
 
 ## Decision pivot — 2026-11-08
 
