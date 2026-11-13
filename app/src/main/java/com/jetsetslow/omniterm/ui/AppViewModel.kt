@@ -1334,15 +1334,17 @@ class AppViewModel @JvmOverloads constructor(
     var hideSensitiveInfo by mutableStateOf(false)
         private set
 
-    // Every process relaunch demands authentication when lock is enabled. Warm reopens additionally
-    // re-lock after the configured time away. The tracker is in-memory and monotonic: process death
-    // can never preserve a stale grace timestamp, and wall-clock changes cannot bypass the policy.
+    // App Lock's window is process-wide (AppLockGrace): it opens when OmniTerm stops being visible
+    // while unlocked and, within the chosen time, a return or a rebuilt screen stays unlocked. It
+    // survives Android closing the process in the background, and never a reboot, an update, a
+    // force stop or a crash.
     var appLockBackgroundTimeoutMs by mutableStateOf(DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS)
         private set
-    private val appLockTimeoutTracker = AppLockTimeoutTracker()
+    private val appLockGrace = AppLockGrace.get(application)
 
     /**
-     * Clock for the background lock timer: [android.os.SystemClock.elapsedRealtime] (CLOCK_BOOTTIME).
+     * Clock for the background lock timer: [android.os.SystemClock.elapsedRealtime] (CLOCK_BOOTTIME),
+     * through [AppLockClock].
      *
      * NOT System.nanoTime()/currentTimeMillis(). nanoTime is CLOCK_MONOTONIC, which STOPS while the
      * device is suspended in deep sleep — so backgrounding the app and letting the screen turn off
@@ -1350,7 +1352,7 @@ class AppViewModel @JvmOverloads constructor(
      * elapsedRealtime keeps counting through suspend while still being immune to wall-clock changes,
      * so a user-set timeout cannot be bypassed by moving the system clock backwards either.
      */
-    private fun appLockClockMs(): Long = android.os.SystemClock.elapsedRealtime()
+    private fun appLockClockMs(): Long = appLockGrace.nowMs()
 
     fun saveAppLockBackgroundTimeout(timeoutMs: Long) {
         appLockBackgroundTimeoutMs = normalizeAppLockBackgroundTimeout(timeoutMs)
@@ -1366,28 +1368,59 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Called only when the Activity genuinely becomes non-visible, not for configuration changes. */
     fun noteAppBackgrounded(nowMs: Long = appLockClockMs()) {
-        appLockTimeoutTracker.noteBackgrounded(nowMs)
+        // Before the settings are read, this screen has not decided whether it is locked; its
+        // cold-start decision below still sees whatever window an earlier screen left open.
+        if (!securitySettingsLoaded) return
+        appLockGrace.noteLeftForeground(
+            unlocked = !isAppLocked,
+            lockEnabled = shouldLockOnColdStart(),
+            timeoutMs = appLockBackgroundTimeoutMs,
+            nowMs = nowMs,
+        )
     }
 
     /** Consume one background interval and re-engage authentication when its timeout has elapsed. */
     fun relockIfNeeded(nowMs: Long = appLockClockMs()) {
         if (!securitySettingsLoaded) return
         if (
-            appLockTimeoutTracker.consumeShouldRelock(
-                nowMs = nowMs,
+            appLockGrace.shouldRelockOnReturn(
                 timeoutMs = appLockBackgroundTimeoutMs,
                 lockEnabled = isAppLockEnabled,
                 hasPin = !savedPin.isNullOrBlank(),
+                nowMs = nowMs,
             )
         ) {
-            currentPinInput = ""
-            lockScreenError = null
-            isAppLocked = true
+            lockApp()
         }
+    }
+
+    /** Locks at once, whatever the window: the lock screen's own "Lock now" and every relock. */
+    fun lockApp() {
+        appLockGrace.close()
+        if (!shouldLockOnColdStart()) return
+        currentPinInput = ""
+        lockScreenError = null
+        isAppLocked = true
     }
 
     private fun shouldLockOnColdStart(): Boolean =
         !savedPin.isNullOrBlank() && isAppLockEnabled
+
+    /**
+     * Whether this screen, new to this process or rebuilt in it, starts locked: always with App
+     * Lock on, unless an earlier screen left the app unlocked within its window. Runs once.
+     */
+    private fun evaluateColdStartLock() {
+        if (coldStartLockEvaluated) return
+        coldStartLockEvaluated = true
+        val lockOn = shouldLockOnColdStart()
+        isAppLocked = lockOn &&
+            !appLockGrace.startsUnlocked(
+                timeoutMs = appLockBackgroundTimeoutMs,
+                lockEnabled = lockOn,
+                hasPin = lockOn,
+            )
+    }
 
     var defaultKeepScreenOn by mutableStateOf(false)
     private var initialKeepScreenOnLoaded = false
@@ -1677,6 +1710,8 @@ class AppViewModel @JvmOverloads constructor(
     }
     var edittingSftpFile by mutableStateOf<SftpFile?>(null)
     var edittingSftpFilePath by mutableStateOf("")
+    /** The open SFTP editor's unsaved text, kept here so locking or a rotation cannot lose it. */
+    val sftpEditorDraft = EditorDraftSlot()
     var networkShareScanRunning by mutableStateOf(false); private set
     var networkShareScanStatus by mutableStateOf<String?>(null); private set
     var networkShareScanCidr by mutableStateOf("")
@@ -2915,10 +2950,7 @@ class AppViewModel @JvmOverloads constructor(
                 ?.toIntOrNull()?.coerceIn(5, 50) ?: 20
             batterySettingsLoaded = true
             evaluateCachedBatterySample()
-            if (!coldStartLockEvaluated) {
-                coldStartLockEvaluated = true
-                isAppLocked = hasPinLock
-            }
+            evaluateColdStartLock()
             securitySettingsLoaded = true
             // Covers the rare case where the app was backgrounded and foregrounded while this
             // authoritative database read was still in flight.
@@ -3059,11 +3091,9 @@ class AppViewModel @JvmOverloads constructor(
                 // Locking only once also prevents re-locking (and re-prompting biometrics) on every
                 // later settings write.
                 if (!coldStartLockEvaluated && list.isNotEmpty()) {
-                    coldStartLockEvaluated = true
-                    // Cold start: if app lock is enabled, demand the PIN/biometric on this relaunch.
-                    if (shouldLockOnColdStart()) {
-                        isAppLocked = true
-                    }
+                    // Cold start: if app lock is enabled, demand the PIN/biometric on this relaunch
+                    // unless the app was left unlocked within its window.
+                    evaluateColdStartLock()
                 }
 
                 if (backgroundKeepAlive && activeKeepaliveSessionsCount > 0) {
@@ -4654,7 +4684,7 @@ class AppViewModel @JvmOverloads constructor(
             val verifiedPin = currentPinInput
             // Unlock app successfully
             isAppLocked = false
-            appLockTimeoutTracker.clear()
+            appLockGrace.close()
             currentPinInput = ""
             lockScreenError = null
             migratePinHashAfterSuccess(verifiedPin)
@@ -4706,7 +4736,7 @@ class AppViewModel @JvmOverloads constructor(
 
     fun biometricSuccessUnlock() {
         isAppLocked = false
-        appLockTimeoutTracker.clear()
+        appLockGrace.close()
         currentPinInput = ""
         lockScreenError = null
         drainPendingExternalLaunches()
@@ -11452,6 +11482,8 @@ class AppViewModel @JvmOverloads constructor(
 
     // ── Share browser: in-app text file editing (parity with openSftpFileForEdit) ──
     var edittingShareFile by mutableStateOf<SftpFile?>(null)
+    /** The open share editor's unsaved text, kept here so locking or a rotation cannot lose it. */
+    val shareEditorDraft = EditorDraftSlot()
     var shareSaving by mutableStateOf(false); private set
     private val shareEditMaxBytes = 5L * 1024 * 1024   // guard against opening a huge binary as text
 
@@ -14549,7 +14581,7 @@ class AppViewModel @JvmOverloads constructor(
         if (!enabled) {
             useBiometrics = false
             isAppLocked = false
-            appLockTimeoutTracker.clear()
+            appLockGrace.close()
         }
         viewModelScope.launch {
             repository.insertSetting("app_lock_enabled", enabled.toString())
@@ -15036,7 +15068,7 @@ class AppViewModel @JvmOverloads constructor(
             isAppLockEnabled = false
             useBiometrics = false
             isAppLocked = false
-            appLockTimeoutTracker.clear()
+            appLockGrace.close()
             failedPinAttempts = 0
             pinLockedUntilMs = 0L
         }

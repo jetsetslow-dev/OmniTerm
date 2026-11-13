@@ -3067,12 +3067,16 @@ fun SftpFileEditor(
     // Network shares can't elevate, so their editor hides the sudo toggle entirely (rather than
     // showing a dead control). SFTP hosts leave it on.
     showSudo: Boolean = true,
+    // Held by the ViewModel so the text typed so far survives App Lock locking and unlocking, a
+    // rotation, or any other rebuild of this screen (EditorDraft).
+    draftSlot: EditorDraftSlot = remember { EditorDraftSlot() },
 ) {
-    var buffer by remember(file.name) { mutableStateOf(file.content) }
+    val draft = remember(file) { draftSlot.draftFor(file) }
+    var buffer by draft::text
     // Files open read-only so browsing a config can't corrupt it with a stray IME keystroke;
     // the pencil toggle in the top bar enables editing (and with it, Save). An empty file, such as
     // one just made with New file, has nothing to corrupt and opens ready to type.
-    var editMode by remember(file.name) { mutableStateOf(file.content.isEmpty()) }
+    var editMode by draft::editMode
     val dirty = buffer != file.content
     val lineCount = remember(buffer) { buffer.count { it == '\n' } + 1 }
 

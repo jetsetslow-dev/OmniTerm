@@ -1,7 +1,11 @@
 package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.ui.AppLockTimeoutDraft
-import com.jetsetslow.omniterm.ui.AppLockTimeoutTracker
+import com.jetsetslow.omniterm.ui.AppLockAwayRecord
+import com.jetsetslow.omniterm.ui.AppLockAwayStore
+import com.jetsetslow.omniterm.ui.AppLockClock
+import com.jetsetslow.omniterm.ui.AppLockGraceWindow
+import com.jetsetslow.omniterm.ui.PreviousExit
 import com.jetsetslow.omniterm.ui.DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS
 import com.jetsetslow.omniterm.ui.MAX_APP_LOCK_BACKGROUND_TIMEOUT_MS
 import com.jetsetslow.omniterm.ui.normalizeAppLockBackgroundTimeout
@@ -12,50 +16,68 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppLockTimeoutPolicyTest {
+    private fun window() = AppLockGraceWindow(
+        clock = object : AppLockClock {
+            override fun elapsedRealtimeMs() = 0L
+            override fun bootCount(): Int? = 1
+        },
+        store = object : AppLockAwayStore {
+            override fun read(): AppLockAwayRecord? = null
+            override fun write(record: AppLockAwayRecord) = Unit
+            override fun clear() = Unit
+        },
+        previousExit = { PreviousExit.LOCKS },
+        pid = 100,
+        installStamp = 1L,
+    )
+
     @Test
     fun locksAtConfiguredBoundary() {
-        val tracker = AppLockTimeoutTracker()
-        tracker.noteBackgrounded(1_000L)
+        val tracker = window()
+        tracker.noteLeftForeground(unlocked = true, lockEnabled = true, timeoutMs = 30_000L, nowMs = 1_000L)
 
         assertTrue(
-            tracker.consumeShouldRelock(
-                nowMs = 31_000L,
+            tracker.shouldRelockOnReturn(
                 timeoutMs = 30_000L,
                 lockEnabled = true,
                 hasPin = true,
+                nowMs = 31_000L,
             ),
         )
     }
 
     @Test
     fun returningBeforeTimeoutConsumesThatBackgroundInterval() {
-        val tracker = AppLockTimeoutTracker()
-        tracker.noteBackgrounded(1_000L)
+        val tracker = window()
+        tracker.noteLeftForeground(true, true, 30_000L, nowMs = 1_000L)
 
-        assertFalse(tracker.consumeShouldRelock(30_999L, 30_000L, true, true))
-        assertFalse(tracker.consumeShouldRelock(90_000L, 30_000L, true, true))
+        assertFalse(tracker.shouldRelockOnReturn(30_000L, true, true, nowMs = 30_999L))
+        assertFalse(tracker.shouldRelockOnReturn(30_000L, true, true, nowMs = 90_000L))
     }
 
     @Test
     fun duplicateStopsKeepEarliestBackgroundTime() {
-        val tracker = AppLockTimeoutTracker()
-        tracker.noteBackgrounded(1_000L)
-        tracker.noteBackgrounded(20_000L)
+        val tracker = window()
+        tracker.noteLeftForeground(true, true, 30_000L, nowMs = 1_000L)
+        tracker.noteLeftForeground(true, true, 30_000L, nowMs = 20_000L)
 
-        assertTrue(tracker.consumeShouldRelock(31_000L, 30_000L, true, true))
+        assertTrue(tracker.shouldRelockOnReturn(30_000L, true, true, nowMs = 31_000L))
     }
 
     @Test
-    fun disabledLockMissingPinAndClockRollbackDoNotLock() {
+    fun disabledLockAndMissingPinDoNotLockButTimeRunningBackwardsDoes() {
         fun result(enabled: Boolean, hasPin: Boolean, nowMs: Long): Boolean {
-            val tracker = AppLockTimeoutTracker()
-            tracker.noteBackgrounded(10_000L)
-            return tracker.consumeShouldRelock(nowMs, 0L, enabled, hasPin)
+            val tracker = window()
+            tracker.noteLeftForeground(true, true, 0L, nowMs = 10_000L)
+            return tracker.shouldRelockOnReturn(0L, enabled, hasPin, nowMs)
         }
 
         assertFalse(result(enabled = false, hasPin = true, nowMs = 10_000L))
         assertFalse(result(enabled = true, hasPin = false, nowMs = 10_000L))
-        assertFalse(result(enabled = true, hasPin = true, nowMs = 9_999L))
+        // Time since boot cannot run backwards within one process; if it seems to, fail closed.
+        val tracker = window()
+        tracker.noteLeftForeground(true, true, 60_000L, nowMs = 10_000L)
+        assertTrue(tracker.shouldRelockOnReturn(60_000L, true, true, nowMs = 9_999L))
     }
 
     @Test

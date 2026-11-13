@@ -247,9 +247,14 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
 - **On-device encryption** — credentials, private keys, sudo passwords, and proxy passwords use AES-GCM with an Android Keystore-managed key (hardware-backed where the device supports it).
 - **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it. If you reject a host's key, OmniTerm stops asking about it from background checks; it asks again when you connect to that host, tap **Retry** on it, or test its connection.
 - **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust. When a program on that host asks to use a security key through it, OmniTerm says so, and the user it is signing in as; cancel unless you started it. Such a request waits 20 seconds for the touch, including when the security key uses an SSH certificate.
-- **Biometric app lock** — lock the whole app behind biometrics or a PIN. Cold starts always lock;
-  warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration
-  up to 24 hours. Rotation does not start the background timer.
+- **Biometric app lock** — lock the whole app behind biometrics or a PIN. Choose how long it stays
+  unlocked after you leave OmniTerm: lock immediately, after 30 seconds, 1 minute, 5 minutes, or a
+  custom time up to 24 hours. The time counts from when you left. Switching apps, rotating the
+  phone, or Android closing OmniTerm in the background to free memory does not lock it sooner, and
+  changing the phone's clock does not change the time. It always locks when the time is up, when
+  the phone restarts, after a force stop, a crash or an update, and when you tap **Lock now** in
+  Settings. On Android 10 and older, and on Android 11 to 14 after you swipe OmniTerm away in
+  Recents, a fresh start always locks, because those versions do not say why the app closed.
 - **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
 - **Automation is opt-in** — other apps can run your scripts only after you turn on **Tools → Automation** and give them a token, and then only that token's script on its hosts. A request with a token OmniTerm does not know gets no answer at all.
 - **VPN tunnels stay inside OmniTerm** — a tunnel's configuration, with its private key, is stored encrypted on the phone; the app talks only to the peer it names, and a host with a tunnel is never dialled directly.
