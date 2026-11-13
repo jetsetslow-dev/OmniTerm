@@ -133,10 +133,12 @@ object TerminalSessionManager {
         val (generation, snap) = synchronized(session.emulator) {
             val generation = session.snapshotGeneration.incrementAndGet()
             val total = session.emulator.rowCount()
-            val count = session.viewportRowCount.coerceIn(1, 300)
+            val view = session.viewport.get()
+            val count = view.rowCount.coerceIn(1, 300)
             val maxFirst = (total - count).coerceAtLeast(0)
-            val first = if (session.followTail) maxFirst else session.viewportFirstRow.coerceIn(0, maxFirst)
-            session.viewportFirstRow = first
+            val first = if (view.followTail) maxFirst else view.firstRow.coerceIn(0, maxFirst)
+            // Only if the screen has not moved the viewport since: its own publish follows.
+            if (first != view.firstRow) session.viewport.compareAndSet(view, view.copy(firstRow = first))
             generation to session.emulator.snapshotRange(first, count)
         }
         // Mutation of SnapshotState must happen on Main thread.

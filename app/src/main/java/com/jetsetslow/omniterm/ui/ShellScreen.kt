@@ -3161,9 +3161,10 @@ private fun TerminalCanvas(
                     val dimmedFg = if (span.dim) lerpArgb(effectiveBg, resolvedFg, 0.6f) else resolvedFg
                     paint.color = ensureLegibleOnBackground(dimmedFg, effectiveBg)
                     // SGR text attributes: italic via glyph skew (no italic monospace variant is
-                    // guaranteed on-device), underline natively.
+                    // guaranteed on-device), underline and strike-through natively.
                     paint.textSkewX = if (span.italic) -0.25f else 0f
                     paint.isUnderlineText = span.underline
+                    paint.isStrikeThruText = span.strike
                     paint.alpha = 255
                     val x = col * cellWidthPx
                     val (glyphs, glyphWidths) = span.cellLayout()
@@ -3182,7 +3183,8 @@ private fun TerminalCanvas(
                     for (i in glyphs.indices) {
                         val glyphWidth = glyphWidths[i].coerceIn(1, 2)
                         val cellCenterX = col * cellWidthPx + (glyphWidth * cellWidthPx) / 2f
-                        native.drawText(glyphs[i], cellCenterX, baselineY, paint)
+                        // Concealed text (SGR 8) keeps its cells and background, not its glyphs.
+                        if (!span.hidden) native.drawText(glyphs[i], cellCenterX, baselineY, paint)
                         col += glyphWidth
                     }
                 }
@@ -3203,6 +3205,7 @@ private fun TerminalCanvas(
                         // glyph must stay readable on the cursor block whatever the theme pairing.
                         regularPaint.textSkewX = 0f
                         regularPaint.isUnderlineText = false
+                        regularPaint.isStrikeThruText = false
                         regularPaint.color = ensureLegibleOnBackground(backgroundArgb, cursorArgb)
                         // Clip to the cursor cell, but retain the glyph's original two-cell origin.
                         // Re-centering a wide glyph in the continuation cell shifts it and paints

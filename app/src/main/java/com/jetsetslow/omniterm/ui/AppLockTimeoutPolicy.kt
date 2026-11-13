@@ -86,35 +86,3 @@ private fun parseAppLockCustomDuration(value: String, unit: String): Long? {
 
 internal fun shouldRecordAppBackground(isChangingConfigurations: Boolean): Boolean =
     !isChangingConfigurations
-
-/**
- * In-process foreground/background tracker for the app lock.
- *
- * The timestamp is deliberately not persisted: process recreation is handled by the stricter
- * cold-start lock. Callers supply monotonic time so wall-clock changes cannot shorten or extend the
- * configured interval.
- */
-internal class AppLockTimeoutTracker {
-    private var backgroundedAtMs: Long? = null
-
-    fun noteBackgrounded(nowMs: Long) {
-        // Keep the earliest unmatched stop if Android delivers duplicate lifecycle callbacks.
-        if (backgroundedAtMs == null) backgroundedAtMs = nowMs
-    }
-
-    fun clear() {
-        backgroundedAtMs = null
-    }
-
-    fun consumeShouldRelock(
-        nowMs: Long,
-        timeoutMs: Long,
-        lockEnabled: Boolean,
-        hasPin: Boolean,
-    ): Boolean {
-        val since = backgroundedAtMs ?: return false
-        backgroundedAtMs = null
-        if (!lockEnabled || !hasPin || nowMs < since) return false
-        return nowMs - since >= normalizeAppLockBackgroundTimeout(timeoutMs)
-    }
-}

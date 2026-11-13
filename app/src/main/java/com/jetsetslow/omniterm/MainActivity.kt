@@ -113,8 +113,8 @@ class MainActivity : AppCompatActivity() {
 
   override fun onStop() {
     super.onStop()
-    // Rotation/theme recreation must not count as leaving the app. A process restart still follows
-    // the independent cold-start lock path.
+    // Rotation/theme recreation must not count as leaving the app. Any other stop opens App Lock's
+    // window (AppLockGrace), which a later screen or process in that window takes over.
     if (com.jetsetslow.omniterm.ui.shouldRecordAppBackground(isChangingConfigurations)) {
       appViewModel?.noteAppBackgrounded()
     }
@@ -287,6 +287,8 @@ class MainActivity : AppCompatActivity() {
         .putLong(crashTimeKey, System.currentTimeMillis())
         .commit()
       runCatching { com.jetsetslow.omniterm.data.CrashLog.record(appContext, report) }
+      // A crash never leaves App Lock's window open for the next start.
+      com.jetsetslow.omniterm.ui.AppLockGrace.forgetAfterCrash(appContext)
       previous?.uncaughtException(thread, throwable)
     }
   }

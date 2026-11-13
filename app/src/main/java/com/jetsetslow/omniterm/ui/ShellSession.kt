@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlin.random.Random
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 private val TmuxNameAdjectives = listOf(
     "bouncy", "brisk", "cheery", "cozy", "curious", "dapper", "fizzy", "jolly",
@@ -79,6 +80,9 @@ internal fun displayTmuxSessionName(tmuxName: String): String =
         .replace(Regex("-[a-p]{32}$"), "")
         .replace('-', ' ')
 
+/** The rows a terminal pane shows: where it starts, how many, and whether it follows new output. */
+data class TerminalViewport(val firstRow: Int = 0, val rowCount: Int = 24, val followTail: Boolean = true)
+
 /**
  * Start the single newest-wins PTY resize consumer.
  *
@@ -123,9 +127,15 @@ class ShellSession(
     var terminalScreen by mutableStateOf(TerminalSnapshot.EMPTY)
     val snapshotGeneration = AtomicLong(0)
     var publishedSnapshotGeneration: Long = 0
-    var viewportFirstRow: Int = 0
-    var viewportRowCount: Int = 24
-    var followTail: Boolean = true
+    /**
+     * The rows the pane shows. The screen writes it on Main and every publish reads it on a
+     * background thread, so it is replaced whole and read once: a publish never pairs a new first
+     * row with an old row count or follow flag, which scrambled the rows shown while scrolling.
+     */
+    val viewport = AtomicReference(TerminalViewport())
+    val viewportFirstRow: Int get() = viewport.get().firstRow
+    val viewportRowCount: Int get() = viewport.get().rowCount
+    val followTail: Boolean get() = viewport.get().followTail
     /**
      * PTY grid this session is currently rendered at. Tracked per-session (not globally) so split
      * panes can each own their own dimensions — a side-by-side pane is narrower than a full-screen
@@ -260,8 +270,21 @@ class ShellSession(
     // ── Auto-reconnect / persistent-session state ──
     // Credentials + last known PTY size are kept so a dropped session can be reopened without the UI.
     var creds: SshCredentials? = null
-    var lastCols: Int = 80
-    var lastRows: Int = 24
+    // Written on Main by a resize, read by the reconnect loop on IO.
+    @Volatile var lastCols: Int = 80
+    @Volatile var lastRows: Int = 24
+
+    /**
+     * Takes [emulator]'s grid as this session's own size, the one its channel was opened with. The
+     * screen's size can change while a connection is being made, so the size it has now is not
+     * necessarily the size the emulator and the remote got.
+     */
+    fun matchGridTo(emulator: TerminalEmulator) {
+        termCols = emulator.cols
+        termRows = emulator.rows
+        lastCols = emulator.cols
+        lastRows = emulator.rows
+    }
     /** True ⇒ relaunch inside tmux on connect so the session survives drops (re-attached on reconnect). */
     var persistent: Boolean = false
     /**

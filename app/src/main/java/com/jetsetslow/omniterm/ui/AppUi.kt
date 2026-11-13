@@ -835,14 +835,17 @@ fun MainAppScreen(viewModel: AppViewModel) {
                         // Only dismiss once the save is verified persisted on the remote.
                         viewModel.edittingSftpFile = null
                         viewModel.edittingSftpFilePath = ""
+                        viewModel.sftpEditorDraft.clear()
                     }
                 },
                 onDismiss = {
                     viewModel.edittingSftpFile = null
                     viewModel.edittingSftpFilePath = ""
+                    viewModel.sftpEditorDraft.clear()
                 },
                 confirm = editorConfirm,
                 highlightLimit = viewModel.editorHighlightLimit,
+                draftSlot = viewModel.sftpEditorDraft,
             )
             ConfirmHost(editorConfirm)
         }
@@ -859,12 +862,19 @@ fun MainAppScreen(viewModel: AppViewModel) {
                 sudo = false,
                 onToggleSudo = {},
                 onSave = { buffer ->
-                    viewModel.shareSaveText(editingFile, buffer) { viewModel.edittingShareFile = null }
+                    viewModel.shareSaveText(editingFile, buffer) {
+                        viewModel.edittingShareFile = null
+                        viewModel.shareEditorDraft.clear()
+                    }
                 },
-                onDismiss = { viewModel.edittingShareFile = null },
+                onDismiss = {
+                    viewModel.edittingShareFile = null
+                    viewModel.shareEditorDraft.clear()
+                },
                 confirm = shareEditorConfirm,
                 highlightLimit = viewModel.editorHighlightLimit,
                 showSudo = false,
+                draftSlot = viewModel.shareEditorDraft,
             )
             ConfirmHost(shareEditorConfirm)
         }
