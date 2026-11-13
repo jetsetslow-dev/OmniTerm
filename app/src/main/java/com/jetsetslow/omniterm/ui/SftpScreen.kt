@@ -3105,7 +3105,7 @@ fun SftpFileEditor(
         error = error,
         saveLabel = if (sudo) "Save as root" else "Save & verify",
         readOnly = !editMode,
-        language = remember(file.name) { languageForFileName(file.name) },
+        language = remember(file.name) { languageForFileName(file.name, file.content.lineSequence().firstOrNull()) },
         highlightMaxChars = highlightLimit,
         topBarAction = {
             Row(verticalAlignment = Alignment.CenterVertically) {

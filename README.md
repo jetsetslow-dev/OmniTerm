@@ -107,6 +107,7 @@ Open **Files** to work with remote filesystems.
 
 **SFTP** browses the selected SSH host (the host picker lives here):
 - Upload, download, rename, delete, create folders, start a **new text file**, and **edit text files** in the built-in code editor (line numbers, syntax highlighting, find/replace, sudo-assisted writes).
+- The editor colours shell scripts and YAML the way they read: a string or heredoc that runs over several lines stays a string to its end, a YAML `|` or `>` block stays text, and an apostrophe in a word (`Don't`) or a keyword inside a word (`--local`, `$done`) no longer starts a colour. It also recognises `.bashrc`, `.zshrc`, `.profile`, `.env` files, `Dockerfile.prod`, `Containerfile`, `.j2` and `.tmpl` templates of YAML files, and scripts without an extension that start with a shell `#!` line. Line numbers stay beside their lines in long files, with emoji or wrapped lines.
 - **New file** shows progress and stays on the host and folder where you started it. Switching hosts while it finishes never opens a file from the new host. A stale browsing connection is replaced once; a failed fresh sign-in is reported without asking for a second one-time code.
 - **Multi-select** for batch copy/cut/download/delete; **sort** by name/size/date/type; **search** with a live folder filter, recursive tree search, and glob wildcards.
 - **Archive** the selection to zip/tar/tar.gz, or **extract here** an archive into a same-named subfolder — all server-side.
