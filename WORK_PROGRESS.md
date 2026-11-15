@@ -14,6 +14,12 @@ Review and merge remain the user's.
   closed the previous process itself; force stop, crash, ANR, update, reboot, Android 10 and older
   lock. "Lock now" added. Editor buffers survive a relock. Device: 10-minute window kept across an
   app switch and a background kill at 9:30, locked at 10:30 and after a reboot.
+  The PR's first CI run failed one window test (a follow-up commit fixes it): when the database
+  answered the start-up read before the settings collector saw its empty placeholder, the
+  placeholder then read App Lock (and battery saver) as off until the next emission, so leaving
+  that screen opened no window. Locally the read never won that race. The collector now ignores
+  the placeholder; a test with a database that answers at once fails without that (on App Lock, and
+  on battery saver alone) and passes with it.
 - **Terminal pipeline** (7628473): one publisher per session replaces the 16 ms throttle whose race
   dropped a burst's last update (B1); a new session opens at its emulator's size and the first
   measure of its pane is not skipped (B4); the viewport is one value read once per publish (B5); a
@@ -26,7 +32,8 @@ Review and merge remain the user's.
 - **Editor** (015fc58): stateful line lexer for shell and YAML (multi-line strings, heredocs, block
   scalars), quote and keyword boundaries, CRLF and tab keys, more file names and shebangs, per-line
   cache; the gutter is drawn from the field's layout (C1–C6, C8). No new languages.
-- **Dependencies** (d6d9d50): Roborazzi 1.79.0 with verified checksums.
+- **Dependencies** (d6d9d50, and a follow-up commit): Roborazzi 1.79.0; then Robolectric 4.18, KSP
+  2.3.14 and actions/setup-java 6.3.0, released during review; checksums written and verified.
 - Proof: every new JVM test fails on the code before its fix (old throttle 2/5, old sizing 1/1, old
   emulator 28/33, old highlighter 8/8, fixed-height gutter 1/9). On the API 35 emulator against the
   repo's SSH fixture, before → after: bursts whose last update stayed off screen 4/400 → 0/400 (and

@@ -13,10 +13,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelStore
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.SftpFile
+import com.jetsetslow.omniterm.data.tunnel.TunnelManager
 import com.jetsetslow.omniterm.ui.AppLockAwayRecord
 import com.jetsetslow.omniterm.ui.AppLockAwayStore
 import com.jetsetslow.omniterm.ui.AppLockClock
@@ -32,6 +34,7 @@ import com.jetsetslow.omniterm.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -138,10 +141,39 @@ class AppLockWindowRobolectricTest {
             val first = open()
             withContext(main) { first.biometricSuccessUnlock() }
             withContext(main) { first.noteAppBackgrounded() }
+            assertNotNull("leaving unlocked writes the record", store.record)
             clock.now += 59 * 60_000L
             // Same process: Don't keep activities, Back to exit, or the task removed while the
             // keep-alive service ran, then reopened from its notification.
             assertFalse(open().isAppLocked)
+        }
+    }
+
+    /**
+     * The database can answer the start-up read before the settings collector has seen its empty
+     * placeholder: the read's task then finishes first. The placeholder must not read App Lock as
+     * off afterwards: leaving that screen opened no window, and the next screen locked. A loaded
+     * build machine hit this in [aRebuiltScreenInTheSameProcessKeepsTheWindow]; here the database
+     * answers on the calling thread, so it happens every time.
+     */
+    @Test
+    fun aStartupReadThatAnswersAtOnceKeepsAppLockOn() {
+        withLock(60 * 60_000L, instantDatabase = true) { open ->
+            // Battery saver is read at start-up the same way.
+            open.repository.insertSetting("battery_saver_enabled", "true")
+            newProcess()
+            val (first, firstStart) = open.seeingStartup()
+            assertTrue("the start-up read finished in its first task", firstStart.loaded)
+            assertTrue("App Lock reads as on after the start-up read", firstStart.lockEnabled)
+            assertTrue("battery saver reads as on after the start-up read", firstStart.batterySaver)
+            withContext(main) { first.biometricSuccessUnlock() }
+            withContext(main) { first.noteAppBackgrounded() }
+            assertNotNull("leaving unlocked writes the record", store.record)
+
+            clock.now += 59 * 60_000L
+            val (_, secondStart) = open.seeingStartup()
+            assertTrue("App Lock reads as on in the rebuilt screen", secondStart.lockEnabled)
+            assertFalse("the rebuilt screen starts unlocked", secondStart.locked)
         }
     }
 
@@ -229,29 +261,77 @@ class AppLockWindowRobolectricTest {
 
     private lateinit var main: CoroutineDispatcher
 
+    /** What a new screen showed in the first main-thread task after the work its start began. */
+    private data class Startup(
+        val loaded: Boolean,
+        val lockEnabled: Boolean,
+        val locked: Boolean,
+        val batterySaver: Boolean,
+    )
+
+    /** Opens screens (ViewModels) the way the app does; `open()` waits until one has decided. */
+    private inner class Screens(
+        val repository: AppRepository,
+        private val application: Application,
+        private val store: ViewModelStore,
+    ) {
+        private var n = 0
+
+        suspend operator fun invoke(): AppViewModel = seeingStartup().first
+
+        suspend fun seeingStartup(): Pair<AppViewModel, Startup> {
+            lateinit var startup: Startup
+            val model = withContext(main) {
+                val model = AppViewModel(application)
+                // Queued behind every task the constructor queued, and before any they queue.
+                launch(main) {
+                    startup = Startup(
+                        model.securitySettingsLoaded,
+                        model.isAppLockEnabled,
+                        model.isAppLocked,
+                        model.batterySaverEnabled,
+                    )
+                }
+                model
+            }
+            store.put("vm${n++}", model)
+            waitWhileOnMain(main, 10_000) { !model.securitySettingsLoaded }
+            return model to startup
+        }
+    }
+
     /**
      * App Lock on with a PIN and [timeoutMs]; [block] gets `open`, which builds a ViewModel the way
-     * a new screen does and waits until it has decided whether it starts locked.
+     * a new screen does and waits until it has decided whether it starts locked. With
+     * [instantDatabase], an in-memory database answers reads on the calling thread.
      */
-    private fun withLock(timeoutMs: Long, block: suspend (open: suspend () -> AppViewModel) -> Unit) = runBlocking {
+    private fun withLock(
+        timeoutMs: Long,
+        instantDatabase: Boolean = false,
+        block: suspend (open: Screens) -> Unit,
+    ) = runBlocking {
         val executor = Executors.newSingleThreadExecutor()
         main = executor.asCoroutineDispatcher()
         Dispatchers.setMain(main)
         val store = ViewModelStore()
         val application = ApplicationProvider.getApplicationContext<Application>()
+        val sharedDatabase = AppDatabase.getDatabase(application)
+        val writes = Executors.newSingleThreadExecutor()
+        val instant = if (!instantDatabase) null else {
+            Room.inMemoryDatabaseBuilder(application, AppDatabase::class.java)
+                .setQueryExecutor { it.run() }
+                .setTransactionExecutor(writes)
+                .allowMainThreadQueries()
+                .build()
+                .also(AppDatabase::replaceForTests)
+        }
         val repository = AppRepository(AppDatabase.getDatabase(application))
         try {
             repository.insertSetting("app_pin", hashPinForStorage("4826"))
             repository.insertSetting("app_lock_enabled", "true")
             repository.insertSetting("biometrics_enabled", "false")
             repository.insertSetting("app_lock_grace_ms", timeoutMs.toString())
-            var n = 0
-            block {
-                val model = withContext(main) { AppViewModel(application) }
-                store.put("vm${n++}", model)
-                waitWhileOnMain(main, 10_000) { !model.securitySettingsLoaded }
-                model
-            }
+            block(Screens(repository, application, store))
         } finally {
             try {
                 clearViewModelsAndAwaitTerminalJobs(store, main)
@@ -259,6 +339,13 @@ class AppLockWindowRobolectricTest {
                 for (key in listOf("app_pin", "app_lock_enabled", "biometrics_enabled", "app_lock_grace_ms")) {
                     repository.deleteSetting(key)
                 }
+                if (instant != null) {
+                    AppDatabase.replaceForTests(sharedDatabase)
+                    // Each ViewModel points the tunnel lookup at its own repository.
+                    TunnelManager.attach(AppRepository(sharedDatabase))
+                    instant.close()
+                }
+                writes.shutdown()
                 Dispatchers.resetMain()
                 executor.shutdown()
             }

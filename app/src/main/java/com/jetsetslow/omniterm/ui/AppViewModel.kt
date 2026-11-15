@@ -1341,6 +1341,8 @@ class AppViewModel @JvmOverloads constructor(
     var appLockBackgroundTimeoutMs by mutableStateOf(DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS)
         private set
     private val appLockGrace = AppLockGrace.get(application)
+    /** Whether the settings collector has seen rows rather than allSettings' empty placeholder. */
+    private var settingsRowsSeen = false
 
     /**
      * Clock for the background lock timer: [android.os.SystemClock.elapsedRealtime] (CLOCK_BOOTTIME),
@@ -2963,6 +2965,14 @@ class AppViewModel @JvmOverloads constructor(
             // Every property assigned in here must be declared ABOVE the init block, or its
             // mutableStateOf delegate is still null and the app crashes on startup.
             allSettings.collect { list ->
+                // allSettings starts with an empty placeholder. When the start-up read above has
+                // already answered, the placeholder must not undo what it set: App Lock would read
+                // as off (no lock screen, and no window when the app is left) and battery saver as
+                // off until the next emission. A table that really is empty never arrives apart
+                // from the placeholder: the StateFlow drops the equal value, and the start-up read
+                // saw it empty too.
+                val placeholder = list.isEmpty() && !settingsRowsSeen
+                if (list.isNotEmpty()) settingsRowsSeen = true
                 val pinVal = list.find { it.key == "app_pin" }?.value
                 failedPinAttempts = list.find { it.key == "pin_failed_attempts" }
                     ?.value?.toIntOrNull()?.coerceIn(0, PIN_MAX_ATTEMPTS) ?: failedPinAttempts
@@ -3000,10 +3010,12 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 alertHistoryLimit = list.find { it.key == "alert_history_limit" }?.value
                     ?.toIntOrNull()?.coerceIn(10, 100) ?: 100
-                batterySaverEnabled = list.find { it.key == "battery_saver_enabled" }?.value == "true"
-                batterySaverThresholdPct = list.find { it.key == "battery_saver_threshold" }?.value
-                    ?.toIntOrNull()?.coerceIn(5, 50) ?: 20
-                if (batterySettingsLoaded) evaluateCachedBatterySample()
+                if (!placeholder) {
+                    batterySaverEnabled = list.find { it.key == "battery_saver_enabled" }?.value == "true"
+                    batterySaverThresholdPct = list.find { it.key == "battery_saver_threshold" }?.value
+                        ?.toIntOrNull()?.coerceIn(5, 50) ?: 20
+                    if (batterySettingsLoaded) evaluateCachedBatterySample()
+                }
                 list.find { it.key == "text_scale" }?.value?.let { textScale = it }
                 list.find { it.key == "accessibility" }?.value?.let { isAccessibilityEnabled = it == "true" }
                 list.find { it.key == "amoled" }?.value?.let { isAmoledEnabled = it == "true" }
@@ -3054,12 +3066,14 @@ class AppViewModel @JvmOverloads constructor(
                 )
 
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
-                savedPin = pinVal
-                isAppLockEnabled = hasPinLock
-                appLockBackgroundTimeoutMs = normalizeAppLockBackgroundTimeout(
-                    list.find { it.key == "app_lock_grace_ms" }?.value?.toLongOrNull(),
-                )
-                useBiometrics = hasPinLock && bioEnabled
+                if (!placeholder) {
+                    savedPin = pinVal
+                    isAppLockEnabled = hasPinLock
+                    appLockBackgroundTimeoutMs = normalizeAppLockBackgroundTimeout(
+                        list.find { it.key == "app_lock_grace_ms" }?.value?.toLongOrNull(),
+                    )
+                    useBiometrics = hasPinLock && bioEnabled
+                }
                 // Screenshot blocking defaults on until explicitly set; terminal and credential
                 // screens are sensitive even when the user has not configured an app lock.
                 isFlagSecureEnabled = list.find { it.key == "flag_secure" }?.value
