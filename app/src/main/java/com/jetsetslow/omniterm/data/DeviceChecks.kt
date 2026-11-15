@@ -26,19 +26,23 @@ object AlertSubjects {
 
 /**
  * Alert rules about a device the phone reads itself, with no SSH host between: an SNMP device's
- * picked interfaces and its UPS. They are checked on the same pace and through the same incidents,
- * notifications and forwarding as host checks, and only read: nothing here changes a device.
+ * picked interfaces and its UPS, and a Proxmox VE server's backups and the guests that should run.
+ * They are checked on the same pace and through the same incidents, notifications and forwarding
+ * as host checks, and only read: nothing here changes a device or a guest.
  *
  * Credit: the interface and UPS alerts follow LibreNMS's alert rule collection (a port down, a UPS
- * on battery or with a low battery).
+ * on battery or with a low battery); the Proxmox ones read only what the Proxmox VE API documents.
  */
 object DeviceChecks {
     const val SNMP_INTERFACE_DOWN = "SNMP Interface Down"
     const val SNMP_UPS_ON_BATTERY = "SNMP UPS On Battery"
     const val SNMP_UPS_BATTERY_LOW = "SNMP UPS Battery Low"
+    const val PROXMOX_BACKUP_FAILED = "Proxmox Backup Failed"
+    const val PROXMOX_GUEST_STOPPED = "Proxmox Guest Stopped"
 
     val SNMP = listOf(SNMP_INTERFACE_DOWN, SNMP_UPS_ON_BATTERY, SNMP_UPS_BATTERY_LOW)
-    val ALL = SNMP
+    val PROXMOX = listOf(PROXMOX_BACKUP_FAILED, PROXMOX_GUEST_STOPPED)
+    val ALL = SNMP + PROXMOX
 
     /** A battery the UPS itself calls low or depleted, whatever its charge: reads below 0 and alerts. */
     const val BATTERY_REPORTED_LOW = -1f
@@ -46,18 +50,18 @@ object DeviceChecks {
 
     fun isDeviceCheck(metricName: String) = metricName in ALL
     fun isSnmp(metricName: String) = metricName in SNMP
+    fun isProxmox(metricName: String) = metricName in PROXMOX
 
     /** Checks that alert on yes or no (any item down or stopped); only Battery Low takes a threshold. */
     fun isYesNo(metricName: String) = isDeviceCheck(metricName) && metricName != SNMP_UPS_BATTERY_LOW
 
-    /** Checks whose rule names the items to watch (interfaces), kept one per line in its target. */
-    fun picksItems(metricName: String) = metricName == SNMP_INTERFACE_DOWN
+    /** Checks whose rule names the items to watch (interfaces, guests), kept one per line in its target. */
+    fun picksItems(metricName: String) = metricName == SNMP_INTERFACE_DOWN || metricName == PROXMOX_GUEST_STOPPED
 
     fun defaultThreshold(metricName: String): Float = if (metricName == SNMP_UPS_BATTERY_LOW) DEFAULT_CHARGE_PERCENT else 0f
 
-    /** A link or the mains gets two minutes to come back. */
-    @Suppress("UNUSED_PARAMETER")
-    fun defaultWindow(metricName: String): String = "2m"
+    /** A failed backup alerts at once; a link, the mains or a guest gets two minutes to come back. */
+    fun defaultWindow(metricName: String): String = if (metricName == PROXMOX_BACKUP_FAILED) "0m" else "2m"
 
     /** Devices are read once a minute for their rules, and never more often than hosts are polled. */
     const val MIN_INTERVAL_MS = 60_000L
@@ -70,6 +74,7 @@ object DeviceChecks {
     /** Why a rule cannot be saved as it is, or null. */
     fun problem(metricName: String, target: String): String? = when {
         metricName == SNMP_INTERFACE_DOWN && picked(target).isEmpty() -> "Pick the interfaces to watch"
+        metricName == PROXMOX_GUEST_STOPPED && picked(target).none { it.toIntOrNull() != null } -> "Pick the guests that should be running"
         else -> null
     }
 
@@ -115,10 +120,37 @@ object DeviceChecks {
         else -> null
     }
 
+    /**
+     * What a Proxmox rule reads from [overview]. Backup Failed counts the guests whose newest finished
+     * backup failed, and a node's newest job whose guests are unknown when it failed; Guest Stopped
+     * the picked guests (by VM ID) that are not running, one no longer listed included.
+     */
+    fun proxmoxReading(metricName: String, target: String, overview: Proxmox.Overview): Reading? = when (metricName) {
+        PROXMOX_BACKUP_FAILED -> {
+            val failed = Proxmox.failedBackups(overview)
+            Reading(failed.size.toFloat(), failed)
+        }
+        PROXMOX_GUEST_STOPPED -> {
+            val byId = overview.guests.associateBy { it.vmid }
+            val stopped = picked(target).mapNotNull { it.toIntOrNull() }.mapNotNull { vmid ->
+                val g = byId[vmid]
+                when {
+                    g == null -> "VM $vmid (not found)"
+                    g.running -> null
+                    else -> "${g.label}: ${g.status.ifBlank { "unknown" }}"
+                }
+            }
+            Reading(stopped.size.toFloat(), stopped)
+        }
+        else -> null
+    }
+
     fun describe(metricName: String, value: Float): String = when (metricName) {
         SNMP_INTERFACE_DOWN -> plural(value.toInt(), "interface down", "interfaces down")
         SNMP_UPS_ON_BATTERY -> if (value > 0f) "on battery" else "on mains"
         SNMP_UPS_BATTERY_LOW -> if (value < 0f) "battery low" else "${value.toInt()}% charged"
+        PROXMOX_BACKUP_FAILED -> if (value > 0f) plural(value.toInt(), "failed backup") else "backups OK"
+        PROXMOX_GUEST_STOPPED -> if (value > 0f) plural(value.toInt(), "guest not running", "guests not running") else "all running"
         else -> value.toString()
     }
 
@@ -139,6 +171,8 @@ object DeviceChecks {
             SNMP_INTERFACE_DOWN -> if (listed.isEmpty()) describe(metricName, value) else "Down$with"
             SNMP_UPS_ON_BATTERY -> "UPS on battery$with"
             SNMP_UPS_BATTERY_LOW -> if (value < 0f) "The UPS reports a low battery$with" else "UPS battery at ${value.toInt()}% (limit ${threshold.toInt()}%)"
+            PROXMOX_BACKUP_FAILED -> if (listed.isEmpty()) describe(metricName, value) else "Backup failed$with"
+            PROXMOX_GUEST_STOPPED -> if (listed.isEmpty()) describe(metricName, value) else "Not running$with"
             else -> describe(metricName, value)
         }
     }

@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jetsetslow.omniterm.R
+import com.jetsetslow.omniterm.data.AlertSubjects
 import com.jetsetslow.omniterm.data.Proxmox
 import com.jetsetslow.omniterm.data.ProxmoxApi
 import com.jetsetslow.omniterm.data.ProxmoxServerEntity
@@ -121,6 +122,7 @@ private fun ProxmoxServerCard(
                 Spacer(Modifier.width(6.dp))
                 OmniButton(stringResource(R.string.delete), onDelete, small = true, color = OmniColors.red, modifier = Modifier.testTag("proxmox.delete.${server.id}"))
             }
+            DeviceAlertsLine(viewModel, AlertSubjects.proxmox(server.id), "proxmox.alerts.${server.id}")
             val untrusted = view?.untrusted
             when {
                 untrusted != null -> {

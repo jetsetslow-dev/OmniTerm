@@ -2,19 +2,27 @@ package com.jetsetslow.omniterm
 
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import com.jetsetslow.omniterm.data.AlertSubjects
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.BackupChecks
 import com.jetsetslow.omniterm.data.CertificateTrust
+import com.jetsetslow.omniterm.data.DeviceChecks
 import com.jetsetslow.omniterm.data.HostChecks
 import com.jetsetslow.omniterm.data.Proxmox
 import com.jetsetslow.omniterm.data.ProxmoxServerEntity
@@ -54,6 +62,9 @@ import kotlin.math.abs
  *   server saved for the same address (127.0.0.1, port 8006 reversed like the hosts'): a guest a
  *   scheduled job backed up counts from when the job finished, and one whose backups only failed
  *   alerts.
+ * - Alert rules on a server read it from the phone: Backup Failed names the guest whose newest
+ *   backup failed, Guest Stopped a picked guest that is not running, nothing is started, and
+ *   removing the server takes its rules and incidents.
  */
 class E2eProxmoxTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -316,6 +327,101 @@ class E2eProxmoxTest {
         }
     }
 
+    @Test fun serverRulesAlertOnAFailedBackupAndAGuestThatIsNotRunning() = runBlocking {
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue(args.getString("omniterm_e2e_proxmox") == "yes")
+        val token = requireNotNull(args.getString("pve_token")) { "-e pve_token is required" }
+        val fingerprint = requireNotNull(args.getString("pve_fingerprint")) { "-e pve_fingerprint is required" }
+        val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
+        composeRule.runOnUiThread { vm.isAppLocked = false }
+        val db = AppDatabase.getDatabase(composeRule.activity)
+        val originalAlertsEnabled = vm.alertsEnabled
+        val name = "$PREFIX rules"
+        fun rules() = runBlocking { db.alertRuleDao().getAllRules() }.filter { it.notes == DEVICE_NOTE }
+        suspend fun clean() {
+            for (s in db.proxmoxServerDao().getAll().filter { it.name == name }) vm.deleteProxmoxServer(s)
+            rules().forEach(vm::deleteAlertRule)
+            await("server and rules deleted", 10_000) { runBlocking { db.proxmoxServerDao().getAll() }.none { it.name == name } && rules().isEmpty() }
+        }
+        try {
+            clean()
+            TestNotifications.allow()
+            vm.saveAlertsEnabled(true)
+            val id = save(vm, ProxmoxServerEntity(name = name, host = HOST, tokenId = FULL_ID, tokenSecret = token, fingerprint = fingerprint))
+            await("server listed", 10_000) { vm.proxmoxServers.value.any { it.id == id } }
+            val server = vm.proxmoxServers.value.single { it.id == id }
+            // The fake keeps its state while it runs: VM 100 running, VM 101 stopped.
+            val api = vm.proxmoxApi(server)
+            val before = api.overview()
+            before.guests.single { it.vmid == 100 }.takeIf { !it.running }?.let { api.power(it, Proxmox.Power.START) }
+            before.guests.single { it.vmid == 101 }.takeIf { it.running }?.let { api.power(it, Proxmox.Power.STOP) }
+
+            // Guest Stopped in the editor: the server instead of hosts, its guests from what it reports.
+            val subject = AlertSubjects.proxmox(id)
+            composeRule.runOnUiThread {
+                vm.activeAlertsTab = 1
+                vm.navigateTo(Screen.Alerts)
+            }
+            composeRule.onNodeWithContentDescription("Add").performClick()
+            await("the rule editor", 10_000) { composeRule.onAllNodes(hasText("Add Alert Rule Trigger")).fetchSemanticsNodes().isNotEmpty() }
+            composeRule.onNode(hasText(DeviceChecks.PROXMOX_GUEST_STOPPED) and hasClickAction()).performScrollTo().performClick()
+            composeRule.onNodeWithTag("alertRule.device.$subject").performScrollTo().performClick()
+            await("its guests", 20_000) { composeRule.onAllNodes(hasTestTag("alertRule.item.101")).fetchSemanticsNodes().isNotEmpty() }
+            assertTrue("a template is not a guest to run", composeRule.onAllNodes(hasTestTag("alertRule.item.9000")).fetchSemanticsNodes().isEmpty())
+            composeRule.onNodeWithTag("alertRule.device.problem").performScrollTo().assertTextEquals("Pick the guests that should be running")
+            composeRule.onNodeWithTag("alertRule.item.100").performScrollTo().performClick()
+            composeRule.onNodeWithTag("alertRule.item.101").performScrollTo().performClick()
+            composeRule.onNodeWithText("Notes (optional)", substring = true).performScrollTo().performTextReplacement(DEVICE_NOTE)
+            composeRule.onNodeWithText("Confirm").performClick()
+            await("the guest rule saved", 10_000) { rules().size == 1 }
+            val picked = rules().single()
+            assertEquals(listOf<Any>(subject, DeviceChecks.PROXMOX_GUEST_STOPPED, "100\n101", "2m"), listOf(picked.serverId, picked.metricName, picked.target, picked.triggerWindow))
+            // From the first reading rather than after two minutes, to keep the suite short.
+            vm.updateAlertRule(picked.copy(triggerWindow = "0m"))
+            vm.addAlertRule(subject, DeviceChecks.PROXMOX_BACKUP_FAILED, "/", 0f, "CRITICAL", DeviceChecks.defaultWindow(DeviceChecks.PROXMOX_BACKUP_FAILED), DEVICE_NOTE)
+            await("two rules", 10_000) { rules().size == 2 && rules().all { it.triggerWindow == "0m" } }
+            val backup = rules().single { it.metricName == DeviceChecks.PROXMOX_BACKUP_FAILED }
+            val running = rules().single { it.metricName == DeviceChecks.PROXMOX_GUEST_STOPPED }
+            fun firing() = runBlocking { db.activeAlertDao().getActiveAlerts() }.filter { it.serverId == subject }
+            // Devices are read once a minute for their rules; adding one reads it at once.
+            await("both alert", 150_000, { firing().map { it.ruleId } }) { firing().map { it.ruleId }.toSet() == setOf(backup.id, running.id) }
+            assertEquals("1 failed backup: CT 200 (dns): ERROR: backup storage 'nas' is not online", vm.hostCheckResults[backup.id to subject]?.summary)
+            assertEquals("1 guest not running: VM 101 (db): stopped", vm.hostCheckResults[running.id to subject]?.summary)
+            fun notification(ruleId: Int) = TestNotifications.text(alertNotificationId(ruleId, subject))
+            await("the notifications", 10_000, { notification(backup.id) to notification(running.id) }) {
+                notification(backup.id) == "Backup failed: CT 200 (dns): ERROR: backup storage 'nas' is not online" &&
+                    notification(running.id) == "Not running: VM 101 (db): stopped"
+            }
+
+            // The rule list says what each last saw and which guests it watches; the incident names
+            // the server.
+            val ruleList = composeRule.onNode(hasScrollToNodeAction() and hasAnyDescendant(alertRuleSwitch()))
+            ruleList.performScrollToNode(hasTestTag("alertRule.enabled.${running.id}"))
+            composeRule.onNode(
+                hasTestTag("alertRule.check.${running.id}") and hasText("VM 100, VM 101 · 1 guest not running: VM 101 (db): stopped"),
+                useUnmergedTree = true,
+            ).assertExists()
+            composeRule.runOnUiThread { vm.activeAlertsTab = 0 }
+            await("the incident", 10_000) { composeRule.onAllNodes(hasText("Device: $name", substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+
+            // The server's card says what is alerting; nothing was started.
+            composeRule.runOnUiThread { vm.navigateTo(Screen.Proxmox) }
+            await("the card's alerts", 10_000) {
+                composeRule.onAllNodes(hasTestTag("proxmox.alerts.$id") and hasText(DeviceChecks.PROXMOX_BACKUP_FAILED, substring = true), useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            assertTrue("only read", !api.overview().guests.single { it.vmid == 101 }.running)
+
+            // Removing the server takes its rules and incidents with it.
+            vm.deleteProxmoxServer(server)
+            await("its rules and incidents", 10_000, { rules() to firing() }) { rules().isEmpty() && firing().isEmpty() }
+            await("its notifications", 10_000) { notification(backup.id) == null && notification(running.id) == null }
+        } finally {
+            clean()
+            vm.saveAlertsEnabled(originalAlertsEnabled)
+        }
+    }
+
     private suspend fun save(vm: AppViewModel, server: ProxmoxServerEntity): Int {
         val saved = CompletableDeferred<Result<Int>>()
         composeRule.runOnUiThread { vm.saveProxmoxServer(server) { saved.complete(it) } }
@@ -341,6 +447,7 @@ class E2eProxmoxTest {
         const val PREFIX = "E2E PVE"
         const val LAB_HOST = "E2E Foreground Demo"
         const val NOTE = "E2E PVE backup tasks"
+        const val DEVICE_NOTE = "E2E PVE server rules"
         const val HOST = "10.0.2.2"
         const val FULL_ID = "omniterm@pve!e2e"
         const val AUDIT_ID = "audit@pve!e2e"

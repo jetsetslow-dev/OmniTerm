@@ -756,6 +756,8 @@
     <string name="device_check_hint_interface">"Alerts when an interface you pick is switched on with no link, or is no longer listed. Read from this phone over SNMP, once a minute."</string>
     <string name="device_check_hint_on_battery">"Alerts when the UPS runs on its battery, as UPS-MIB (RFC 1628) or APC's PowerNet MIB reports it. Read from this phone over SNMP."</string>
     <string name="device_check_hint_battery_low">"Alerts when the UPS's charge falls below the threshold, or the UPS itself reports a low battery. Read from this phone over SNMP."</string>
+    <string name="device_check_hint_backup">"Alerts when a guest's newest finished backup (vzdump) task failed, naming the guest and why, or a backup job whose log could not be read failed. Read from this phone through the Proxmox VE API, once a minute."</string>
+    <string name="device_check_hint_guests">"Alerts when a guest you pick is not running, or is no longer listed. Read from this phone through the Proxmox VE API, once a minute. Nothing is started for you."</string>
     <string name="device_check_not_reported">"Not reported by this device"</string>
     <string name="device_rule_summary_battery">"%1$s · Alerts below %2$s, or when the UPS reports a low battery, for %3$s"</string>
     <string name="alert_device_subject">"Device: %1$s"</string>

@@ -4416,6 +4416,19 @@ class AppViewModel @JvmOverloads constructor(
                     snapshot?.let { DeviceChecks.snmpReading(rule.metricName, rule.target, it) }
                 }
             }
+            AlertSubjects.Kind.PROXMOX -> {
+                val server = repository.getAllProxmoxServers().find { it.id == id } ?: return
+                val (overview, failure) = try {
+                    proxmoxOverview(server, maxAgeMs = interval / 2) to null
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null to (e.message ?: e.javaClass.simpleName)
+                }
+                evaluateDeviceRules(AlertSubject(subject, server.name, server.host), rules, failure, interval) { rule ->
+                    overview?.let { DeviceChecks.proxmoxReading(rule.metricName, rule.target, it) }
+                }
+            }
             else -> Unit
         }
     }

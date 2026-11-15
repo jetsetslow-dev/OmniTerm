@@ -2,6 +2,7 @@ package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.AlertSubjects
 import com.jetsetslow.omniterm.data.DeviceChecks
+import com.jetsetslow.omniterm.data.Proxmox
 import com.jetsetslow.omniterm.data.SnmpDevices
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,7 +10,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** What the SNMP device alert rules read from a poll, and how a device is named as an alert's subject. */
+/** What the device alert rules read from an SNMP poll or a Proxmox VE overview, and how a device is named as an alert's subject. */
 class DeviceChecksTest {
     @Test
     fun aDeviceSubjectIsNeverAHostIdAndKeepsItsKind() {
@@ -65,5 +66,36 @@ class DeviceChecksTest {
         assertEquals("UPS battery at 25% (limit 30%)", DeviceChecks.alertText(low, 25f, 30f, listOf("25% charged")))
         assertEquals("The UPS reports a low battery: 45% charged", DeviceChecks.alertText(low, -1f, 30f, listOf("45% charged")))
         assertEquals("battery low", DeviceChecks.describe(low, -1f))
+    }
+
+    @Test
+    fun aGuestsNewestFailedBackupAlertsUntilOneFinishesAndOnlyPickedGuestsMustRun() {
+        fun guest(vmid: Int, name: String, status: String) = Proxmox.Guest("pve1", vmid, "qemu", name, status, null, null, null, null, null, false)
+        fun task(id: String, start: Long, status: String) = Proxmox.Task("UPID:pve1:$id:$start", "pve1", "vzdump", id, "root@pam", start, start + 60, status)
+        val guests = listOf(guest(100, "web", "running"), guest(101, "db", "stopped"), guest(102, "ci", "paused"))
+        val failedThenFixed = Proxmox.Overview("8.4", emptyList(), guests, emptyList(), listOf(
+            Proxmox.BackupRun(task("101", 300, "OK"), mapOf(101 to null)),
+            Proxmox.BackupRun(task("", 200, "job errors"), mapOf(100 to "no space left on device", 101 to "no space left on device")),
+            Proxmox.BackupRun(task("102", 100, "ERROR: storage offline"), mapOf(102 to "ERROR: storage offline")),
+        ))
+        val failed = DeviceChecks.PROXMOX_BACKUP_FAILED
+        val reading = DeviceChecks.proxmoxReading(failed, "", failedThenFixed)
+        assertEquals("101 backed up since; 100 and 102 not", DeviceChecks.Reading(2f, listOf("VM 100 (web): no space left on device", "VM 102 (ci): ERROR: storage offline")), reading)
+        assertTrue(DeviceChecks.breached(failed, reading!!.value, 0f))
+        assertEquals("Backup failed: VM 100 (web): no space left on device, VM 102 (ci): ERROR: storage offline", DeviceChecks.alertText(failed, 2f, 0f, reading.names))
+        assertEquals("backups OK", DeviceChecks.summary(failed, 0f, emptyList()))
+        assertEquals("a failure alerts at once", "0m", DeviceChecks.defaultWindow(failed))
+
+        val stopped = DeviceChecks.PROXMOX_GUEST_STOPPED
+        assertEquals("Pick the guests that should be running", DeviceChecks.problem(stopped, ""))
+        val picked = DeviceChecks.encodePicked(listOf("100", "101", "102", "999"))
+        assertEquals(
+            DeviceChecks.Reading(3f, listOf("VM 101 (db): stopped", "VM 102 (ci): paused", "VM 999 (not found)")),
+            DeviceChecks.proxmoxReading(stopped, picked, failedThenFixed),
+        )
+        assertEquals(DeviceChecks.Reading(0f, emptyList()), DeviceChecks.proxmoxReading(stopped, "100", failedThenFixed))
+        assertEquals("1 guest not running: VM 101 (db): stopped", DeviceChecks.summary(stopped, 1f, listOf("VM 101 (db): stopped")))
+        assertTrue(DeviceChecks.isYesNo(stopped) && DeviceChecks.picksItems(stopped) && DeviceChecks.isProxmox(stopped))
+        assertFalse(DeviceChecks.isSnmp(stopped))
     }
 }

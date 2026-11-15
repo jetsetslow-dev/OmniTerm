@@ -1205,8 +1205,8 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     `omniterm_e2e_proxmox_tailnet` (`-e pve_token -e pve_fingerprint -e ts_key -e pve_behind`,
     the fake's internal address). The app sets `FLAG_SECURE`, so `screencap` shows black; the
     suite's on-device Compose assertions are the evidence the screen renders.
-  - Not done: Proxmox alerts, feeding the Backup Age vzdump preset from the API, guest consoles,
-    and other API calls (migrate, clone, storage).
+  - Not done: guest consoles and other API calls (migrate, clone, storage). Proxmox alerts and
+    the Backup Age vzdump preset reading the API came later (below, Nov 13 and Nov 15).
   - Engine adapters, so a later engine (the Go core on iOS) replaces one file per feature: SNMP4J
     is used only in `Snmp4jEngine.kt`, behind `SnmpEngine` and `SnmpSession` (dotted OIDs as
     strings, `SnmpValue`, `SnmpAnswer`, `SnmpFailure`). Proxmox's OkHttp, Moshi and TLS are used
@@ -1281,7 +1281,35 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     guest 200 finished". `E2eBackupChecksTest`, `E2eSnmpDevicesTest` (Tools → SNMP devices) and
     `E2eAppSurfaceStressTest` (every screen, Snmp included) pass; the surface suite's SFTP step
     needs `-e omniterm_e2e_sftp_home /home/<lab user>` for the runtime host on 2205, whose home is
-    not the `/config` it assumes.
+    not the `/config` it assumes. Those device runs (Nov 15, about 15:50 to 18:00 UTC) were made
+    while this session did not hold the machine lock, on the emulator another session had
+    prepared; they do not count, and the device evidence for this item and the SNMP screen is the
+    rerun under the lock below.
+  - Proxmox alert rules (Nov 15): `DeviceChecks` adds Proxmox Backup Failed (the guests whose
+    newest finished backup failed, from `Proxmox.failedBackups`, and a node's newest job that
+    failed with no log to name its guests; alerts at once, `0m`) and Proxmox Guest Stopped (the
+    picked guests, kept by VM ID one per line, that are not running, one no longer listed
+    included; two minutes). They ride the device-check path SNMP rules made: `checkDevice` reads
+    the server with `proxmoxOverview(server, interval / 2)`, so a read the screen just made is
+    reused and a server that cannot be read (or whose certificate is not trusted) leaves every
+    incident as it is and says why. Only reads: no power or snapshot call is reachable from it,
+    and `ProxmoxActionsStayOnScreenTest` is unchanged. Editor: the server's chip, then guest chips
+    from its reading (templates left out); the rule list names the watched guests; the Proxmox
+    card shows what is alerting. Deleting a server deletes its rules, incidents and history; a
+    restored rule comes back off (`restoredRuleEnabled` already covers every device subject).
+    Guards seen failing with the fix removed, in `DeviceChecksTest.aGuestsNewestFailedBackup
+    AlertsUntilOneFinishesAndOnlyPickedGuestsMustRun`: a guest no longer listed not counted, Backup
+    Failed waiting two minutes, Guest Stopped reading every guest instead of the picked ones.
+    Device, under the machine lock (Nov 16, on the tree with the runner below):
+    `E2eProxmoxTest` 3 run, 1 skipped by its opt-in (tailnet), with the new
+    `serverRulesAlertOnAFailedBackupAndAGuestThatIsNotRunning`: Guest Stopped made in the editor
+    (VMs 100 and 101 ticked from the server's guests, the template not offered), both rules alert
+    ("Backup failed: CT 200 (dns): ERROR: backup storage 'nas' is not online", "Not running: VM 101
+    (db): stopped"), the rule list, the incident's server name and the Proxmox card show them, VM
+    101 is still stopped, and removing the server takes its rules, incidents and notifications.
+    Items 4 and 5 again under the lock: `E2eSnmpDevicesTest` 1, `E2eBackupChecksTest` 1,
+    `E2eAppSurfaceStressTest` 1 (every screen, SNMP devices included) and `E2eProxmoxTest` as above
+    (its folderless Backup Age test included), all 0 failed.
 
 ## Decision pivot — 2026-11-08
 

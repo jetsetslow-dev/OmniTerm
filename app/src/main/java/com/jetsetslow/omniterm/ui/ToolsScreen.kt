@@ -1098,7 +1098,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK,
                     ) + HostChecks.ALL +
                         // Device checks once there is a device to check (or the rule is one already).
-                        (if (snmpDevices.isNotEmpty() || DeviceChecks.isSnmp(existing?.metricName.orEmpty())) DeviceChecks.SNMP else emptyList())
+                        (if (snmpDevices.isNotEmpty() || DeviceChecks.isSnmp(existing?.metricName.orEmpty())) DeviceChecks.SNMP else emptyList()) +
+                        (if (proxmoxServers.isNotEmpty() || DeviceChecks.isProxmox(existing?.metricName.orEmpty())) DeviceChecks.PROXMOX else emptyList())
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         metricsOptions.forEach { opt ->
@@ -1402,6 +1403,8 @@ private fun deviceCheckHint(metricName: String): Int? = when (metricName) {
     DeviceChecks.SNMP_INTERFACE_DOWN -> R.string.device_check_hint_interface
     DeviceChecks.SNMP_UPS_ON_BATTERY -> R.string.device_check_hint_on_battery
     DeviceChecks.SNMP_UPS_BATTERY_LOW -> R.string.device_check_hint_battery_low
+    DeviceChecks.PROXMOX_BACKUP_FAILED -> R.string.device_check_hint_backup
+    DeviceChecks.PROXMOX_GUEST_STOPPED -> R.string.device_check_hint_guests
     else -> null
 }
 
@@ -1476,7 +1479,8 @@ private fun DeviceRuleFields(
 @Composable
 private fun DeviceRuleCheckLine(rule: AlertRuleEntity, result: EndpointChecks.Result?) {
     val picked = DeviceChecks.picked(rule.target)
-    val watched = picked.joinToString(", ").ifEmpty { null }
+    // Guests are kept by VM ID.
+    val watched = picked.joinToString(", ") { if (DeviceChecks.isProxmox(rule.metricName)) "VM $it" else it }.ifEmpty { null }
     val over = result?.value?.let { DeviceChecks.breached(rule.metricName, it, rule.thresholdValue) } == true
     Text(
         listOfNotNull(watched, result?.summary ?: stringResource(R.string.endpoint_not_checked_yet)).joinToString(" · "),

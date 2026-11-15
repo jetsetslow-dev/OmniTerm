@@ -1,9 +1,6 @@
 package com.jetsetslow.omniterm
 
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
-import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
@@ -187,7 +184,7 @@ class E2eSnmpDevicesTest {
             }
 
             // The rule list says what each last saw; the incident names the device.
-            val ruleList = composeRule.onNode(hasScrollToNodeAction() and hasAnyDescendant(isRuleSwitch()))
+            val ruleList = composeRule.onNode(hasScrollToNodeAction() and hasAnyDescendant(alertRuleSwitch()))
             ruleList.performScrollToNode(hasTestTag("alertRule.enabled.${down.id}"))
             composeRule.onNode(hasTestTag("alertRule.check.${down.id}") and hasText("1 interface down: omni-up", substring = true), useUnmergedTree = true).assertExists()
             composeRule.runOnUiThread { vm.activeAlertsTab = 0 }
@@ -220,10 +217,6 @@ class E2eSnmpDevicesTest {
         await("this suite's devices and rules deleted", 10_000) {
             runBlocking { db.snmpDeviceDao().getAllSnmpDevices().none { it.name.startsWith(PREFIX) } && db.alertRuleDao().getAllRules().none { it.notes == NOTE } }
         }
-    }
-
-    private fun isRuleSwitch() = SemanticsMatcher("an alert rule's switch") {
-        it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("alertRule.enabled.") == true
     }
 
     /**
