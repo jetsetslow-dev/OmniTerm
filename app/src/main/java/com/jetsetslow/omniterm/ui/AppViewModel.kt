@@ -590,6 +590,7 @@ enum class Screen {
     Mcp,
     VpnTunnels,
     Proxmox,
+    Snmp,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -4801,7 +4802,7 @@ class AppViewModel @JvmOverloads constructor(
         Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) INFRA_TAB_COUNT else 0
         Screen.Fleet -> FLEET_TAB_COUNT
         Screen.SFTP -> 4
-        Screen.Network -> 10
+        Screen.Network -> 9
         Screen.Alerts -> 3
         Screen.QuickScripts -> 2
         else -> 0
@@ -6440,7 +6441,7 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    // ── SNMP devices (Network → SNMP) ──
+    // ── SNMP devices (Tools → SNMP devices) ──
 
     val snmpDevices = repository.snmpDevicesFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 

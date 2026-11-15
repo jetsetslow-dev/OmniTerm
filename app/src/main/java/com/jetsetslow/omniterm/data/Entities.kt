@@ -357,7 +357,7 @@ data class ProxmoxServerEntity(
 )
 
 /**
- * A device polled over SNMP from the phone (Network → SNMP): a switch, router, UPS or printer.
+ * A device polled over SNMP from the phone (Tools → SNMP devices): a switch, router, UPS or printer.
  * [community], [authPassword] and [privPassword] are encrypted at the repository boundary.
  * [tunnelId] works as a host's does: while the tunnel is in use the device is not polled at all,
  * since SNMP is UDP and tunnels carry TCP only, and never directly instead.

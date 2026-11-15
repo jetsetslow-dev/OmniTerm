@@ -242,6 +242,7 @@ internal val toolsItems = listOf(
     Triple(Screen.Automation, "Automation", Icons.Filled.SmartToy),
     Triple(Screen.Mcp, "AI assistants", Icons.Filled.Hub),
     Triple(Screen.VpnTunnels, "VPN tunnels", Icons.Filled.VpnLock),
+    Triple(Screen.Snmp, "SNMP devices", Icons.Filled.Router),
     Triple(Screen.Proxmox, "Proxmox VE", Icons.Filled.ViewInAr),
     Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
     Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
@@ -1910,7 +1911,7 @@ fun NetworkToolView(viewModel: AppViewModel) {
     // Subtab index lives in the VM so the app's global horizontal-swipe gesture (swipeNavigate) can
     // page between these tabs the same way it does Monitor/Infra/SFTP/Fleet.
     val tab = viewModel.activeNetworkTab
-    val tabs = listOf("Host Scan", "Wake-on-LAN", "Ping", "Traceroute", "Port Scan", "DNS Lookup", "WHOIS", "Speed Test", "Tunnels", "SNMP")
+    val tabs = listOf("Host Scan", "Wake-on-LAN", "Ping", "Traceroute", "Port Scan", "DNS Lookup", "WHOIS", "Speed Test", "Tunnels")
 
     ToolScaffold(viewModel, "Network tools") {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -1929,8 +1930,7 @@ fun NetworkToolView(viewModel: AppViewModel) {
                     5 -> DnsLookupTab(viewModel)
                     6 -> WhoisTab(viewModel)
                     7 -> SpeedTestTab(viewModel)
-                    8 -> TunnelsTab(viewModel)
-                    else -> SnmpTab(viewModel)
+                    else -> TunnelsTab(viewModel)
                 }
             }
         }

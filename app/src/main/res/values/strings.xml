@@ -849,7 +849,8 @@
     <string name="proxmox_delete_snapshot_title">"Delete snapshot %2$s of %1$s?"</string>
     <string name="proxmox_delete_snapshot_text">"The snapshot is removed for good; the guest itself is not changed."</string>
     <string name="proxmox_done">"Done."</string>
-    <string name="snmp_intro">"Switches, routers, UPSes and printers, read over SNMP from this phone every 30 seconds while this tab is open. Read-only: nothing on a device is changed."</string>
+    <string name="snmp_title">"SNMP devices"</string>
+    <string name="snmp_intro">"Switches, routers, UPSes and printers, read over SNMP from this phone every 30 seconds while this screen is open. Read-only: nothing on a device is changed."</string>
     <string name="snmp_add">"Add device"</string>
     <string name="snmp_none">"No SNMP devices yet."</string>
     <string name="snmp_delete_title">"Delete %1$s?"</string>

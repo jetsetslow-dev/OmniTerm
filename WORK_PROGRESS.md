@@ -1256,6 +1256,10 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     `E2eAlertLifecycleStressTest` passes through mute, recreate and unmute, then waits for the
     host to go offline with Wi-Fi off; on the emulator the lab host is reached over adb reverse
     and cellular stays up, so it never does (a lab assumption, not this change; to fix separately).
+  - SNMP devices on their own screen (Nov 13): Tools → SNMP devices (`Screen.Snmp`, Router icon,
+    before Proxmox VE) instead of Network's tenth tab. Monitor stays per host over SSH, one at a
+    time, so devices read from the phone get a screen like Proxmox VE's. Network has nine tabs again
+    (`subtabCount`), and README, PRIVACY, THIRD_PARTY_NOTICES and code comments name the new path.
 
 ## Decision pivot — 2026-11-08
 

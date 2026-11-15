@@ -1301,6 +1301,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         Screen.Mcp -> McpToolView(viewModel)
                         Screen.VpnTunnels -> VpnTunnelsToolView(viewModel)
                         Screen.Proxmox -> ProxmoxToolView(viewModel)
+                        Screen.Snmp -> SnmpToolView(viewModel)
                     }
 
                     // In a landscape terminal the IME intentionally hides both global bars to preserve
@@ -1979,7 +1980,7 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
 fun isToolSubScreen(screen: Screen): Boolean {
     return screen in listOf(
         Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.Network,
-        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp, Screen.VpnTunnels, Screen.Proxmox,
+        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp, Screen.VpnTunnels, Screen.Proxmox, Screen.Snmp,
     )
 }
 

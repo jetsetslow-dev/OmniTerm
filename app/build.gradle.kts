@@ -252,7 +252,7 @@ dependencies {
   }
   // FTP client for the Shares browser. WebDAV rides on the existing OkHttp dependency.
   implementation(libs.commons.net)
-  // SNMP v2c/v3 polling for Monitor → Devices (Apache-2.0, no runtime dependencies). Read-only:
+  // SNMP v2c/v3 polling for Tools → SNMP devices (Apache-2.0, no runtime dependencies). Read-only:
   // OmniTerm sends GET and GETBULK only. Its v3 USM uses the JDK's own MD5/SHA and AES/DES.
   implementation(libs.snmp4j)
   // FIDO2 (CTAP2) over USB and NFC, for SSH keys kept on a security key (sk-ssh-ed25519,

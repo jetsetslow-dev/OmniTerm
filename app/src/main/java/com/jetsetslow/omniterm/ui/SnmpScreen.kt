@@ -42,23 +42,29 @@ import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import kotlinx.coroutines.delay
 
-/** How often the SNMP tab polls its devices while it is open. */
-private const val SNMP_TAB_POLL_MS = 30_000L
+/** How often the SNMP screen polls its devices while it is open. */
+private const val SNMP_SCREEN_POLL_MS = 30_000L
 
 /**
- * Network → SNMP: saved devices, each polled from the phone while this tab is open, every 30
- * seconds, for its name, uptime, CPU, memory, disks, interfaces with their traffic, errors and
- * discards, and a UPS's power source and battery.
+ * Tools → SNMP devices: saved devices, each polled from the phone while this screen is open, every
+ * 30 seconds, for its name, uptime, CPU, memory, disks, interfaces with their traffic, errors and
+ * discards, and a UPS's power source and battery. A screen of its own rather than part of Monitor,
+ * which shows hosts reached over SSH, one at a time.
  */
 @Composable
-internal fun SnmpTab(viewModel: AppViewModel) {
+fun SnmpToolView(viewModel: AppViewModel) {
+    ToolScaffold(viewModel, stringResource(R.string.snmp_title)) { SnmpDeviceList(viewModel) }
+}
+
+@Composable
+private fun SnmpDeviceList(viewModel: AppViewModel) {
     val devices by viewModel.snmpDevices.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<SnmpDeviceEntity?>(null) }
     var deleting by remember { mutableStateOf<SnmpDeviceEntity?>(null) }
     LaunchedEffect(devices.map { it.id to it.hashCode() }) {
         while (true) {
             devices.forEach(viewModel::pollSnmpDevice)
-            delay(SNMP_TAB_POLL_MS)
+            delay(SNMP_SCREEN_POLL_MS)
         }
     }
     Column(Modifier.fillMaxSize().padding(top = 8.dp)) {

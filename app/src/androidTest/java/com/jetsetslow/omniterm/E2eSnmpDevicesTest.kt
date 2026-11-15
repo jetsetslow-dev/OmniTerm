@@ -41,7 +41,7 @@ import org.junit.Rule
 import org.junit.Test
 
 /**
- * Network → SNMP against the repository's net-snmp fixture (`./scripts/test-hosts.sh snmp`),
+ * Tools → SNMP devices against the repository's net-snmp fixture (`./scripts/test-hosts.sh snmp`),
  * which the emulator reaches at 10.0.2.2:1161 over UDP. Its community and v3 password are passed
  * as `snmp_community` and `snmp_pass`, never committed.
  * - A v2c device added in the dialog is polled and shows the fixture's name, uptime, memory and
@@ -71,10 +71,7 @@ class E2eSnmpDevicesTest {
         val originalAlertsEnabled = vm.alertsEnabled
         try {
             forgetMine(vm, db)
-            composeRule.runOnUiThread {
-                vm.navigateTo(Screen.Network)
-                vm.activeNetworkTab = SNMP_TAB
-            }
+            composeRule.runOnUiThread { vm.navigateTo(Screen.Snmp) }
             composeRule.waitForIdle()
 
             // v2c, through the dialog.
@@ -90,7 +87,7 @@ class E2eSnmpDevicesTest {
             val raw = db.snmpDeviceDao().getAllSnmpDevices().single { it.id == v2c.id }
             assertTrue("stored encrypted", raw.community.startsWith("enc:") && community !in raw.community)
 
-            // The tab polls it as soon as it is listed.
+            // The screen polls it as soon as it is listed.
             await("v2c device answered", 30_000, { vm.snmpReadings[v2c.id]?.outcome }) { vm.snmpReadings[v2c.id]?.outcome is SnmpDevices.Outcome.Answered }
             val snap = (vm.snmpReadings.getValue(v2c.id).outcome as SnmpDevices.Outcome.Answered).snapshot
             assertEquals("omniterm-snmp-fixture", snap.name)
@@ -197,10 +194,7 @@ class E2eSnmpDevicesTest {
             await("the incident", 10_000) { composeRule.onAllNodes(hasText("Device: $PREFIX v2c", substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
 
             // And its card says what is alerting.
-            composeRule.runOnUiThread {
-                vm.navigateTo(Screen.Network)
-                vm.activeNetworkTab = SNMP_TAB
-            }
+            composeRule.runOnUiThread { vm.navigateTo(Screen.Snmp) }
             await("the card's alerts", 10_000) {
                 composeRule.onAllNodes(hasTestTag("snmp.alerts.${v2c.id}") and hasText(DeviceChecks.SNMP_INTERFACE_DOWN, substring = true), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
@@ -248,6 +242,5 @@ class E2eSnmpDevicesTest {
         const val PREFIX = "E2E SNMP"
         const val NOTE = "E2E SNMP device rule"
         const val HOST = "10.0.2.2"
-        const val SNMP_TAB = 9
     }
 }

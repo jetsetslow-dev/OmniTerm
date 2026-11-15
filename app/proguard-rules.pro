@@ -29,7 +29,7 @@
 -keep class com.rapid7.client.dcerpc.** { *; }
 -dontwarn com.rapid7.client.dcerpc.**
 
-# SNMP4J (Network -> SNMP) creates its SMI value types, addresses, transports, security models and
+# SNMP4J (Tools -> SNMP devices) creates its SMI value types, addresses, transports, security models and
 # protocols from class names in its own .properties files (Class.forName), so shrinking it breaks
 # decoding replies only at runtime, in release builds.
 -keep class org.snmp4j.** { *; }
