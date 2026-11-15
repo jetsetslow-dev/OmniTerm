@@ -34,7 +34,8 @@ import kotlin.math.abs
  * Backup Age over real SSH to the repository's Docker runtime fixture, which holds a restic and a
  * Borg repository and a vzdump folder, each with backups from 2026-01-01 00:00 UTC (see
  * scripts/test-hosts/fixtures/runtime-host/start.sh). The repositories' password is passed as the
- * `backup_pass` argument, never committed.
+ * `backup_pass` argument, never committed: `./scripts/test-hosts.sh suite E2eBackupChecksTest
+ * omniterm_e2e_backup_checks=yes backup_pass`.
  * - A restic rule made in the editor reads the old snapshot and alerts, naming it.
  * - Borg and vzdump rules with a high limit read the same age and stay quiet.
  * - A wrong password and a missing repository each alert with what went wrong.
@@ -46,7 +47,7 @@ class E2eBackupChecksTest {
     @Test fun backupChecksReadTheFixtureRepositories() {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_backup_checks") == "yes")
-        val password = requireNotNull(args.getString("backup_pass")) { "-e backup_pass <password> is required" }
+        val password = E2eArgs.require("backup_pass")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.waitUntil(15_000) { vm.servers.value.any { it.name == HOST } }

@@ -19,7 +19,11 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 
-/** Broad physical smoke/soak over every screen, subtab, theme, refresh, and core remote loader. */
+/**
+ * Broad physical smoke/soak over every screen, subtab, theme, refresh, and core remote loader. Run
+ * with `./scripts/test-hosts.sh suite E2eAppSurfaceStressTest omniterm_e2e_surfaces=yes
+ * omniterm_e2e_sftp_home`: the lab host's home comes from that fixture itself.
+ */
 class E2eAppSurfaceStressTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
@@ -93,12 +97,11 @@ class E2eAppSurfaceStressTest {
             // Await the load's OUTCOME rather than the loading-flag start edge: with a warm pooled
             // SFTP session a LAN listing completes faster than one poll interval, so the
             // true-then-false pulse can be missed entirely and the start await times out.
-            // The home LAYOUT is as fixture-specific as the name: scripts/test-hosts.sh containers
-            // put the account's home at /config, not /home/<user>. The repository's own fleet is the
-            // default so a clean checkout passes with no arguments; a physical lab passes its own
-            // layout with -e omniterm_e2e_sftp_home /home/<user>.
-            val sftpHome = InstrumentationRegistry.getArguments().getString("omniterm_e2e_sftp_home")
-                ?: "/config"
+            // The home LAYOUT is as fixture-specific as the name: the edge containers put it at
+            // /config, the runtime host the suites share at /home/<user>. Assumed, it fails as soon
+            // as the lab host is another fixture, so it is passed: the shared run script reads it
+            // from the lab host's fixture, and a physical lab passes omniterm_e2e_sftp_home=<path>.
+            val sftpHome = E2eArgs.require("omniterm_e2e_sftp_home")
             // Join the exact request, not a brief loading pulse or a success-only predicate
             // that hides a completed failure behind a generic timeout.
             lateinit var sftpLoad: kotlinx.coroutines.Job

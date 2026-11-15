@@ -40,7 +40,8 @@ import org.junit.Test
 /**
  * Tools → SNMP devices against the repository's net-snmp fixture (`./scripts/test-hosts.sh snmp`),
  * which the emulator reaches at 10.0.2.2:1161 over UDP. Its community and v3 password are passed
- * as `snmp_community` and `snmp_pass`, never committed.
+ * as `snmp_community` and `snmp_pass`, never committed: `./scripts/test-hosts.sh suite
+ * E2eSnmpDevicesTest omniterm_e2e_snmp=yes snmp_community snmp_pass`.
  * - A v2c device added in the dialog is polled and shows the fixture's name, uptime, memory and
  *   interfaces with their error counters, an interface switched on with no link among them, and
  *   its UPS on a low battery (UPS-MIB); its community is stored encrypted.
@@ -59,8 +60,8 @@ class E2eSnmpDevicesTest {
     @Test fun devicesArePolledFromThePhoneOverV2cAndV3() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_snmp") == "yes")
-        val community = requireNotNull(args.getString("snmp_community")) { "-e snmp_community is required" }
-        val password = requireNotNull(args.getString("snmp_pass")) { "-e snmp_pass is required" }
+        val community = E2eArgs.require("snmp_community")
+        val password = E2eArgs.require("snmp_pass")
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
         val db = AppDatabase.getDatabase(composeRule.activity)

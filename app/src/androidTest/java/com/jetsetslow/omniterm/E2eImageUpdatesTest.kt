@@ -41,7 +41,8 @@ import org.junit.Test
  * - Stacks says how many images have updates and leads to Images.
  * - An Image Updates rule alerts naming app:latest, reusing that check instead of asking the
  *   registry again.
- * The Podman run adds its own host for 2206 (`-e user`, `-e pass`) and removes it afterwards.
+ * The Podman run adds its own host for 2206 and removes it afterwards. Run with
+ * `./scripts/test-hosts.sh suite E2eImageUpdatesTest omniterm_e2e_image_updates=yes user pass`.
  */
 class E2eImageUpdatesTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -102,36 +103,17 @@ class E2eImageUpdatesTest {
     @Test fun podmanHostShowsTheUpdate() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_image_updates") == "yes")
-        val user = requireNotNull(args.getString("user")) { "-e user <name> is required" }
-        val pass = requireNotNull(args.getString("pass")) { "-e pass <password> is required" }
+        val user = E2eArgs.require("user")
+        val pass = E2eArgs.require("pass")
         val vm = model()
-        vm.servers.value.filter { it.name == PODMAN_HOST }.forEach { vm.deleteServer(it) }
-        await("old Podman host removed", 10_000) { vm.servers.value.none { it.name == PODMAN_HOST } }
-        var added: String? = "pending"
-        composeRule.runOnUiThread {
-            vm.addServer(PODMAN_HOST, "127.0.0.1", 2206, user, null, "password", "", 0, false, "", password = pass) { added = it }
-        }
-        await("Podman host added", 10_000) { vm.servers.value.any { it.name == PODMAN_HOST } }
-        assertEquals(null, added)
-        val host = vm.servers.value.single { it.name == PODMAN_HOST }
+        val host = E2eLabHosts.add(composeRule, vm, PODMAN_HOST, "127.0.0.1", 2206, user, pass)
         try {
-            // The fixture's own host key, on first use; only for this host's port.
-            val approve = CoroutineScope(Dispatchers.Main).launch {
-                while (true) {
-                    vm.pendingHostKeyApproval?.let { if ("2206" in it.host || it.host == "127.0.0.1") vm.approveHostKey(true) }
-                    delay(100)
-                }
-            }
-            try {
-                assertTrue(vm.executeSshCommand(host, "printf 'OT-READY\\n'").contains("OT-READY"))
-            } finally {
-                approve.cancel()
-            }
+            // The fixture's own host key, on first use.
+            E2eLabHosts.connectOnce(vm, host)
             withContainers(vm, host, "podman") { checkImages(vm, host, "podman") }
         } finally {
             composeRule.runOnUiThread { vm.selectedServerId = null }
-            vm.deleteServer(host)
-            await("Podman host removed", 10_000) { vm.servers.value.none { it.name == PODMAN_HOST } }
+            E2eLabHosts.remove(composeRule, vm, PODMAN_HOST)
         }
     }
 

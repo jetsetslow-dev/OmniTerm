@@ -22,6 +22,19 @@
 #   ./scripts/test-hosts.sh fleet    # print the settings to enter in OmniTerm
 #   ./scripts/test-hosts.sh android [serial] # reverse the fixture ports to a physical device
 #   ./scripts/test-hosts.sh android-clear [serial] # remove only those reverse mappings
+#   ./scripts/test-hosts.sh suite <Suite>[#test] [name | name=value | name=@VARIABLE ...]
+#                                    # run one device suite against these fixtures (see below)
+#
+# `suite` runs com.jetsetslow.omniterm.<Suite> on $ANDROID_SERIAL, or the one device attached,
+# after reversing the fixture ports to it. Each argument becomes one instrumentation argument: a
+# bare name is filled in from these fixtures (host, port, user, pass, network_host,
+# omniterm_e2e_sftp_home, backup_pass, snmp_community, snmp_pass, wg_client_key, wg_server_pub,
+# ts_key, ts_behind, pve_token, pve_audit_token, pve_fingerprint, pve_behind), name=value is passed
+# as written (an opt-in such as omniterm_e2e_proxmox=yes), and name=@VARIABLE takes the value of
+# that environment variable (or of .env). The whole `am instrument` line goes to the device on
+# adb's standard input, so no password, key or token is ever on a command line on this machine,
+# where `ps` shows it to every user; those values are masked in what it prints. It exits 0 only
+# when the run ends OK, and says how many tests were skipped by their opt-in.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -114,6 +127,10 @@ EDGE_HOSTS=(
 PROXY_PORTS=(1080 8888)
 SHARE_PORTS=(21 445 8082)
 ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2207 2299 8006 8080 8081 8082 8888)
+# The lab host the device suites share ("E2E Foreground Demo"): the Docker runtime fixture.
+LAB_PORT=2205
+LAB_CONTAINER=omniterm-test-runtime-docker
+RUNNER=com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
@@ -121,6 +138,52 @@ ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Connect
 require_docker() {
   command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
   docker info >/dev/null 2>&1 || { echo "cannot talk to the docker daemon" >&2; exit 1; }
+}
+
+# reverse_ports android|android-clear <serial>: the fixture ports to or from a device's 127.0.0.1.
+reverse_ports() {
+  local p
+  for p in "${ANDROID_PORTS[@]}" $(seq 21100 21110); do
+    if [ "$1" = android ]; then
+      adb -s "$2" reverse "tcp:$p" "tcp:$p" >/dev/null
+    else
+      adb -s "$2" reverse --remove "tcp:$p" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+# One word for the device's shell, quoted so it is passed exactly as written.
+device_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+# What a device suite gets for a bare argument name in `suite`; empty when that fixture is not up.
+fixture_value() {
+  case "$1" in
+    host) echo 127.0.0.1 ;; # through `android`'s reverse mappings
+    port) echo "$LAB_PORT" ;;
+    user) echo "$USER_NAME" ;;
+    pass) echo "$PASSWORD" ;;
+    # The fixtures as the phone's own network reaches them, not through adb: what a Wi-Fi or mobile
+    # data loss takes away. The emulator's address for this machine, or OMNITERM_TEST_NETWORK_HOST.
+    network_host)
+      if [ -n "${OMNITERM_TEST_NETWORK_HOST:-}" ]; then echo "$OMNITERM_TEST_NETWORK_HOST"
+      elif [[ "$serial" == emulator-* ]]; then echo 10.0.2.2
+      fi ;;
+    # The lab user's home on the lab host, as that fixture has it.
+    omniterm_e2e_sftp_home) docker exec "$LAB_CONTAINER" getent passwd "$USER_NAME" 2>/dev/null | cut -d: -f6 ;;
+    backup_pass) echo "${OMNITERM_TEST_BACKUP_PASSWORD:-}" ;;
+    snmp_community) echo "${OMNITERM_TEST_SNMP_COMMUNITY:-}" ;;
+    snmp_pass) echo "${OMNITERM_TEST_SNMP_PASSWORD:-}" ;;
+    wg_client_key) echo "${OMNITERM_TEST_WG_CLIENT_KEY:-}" ;;
+    wg_server_pub) echo "${OMNITERM_TEST_WG_SERVER_PUB:-}" ;;
+    ts_key) echo "${OMNITERM_TEST_TS_PHONE_KEY:-}" ;;
+    ts_behind) echo "${OMNITERM_TEST_TS_BEHIND:-}" ;;
+    pve_token) echo "${OMNITERM_TEST_PVE_TOKEN:-}" ;;
+    pve_audit_token) echo "${OMNITERM_TEST_PVE_AUDIT_TOKEN:-}" ;;
+    # The Proxmox fake's certificate, as `openssl x509 -fingerprint -sha256` prints it.
+    pve_fingerprint) openssl s_client -connect 127.0.0.1:8006 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 ;;
+    pve_behind) docker inspect omniterm-test-proxmox-api --format '{{(index .NetworkSettings.Networks "omniterm-test-internal").IPAddress}}' 2>/dev/null ;;
+    *) return 1 ;;
+  esac
 }
 
 ensure_keys() {
@@ -218,7 +281,7 @@ registry_certs() {
 }
 
 tailnet_up() {
-  local hs=(docker exec omniterm-test-headscale headscale) i uid router_key phone_key node routes behind address
+  local hs=(docker exec omniterm-test-headscale headscale) i uid router_key phone_key node routes behind address last
   address=$(docker inspect omniterm-test-headscale --format '{{(index .NetworkSettings.Networks "omniterm-test-edge").IPAddress}}')
   [ -n "$address" ] || { echo "headscale has no address on the edge network" >&2; return 1; }
   # A new address in the map takes a restart, which also forgets headscale's nodes and keys.
@@ -237,11 +300,15 @@ tailnet_up() {
   set_env OMNITERM_TEST_TS_PHONE_KEY "$phone_key"
   set_env OMNITERM_TEST_TS_ROUTES "$routes"
   set_env OMNITERM_TEST_TS_BEHIND "$behind"
+  # The recreated router joins as a new node. Until headscale sees the old one go, that one still
+  # shows online, so wait for a router newer than every node there was, or its routes are never
+  # approved and nothing is reachable through the tailnet.
+  last=$("${hs[@]}" nodes list -o json 2>/dev/null | python3 -I -c 'import json,sys; print(max([int(n["id"]) for n in json.load(sys.stdin) or []], default=0))')
   OMNITERM_TEST_TS_ROUTER_KEY="$router_key" OMNITERM_TEST_TS_ROUTES="$routes" \
     compose --profile tailnet up -d --no-deps --force-recreate tailnet-router
   for i in $(seq 1 60); do
     node=$("${hs[@]}" nodes list -o json 2>/dev/null |
-      python3 -I -c 'import json,sys; ids=[n["id"] for n in json.load(sys.stdin) or [] if n.get("given_name", "").startswith("router") and n.get("online")]; print(max(ids) if ids else "")')
+      python3 -I -c 'import json,sys; ids=[int(n["id"]) for n in json.load(sys.stdin) or [] if n.get("given_name", "").startswith("router") and n.get("online") and int(n["id"]) > int(sys.argv[1])]; print(max(ids) if ids else "")' "${last:-0}")
     [ -n "$node" ] && break
     sleep 2
   done
@@ -554,19 +621,60 @@ EOF
       }
       serial="${devices[0]}"
     fi
-    for p in "${ANDROID_PORTS[@]}" $(seq 21100 21110); do
-      if [ "$1" = android ]; then
-        adb -s "$serial" reverse "tcp:$p" "tcp:$p" >/dev/null
-      else
-        adb -s "$serial" reverse --remove "tcp:$p" >/dev/null 2>&1 || true
-      fi
-    done
+    reverse_ports "$1" "$serial"
     if [ "$1" = android ]; then
       echo "fixture ports reversed to $serial; use 127.0.0.1 in OmniTerm"
       adb -s "$serial" reverse --list
     else
       echo "fixture reverse mappings removed from $serial"
     fi
+    ;;
+
+  suite)
+    command -v adb >/dev/null || { echo "adb is required" >&2; exit 1; }
+    [ $# -ge 2 ] || { echo "usage: $0 suite <Suite>[#test] [name | name=value | name=@VARIABLE ...]" >&2; exit 2; }
+    target="$2"
+    shift 2
+    serial="${ANDROID_SERIAL:-}"
+    if [ -z "$serial" ]; then
+      mapfile -t devices < <(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
+      [ "${#devices[@]}" -eq 1 ] || { echo "set ANDROID_SERIAL (found ${#devices[@]} devices)" >&2; exit 1; }
+      serial="${devices[0]}"
+    fi
+    line="am instrument -w -r"
+    masked=()
+    for a in "$@"; do
+      name="${a%%=*}"
+      [[ "$name" =~ ^[A-Za-z0-9_]+$ ]] || { echo "not an argument name: $name" >&2; exit 2; }
+      if [ "$a" = "$name" ]; then
+        value=$(fixture_value "$name") || { echo "$name is not a fixture value: pass $name=value or $name=@VARIABLE" >&2; exit 2; }
+        [ -n "$value" ] || { echo "$name: its fixture is not set up (see this script's usage)" >&2; exit 1; }
+        case "$name" in pass | backup_pass | snmp_* | wg_* | ts_key | pve_token | pve_audit_token) masked+=("$value") ;; esac
+      else
+        value="${a#*=}"
+        if [[ "$value" == @* ]]; then
+          var="${value#@}"
+          [[ "$var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "not a variable name: $var" >&2; exit 2; }
+          value="${!var:-}"
+          [ -n "$value" ] || { echo "$var is not set" >&2; exit 1; }
+          masked+=("$value")
+        fi
+      fi
+      line+=" -e $name $(device_quote "$value")"
+    done
+    line+=" -e class $(device_quote "com.jetsetslow.omniterm.$target") $RUNNER"
+    # The device may not listen on ports below 1024 (21, 445): those mappings fail, as in `android`.
+    reverse_ports android "$serial" 2>/dev/null
+    adb -s "$serial" shell input keyevent KEYCODE_WAKEUP
+    adb -s "$serial" shell wm dismiss-keyguard
+    # printf is a shell builtin: the line goes to adb's standard input, never into an argument list.
+    out=$(printf '%s; exit\n' "$line" | adb -s "$serial" shell 2>&1)
+    for m in "${masked[@]}"; do out="${out//"$m"/***}"; done
+    printf '%s\n' "$out"
+    # -3 is an ignored test, -4 a failed assumption: an opt-in it was not given.
+    skipped=$(grep -cE '^INSTRUMENTATION_STATUS_CODE: -(3|4)' <<<"$out")
+    echo "== $target: $(grep -E '^OK \(|^Tests run|INSTRUMENTATION_FAILED' <<<"$out" | head -2 | tr '\n' ' ')($skipped skipped by their opt-in)"
+    grep -q '^OK (' <<<"$out" && ! grep -q 'FAILURES!!!' <<<"$out"
     ;;
 
   *)

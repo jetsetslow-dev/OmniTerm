@@ -73,8 +73,13 @@ state that a screen reads.
   node with a real API server. Their disks, keys and passwords stay outside the repository. See
   `scripts/os-lab/README.md`.
 - `E2eAppSurfaceStressTest` is the required sweep: it walks every route, subtab, theme, and rotation.
-  Run it with `-e omniterm_e2e_surfaces yes`. Add `-e omniterm_e2e_sftp_home <path>` when the fixture
-  home is not `/home/<user>` (the Docker fleet uses `/config`).
+  Run it with `./scripts/test-hosts.sh suite E2eAppSurfaceStressTest omniterm_e2e_surfaces=yes
+  omniterm_e2e_sftp_home` (the lab host's home, read from its fixture; a physical lab passes
+  `omniterm_e2e_sftp_home=<path>`).
+- Run device suites with `./scripts/test-hosts.sh suite <Suite> <opt-in>=yes <name>...`: it fills in
+  the fixtures' addresses and secrets by name and sends the `am instrument` line on adb's standard
+  input, so no password, key or token is on a command line where `ps` shows it. Never pass a
+  secret with `-e` on `adb shell`'s command line. Each suite's doc comment shows its line.
 - Every `E2e*` suite is opt-in behind `assumeTrue(...)` on an instrumentation argument. A plain
   `connectedAndroidTest` **skips them and still reports BUILD SUCCESSFUL**. Never cite a connected
   run as screen coverage without naming the arguments you passed and the test count that executed.

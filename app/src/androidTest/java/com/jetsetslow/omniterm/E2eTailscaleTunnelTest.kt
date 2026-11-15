@@ -40,9 +40,9 @@ import org.junit.Test
  * - a host that answers directly, once the tunnel is picked, is never dialled directly;
  * - a tunnel without a key shows a Sign in button and carries nothing, and its host never goes
  *   direct.
- * Run with -e omniterm_e2e_tailscale yes -e ts_key <key> -e ts_behind <address> -e user <user>
- * -e pass <password> (scripts/test-hosts/.env: OMNITERM_TEST_TS_PHONE_KEY, OMNITERM_TEST_TS_BEHIND,
- * written by `./scripts/test-hosts.sh up` or `tailnet`). Everything it adds is removed again.
+ * Run with `./scripts/test-hosts.sh suite E2eTailscaleTunnelTest omniterm_e2e_tailscale=yes ts_key
+ * ts_behind user pass` (the key and address are written by `./scripts/test-hosts.sh up` or
+ * `tailnet`). Everything it adds is removed again.
  */
 class E2eTailscaleTunnelTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -50,10 +50,10 @@ class E2eTailscaleTunnelTest {
     @Test fun hostsBehindATailnetAreReachedThroughItAndNeverDirectly() {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_tailscale") == "yes")
-        val authKey = requireNotNull(args.getString("ts_key")) { "-e ts_key is required" }
-        val behindAddress = requireNotNull(args.getString("ts_behind")) { "-e ts_behind is required" }
-        val user = requireNotNull(args.getString("user")) { "-e user is required" }
-        val pass = requireNotNull(args.getString("pass")) { "-e pass is required" }
+        val authKey = E2eArgs.require("ts_key")
+        val behindAddress = E2eArgs.require("ts_behind")
+        val user = E2eArgs.require("user")
+        val pass = E2eArgs.require("pass")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val db = AppDatabase.getDatabase(context)
         val repository = AppRepository(db)

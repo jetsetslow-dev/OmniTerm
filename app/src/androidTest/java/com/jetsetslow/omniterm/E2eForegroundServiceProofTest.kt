@@ -143,10 +143,9 @@ class E2eForegroundServiceProofTest {
             val args = InstrumentationRegistry.getArguments()
             val demoHost = args.getString("omniterm_e2e_demo_host") ?: "127.0.0.1"
             val demoPort = args.getString("omniterm_e2e_demo_port")?.toIntOrNull() ?: 2299
-            val demoPassword = requireNotNull(args.getString("omniterm_e2e_demo_password")) {
-                "-e omniterm_e2e_demo_password <secret> is required; it is the generated fixture " +
-                    "password from scripts/test-hosts/.env and is deliberately not hard-coded here"
-            }
+            // The generated fixture password from scripts/test-hosts/.env, deliberately not
+            // hard-coded here: omniterm_e2e_demo_password=@OMNITERM_TEST_PASSWORD.
+            val demoPassword = E2eArgs.require("omniterm_e2e_demo_password")
 
             repository.getAllServers().filter { it.name == "atlas-prod" }.forEach { repository.deleteServerAndDependents(it.id) }
             val id = repository.insertServer(

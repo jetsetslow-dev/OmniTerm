@@ -37,7 +37,8 @@ import java.io.File
  * with no sudo password saved and with one saved; the same command without sudo is the login; a
  * file is pushed into /etc, where the login may not write, and belongs to root. sudo refusing is
  * FleetSudoRobolectricTest's: this host's sudo never does. Run with
- * -e omniterm_e2e_fleet_sudo yes -e pass <password> (scripts/test-hosts/.env).
+ * `./scripts/test-hosts.sh suite E2eFleetSudoTest omniterm_e2e_fleet_sudo=yes pass`: `pass` is the
+ * fixture's password, saved as the host's sudo password.
  */
 class E2eFleetSudoTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -45,7 +46,7 @@ class E2eFleetSudoTest {
     @Test fun aCommandAndAPushRunAsRootOnceTheUserSaysSo() = runBlocking<Unit> {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_fleet_sudo") == "yes")
-        val pass = requireNotNull(args.getString("pass")) { "-e pass is required: the password saved as the host's sudo password" }
+        val pass = E2eArgs.require("pass")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val repository = AppRepository(AppDatabase.getDatabase(context))
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]

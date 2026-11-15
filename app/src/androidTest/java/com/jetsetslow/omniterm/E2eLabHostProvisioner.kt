@@ -7,7 +7,6 @@ import com.jetsetslow.omniterm.ui.AppViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
@@ -18,15 +17,13 @@ import org.junit.Test
  * device, since no suite creates that host and several only `await` it.
  *
  * Credentials are passed as instrumentation arguments so nothing secret is committed. Run both
- * steps after wiping app data — create the row, then trust the host key:
+ * steps after wiping app data — create the row (the repository's Docker runtime fixture, through
+ * the reversed ports), then trust the host key:
  *
  * ```
- * R=com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
- * adb shell am instrument -w -e omniterm_e2e_provision_host yes \
- *   -e host <ip> -e user <name> -e pass '<password>' \
- *   -e class com.jetsetslow.omniterm.E2eLabHostProvisioner#provisionLabHost $R
- * adb shell am instrument -w -e omniterm_e2e_trust_host yes \
- *   -e class com.jetsetslow.omniterm.E2eLabHostProvisioner#trustLabHostKey $R
+ * ./scripts/test-hosts.sh suite 'E2eLabHostProvisioner#provisionLabHost' \
+ *   omniterm_e2e_provision_host=yes host port user pass
+ * ./scripts/test-hosts.sh suite 'E2eLabHostProvisioner#trustLabHostKey' omniterm_e2e_trust_host=yes
  * ```
  *
  * A third step is required before any suite that drives the UI through accessibility:
@@ -52,34 +49,16 @@ class E2eLabHostProvisioner {
     fun provisionLabHost() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_provision_host") == "yes")
-        val host = requireNotNull(args.getString("host")) { "-e host <ip> is required" }
-        val user = requireNotNull(args.getString("user")) { "-e user <name> is required" }
-        val pass = requireNotNull(args.getString("pass")) { "-e pass <password> is required" }
+        val host = E2eArgs.require("host")
+        val user = E2eArgs.require("user")
+        val pass = E2eArgs.require("pass")
         val port = args.getString("port")?.toIntOrNull() ?: 22
 
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
 
-        if (vm.servers.value.any { it.name == HOST_NAME }) return@runBlocking
-
-        var result: String? = "pending"
-        composeRule.runOnUiThread {
-            vm.addServer(
-                name = HOST_NAME,
-                host = host,
-                port = port,
-                username = user,
-                group = null,
-                authType = "password",
-                notes = "",
-                keepAlive = 0,
-                compression = false,
-                proxy = "",
-                password = pass,
-            ) { error -> result = error }
-        }
-        await("host row created") { vm.servers.value.any { it.name == HOST_NAME } }
-        assertTrue("addServer reported: $result", result == null)
+        E2eLabHosts.add(composeRule, vm, HOST_NAME, host, port, user, pass, keepExisting = true)
+        Unit
     }
 
     /**
@@ -95,21 +74,8 @@ class E2eLabHostProvisioner {
         composeRule.runOnUiThread { vm.isAppLocked = false }
         await("host row loaded") { vm.servers.value.any { it.name == HOST_NAME } }
         val host = requireNotNull(vm.servers.value.find { it.name == HOST_NAME }) { "host row missing" }
-        composeRule.runOnUiThread {
-            vm.selectedServerId = host.id
-            vm.runFleetBroadcast("printf 'FLEET-SMALL-END\\n'", listOf(host.id))
-        }
-        repeat(120) {
-            composeRule.runOnUiThread { if (vm.pendingHostKeyApproval != null) vm.approveHostKey(true) }
-            if (!vm.isBroadcastExecuting) return@repeat
-            delay(250)
-        }
-        await("broadcast settles", 30_000) { !vm.isBroadcastExecuting }
-        val result = vm.broadcastResults.singleOrNull()
-        assertTrue(
-            "probe failed: status=${result?.status} output=${result?.output?.take(200)}",
-            result?.output?.contains("FLEET-SMALL-END") == true,
-        )
+        E2eLabHosts.connectOnce(vm, host)
+        Unit
     }
 
     private suspend fun await(label: String, timeoutMs: Long = 10_000, predicate: () -> Boolean) {

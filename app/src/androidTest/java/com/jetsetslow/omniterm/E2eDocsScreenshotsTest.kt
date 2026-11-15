@@ -29,12 +29,10 @@ import org.junit.Test
  * [E2eLabHostProvisioner] seeds as `E2E Foreground Demo`, plus two more rows for the other fixture
  * ports. The rows are renamed for the shots and restored afterwards. Run it with the fleet up and
  * its ports reversed to the emulator, a compose project running on the Docker-runtime host, and
- * the same `-e user` / `-e pass` arguments as the provisioner:
+ * the same `user` and `pass` as the provisioner:
  *
  * ```
- * adb shell am instrument -w -e omniterm_e2e_docs_screenshots yes -e user <name> -e pass '<password>' \
- *   -e class com.jetsetslow.omniterm.E2eDocsScreenshotsTest \
- *   com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+ * ./scripts/test-hosts.sh suite E2eDocsScreenshotsTest omniterm_e2e_docs_screenshots=yes user pass
  * ```
  *
  * PNGs land in the app's external files dir under `docs-screenshots/` for `adb pull`; nothing is
@@ -47,8 +45,8 @@ class E2eDocsScreenshotsTest {
     fun captureDocumentationScreenshots() = runBlocking<Unit> {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_docs_screenshots") == "yes")
-        val user = requireNotNull(args.getString("user")) { "-e user <name> is required" }
-        val pass = requireNotNull(args.getString("pass")) { "-e pass <password> is required" }
+        val user = E2eArgs.require("user")
+        val pass = E2eArgs.require("pass")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val repository = AppRepository(AppDatabase.getDatabase(context))

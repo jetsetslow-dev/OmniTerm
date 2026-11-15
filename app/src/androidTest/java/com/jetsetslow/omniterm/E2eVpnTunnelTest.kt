@@ -41,8 +41,8 @@ import org.junit.Test
  * - on a Wi-Fi a tunnel is listed as not needed on, its host is reached directly, and off that
  *   list it is behind the tunnel again;
  * - a tunnel a host still uses cannot be deleted.
- * Run with -e omniterm_e2e_vpn yes -e wg_client_key <key> -e wg_server_pub <key> -e pass <password>
- * (scripts/test-hosts/.env). Everything it adds is removed again.
+ * Run with `./scripts/test-hosts.sh suite E2eVpnTunnelTest omniterm_e2e_vpn=yes wg_client_key
+ * wg_server_pub user pass`. Everything it adds is removed again.
  */
 class E2eVpnTunnelTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -50,10 +50,10 @@ class E2eVpnTunnelTest {
     @Test fun hostsBehindATunnelAreReachedThroughItAndNeverDirectly() {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_vpn") == "yes")
-        val clientKey = requireNotNull(args.getString("wg_client_key")) { "-e wg_client_key is required" }
-        val serverPub = requireNotNull(args.getString("wg_server_pub")) { "-e wg_server_pub is required" }
-        val user = requireNotNull(args.getString("user")) { "-e user is required" }
-        val pass = requireNotNull(args.getString("pass")) { "-e pass is required" }
+        val clientKey = E2eArgs.require("wg_client_key")
+        val serverPub = E2eArgs.require("wg_server_pub")
+        val user = E2eArgs.require("user")
+        val pass = E2eArgs.require("pass")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val repository = AppRepository(AppDatabase.getDatabase(context))
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]

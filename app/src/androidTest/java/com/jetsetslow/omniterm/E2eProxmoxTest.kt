@@ -49,7 +49,9 @@ import kotlin.math.abs
  * self-signed certificate made when the container starts. The fake answers what the API viewer
  * documents; it proves this client, not Proxmox itself. Its two tokens are passed as `pve_token`
  * (may do everything) and `pve_audit_token` (may only read), never committed; `pve_fingerprint` is
- * the certificate's SHA-256 as `openssl x509 -fingerprint -sha256` prints it on the host.
+ * the certificate's SHA-256 as `openssl x509 -fingerprint -sha256` prints it on the host. Run with
+ * `./scripts/test-hosts.sh suite E2eProxmoxTest omniterm_e2e_proxmox=yes pve_token pve_audit_token
+ * pve_fingerprint`; the tailnet test also takes `omniterm_e2e_proxmox_tailnet=yes ts_key pve_behind`.
  * - A server added in the dialog is not read until its certificate is trusted, and the fingerprint
  *   the app shows is the one OpenSSL prints. The token is stored encrypted.
  * - Once trusted: version, nodes, guests and recent backups, with a failed backup marked.
@@ -72,9 +74,9 @@ class E2eProxmoxTest {
     @Test fun serversAreReadAndGuestsManagedOverTheApi() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_proxmox") == "yes")
-        val token = requireNotNull(args.getString("pve_token")) { "-e pve_token is required" }
-        val auditToken = requireNotNull(args.getString("pve_audit_token")) { "-e pve_audit_token is required" }
-        val expectedFingerprint = requireNotNull(args.getString("pve_fingerprint")) { "-e pve_fingerprint is required" }
+        val token = E2eArgs.require("pve_token")
+        val auditToken = E2eArgs.require("pve_audit_token")
+        val expectedFingerprint = E2eArgs.require("pve_fingerprint")
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
         val db = AppDatabase.getDatabase(composeRule.activity)
@@ -221,10 +223,10 @@ class E2eProxmoxTest {
     @Test fun aServerBehindATailnetIsReadThroughItAndNeverDirectly() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_proxmox_tailnet") == "yes")
-        val token = requireNotNull(args.getString("pve_token")) { "-e pve_token is required" }
-        val fingerprint = requireNotNull(args.getString("pve_fingerprint")) { "-e pve_fingerprint is required" }
-        val tsKey = requireNotNull(args.getString("ts_key")) { "-e ts_key is required" }
-        val behind = requireNotNull(args.getString("pve_behind")) { "-e pve_behind is required" }
+        val token = E2eArgs.require("pve_token")
+        val fingerprint = E2eArgs.require("pve_fingerprint")
+        val tsKey = E2eArgs.require("ts_key")
+        val behind = E2eArgs.require("pve_behind")
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
         val db = AppDatabase.getDatabase(composeRule.activity)
@@ -275,8 +277,8 @@ class E2eProxmoxTest {
     @Test fun aVzdumpRuleWithNoFolderReadsTheServersBackupTasks() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_proxmox") == "yes")
-        val token = requireNotNull(args.getString("pve_token")) { "-e pve_token is required" }
-        val fingerprint = requireNotNull(args.getString("pve_fingerprint")) { "-e pve_fingerprint is required" }
+        val token = E2eArgs.require("pve_token")
+        val fingerprint = E2eArgs.require("pve_fingerprint")
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
         val db = AppDatabase.getDatabase(composeRule.activity)
@@ -330,8 +332,8 @@ class E2eProxmoxTest {
     @Test fun serverRulesAlertOnAFailedBackupAndAGuestThatIsNotRunning() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_proxmox") == "yes")
-        val token = requireNotNull(args.getString("pve_token")) { "-e pve_token is required" }
-        val fingerprint = requireNotNull(args.getString("pve_fingerprint")) { "-e pve_fingerprint is required" }
+        val token = E2eArgs.require("pve_token")
+        val fingerprint = E2eArgs.require("pve_fingerprint")
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
         val db = AppDatabase.getDatabase(composeRule.activity)

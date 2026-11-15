@@ -1310,6 +1310,49 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     Items 4 and 5 again under the lock: `E2eSnmpDevicesTest` 1, `E2eBackupChecksTest` 1,
     `E2eAppSurfaceStressTest` 1 (every screen, SNMP devices included) and `E2eProxmoxTest` as above
     (its folderless Backup Age test included), all 0 failed.
+  - One way to run device suites (Nov 15): `./scripts/test-hosts.sh suite <Suite>[#test]
+    <opt-in>=yes <name>...` reverses the fixture ports, fills each bare name from the fixtures
+    (host, port, user, pass, network_host, omniterm_e2e_sftp_home, the backup, SNMP, WireGuard,
+    Tailscale and Proxmox values, the Proxmox certificate's fingerprint and internal address),
+    takes `name=@VARIABLE` from the environment for a personal lab, and sends the whole
+    `am instrument` line on adb's standard input (printf is a builtin), so no secret is on a
+    command line where `ps` shows it; secret values are masked in its output, and it exits 0 only
+    on OK, saying how many tests their opt-in skipped. Suites read their arguments through one
+    helper (`E2eArgs`), and the suites that took secrets with `-e` (SNMP, backup checks, Proxmox,
+    image updates, Fleet sudo, VPN, Tailscale, docs screenshots, tmux retention, lab seed, the
+    foreground proof's demo host, the provisioner) now say how to run them with it; AGENTS.md and
+    E2E_STRESS_TEST_PROGRESS.md show the same lines. `E2eLabHosts` is the one copy of "save a
+    password host, connect once approving its key" that the provisioner and the image-updates
+    suite each had.
+  - The two red suites, fixed in the suites with what the shared runner supplies:
+    `E2eAlertLifecycleStressTest` waited for the lab host to go offline with Wi-Fi off, but that
+    host is 127.0.0.1 through adb reverse, which no network loss touches, and the emulator keeps
+    mobile data. The only recorded pass is the physical-device run in E2E_STRESS_TEST_PROGRESS.md,
+    where the lab sat on the Wi-Fi; no emulator run of it is recorded (the #147 notes list it only
+    as compiled). It now saves its own host at `network_host` (10.0.2.2 from the emulator, the
+    emulated network) and `PhoneOffline` turns off Wi-Fi and mobile data, putting back what was
+    on. `E2eAppSurfaceStressTest` assumed `/config`, the edge containers' home, while the lab host
+    is the runtime fixture (`/home/<user>`); the SFTP home is now required and the runner reads it
+    from that fixture (`getent passwd` in the container).
+    Evidence, under the machine lock (Nov 16): while the provisioner ran, a watcher over every
+    process's command line found the lab password in none with the runner, and in one (the adb
+    client) the old way; the shares fixture's own rclone, which takes its password as an
+    argument, is counted apart. Through the runner: `E2eLabHostProvisioner` (both steps),
+    `E2eImageUpdatesTest` 2, `E2eFleetSudoTest` 1, `E2eVpnTunnelTest` 1, `E2eTailscaleTunnelTest`
+    1, `E2eProxmoxTest`'s tailnet test 1, `E2eAlertLifecycleStressTest` 1 and
+    `E2eAppSurfaceStressTest` 1, besides the item 6 suites above, all 0 failed. Guard: with
+    `PhoneOffline` turning off only Wi-Fi, the alert suite failed waiting for its host to go
+    offline (line 132), as the old suite did.
+    The Tailscale suite first failed on the fixture, not the app: its keys last 24 hours, and
+    `./scripts/test-hosts.sh tailnet` made new ones, but then approved the routes of the old
+    router node, which headscale still showed online, so the new router offered nothing ("not in
+    this tailnet"). `tailnet_up` now waits for a router newer than every node there was. The
+    runner also counts a failed assumption (an opt-in not given) as skipped, not passed.
+  - Not covered: there is no Kubernetes device suite (only `KubeTest` and `KubeDirectTest` on the
+    JVM; the k3s lab is a QEMU VM checked by hand), so the `JsonTree` move has its unit tests only.
+    `E2eTerminalNetworkRecoveryStressTest` and `E2eFileTransferLifecycleStressTest` still turn off
+    only Wi-Fi with the lab host on 127.0.0.1, so on the emulator they never lose it either; they
+    were not run here. The shares fixture starts rclone with its password on the command line.
 
 ## Decision pivot — 2026-11-08
 

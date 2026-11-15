@@ -157,25 +157,25 @@ adb install -r <debug-apk>
 adb install -r <test-apk>
 ```
 
-Run the previously verified opt-in suites:
+Run the previously verified opt-in suites through the shared runner, which reverses the fixture ports, fills in the fixtures' values by name and sends the line on adb's standard input:
 
 ```bash
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalStressTest -e omniterm_e2e_terminal yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalLifecycleStressTest -e omniterm_e2e_terminal_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalNetworkRecoveryStressTest -e omniterm_e2e_terminal_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeBuilderUiStressTest -e omniterm_e2e_compose_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeDeployStressTest -e omniterm_e2e_compose_deploy yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest -e omniterm_e2e_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eAlertLifecycleStressTest -e omniterm_e2e_alerts yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eRemoteFilesStressTest -e omniterm_e2e_remote_files yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFilesUiStressTest -e omniterm_e2e_files_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFileTransferLifecycleStressTest -e omniterm_e2e_transfer_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eSettingsStateStressTest -e omniterm_e2e_settings_state yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eForegroundServiceProofTest -e omniterm_e2e_foreground_proof yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
-adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalNavigationMatrixTest -e omniterm_e2e_terminal_nav_matrix yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+./scripts/test-hosts.sh suite E2eTerminalStressTest omniterm_e2e_terminal=yes
+./scripts/test-hosts.sh suite E2eTerminalLifecycleStressTest omniterm_e2e_terminal_lifecycle=yes
+./scripts/test-hosts.sh suite E2eTerminalNetworkRecoveryStressTest omniterm_e2e_terminal_network=yes
+./scripts/test-hosts.sh suite E2eComposeBuilderUiStressTest omniterm_e2e_compose_ui=yes
+./scripts/test-hosts.sh suite E2eComposeDeployStressTest omniterm_e2e_compose_deploy=yes
+./scripts/test-hosts.sh suite E2eNetworkToolsTest omniterm_e2e_network=yes
+./scripts/test-hosts.sh suite E2eAlertLifecycleStressTest omniterm_e2e_alerts=yes network_host port user pass
+./scripts/test-hosts.sh suite E2eRemoteFilesStressTest omniterm_e2e_remote_files=yes
+./scripts/test-hosts.sh suite E2eFilesUiStressTest omniterm_e2e_files_ui=yes
+./scripts/test-hosts.sh suite E2eFileTransferLifecycleStressTest omniterm_e2e_transfer_lifecycle=yes
+./scripts/test-hosts.sh suite E2eSettingsStateStressTest omniterm_e2e_settings_state=yes
+./scripts/test-hosts.sh suite E2eForegroundServiceProofTest omniterm_e2e_foreground_proof=yes
+./scripts/test-hosts.sh suite E2eTerminalNavigationMatrixTest omniterm_e2e_terminal_nav_matrix=yes
 ```
 
-`E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.
+`E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `E2eArgs.require` calls for the argument names and pass each secret as `name=@VARIABLE`, so it is read from the environment and never written on a command line or into this document.
 
 ## Checkpoint discipline
 
