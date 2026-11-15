@@ -113,7 +113,7 @@ EDGE_HOSTS=(
 )
 PROXY_PORTS=(1080 8888)
 SHARE_PORTS=(21 445 8082)
-ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2207 2299 8080 8081 8082 8888)
+ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2207 2299 8006 8080 8081 8082 8888)
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
@@ -357,7 +357,8 @@ case "${1:-}" in
 
   proxmox)
     # The Proxmox VE API contract fake for E2eProxmoxTest (see docker-compose.yml). The emulator
-    # reaches it at 10.0.2.2:8006; its certificate is made on start, so trust it again in the app.
+    # reaches it at 10.0.2.2:8006, or at 127.0.0.1:8006 once `android` reverses the ports; its
+    # certificate is made on start, so trust it again in the app.
     require_docker
     compose --profile proxmox up -d --build --no-deps proxmox-api || exit 1
     echo "proxmox api ready: https://127.0.0.1:8006 (tokens omniterm@pve!e2e and audit@pve!e2e from .env)"

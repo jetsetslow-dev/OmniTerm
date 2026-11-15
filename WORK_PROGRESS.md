@@ -1260,6 +1260,28 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     before Proxmox VE) instead of Network's tenth tab. Monitor stays per host over SSH, one at a
     time, so devices read from the phone get a screen like Proxmox VE's. Network has nine tabs again
     (`subtabCount`), and README, PRIVACY, THIRD_PARTY_NOTICES and code comments name the new path.
+  - Proxmox backup tasks for Backup Age (Nov 13): `ProxmoxApi.overview` reads 50 vzdump tasks per
+    online node (10 still shown) and, for the newest 10 finished whole-job tasks (no guest ID), the
+    task log, paged 500 lines, cached by UPID (a finished task's log does not change). `Proxmox.
+    backupLog` takes each guest's result from vzdump's own lines (Starting/Finished Backup of VM n,
+    ERROR: Backup of VM n failed - why); a guest started and never finished failed with the job's
+    status. A vzdump Backup Age rule with no folder now reads the backup tasks of the Proxmox server
+    whose address (or tunnel address) is the host's (`BackupChecks.fromProxmox`): the newest
+    finished backup of the guest counts, a failure does not; no server for the address, or one that
+    cannot be read, is unknown and says why. The read reuses the screen's when it is younger than
+    half the pace (`proxmoxOverview`) and shows on the screen too. Proxmox screen: a job lists its
+    guests. Fixture: a scheduled job of VMs 100 and 101 two hours before the fake started, with its
+    log; `test-hosts.sh android` reverses 8006 so the lab host and the fake share 127.0.0.1.
+    Guards seen failing with the fix removed: `aVzdumpRuleWithNoFolderCountsTheNewestBackupThe
+    ServerFinished` (a failed backup counted), `aBackupJobsLogSaysHowEachGuestWent...` (a guest the
+    stopped job never finished counted as backed up), `theTrustedCertificateReads...` (the log read
+    again on every overview). Device: `E2eProxmoxTest` 2/2 (the tailnet test is opted out) with the
+    new `aVzdumpRuleWithNoFolderReadsTheServersBackupTasks`: VM 101, only in the job's log, reads the
+    job's age, and CT 200, whose backups only failed, alerts "No Proxmox VE backup: no backup of
+    guest 200 finished". `E2eBackupChecksTest`, `E2eSnmpDevicesTest` (Tools → SNMP devices) and
+    `E2eAppSurfaceStressTest` (every screen, Snmp included) pass; the surface suite's SFTP step
+    needs `-e omniterm_e2e_sftp_home /home/<lab user>` for the runtime host on 2205, whose home is
+    not the `/config` it assumes.
 
 ## Decision pivot — 2026-11-08
 

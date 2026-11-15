@@ -3,7 +3,7 @@
 
 It answers the calls OmniTerm makes with the shapes the API viewer documents
 (https://pve.proxmox.com/pve-docs/api-viewer/): version, nodes, cluster resources, guest power,
-snapshots and tasks. Like Proxmox it takes an API token in `Authorization: PVEAPIToken=ID=SECRET`,
+snapshots, tasks and a task's log. Like Proxmox it takes an API token in `Authorization: PVEAPIToken=ID=SECRET`,
 puts its reason for a refusal in the HTTP status line, and answers an action with a task UPID that
 runs for a moment. Two tokens: `omniterm@pve!e2e` may do everything, `audit@pve!e2e` may only read.
 State lives in memory and starts afresh with the container. It is not Proxmox: it proves OmniTerm's
@@ -53,9 +53,30 @@ for key in GUESTS:
     SNAPSHOTS.setdefault(key, [])
 
 TASKS = {}  # upid -> task
+# Backup tasks: two of one guest each (an old success, a failure), and a scheduled job of two guests
+# two hours before the container started, whose task has no guest ID: which guests it backed up
+# is only in its log, as Proxmox writes it.
 VZDUMP = [
     {"type": "vzdump", "id": "100", "status": "OK", "starttime": 1762905600, "endtime": 1762905900, "user": "root@pam"},
     {"type": "vzdump", "id": "200", "status": "ERROR: backup storage 'nas' is not online", "starttime": 1762909200, "endtime": 1762909230, "user": "root@pam"},
+    {"type": "vzdump", "id": "", "status": "OK", "starttime": BOOT - 7200, "endtime": BOOT - 7080, "user": "root@pam"},
+]
+JOB_LOG = [
+    "INFO: starting new backup job: vzdump 100 101 --mode snapshot --storage local --compress zstd",
+    "INFO: Starting Backup of VM 100 (qemu)",
+    "INFO: Backup started at 2026-11-12 01:00:01",
+    "INFO: status = running",
+    "INFO: creating vzdump archive '/var/lib/vz/dump/vzdump-qemu-100-2026_11_12-01_00_01.vma.zst'",
+    "INFO: Finished Backup of VM 100 (00:00:58)",
+    "INFO: Backup finished at 2026-11-12 01:00:59",
+    "INFO: Starting Backup of VM 101 (qemu)",
+    "INFO: Backup started at 2026-11-12 01:00:59",
+    "INFO: status = stopped",
+    "INFO: creating vzdump archive '/var/lib/vz/dump/vzdump-qemu-101-2026_11_12-01_00_59.vma.zst'",
+    "INFO: Finished Backup of VM 101 (00:01:01)",
+    "INFO: Backup finished at 2026-11-12 01:02:00",
+    "INFO: Backup job finished successfully",
+    "TASK OK",
 ]
 task_counter = [0]
 
@@ -69,6 +90,7 @@ def upid(kind, vmid, user):
 for t in VZDUMP:
     t["upid"] = upid("vzdump", t["id"], "root@pam")
     t["node"] = "pve1"
+LOGS = {t["upid"]: JOB_LOG for t in VZDUMP if t["id"] == ""}
 
 
 def start_task(kind, vmid, user, effect):
@@ -159,6 +181,13 @@ class Handler(BaseHTTPRequestHandler):
                 tasks = [t for t in VZDUMP if query.get("typefilter") in (None, t["type"])]
                 limit = int(query.get("limit", "50"))
                 return self.reply(200, sorted(tasks, key=lambda t: -t["starttime"])[:limit])
+            if method == "GET" and len(p) == 5 and p[4] == "log":
+                # Lines numbered from 1, a page of them from start (0-based) as the API pages them.
+                lines = LOGS.get(p[3], ["TASK OK"]) if any(t["upid"] == p[3] for t in VZDUMP) else None
+                if lines is None:
+                    return self.reply(500, reason="no such task")
+                start, limit = int(query.get("start", "0")), int(query.get("limit", "50"))
+                return self.reply(200, [{"n": i + 1, "t": line} for i, line in enumerate(lines)][start:start + limit])
             if method == "GET" and len(p) == 5 and p[4] == "status":
                 task = TASKS.get(p[3])
                 if task is None:

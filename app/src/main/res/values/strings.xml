@@ -773,6 +773,8 @@
     <string name="backup_tool">"Backup tool"</string>
     <string name="backup_repository">"Repository"</string>
     <string name="backup_dump_folder">"Dump folder"</string>
+    <string name="backup_dump_folder_hint">"Leave it empty to read the backup tasks of the server saved under Tools → Proxmox VE with this host’s address, wherever the dumps are stored."</string>
+    <string name="backup_no_proxmox_server">"no Proxmox VE server is saved for %1$s: add it under Tools → Proxmox VE, or enter the dump folder"</string>
     <string name="backup_filter_restic">"Only snapshots from host (optional)"</string>
     <string name="backup_filter_borg">"Only archives matching (optional)"</string>
     <string name="backup_filter_pbs">"Only backup group (optional)"</string>

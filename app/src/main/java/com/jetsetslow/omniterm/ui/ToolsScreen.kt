@@ -1529,7 +1529,7 @@ private fun BackupTargetFields(
         placeholder = { Text(placeholder) },
         singleLine = true,
         isError = error != null,
-        supportingText = error?.let { { Text(it) } },
+        supportingText = (error ?: if (tool == BackupChecks.Tool.VZDUMP) stringResource(R.string.backup_dump_folder_hint) else null)?.let { { Text(it) } },
         modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.repository"),
     )
     OutlinedTextField(

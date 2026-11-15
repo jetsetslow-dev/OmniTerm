@@ -9,7 +9,9 @@ import kotlin.math.roundToInt
  * read on the host with the backup tool itself. restic, Borg, Proxmox Backup Server (its client)
  * and Proxmox vzdump files are read; the reading alerts when it passes the rule's limit in hours,
  * and also when the check finds no backup, no tool, no repository, or a wrong password. A
- * repository busy with a backup reads as unknown, so a running backup never alerts.
+ * repository busy with a backup reads as unknown, so a running backup never alerts. A vzdump rule
+ * with no folder reads the backup tasks of the Proxmox VE server saved for the same address
+ * instead, through its API ([fromProxmox]), so a job's backups count wherever they were stored.
  *
  * The rule's `target` holds the [Target], one field per line; its `secret` holds the repository
  * password, encrypted on the phone and sent on the command's standard input, so it never appears
@@ -71,9 +73,10 @@ object BackupChecks {
     /** Why [target] cannot be checked, or null when it can. */
     fun problem(target: Target?): String? = when {
         target == null -> "Pick a backup tool"
-        target.tool == Tool.VZDUMP && target.repository.isBlank() -> "Enter the folder vzdump writes to"
         target.tool == Tool.VZDUMP && target.filter.isNotBlank() && target.filter.toIntOrNull()?.takeIf { it > 0 } == null ->
             "A guest ID is a number, like 100"
+        // No folder: the Proxmox VE server's backup tasks.
+        target.tool == Tool.VZDUMP -> null
         target.repository.isBlank() && target.settingsFile.isBlank() ->
             "Enter the repository, or a settings file on the host that names it"
         target.tool == Tool.PBS && target.fingerprint.isNotBlank() && !FINGERPRINT.matches(target.fingerprint) ->
@@ -155,6 +158,23 @@ object BackupChecks {
 
     /** One reading: hours since the newest backup or a code below 0, and what it was (a snapshot, an error line). */
     data class Outcome(val value: Float?, val detail: String)
+
+    /** Whether [target] reads a Proxmox VE server's backup tasks rather than a folder on the host. */
+    fun readsProxmoxTasks(target: Target) = target.tool == Tool.VZDUMP && target.repository.isBlank()
+
+    /**
+     * The reading from a Proxmox VE server's backup tasks ([Proxmox.Overview.runs]): hours since the
+     * newest backup that finished, of the rule's guest or of any guest. Only one that finished
+     * counts; a failed backup leaves the age growing (a Proxmox Backup Failed rule says it failed).
+     */
+    fun fromProxmox(target: Target, overview: Proxmox.Overview, nowEpochSec: Long): Outcome {
+        val vmid = target.filter.toIntOrNull()
+        val task = Proxmox.newestBackup(overview, vmid)
+            ?: return Outcome(NO_BACKUPS, if (vmid == null) "no backup task finished" else "no backup of guest $vmid finished")
+        val at = task.end ?: task.start ?: return Outcome(FAILED, "the backup task has no time")
+        val guest = vmid?.let { id -> overview.guests.find { it.vmid == id }?.label ?: "VM $id" }
+        return Outcome(hoursSince(at, nowEpochSec), listOfNotNull(guest, "on ${task.node}").joinToString(" "))
+    }
 
     /**
      * The reading from what the SSH transport returned for [command]. Null when the command never
@@ -352,6 +372,7 @@ object BackupChecks {
         val where = target?.repository?.takeIf { it.isNotBlank() }?.let { " $it" } ?: target?.settingsFile?.let { " from $it" }.orEmpty()
         return when {
             value >= 0f -> "Newest $tool backup is ${age(value)} old (limit ${age(thresholdHours)})" + if (detail.isNotBlank()) ": $detail" else ""
+            target != null && readsProxmoxTasks(target) && value == NO_BACKUPS -> "No Proxmox VE backup: $detail"
             value == NO_BACKUPS -> "No $tool backups in$where"
             value == TOOL_MISSING -> "${target?.tool?.binary ?: "The backup tool"} is not installed on this host"
             value == REPO_MISSING -> "$tool repository not found:$where" + if (detail.isNotBlank() && target?.tool != Tool.VZDUMP) " ($detail)" else ""

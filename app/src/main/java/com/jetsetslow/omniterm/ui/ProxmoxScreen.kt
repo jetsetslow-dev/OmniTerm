@@ -183,7 +183,8 @@ private fun ProxmoxOverviewView(id: Int, overview: Proxmox.Overview, onGuest: (P
             t.running -> stringResource(R.string.proxmox_backup_running)
             else -> t.status
         }
-        val what = t.id.ifBlank { stringResource(R.string.proxmox_backup_all) }
+        val guests = overview.runs.firstOrNull { it.task.upid == t.upid }?.guests?.keys?.sorted().orEmpty()
+        val what = t.id.ifBlank { if (guests.isEmpty()) stringResource(R.string.proxmox_backup_all) else guests.joinToString(", ") }
         val at = t.start?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it * 1000)) }.orEmpty()
         Text(
             "$what · $result · $at · ${t.node}",

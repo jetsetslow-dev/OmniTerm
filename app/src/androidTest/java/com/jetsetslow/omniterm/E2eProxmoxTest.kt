@@ -13,7 +13,9 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.AppDatabase
+import com.jetsetslow.omniterm.data.BackupChecks
 import com.jetsetslow.omniterm.data.CertificateTrust
+import com.jetsetslow.omniterm.data.HostChecks
 import com.jetsetslow.omniterm.data.Proxmox
 import com.jetsetslow.omniterm.data.ProxmoxServerEntity
 import com.jetsetslow.omniterm.data.tunnel.TailscaleSettings
@@ -21,6 +23,7 @@ import com.jetsetslow.omniterm.data.tunnel.TunnelManager
 import com.jetsetslow.omniterm.data.tunnel.TunnelStates
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
+import com.jetsetslow.omniterm.ui.alertNotificationId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -30,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
+import kotlin.math.abs
 
 /**
  * Tools → Proxmox VE against the repository's contract fake of the Proxmox VE API
@@ -46,6 +50,10 @@ import org.junit.Test
  *   the guest and the snapshot; a name Proxmox would refuse cannot be sent.
  * - A read-only token's refusal, a wrong token and a changed certificate each say what is wrong.
  * - Removing a server asks first.
+ * - A Backup Age rule for vzdump with no folder, on the lab host, reads the backup tasks of the
+ *   server saved for the same address (127.0.0.1, port 8006 reversed like the hosts'): a guest a
+ *   scheduled job backed up counts from when the job finished, and one whose backups only failed
+ *   alerts.
  */
 class E2eProxmoxTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
@@ -101,14 +109,16 @@ class E2eProxmoxTest {
             assertEquals("8.4.1", overview.version)
             assertEquals(listOf("pve1" to true, "pve2" to false), overview.nodes.map { it.name to it.online })
             assertEquals(listOf("VM 100 (web)", "VM 101 (db)", "CT 200 (dns)", "VM 9000 (debian-template)"), overview.guests.map { it.label })
-            assertEquals(listOf("200" to false, "100" to true), overview.backups.map { it.id to it.ok })
+            assertEquals(listOf("" to true, "200" to false, "100" to true), overview.backups.map { it.id to it.ok })
+            assertEquals("the scheduled job's guests, from its log", mapOf(100 to null, 101 to null), overview.runs.first().guests)
             composeRule.waitForIdle()
             composeRule.onNode(hasTestTag("proxmox.version.${lab.id}") and hasText("Proxmox VE 8.4.1"), useUnmergedTree = true).assertExists()
             composeRule.onNode(hasTestTag("proxmox.node.${lab.id}.pve2") and hasText("offline", substring = true), useUnmergedTree = true).assertExists()
             composeRule.onNode(hasTestTag("proxmox.guest.${lab.id}.100") and hasText("VM 100 (web) · running", substring = true), useUnmergedTree = true).assertExists()
             composeRule.onNode(hasTestTag("proxmox.guest.${lab.id}.9000") and hasText("template", substring = true), useUnmergedTree = true).assertExists()
             composeRule.onNodeWithTag("proxmox.backup.${lab.id}.0", useUnmergedTree = true).performScrollTo()
-            composeRule.onNode(hasTestTag("proxmox.backup.${lab.id}.0") and hasText("backup storage 'nas' is not online", substring = true), useUnmergedTree = true).assertExists()
+            composeRule.onNode(hasTestTag("proxmox.backup.${lab.id}.0") and hasText("100, 101 · OK", substring = true), useUnmergedTree = true).assertExists()
+            composeRule.onNode(hasTestTag("proxmox.backup.${lab.id}.1") and hasText("backup storage 'nas' is not online", substring = true), useUnmergedTree = true).assertExists()
 
             // The fake keeps its state while it runs: start this run from VM 101 stopped, with no snapshot of ours.
             val api = vm.proxmoxApi(lab)
@@ -251,6 +261,61 @@ class E2eProxmoxTest {
         }
     }
 
+    @Test fun aVzdumpRuleWithNoFolderReadsTheServersBackupTasks() = runBlocking {
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue(args.getString("omniterm_e2e_proxmox") == "yes")
+        val token = requireNotNull(args.getString("pve_token")) { "-e pve_token is required" }
+        val fingerprint = requireNotNull(args.getString("pve_fingerprint")) { "-e pve_fingerprint is required" }
+        val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
+        composeRule.runOnUiThread { vm.isAppLocked = false }
+        val db = AppDatabase.getDatabase(composeRule.activity)
+        await("the lab host", 15_000) { vm.servers.value.any { it.name == LAB_HOST } }
+        val host = vm.servers.value.single { it.name == LAB_HOST }
+        assertEquals("the lab host over adb reverse", "127.0.0.1", host.host)
+        val originalAlertsEnabled = vm.alertsEnabled
+        fun rules() = runBlocking { db.alertRuleDao().getAllRules() }.filter { it.notes == NOTE }
+        fun firing() = runBlocking { db.activeAlertDao().getActiveAlerts() }.filter { it.serverId == host.id }
+        suspend fun clean() {
+            rules().forEach(vm::deleteAlertRule)
+            await("rules deleted", 10_000) { rules().isEmpty() }
+            for (s in db.proxmoxServerDao().getAll().filter { it.name.startsWith(PREFIX) }) db.proxmoxServerDao().delete(s.id)
+        }
+        try {
+            clean()
+            TestNotifications.allow()
+            vm.saveAlertsEnabled(true)
+            val local = save(vm, ProxmoxServerEntity(name = "$PREFIX local", host = "127.0.0.1", tokenId = FULL_ID, tokenSecret = token, fingerprint = fingerprint))
+            for (guest in listOf("101", "200")) {
+                vm.addAlertRule(host.id, HostChecks.BACKUP_AGE, "/", 1_000_000f, "WARNING", "0m", NOTE,
+                    target = BackupChecks.encode(BackupChecks.Target(BackupChecks.Tool.VZDUMP, "", guest)))
+            }
+            await("two rules", 10_000) { rules().size == 2 }
+            val byGuest = rules().associateBy { BackupChecks.decode(it.target)?.filter }
+            val backedUp = byGuest.getValue("101")
+            val failedOnly = byGuest.getValue("200")
+            fun result(id: Int) = vm.hostCheckResults[id to host.id]
+            vm.refreshServer(host.id)
+            await("both read", 120_000, { result(backedUp.id) to result(failedOnly.id) }) { result(backedUp.id) != null && result(failedOnly.id) != null }
+
+            // The check's read shows on the screen too; the job names no guest, its log does.
+            val overview = requireNotNull(vm.proxmoxViews[local]?.overview) { "read for the check: ${vm.proxmoxViews[local]}" }
+            val job = overview.runs.single { it.task.id.isEmpty() }
+            val expected = (System.currentTimeMillis() / 1000 - requireNotNull(job.task.end)) / 3600f
+            val reading = requireNotNull(result(backedUp.id))
+            assertTrue("${reading.summary}: expected about $expected h", reading.value != null && abs(reading.value!! - expected) < 0.1f)
+            assertTrue(reading.summary, reading.summary.endsWith("(VM 101 (db) on pve1)"))
+            assertEquals(result(failedOnly.id)?.summary, BackupChecks.NO_BACKUPS, result(failedOnly.id)?.value)
+            await("the guest with only failed backups alerts", 30_000, { firing() }) { firing().any { it.ruleId == failedOnly.id } }
+            await("its notification", 10_000, { TestNotifications.text(alertNotificationId(failedOnly.id, host.id)) }) {
+                TestNotifications.text(alertNotificationId(failedOnly.id, host.id)) == "No Proxmox VE backup: no backup of guest 200 finished"
+            }
+            assertTrue("a backup within its limit is quiet", firing().none { it.ruleId == backedUp.id })
+        } finally {
+            clean()
+            vm.saveAlertsEnabled(originalAlertsEnabled)
+        }
+    }
+
     private suspend fun save(vm: AppViewModel, server: ProxmoxServerEntity): Int {
         val saved = CompletableDeferred<Result<Int>>()
         composeRule.runOnUiThread { vm.saveProxmoxServer(server) { saved.complete(it) } }
@@ -274,6 +339,8 @@ class E2eProxmoxTest {
 
     private companion object {
         const val PREFIX = "E2E PVE"
+        const val LAB_HOST = "E2E Foreground Demo"
+        const val NOTE = "E2E PVE backup tasks"
         const val HOST = "10.0.2.2"
         const val FULL_ID = "omniterm@pve!e2e"
         const val AUDIT_ID = "audit@pve!e2e"

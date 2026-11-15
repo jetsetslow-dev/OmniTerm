@@ -7,7 +7,7 @@ import kotlin.time.TimeSource
 /**
  * What OmniTerm reads from and does on a Proxmox VE server, from the documented API
  * (https://pve.proxmox.com/pve-docs/api-viewer/): nodes, guests (VMs and containers), their power
- * and snapshots, and the backup (vzdump) tasks.
+ * and snapshots, and the backup (vzdump) tasks with what each did for each guest.
  *
  * This file is plain Kotlin. The HTTP and TLS library sits behind [ProxmoxTransport]
  * ([OkHttpProxmoxTransport] on Android), so another engine can replace it without touching the
@@ -45,13 +45,35 @@ object Proxmox {
         val ok get() = status == "OK"
     }
 
-    data class Overview(val version: String, val nodes: List<Node>, val guests: List<Guest>, val backups: List<Task>)
+    /**
+     * What one finished backup (vzdump) [task] did for each guest it backed up, by VM ID: null when
+     * that guest's backup finished, else why it failed.
+     */
+    data class BackupRun(val task: Task, val guests: Map<Int, String?>)
+
+    /**
+     * [backups] are the newest backup tasks, to show; [runs] are the finished ones of a longer
+     * history, each with its guests, for the backup checks and alerts.
+     */
+    data class Overview(val version: String, val nodes: List<Node>, val guests: List<Guest>, val backups: List<Task>, val runs: List<BackupRun> = emptyList())
 
     /** The power actions, as the API names them. */
     enum class Power(val action: String) { START("start"), SHUTDOWN("shutdown"), REBOOT("reboot"), STOP("stop") }
 
     const val DEFAULT_PORT = 8006
     const val BACKUP_TASKS = 10
+    /** Backup tasks read per online node, for the checks: a week of daily jobs with room to spare. */
+    const val BACKUP_HISTORY = 50
+    /**
+     * A scheduled job backs up several guests in one task, which names no guest: which ones it
+     * backed up, and how each went, is only in its log. The logs of this many of a node's newest
+     * such tasks are read (once each: a finished task's log does not change).
+     */
+    const val BACKUP_LOGS = 10
+    // How vzdump writes each guest's start, end and failure into its task log.
+    private val STARTED = Regex("""^INFO: Starting Backup of VM (\d+)\b""")
+    private val FINISHED = Regex("""^INFO: Finished Backup of VM (\d+)\b""")
+    private val FAILED = Regex("""^ERROR: Backup of VM (\d+) failed - (.*)$""")
     private val TOKEN_ID = Regex("""^[^\s@!:=]+@[^\s@!:=]+![A-Za-z][A-Za-z0-9._-]*$""")
     private val SNAPSHOT_NAME = Regex("""^[A-Za-z][A-Za-z0-9_-]{1,39}$""")
     // A host name or IPv4 address: labels of letters (international names too), digits, hyphens
@@ -117,6 +139,79 @@ object Proxmox {
         Task(t.text("upid"), t.text("node"), t.text("type"), t.text("id"), t.text("user"), t.long("starttime"), t.long("endtime"), t.text("status"))
     }.filter { it.upid.isNotEmpty() }
 
+    /** A task status Proxmox counts as done: "OK", or finished with warnings. */
+    fun succeeded(status: String) = status == "OK" || status.startsWith("WARNINGS")
+
+    internal fun ended(task: Task) = !task.running && task.status != "running"
+
+    /** The lines of a task log page: `[{n, t}]`. */
+    internal fun logLines(data: Any?): List<String> = data.list().map { it.text("t") }
+
+    /**
+     * Each guest's result in a backup job's log: null when its backup finished, else why it failed.
+     * A guest that started and neither finished nor failed (the job was stopped) failed with
+     * [jobStatus], or "did not finish" when the job itself says OK.
+     */
+    internal fun backupLog(lines: List<String>, jobStatus: String): Map<Int, String?> {
+        val result = LinkedHashMap<Int, String?>()
+        val open = LinkedHashSet<Int>()
+        for (line in lines) {
+            val l = line.trim()
+            STARTED.find(l)?.let { val vmid = it.groupValues[1].toInt(); open += vmid; result.putIfAbsent(vmid, null) }
+            FINISHED.find(l)?.let { val vmid = it.groupValues[1].toInt(); open -= vmid; result[vmid] = null }
+            FAILED.find(l)?.let { val vmid = it.groupValues[1].toInt(); open -= vmid; result[vmid] = it.groupValues[2].trim().ifEmpty { "failed" } }
+        }
+        for (vmid in open) result[vmid] = jobStatus.takeUnless { succeeded(it) || it.isBlank() } ?: "did not finish"
+        return result
+    }
+
+    /**
+     * What finished [task] did for each guest: a task of one guest from its status; a whole job from
+     * its [log] (null when it was not read: then only its status is known, for no guest).
+     */
+    internal fun run(task: Task, log: Map<Int, String?>?): BackupRun? {
+        if (!ended(task)) return null
+        val vmid = task.id.toIntOrNull()
+        val guests = when {
+            vmid != null -> mapOf(vmid to if (succeeded(task.status)) null else task.status.ifBlank { "failed" })
+            else -> log.orEmpty()
+        }
+        return BackupRun(task, guests)
+    }
+
+    /** The newest finished backup of [vmid] that succeeded, or of any guest when [vmid] is null. */
+    fun newestBackup(overview: Overview, vmid: Int?): Task? = overview.runs
+        .filter { run -> if (vmid == null) run.guests.values.any { it == null } || (run.guests.isEmpty() && succeeded(run.task.status)) else run.guests.containsKey(vmid) && run.guests[vmid] == null }
+        .maxByOrNull { it.task.start ?: 0 }?.task
+
+    /**
+     * The guests whose newest finished backup failed, each with why: "VM 101 (db): reason". And a
+     * node's newest job whose guests are unknown (its log could not be read) when it failed.
+     */
+    fun failedBackups(overview: Overview): List<String> {
+        val byId = overview.guests.associateBy { it.vmid }
+        val newest = LinkedHashMap<Int, Pair<Long, String?>>()
+        for (run in overview.runs.sortedBy { it.task.start ?: 0 }) {
+            for ((vmid, failure) in run.guests) newest[vmid] = (run.task.start ?: 0) to failure
+        }
+        val guests = newest.entries.sortedBy { it.key }.mapNotNull { (vmid, last) ->
+            last.second?.let { "${byId[vmid]?.label ?: "VM $vmid"}: $it" }
+        }
+        val jobs = overview.runs.filter { it.task.id.toIntOrNull() == null }.groupBy { it.task.node }.mapNotNull { (node, runs) ->
+            runs.maxByOrNull { it.task.start ?: 0 }?.takeIf { it.guests.isEmpty() && !succeeded(it.task.status) }?.let { "Backup job on $node: ${it.task.status.ifBlank { "failed" }}" }
+        }
+        return guests + jobs
+    }
+
+    /**
+     * Whether two saved addresses name the same machine: equal ignoring case, a trailing dot and
+     * IPv6 brackets.
+     */
+    fun sameHost(a: String, b: String): Boolean {
+        fun clean(h: String) = h.trim().removePrefix("[").removeSuffix("]").removeSuffix(".").lowercase()
+        return clean(a).isNotEmpty() && clean(a) == clean(b)
+    }
+
     private fun Any?.long(key: String): Long? = (at(key) as? Number)?.toLong() ?: text(key).toLongOrNull()
     private fun Any?.float(key: String): Float? = (at(key) as? Number)?.toFloat() ?: text(key).toFloatOrNull()
 
@@ -171,15 +266,47 @@ class ProxmoxApi(private val transport: ProxmoxTransport) {
 
     private suspend fun delete(vararg path: String) = transport.call(ProxmoxTransport.Method.DELETE, path.toList())
 
-    /** The version, nodes, guests and the newest backup tasks of the online nodes. */
+    /**
+     * The version, nodes, guests and the backup tasks of the online nodes: the newest to show, and
+     * the finished ones of [Proxmox.BACKUP_HISTORY] with what each did for each guest.
+     */
     suspend fun overview(): Proxmox.Overview {
         val version = get("version").text("version")
         val nodes = Proxmox.nodes(get("nodes"))
         val guests = Proxmox.guests(get("cluster", "resources", query = mapOf("type" to "vm")))
-        val backups = nodes.filter { it.online }.flatMap { node ->
-            Proxmox.tasks(get("nodes", node.name, "tasks", query = mapOf("typefilter" to "vzdump", "limit" to Proxmox.BACKUP_TASKS.toString())))
-        }.sortedByDescending { it.start ?: 0 }.take(Proxmox.BACKUP_TASKS)
-        return Proxmox.Overview(version, nodes, guests, backups)
+        val runs = mutableListOf<Proxmox.BackupRun>()
+        val tasks = nodes.filter { it.online }.flatMap { node ->
+            val history = Proxmox.tasks(get("nodes", node.name, "tasks", query = mapOf("typefilter" to "vzdump", "limit" to Proxmox.BACKUP_HISTORY.toString())))
+                .sortedByDescending { it.start ?: 0 }
+            val logged = history.filter { Proxmox.ended(it) && it.id.toIntOrNull() == null }.take(Proxmox.BACKUP_LOGS).map { it.upid }.toSet()
+            history.mapNotNullTo(runs) { t -> Proxmox.run(t, if (t.upid in logged) backupLog(t) else null) }
+            history
+        }
+        val backups = tasks.sortedByDescending { it.start ?: 0 }.take(Proxmox.BACKUP_TASKS)
+        return Proxmox.Overview(version, nodes, guests, backups, runs.sortedByDescending { it.task.start ?: 0 })
+    }
+
+    /** Each guest's result in finished backup job [task]'s log, read once; null when it cannot be read. */
+    private suspend fun backupLog(task: Proxmox.Task): Map<Int, String?>? {
+        synchronized(logs) { logs[task.upid] }?.let { return it }
+        val lines = mutableListOf<String>()
+        try {
+            while (lines.size < LOG_LINES_MAX) {
+                val page = Proxmox.logLines(get("nodes", task.node, "tasks", task.upid, "log", query = mapOf("start" to lines.size.toString(), "limit" to LOG_PAGE.toString())))
+                lines += page
+                if (page.size < LOG_PAGE) break
+            }
+        } catch (e: ProxmoxUntrusted) {
+            throw e
+        } catch (e: ProxmoxException) {
+            return null
+        }
+        return Proxmox.backupLog(lines, task.status).also { log ->
+            synchronized(logs) {
+                logs[task.upid] = log
+                while (logs.size > LOGS_KEPT) logs.remove(logs.keys.first())
+            }
+        }
     }
 
     suspend fun snapshots(guest: Proxmox.Guest): List<Proxmox.Snapshot> =
@@ -220,8 +347,14 @@ class ProxmoxApi(private val transport: ProxmoxTransport) {
         return "still running on the server"
     }
 
-    private companion object {
-        const val TASK_WAIT_MS = 120_000L
-        const val TASK_POLL_MS = 1_000L
+    internal companion object {
+        private const val TASK_WAIT_MS = 120_000L
+        private const val TASK_POLL_MS = 1_000L
+        private const val LOG_PAGE = 500
+        private const val LOG_LINES_MAX = 20_000
+        private const val LOGS_KEPT = 200
+
+        /** Backup job logs already read, by task UPID (unique to its cluster and time), oldest first. */
+        internal val logs = LinkedHashMap<String, Map<Int, String?>>()
     }
 }

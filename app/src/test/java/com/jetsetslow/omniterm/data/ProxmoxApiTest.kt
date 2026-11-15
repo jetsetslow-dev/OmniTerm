@@ -49,6 +49,7 @@ class ProxmoxApiTest {
 
     @Before
     fun startServer() {
+        synchronized(ProxmoxApi.logs) { ProxmoxApi.logs.clear() }
         https = HttpsServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
         https.httpsConfigurator = HttpsConfigurator(serverContext)
         https.createContext("/") { exchange -> exchange.use { answer(it) } }
@@ -76,7 +77,14 @@ class ProxmoxApiTest {
                 {"id":"lxc/200","vmid":200,"type":"lxc","name":"dns","node":"pve1","status":"stopped","template":0},
                 {"id":"storage/pve1/local","type":"storage","node":"pve1"}]"""
             path == "/api2/json/nodes/pve1/tasks" -> """[{"upid":"UPID:pve1:1:2:3:vzdump:100:root@pam:","node":"pve1","type":"vzdump","id":"100","user":"root@pam","starttime":1762905600,"endtime":1762905900,"status":"OK"},
-                {"upid":"UPID:pve1:1:2:4:vzdump:200:root@pam:","node":"pve1","type":"vzdump","id":"200","user":"root@pam","starttime":1762909200,"endtime":1762909230,"status":"ERROR: storage is not online"}]"""
+                {"upid":"UPID:pve1:1:2:4:vzdump:200:root@pam:","node":"pve1","type":"vzdump","id":"200","user":"root@pam","starttime":1762909200,"endtime":1762909230,"status":"ERROR: storage is not online"},
+                {"upid":"$JOB","node":"pve1","type":"vzdump","id":"","user":"root@pam","starttime":1762912800,"endtime":1762913000,"status":"job errors"}]"""
+            path == "/api2/json/nodes/pve1/tasks/$JOB/log" -> {
+                val q = exchange.requestURI.rawQuery.orEmpty().split('&').associate { it.substringBefore('=') to it.substringAfter('=') }
+                val start = q["start"]?.toIntOrNull() ?: 0
+                val limit = q["limit"]?.toIntOrNull() ?: 50
+                JOB_LOG.drop(start).take(limit).withIndex().joinToString(",", "[", "]") { (i, t) -> "{\"n\":${start + i + 1},\"t\":\"$t\"}" }
+            }
             path.startsWith("/api2/json/nodes/pve1/tasks/UPID:") && path.endsWith("/status") ->
                 if (taskPolls.incrementAndGet() < 2) """{"status":"running"}""" else """{"status":"stopped","exitstatus":"$taskExit"}"""
             path == "/api2/json/nodes/pve1/qemu/100/snapshot" && exchange.requestMethod == "GET" ->
@@ -122,9 +130,25 @@ class ProxmoxApiTest {
         assertThat(overview.nodes[0].memTotal).isEqualTo(8589934592L)
         assertThat(overview.guests.map { it.label }).containsExactly("VM 100 (web)", "CT 200 (dns)").inOrder()
         assertThat(overview.guests[0].cpu).isWithin(0.001f).of(0.5f)
-        assertThat(overview.backups.map { it.id to it.ok }).containsExactly("200" to false, "100" to true).inOrder()
+        assertThat(overview.backups.map { it.id to it.ok }).containsExactly("" to false, "200" to false, "100" to true).inOrder()
         assertWithMessage("backup tasks are read from online nodes only").that(seen.map { it.path }).doesNotContain("/api2/json/nodes/pve2/tasks")
-        assertThat(seen.single { it.path == "/api2/json/nodes/pve1/tasks" }.query).isEqualTo("typefilter=vzdump&limit=10")
+        assertThat(seen.single { it.path == "/api2/json/nodes/pve1/tasks" }.query).isEqualTo("typefilter=vzdump&limit=50")
+
+        // A scheduled job names no guest: its log says which it backed up, and how each went.
+        assertThat(overview.runs.map { it.task.id to it.guests }).containsExactly(
+            "" to mapOf(100 to null, 101 to "no space left on device"),
+            "200" to mapOf(200 to "ERROR: storage is not online"),
+            "100" to mapOf(100 to null),
+        ).inOrder()
+        assertWithMessage("the log is read a page at a time").that(seen.filter { it.path.endsWith("/log") }.map { it.query })
+            .containsExactly("start=0&limit=500", "start=500&limit=500").inOrder()
+        assertThat(Proxmox.newestBackup(overview, 100)?.upid).isEqualTo(JOB)
+        assertWithMessage("only failed backups").that(Proxmox.newestBackup(overview, 200)).isNull()
+        assertThat(Proxmox.newestBackup(overview, 101)).isNull()
+        assertThat(Proxmox.newestBackup(overview, null)?.upid).isEqualTo(JOB)
+        assertThat(Proxmox.failedBackups(overview)).containsExactly("VM 101: no space left on device", "CT 200 (dns): ERROR: storage is not online").inOrder()
+        api(server()).overview()
+        assertWithMessage("a finished job's log is read once").that(seen.count { it.path.endsWith("/log") }).isEqualTo(2)
         assertThat(seen.map { it.auth }.toSet()).containsExactly("PVEAPIToken=$TOKEN_ID=$SECRET")
         assertThat(seen.none { SECRET in it.path || SECRET in it.query.orEmpty() || SECRET in it.body }).isTrue()
 
@@ -224,6 +248,28 @@ class ProxmoxApiTest {
         }
     }
 
+    @Test
+    fun aBackupJobsLogSaysHowEachGuestWentEvenWhenTheJobWasStopped() {
+        val lines = listOf(
+            "INFO: starting new backup job: vzdump 100 101 102",
+            "INFO: Starting Backup of VM 100 (qemu)",
+            "INFO: Finished Backup of VM 100 (00:00:58)",
+            "INFO: Starting Backup of VM 101 (lxc)",
+            "ERROR: Backup of VM 101 failed - unable to create temporary directory",
+            "INFO: Starting Backup of VM 102 (qemu)",
+        )
+        assertThat(Proxmox.backupLog(lines, "interrupted by signal"))
+            .containsExactly(100, null, 101, "unable to create temporary directory", 102, "interrupted by signal").inOrder()
+        assertThat(Proxmox.backupLog(lines, "OK")[102]).isEqualTo("did not finish")
+        val running = Proxmox.Task("UPID:pve1:9", "pve1", "vzdump", "", "root@pam", 1L, null, "")
+        assertWithMessage("a job still running has no result yet").that(Proxmox.run(running, emptyMap())).isNull()
+        val guest = Proxmox.Task("UPID:pve1:8", "pve1", "vzdump", "300", "root@pam", 1L, 2L, "WARNINGS: 1")
+        assertThat(Proxmox.run(guest, null)?.guests).containsExactly(300, null)
+        assertThat(Proxmox.sameHost("[fd00::1]", "FD00::1")).isTrue()
+        assertThat(Proxmox.sameHost("pve.lan.", "PVE.lan")).isTrue()
+        assertThat(Proxmox.sameHost("", "")).isFalse()
+    }
+
     private class SocketLink(val socket: Socket) : TunnelLink {
         override val input: InputStream get() = socket.getInputStream()
         override val output: OutputStream get() = socket.getOutputStream()
@@ -237,6 +283,11 @@ class ProxmoxApiTest {
         private const val TOKEN_ID = "monitor@pve!phone"
         private const val SECRET = "5f1c0d1e-test-only-secret"
         private const val STORE_PASSWORD = "test-only"
+        private const val JOB = "UPID:pve1:1:2:5:vzdump::root@pam:"
+        /** A job of two guests, long enough to take two pages. */
+        private val JOB_LOG = listOf("INFO: starting new backup job: vzdump 100 101 --mode snapshot", "INFO: Starting Backup of VM 100 (qemu)") +
+            List(520) { "INFO: progress ${it / 5}% (read 1 GiB of 100 GiB)" } +
+            listOf("INFO: Finished Backup of VM 100 (00:10:00)", "INFO: Starting Backup of VM 101 (qemu)", "ERROR: Backup of VM 101 failed - no space left on device", "INFO: Backup job finished with errors", "TASK ERROR: job errors")
         private lateinit var serverContext: SSLContext
         private lateinit var FINGERPRINT: String
         private lateinit var dir: File

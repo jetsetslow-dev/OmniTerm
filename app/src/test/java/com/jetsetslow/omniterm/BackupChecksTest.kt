@@ -3,6 +3,7 @@ package com.jetsetslow.omniterm
 import com.jetsetslow.omniterm.data.BackupChecks
 import com.jetsetslow.omniterm.data.BackupChecks.Tool
 import com.jetsetslow.omniterm.data.HostChecks
+import com.jetsetslow.omniterm.data.Proxmox
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -38,7 +39,8 @@ class BackupChecksTest {
         assertEquals("Pick a backup tool", BackupChecks.problem(null))
         assertNotNull(BackupChecks.problem(target(Tool.RESTIC, repo = "")))
         assertNull("a settings file can name the repository", BackupChecks.problem(target(Tool.RESTIC, repo = "", settings = "/etc/restic/env")))
-        assertNotNull(BackupChecks.problem(target(Tool.VZDUMP, repo = "")))
+        assertNull("no folder: the Proxmox VE server's backup tasks", BackupChecks.problem(target(Tool.VZDUMP, repo = "")))
+        assertNotNull(BackupChecks.problem(target(Tool.VZDUMP, repo = "", filter = "web")))
         assertNotNull(BackupChecks.problem(target(Tool.VZDUMP, filter = "100; rm -rf /")))
         assertNotNull(BackupChecks.problem(target(Tool.PBS, fp = "ab:cd")))
         // A newline typed into a field cannot start a new field.
@@ -224,5 +226,26 @@ class BackupChecksTest {
         assertEquals("a dump in India's time is 5.5 hours older in UTC", 35.5f, run("", tz = "IST-5:30").value)
         assertEquals(BackupChecks.NO_BACKUPS, run("102").value)
         assertEquals(BackupChecks.REPO_MISSING, run("", folder = File(tmp.root, "nope").path).value)
+    }
+
+    @Test
+    fun aVzdumpRuleWithNoFolderCountsTheNewestBackupTheServerFinished() {
+        fun task(id: String, start: Long, end: Long?, status: String) = Proxmox.Task("UPID:pve1:$id:$start", "pve1", "vzdump", id, "root@pam", start, end, status)
+        val web = Proxmox.Guest("pve1", 100, "qemu", "web", "running", null, null, null, null, null, false)
+        val job = task("", jan1, jan1 + 600, "job errors")
+        val overview = Proxmox.Overview("8.4", emptyList(), listOf(web), emptyList(), listOf(
+            Proxmox.BackupRun(task("101", jan1 + 3600, jan1 + 3700, "ERROR: no space"), mapOf(101 to "ERROR: no space")),
+            Proxmox.BackupRun(job, mapOf(100 to null, 101 to "no space left on device")),
+            Proxmox.BackupRun(task("100", jan1 - 86_400, jan1 - 86_000, "OK"), mapOf(100 to null)),
+        ))
+        val api = target(Tool.VZDUMP, repo = "", filter = "100")
+        assertTrue(BackupChecks.readsProxmoxTasks(api))
+        assertFalse("a folder is read on the host", BackupChecks.readsProxmoxTasks(target(Tool.VZDUMP)))
+        // Counted from when the job finished with guest 100.
+        assertEquals(BackupChecks.Outcome((now - jan1 - 600) / 3600f, "VM 100 (web) on pve1"), BackupChecks.fromProxmox(api, overview, now))
+        val failedOnly = BackupChecks.fromProxmox(api.copy(filter = "101"), overview, now)
+        assertEquals("a failed backup is no backup", BackupChecks.Outcome(BackupChecks.NO_BACKUPS, "no backup of guest 101 finished"), failedOnly)
+        assertEquals("No Proxmox VE backup: no backup of guest 101 finished", BackupChecks.alertText(api, failedOnly.value!!, 26f, failedOnly.detail))
+        assertEquals("any guest", (now - jan1 - 600) / 3600f, BackupChecks.fromProxmox(api.copy(filter = ""), overview, now).value)
     }
 }

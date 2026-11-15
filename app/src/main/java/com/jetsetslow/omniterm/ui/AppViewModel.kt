@@ -4196,9 +4196,13 @@ class AppViewModel @JvmOverloads constructor(
         val target = BackupChecks.decode(rule.target)
         BackupChecks.problem(target)?.let { return show(EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, it), "")) }
         target!!
-        if (hostOs(srv) == "Windows") return show(EndpointChecks.Result(null, app.getString(R.string.host_check_unknown), ""))
-        val raw = executeSshCommand(srv, BackupChecks.command(target), stdin = rule.secret.substringBefore('\n') + "\n")
-        val outcome = BackupChecks.parse(target, raw, System.currentTimeMillis() / 1000)
+        val outcome = if (BackupChecks.readsProxmoxTasks(target)) {
+            proxmoxBackupOutcome(srv, target)
+        } else {
+            if (hostOs(srv) == "Windows") return show(EndpointChecks.Result(null, app.getString(R.string.host_check_unknown), ""))
+            val raw = executeSshCommand(srv, BackupChecks.command(target), stdin = rule.secret.substringBefore('\n') + "\n")
+            BackupChecks.parse(target, raw, System.currentTimeMillis() / 1000)
+        }
         if (outcome == null) {
             // Never ran: try again at the next poll rather than in 15 minutes.
             backupChecksDueAt.remove(key)
@@ -4219,6 +4223,24 @@ class AppViewModel @JvmOverloads constructor(
                 staleGapMs = BackupChecks.INTERVAL_MS * 3,
                 notificationText = BackupChecks.alertText(target, value, rule.thresholdValue, outcome.detail),
             )
+        }
+    }
+
+    /**
+     * A vzdump rule with no folder, read from the backup tasks of the Proxmox VE server saved for
+     * [srv]'s address (or its tunnel address): only read, through the server's own tunnel when it
+     * has one. Unknown (a null value, saying why) when no server is saved for it or it cannot be read.
+     */
+    private suspend fun proxmoxBackupOutcome(srv: ServerEntity, target: BackupChecks.Target): BackupChecks.Outcome {
+        val addresses = listOf(srv.host, srv.tunnelHost).filter { it.isNotBlank() }
+        val server = repository.getAllProxmoxServers().firstOrNull { s -> listOf(s.host, s.tunnelHost).any { a -> addresses.any { Proxmox.sameHost(a, it) } } }
+            ?: return BackupChecks.Outcome(null, getApplication<Application>().getString(R.string.backup_no_proxmox_server, srv.host))
+        return try {
+            BackupChecks.fromProxmox(target, proxmoxOverview(server, maxAgeMs = BackupChecks.INTERVAL_MS / 2), System.currentTimeMillis() / 1000)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            BackupChecks.Outcome(null, "${server.name}: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -6569,6 +6591,24 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /** When each Proxmox server's overview was last read, by id. */
+    private val proxmoxReadAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
+    /**
+     * [server]'s overview for the checks: the one read for the screen when it is younger than
+     * [maxAgeMs], else read again (and shown). Throws why it could not be read.
+     */
+    private suspend fun proxmoxOverview(server: ProxmoxServerEntity, maxAgeMs: Long): Proxmox.Overview {
+        val kept = withContext(Dispatchers.Main) { proxmoxViews[server.id]?.takeIf { it.error == null && it.untrusted == null }?.overview }
+        if (kept != null && System.currentTimeMillis() - (proxmoxReadAt[server.id] ?: 0L) < maxAgeMs) return kept
+        val overview = proxmoxApi(server).overview()
+        proxmoxReadAt[server.id] = System.currentTimeMillis()
+        withContext(Dispatchers.Main) {
+            if (proxmoxViews[server.id]?.loading != true) proxmoxViews[server.id] = ProxmoxView(overview = overview)
+        }
+        return overview
+    }
+
     /** The user compared and trusted [fingerprint] for [server]: kept with it, then read again. */
     fun trustProxmoxCertificate(server: ProxmoxServerEntity, fingerprint: String) {
         viewModelScope.launch {
@@ -6591,7 +6631,7 @@ class AppViewModel @JvmOverloads constructor(
         proxmoxViews[server.id] = (proxmoxViews[server.id] ?: ProxmoxView()).copy(loading = true)
         viewModelScope.launch {
             proxmoxViews[server.id] = try {
-                ProxmoxView(overview = proxmoxApi(server).overview())
+                ProxmoxView(overview = proxmoxApi(server).overview()).also { proxmoxReadAt[server.id] = System.currentTimeMillis() }
             } catch (e: ProxmoxUntrusted) {
                 ProxmoxView(untrusted = e)
             } catch (e: kotlinx.coroutines.CancellationException) {
