@@ -51,7 +51,8 @@ internal class TunnelSocketFactory(
     private val timeoutMs: Int = TunnelSocket.DEFAULT_TIMEOUT_MS,
 ) : SocketFactory {
     override fun createSocket(host: String, port: Int): Socket {
-        val socket = javaSocket(tunnelId)
+        // JSch dials the host's SSH session, and its jump host or proxy, through here.
+        val socket = javaSocket(tunnelId, TunnelUse.SSH)
         try {
             socket.connect(InetSocketAddress.createUnresolved(rename(host), port), timeoutMs)
         } catch (e: IOException) {
@@ -65,8 +66,9 @@ internal class TunnelSocketFactory(
     override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
 
     companion object {
-        /** An unconnected socket that connects through tunnel [tunnelId], for clients that connect it themselves. */
-        fun javaSocket(tunnelId: Int): Socket = TunnelSocket { host, port, timeout -> TunnelManager.dial(tunnelId, host, port, timeout) }
+        /** An unconnected socket that connects through tunnel [tunnelId] for [use], for clients that connect it themselves. */
+        fun javaSocket(tunnelId: Int, use: TunnelUse): Socket =
+            TunnelSocket { host, port, timeout -> TunnelManager.dial(tunnelId, host, port, timeout, use) }
     }
 }
 
@@ -79,7 +81,8 @@ internal class TunnelHttpSocketFactory(
     private val tunnelId: Int,
     private val rename: (String) -> String = { it },
 ) : javax.net.SocketFactory() {
-    override fun createSocket(): Socket = TunnelSocket { host, port, timeout -> TunnelManager.dial(tunnelId, rename(host), port, timeout) }
+    override fun createSocket(): Socket =
+        TunnelSocket { host, port, timeout -> TunnelManager.dial(tunnelId, rename(host), port, timeout, TunnelUse.OTHER) }
     override fun createSocket(host: String, port: Int): Socket =
         createSocket().apply { connect(InetSocketAddress.createUnresolved(host, port), TunnelSocket.DEFAULT_TIMEOUT_MS) }
     override fun createSocket(host: String, port: Int, localHost: java.net.InetAddress?, localPort: Int): Socket = createSocket(host, port)

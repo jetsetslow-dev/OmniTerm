@@ -618,7 +618,9 @@ object TunnelKinds {
     const val WIREGUARD = "wireguard"
     /** Tailscale, or a Headscale server: the same kind with its own control server. */
     const val TAILSCALE = "tailscale"
+    const val NEBULA = "nebula"
+    const val CLOUDFLARE_ACCESS = "cloudflare-access"
 
     /** The kinds this version can run; a backup's tunnel of any other kind is not restored. */
-    val ALL = setOf(WIREGUARD, TAILSCALE)
+    val ALL = setOf(WIREGUARD, TAILSCALE, NEBULA, CLOUDFLARE_ACCESS)
 }

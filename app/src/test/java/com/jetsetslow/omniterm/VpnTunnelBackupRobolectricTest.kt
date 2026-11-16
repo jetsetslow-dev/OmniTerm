@@ -122,7 +122,18 @@ class VpnTunnelBackupRobolectricTest {
     }
 
     @Test
-    fun aTailscaleTunnelIsRestoredWithItsSettingsButSignsInAgainAsANewDevice() = runBlocking {
+    fun aTailscaleTunnelIsRestoredWithItsSettingsButSignsInAgainAsANewDevice() =
+        identityBackup(TunnelKinds.TAILSCALE, TAILNET, NODE)
+
+    @Test
+    fun aNebulaTunnelRestoresTheUsersCertificateAndKey() =
+        identityBackup(TunnelKinds.NEBULA, "pki:\n  cert: certificate-for-test\n  key: private-key-for-test\n")
+
+    @Test
+    fun accessBackupsRestoreTheEncryptedServiceTokenAndKind() =
+        identityBackup(TunnelKinds.CLOUDFLARE_ACCESS, "{\"hostname\":\"ssh.example.com\",\"clientId\":\"fixture-id\",\"clientSecret\":\"fixture-secret\"}")
+
+    private fun identityBackup(kind: String, config: String, node: String = "") = runBlocking {
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         Dispatchers.setMain(main)
         val store = ViewModelStore()
@@ -133,10 +144,11 @@ class VpnTunnelBackupRobolectricTest {
             withContext(Dispatchers.IO) { db.clearAllTables() }
             val model = withContext(main) { AppViewModel(application) }
             store.put("backup", model)
-            val tailnet = repo.insertTunnel(TunnelEntity(name = "Tailnet", kind = TunnelKinds.TAILSCALE, config = TAILNET))
-            repo.saveTunnelNodeState(tailnet, NODE)
-            assertEquals("the node state is kept, encrypted", NODE, repo.tunnelNodeState(tailnet))
-            assertTrue("and stored encrypted", NODE !in db.tunnelDao().nodeState(tailnet).orEmpty())
+            val tailnet = repo.insertTunnel(TunnelEntity(name = "Tailnet", kind = kind, config = config))
+            repo.saveTunnelNodeState(tailnet, node)
+            assertEquals("the node state is kept, encrypted", node, repo.tunnelNodeState(tailnet))
+            if (node.isNotEmpty()) assertTrue("and stored encrypted", node !in db.tunnelDao().nodeState(tailnet).orEmpty())
+            assertTrue("identity material is encrypted at rest", config !in db.tunnelDao().get(tailnet)!!.config)
             assertEquals("nothing but the tunnel reads it", "", repo.getTunnel(tailnet)!!.nodeState)
             repo.insertServer(host("pi", tunnelId = tailnet))
 
@@ -149,6 +161,8 @@ class VpnTunnelBackupRobolectricTest {
             assertTrue(exportMessage, exportOk)
             waitWhileOnMain(main) { model.backupExportRunning }
             val backup = bytes.toString(Charsets.UTF_8)
+            assertTrue("Tunnel credentials require encrypted backup", JSONObject(backup).has("data"))
+            assertTrue("Tunnel configuration cannot appear in the backup envelope", config !in backup)
 
             withContext(Dispatchers.IO) { db.clearAllTables() }
             val restored = CompletableDeferred<Pair<Boolean, String>>()
@@ -157,9 +171,11 @@ class VpnTunnelBackupRobolectricTest {
             assertTrue(restoreMessage, restoreOk)
             waitWhileOnMain(main) { model.backupRestoreRunning }
 
-            val tunnel = repo.getAllTunnels().single()
-            assertEquals(TunnelKinds.TAILSCALE, tunnel.kind)
-            assertEquals("its settings, auth key included, come back", TAILNET, tunnel.config)
+            val restoredTunnels = repo.getAllTunnels()
+            assertEquals("The tunnel kind must be restored", 1, restoredTunnels.size)
+            val tunnel = restoredTunnels.single()
+            assertEquals(kind, tunnel.kind)
+            assertEquals("its settings, auth key included, come back", config, tunnel.config)
             assertEquals("its device keys do not: it signs in again as a new device", "", repo.tunnelNodeState(tunnel.id))
             assertEquals(tunnel.id, repo.getAllServers().single().tunnelId)
         } finally {

@@ -85,6 +85,8 @@ python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline
 # the network retry its build uses.
 ./scripts/test-retry-network.sh
 ./scripts/test-tunnel.sh
+# The Cloudflare Access test seam ships in no library or app (scripts/check-tunnel-seam.py).
+python3 -I -B ./scripts/test-check-tunnel-seam.py
 # Dependency review's licence policy on the Go modules, from the same allow-licenses list.
 (eval "$(./scripts/go-toolchain.sh)" && python3 -I ./scripts/check-licenses.py)
 
@@ -148,6 +150,8 @@ if command -v adb >/dev/null 2>&1 &&
 else
   echo "Device matrix (Room migrations + UI instrumentation): no Android device/emulator available; deferred to PR CI"
 fi
+# The tunnel library and every app built above: none holds the Access fixture's seam.
+python3 -I -B ./scripts/check-tunnel-seam.py --built
 
 if [[ "$MODE" == "--full" ]]; then
   # Last, because it cleans the build to compile everything under the extractor.

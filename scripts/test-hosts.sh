@@ -10,6 +10,9 @@
 # CI's instrumentation coverage is the emulator-based Room migration matrix, which needs no hosts.
 #
 #   ./scripts/test-hosts.sh up       # generate keys if needed, start, wait until SSH answers
+#   ./scripts/test-hosts.sh tailnet-phone # refresh only the phone key; keep shared nodes running
+#   ./scripts/test-hosts.sh cloudflare-access # TLS/WebSocket service-token contract fake
+#   ./scripts/test-hosts.sh nebula   # start only the Nebula lighthouse and SSH node
 #   ./scripts/test-hosts.sh tailnet  # start only headscale and the tailnet router, with fresh keys
 #   ./scripts/test-hosts.sh rebuild <service> # rebuild and recreate one fixture only
 #   ./scripts/test-hosts.sh registry # start the image-update registry and push its images
@@ -29,12 +32,15 @@
 # after reversing the fixture ports to it. Each argument becomes one instrumentation argument: a
 # bare name is filled in from these fixtures (host, port, user, pass, network_host,
 # omniterm_e2e_sftp_home, backup_pass, snmp_community, snmp_pass, wg_client_key, wg_server_pub,
-# ts_key, ts_behind, pve_token, pve_audit_token, pve_fingerprint, pve_behind), name=value is passed
-# as written (an opt-in such as omniterm_e2e_proxmox=yes), and name=@VARIABLE takes the value of
-# that environment variable (or of .env). The whole `am instrument` line goes to the device on
-# adb's standard input, so no password, key or token is ever on a command line on this machine,
+# ts_key, ts_behind, pve_token, pve_audit_token, pve_fingerprint, pve_behind, second_port), name=value
+# is passed as written (an opt-in such as omniterm_e2e_proxmox=yes), and name=@VARIABLE takes the
+# value of that environment variable (or of .env). The whole `am instrument` line goes to the device
+# on adb's standard input, so no password, key or token is ever on a command line on this machine,
 # where `ps` shows it to every user; those values are masked in what it prints. It exits 0 only
 # when the run ends OK, and says how many tests were skipped by their opt-in.
+# A few names stand for a private fixture file instead (nebula_config, access_config, access_ca):
+# the file is copied into the app's own private files with run-as, on adb's standard input, the
+# suite gets only its file name, and the copy is removed after the run.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -91,7 +97,7 @@ ensure_env() {
   # fake's two token secrets.
   local name
   for name in OMNITERM_TEST_BACKUP_PASSWORD OMNITERM_TEST_SNMP_COMMUNITY OMNITERM_TEST_SNMP_PASSWORD \
-    OMNITERM_TEST_PVE_TOKEN OMNITERM_TEST_PVE_AUDIT_TOKEN; do
+    OMNITERM_TEST_PVE_TOKEN OMNITERM_TEST_PVE_AUDIT_TOKEN OMNITERM_TEST_ACCESS_ID OMNITERM_TEST_ACCESS_SECRET; do
     if ! grep -q "^$name=" "$ENV_FILE"; then
       (umask 077; echo "$name=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)" >>"$ENV_FILE")
       echo "added $name to $ENV_FILE"
@@ -126,11 +132,12 @@ EDGE_HOSTS=(
 )
 PROXY_PORTS=(1080 8888)
 SHARE_PORTS=(21 445 8082)
-ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2207 2299 8006 8080 8081 8082 8888)
+ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2207 2299 8006 8080 8081 8082 8447 8888)
 # The lab host the device suites share ("E2E Foreground Demo"): the Docker runtime fixture.
 LAB_PORT=2205
 LAB_CONTAINER=omniterm-test-runtime-docker
-RUNNER=com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+APP=com.jetsetslow.omniterm.app.oss
+RUNNER=$APP.test/androidx.test.runner.AndroidJUnitRunner
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
@@ -182,6 +189,18 @@ fixture_value() {
     # The Proxmox fake's certificate, as `openssl x509 -fingerprint -sha256` prints it.
     pve_fingerprint) openssl s_client -connect 127.0.0.1:8006 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 ;;
     pve_behind) docker inspect omniterm-test-proxmox-api --format '{{(index .NetworkSettings.Networks "omniterm-test-internal").IPAddress}}' 2>/dev/null ;;
+    # A second SSH fixture with the lab user's login (direct), for a suite that needs two hosts.
+    second_port) echo 2201 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The private fixture file a bare argument name in `suite` stands for, if it is one.
+fixture_file() {
+  case "$1" in
+    nebula_config) echo "$DIR/.nebula/phone.json" ;;           # `nebula`: the phone's Nebula identity
+    access_config) echo "$DIR/.cloudflare-access/phone.json" ;; # `cloudflare-access`: the service token
+    access_ca) echo "$DIR/.cloudflare-access/ca.crt" ;;         # and the contract fake's CA
     *) return 1 ;;
   esac
 }
@@ -263,21 +282,38 @@ EOF_MAP
 
 # The registry fixture's CA and server certificate, made once into .registry/ (gitignored).
 registry_certs() {
-  local d="$DIR/.registry"
+  fixture_certs "$DIR/.registry" omniterm-test-registry
+}
+
+# Shared TLS fixture generation; an existing fixture is never rotated by another fixture.
+fixture_certs() {
+  local d="$1" cert_name="$2"
   [ -s "$d/ca.crt" ] && [ -s "$d/server.crt" ] && [ -s "$d/server.key" ] && return 0
   mkdir -p "$d" || return 1
   local old_umask rc; old_umask=$(umask); umask 077
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj '/CN=OmniTerm test registry CA' \
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=OmniTerm fixture CA" \
     -keyout "$d/ca.key" -out "$d/ca.crt" 2>/dev/null &&
-    openssl req -newkey rsa:2048 -nodes -subj '/CN=omniterm-test-registry' \
+    openssl req -newkey rsa:2048 -nodes -subj "/CN=$cert_name" \
       -keyout "$d/server.key" -out "$d/server.csr" 2>/dev/null &&
-    printf 'subjectAltName=DNS:omniterm-test-registry\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' >"$d/server.ext" &&
+    printf 'subjectAltName=DNS:%s\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' "$cert_name" >"$d/server.ext" &&
     openssl x509 -req -in "$d/server.csr" -CA "$d/ca.crt" -CAkey "$d/ca.key" -CAcreateserial -days 3650 \
       -extfile "$d/server.ext" -out "$d/server.crt" 2>/dev/null
   rc=$?
   umask "$old_umask"
   chmod 644 "$d/ca.crt" "$d/server.crt" 2>/dev/null
   return $rc
+}
+
+# Minting a phone key must not recreate the shared router or reset Headscale.
+headscale_user_id() {
+  docker exec omniterm-test-headscale headscale users list -o json |
+    python3 -I -c 'import json,sys; print(next(u["id"] for u in json.load(sys.stdin) if u["name"] == "lab"))'
+}
+
+headscale_key() {
+  local uid="$1"; shift
+  docker exec omniterm-test-headscale headscale preauthkeys create --user "$uid" --reusable --expiration 24h "$@" -o json |
+    python3 -I -c 'import json,sys; print(json.load(sys.stdin)["key"])'
 }
 
 tailnet_up() {
@@ -289,11 +325,9 @@ tailnet_up() {
   wait_for_port 8085 || return 1
   for i in $(seq 1 30); do "${hs[@]}" users list >/dev/null 2>&1 && break; sleep 1; done
   "${hs[@]}" users create lab >/dev/null 2>&1 || true
-  uid=$("${hs[@]}" users list -o json | python3 -I -c 'import json,sys; print(next(u["id"] for u in json.load(sys.stdin) if u["name"] == "lab"))') || return 1
-  key() { "${hs[@]}" preauthkeys create --user "$uid" --reusable --expiration 24h "$@" -o json |
-    python3 -I -c 'import json,sys; print(json.load(sys.stdin)["key"])'; }
-  router_key=$(key) || return 1
-  phone_key=$(key --ephemeral) || return 1
+  uid=$(headscale_user_id) || return 1
+  router_key=$(headscale_key "$uid") || return 1
+  phone_key=$(headscale_key "$uid" --ephemeral) || return 1
   routes=$(docker network inspect omniterm-test-internal --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | awk '{print $1}')
   behind=$(docker inspect omniterm-test-internal-a --format '{{(index .NetworkSettings.Networks "omniterm-test-internal").IPAddress}}')
   [ -n "$routes" ] && [ -n "$behind" ] || { echo "the internal network has no range, or internal-a no address" >&2; return 1; }
@@ -373,6 +407,47 @@ case "${1:-}" in
     wait_for_auth 2206 || exit 1
     tailnet_up || exit 1
     echo "test fleet ready. Run './scripts/test-hosts.sh fleet' for the settings to enter."
+    ;;
+
+  cloudflare-access)
+    require_docker
+    eval "$("$ROOT/scripts/go-toolchain.sh")"
+    mkdir -p "$DIR/fixtures/cloudflare-access/.build"
+    (cd "$ROOT/tunnel" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$DIR/fixtures/cloudflare-access/.build/accesslab" ./cmd/accesslab) || exit 1
+    fixture_certs "$DIR/.cloudflare-access" '*.access.test' || exit 1
+    # By its full path: the script runs from any folder.
+    (umask 077; python3 -I -c 'import json,os,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps(dict(hostname="ssh.access.test",clientId=os.environ["OMNITERM_TEST_ACCESS_ID"],clientSecret=os.environ["OMNITERM_TEST_ACCESS_SECRET"])))' "$DIR/.cloudflare-access/phone.json") || exit 1
+    compose --profile cloudflare-access up -d --build --no-deps cloudflare-access || exit 1
+    wait_for_port 8447 || exit 1
+    echo "Access contract fake ready on TLS 127.0.0.1:8447; private phone settings and CA in .cloudflare-access"
+    ;;
+
+  nebula)
+    # Caller holds the shared machine lock when building on a relay machine. No other fixture
+    # is recreated: internal-a must already be up, as it is for the WireGuard and tailnet suites.
+    require_docker
+    ensure_env
+    eval "$("$ROOT/scripts/go-toolchain.sh")"
+    mkdir -p "$DIR/fixtures/nebula/.build"
+    (cd "$ROOT/tunnel" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$DIR/fixtures/nebula/.build/nebulalab" ./cmd/nebulalab) || exit 1
+    (umask 077; "$DIR/fixtures/nebula/.build/nebulalab" -generate -state "$DIR/.nebula" -endpoint "${OMNITERM_NEBULA_ENDPOINT:-10.0.2.2:4242}") || exit 1
+    export OMNITERM_NEBULA_UID="$(id -u)" OMNITERM_NEBULA_GID="$(id -g)"
+    compose --profile nebula up -d --build --no-deps --force-recreate nebula || exit 1
+    ready=false
+    for i in $(seq 1 30); do
+      if docker logs omniterm-test-nebula 2>&1 | grep -q 'Nebula fixture ready'; then ready=true; break; fi
+      sleep 1
+    done
+    "$ready" || { echo "Nebula fixture did not start" >&2; exit 1; }
+    echo "Nebula ready: lighthouse UDP 127.0.0.1:4242, SSH node 10.88.0.3:22; phone config in scripts/test-hosts/.nebula/phone.json (private)"
+    ;;
+
+  tailnet-phone)
+    require_docker
+    uid=$(headscale_user_id) || exit 1
+    phone_key=$(headscale_key "$uid" --ephemeral) || exit 1
+    set_env OMNITERM_TEST_TS_PHONE_KEY "$phone_key"
+    echo "refreshed the disposable phone key; Headscale and the router were not restarted"
     ;;
 
   tailnet)
@@ -647,10 +722,18 @@ EOF
     fi
     line="am instrument -w -r"
     masked=()
+    copied=()
     for a in "$@"; do
       name="${a%%=*}"
       [[ "$name" =~ ^[A-Za-z0-9_]+$ ]] || { echo "not an argument name: $name" >&2; exit 2; }
-      if [ "$a" = "$name" ]; then
+      if [ "$a" = "$name" ] && file=$(fixture_file "$name"); then
+        [ -s "$file" ] || { echo "$name: its fixture is not set up (see this script's usage)" >&2; exit 1; }
+        value="e2e-$name"
+        # Only the file name is on a command line; its content goes on adb's standard input.
+        adb -s "$serial" shell "run-as $APP sh -c 'mkdir -p files && cat > files/$value'" <"$file" >/dev/null ||
+          { echo "$name: could not copy it into $APP's private files (install the debug app first)" >&2; exit 1; }
+        copied+=("$value")
+      elif [ "$a" = "$name" ]; then
         value=$(fixture_value "$name") || { echo "$name is not a fixture value: pass $name=value or $name=@VARIABLE" >&2; exit 2; }
         [ -n "$value" ] || { echo "$name: its fixture is not set up (see this script's usage)" >&2; exit 1; }
         case "$name" in pass | backup_pass | snmp_* | wg_* | ts_key | pve_token | pve_audit_token) masked+=("$value") ;; esac
@@ -678,7 +761,11 @@ EOF
     # -3 is an ignored test, -4 a failed assumption: an opt-in it was not given.
     skipped=$(grep -cE '^INSTRUMENTATION_STATUS_CODE: -(3|4)' <<<"$out")
     echo "== $target: $(grep -E '^OK \(|^Tests run|INSTRUMENTATION_FAILED' <<<"$out" | head -2 | tr '\n' ' ')($skipped skipped by their opt-in)"
-    grep -q '^OK (' <<<"$out" && ! grep -q 'FAILURES!!!' <<<"$out"
+    ok=1
+    grep -q '^OK (' <<<"$out" && ! grep -q 'FAILURES!!!' <<<"$out" && ok=0
+    # A suite removes a private file when it reads it; one it never read (skipped) goes here.
+    for f in "${copied[@]}"; do adb -s "$serial" shell "run-as $APP rm -f files/$f" >/dev/null 2>&1; done
+    exit "$ok"
     ;;
 
   *)

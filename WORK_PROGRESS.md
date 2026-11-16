@@ -1599,3 +1599,367 @@ Checkpoint B results:
 
 - Tunnels need a userspace WireGuard/TCP stack; every maintained one is Go (wireguard-go, tsnet).
 - ChatGPT's local MCP support could not be verified (its docs returned 404); not claimed.
+
+## Nebula tunnels (Nov 13–14, Codex relay lane)
+
+- Credit: [Nebula](https://github.com/slackhq/nebula) v1.12.0, MIT, for its userspace `service`;
+  [Haven](https://github.com/GlassHaven/Haven) for the per-host Nebula kind idea only (AGPL,
+  reference only, no copied code). Go's checksum database verifies the exact pinned module zip.
+- Hosts can select Nebula without taking Android's VPN slot. The shared tunnel editor accepts a
+  pasted/imported YAML configuration with inline CA/host certificates and key, static host map and
+  lighthouses; Test connects to the supplied overlay address/port and closes its temporary tunnel.
+  Existing encrypted storage, shared editor frame, first-use start, idle stop, host routing and
+  Wi-Fi exceptions are reused. Backups keep the user's original certificate and key. No DB change
+  and no added code in the restore function.
+- Numeric overlay addresses and static IP:port endpoints only; no phone DNS (since the review,
+  endpoints may be host names: see "Codex lane, reviewed and repaired"). Runtime constructs an
+  allowlist of identity/discovery settings and replaces tun/listen/firewall: UserDevice/service,
+  an ephemeral UDP transport socket, outgoing TCP and replies only. Imported debug, DNS, metrics,
+  control and relay-hosting settings cannot enable services or touch system configuration. File
+  paths/PKCS#11 keys are refused; validation errors never echo private input.
+- Unsafe routes are refused: upstream UserDevice.RoutesFor ignores configured gateways. The public
+  service/control API has no per-node handshake timestamp or byte totals; the card explicitly says
+  handshake unavailable and labels the counters as TCP payload. State/address/counters are read on
+  demand, with no added polling timer. Kotlin registers the shared network bridge for Nebula alone;
+  NetworkChanged calls Control.RebindUDPServer only for live Nebula nodes.
+- Fixture `test-hosts.sh nebula`: only omniterm-test-nebula is built/started, from pinned Alpine and
+  the repository-built Go command. A fresh CA and identities are generated into ignored .nebula
+  with private permissions. Userspace lighthouse 10.88.0.1 and SSH node 10.88.0.3:22 lead to the
+  existing internal-a:2222. No TUN/capabilities, only loopback UDP4242 published. `tailnet-phone`
+  refreshes only the disposable phone's expired Headscale key, using shared key helpers, without
+  restarting/recreating Headscale or its router. No shared service was recreated in this run.
+- Validation: scripts/test-tunnel.sh passed (formatting, strict module verification, host+Android
+  arm64 compile, vet, 34 top-level tests: Nebula8, fixture1, WireGuard/config8, Tailscale17).
+  Targeted OSS JVM tests31 passed, none skipped. Four changed JVM classes (23 tests) passed five
+  more times on one CPU in PlayStore debug:115 additional executions, no failures/errors/skips.
+  All four native ABIs, both OSS debug APKs and final lint passed. Duplicates0, pinned images,
+  shell syntax and diff whitespace checks passed. No new Gradle dependency/verification graph.
+- Go guards seen failing at the intended assertions (13), then restored checks passed: certificate
+  network boundary, system dialer even for a permitted loopback address, private-key mismatch,
+  wrong CA, inbound firewall, transport listener, ancillary metrics service, payload totals,
+  closed-node removal, network notification, unsafe routes, private parser diagnostics, expired
+  running certificate. JVM guards seen failing (6), then restored five repeats passed: supported
+  backup kind, encrypted identity, Wi-Fi routing, idle stop, Test closes its tunnel, Test dials it.
+- API 35 device suites: `E2eNebulaTunnelTest` 1 (`omniterm_e2e_nebula=yes`, generated configuration
+  streamed to app-private files/nebula-e2e.json, fixture user/pass on adb stdin); editor validation,
+  Test, encrypted storage, actual SSH, unreachable overlay host never reached at its answering
+  direct address, outside-address refusal, Wi-Fi exception and removal. Guard seen failing on
+  device with only Nebula's network registration removed (1 executed/1 expected failure); restored
+  complete suite passed1 again. E2eVpnTunnelTest1 (`omniterm_e2e_vpn=yes`),
+  E2eTailscaleTunnelTest1 (`omniterm_e2e_tailscale=yes`), and E2eAppSurfaceStressTest1
+  (`omniterm_e2e_surfaces=yes`, `omniterm_e2e_sftp_home=/home/<fixture user>` for runtime-docker2205)
+  passed, none skipped. The device test waits for the manager's status refresh before asserting
+  counters; the first immediate read exposed a test synchronization defect, now fixed.
+- PRIVACY.md/README/NOTICE and the named external audit describe/credit Nebula. PRIVACY.md states
+  encrypted identity storage/backup, user-owned lighthouse/node traffic and disclosed addresses,
+  disabled ancillary services, numeric addressing and the temporary Test connection. No generated
+  phone identity or configuration file is added by the carrier. Full bundle gate/hosted required
+  checks remain for the orchestrator/owner before merge, as instructed; none were claimed here.
+
+Size (bytes, all-ABI AAR and universal OSS debug APK; pristine baseline630d968, same build flags):
+
+| Artifact | Before | After | Increase |
+| --- | ---: | ---: | ---: |
+| Tunnel AAR | 30076296 | 40247749 | 10171453 |
+| OSS debug APK | 112964487 | 141136215 | 28171728 |
+| arm64-v8a libgojni.so | 18979752 | 25977864 | 6998112 |
+| armeabi-v7a libgojni.so | 18182348 | 24951404 | 6769056 |
+| x86_64 libgojni.so | 20354888 | 27893512 | 7538624 |
+| x86 libgojni.so | 18280140 | 25120876 | 6840736 |
+
+Nebula has no service trimming tags. `debug` and `pkcs11` remain unset (no pprof listener/native
+PKCS#11 module); the existing `-s -w` stripping and Tailscale omission tags remain intact.
+All78 required Go modules passed scripts/check-licenses.py against the repository policy; no
+GPL/AGPL/BSL dependency added. Added modules (exact versions/licences):
+
+| Module | Version | Licence(s) |
+| --- | --- | --- |
+| github.com/DefinedNet/dnsconfig | v0.0.0-20261028201825-617c971e7a6a | MIT |
+| github.com/slackhq/nebula | v1.12.0 | MIT |
+| go.yaml.in/yaml/v3 | v3.0.5 | Apache-2.0, MIT |
+| dario.cat/mergo | v1.0.2 | BSD-3-Clause |
+| filippo.io/bigmod | v0.1.0 | BSD-3-Clause |
+| github.com/DefinedNet/netlink | v1.3.2-dn.1 | Apache-2.0 |
+| github.com/Microsoft/go-winio | v0.6.4 | MIT |
+| github.com/anmitsu/go-shlex | v0.0.0-20200514113438-38f4b401e2be | MIT |
+| github.com/beorn7/perks | v1.0.1 | MIT |
+| github.com/cespare/xxhash/v2 | v2.3.0 | MIT |
+| github.com/flynn/noise | v1.1.0 | BSD-3-Clause |
+| github.com/gogo/protobuf | v1.3.2 | BSD-3-Clause |
+| github.com/miekg/dns | v1.1.73 | BSD-3-Clause |
+| github.com/miekg/pkcs11 | v1.1.2 | BSD-3-Clause |
+| github.com/munnerz/goautoneg | v0.0.0-20191010083416-a7dc8b61c822 | BSD-3-Clause |
+| github.com/nbrownus/go-metrics-prometheus | v0.0.0-20210712211119-974a6260965f | Apache-2.0 |
+| github.com/prometheus/client_golang | v1.25.0 | Apache-2.0 |
+| github.com/prometheus/client_model | v0.6.3 | Apache-2.0 |
+| github.com/prometheus/common | v0.72.0 | Apache-2.0 |
+| github.com/prometheus/procfs | v0.22.0 | Apache-2.0 |
+| github.com/rcrowley/go-metrics | v0.0.0-20201227073835-cf1acfcdf475 | BSD-2-Clause |
+| github.com/stefanberger/go-pkcs11uri | v0.0.0-20230803200340-78284954bff6 | Apache-2.0 |
+| github.com/vishvananda/netns | v0.0.5 | Apache-2.0 |
+| google.golang.org/protobuf | v1.36.12 | BSD-3-Clause, LicenseRef-scancode-google-patent-license-golang |
+
+Shared Go pins raised by Nebula’s minimum-version selection (same licence gate passed):
+
+- github.com/gaissmai/bart: v0.29.0 → v0.30.0 (MIT).
+- github.com/klauspost/compress: v1.20.0 → v1.20.1 (Apache-2.0, BSD-3-Clause, MIT).
+- golang.zx2c4.com/wireguard/windows: v1.0.1 → v1.1.1 (MIT).
+- gvisor.dev/gvisor: v0.0.0-20260915211658-a6f909f08a72 → v0.0.0-20261014193016-04d31b385980 (Apache-2.0, BSD-3-Clause, MIT).
+
+The candidate APK was packaged afresh to remove incremental archive slack; every ZIP entry’s SHA-256 matched the validated candidate. The size table uses the fresh archive.
+
+## Cloudflare Access service-token SSH (Nov 14, Codex relay lane)
+
+Protocol research: [cloudflared](https://github.com/cloudflare/cloudflared), Apache-2.0, revision
+`b0297f0b24c60a4cef743b7b878e2da3798cb839`, read as a reference, reimplemented without copying code.
+- [`cmd/cloudflared/access/carrier.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/cmd/cloudflared/access/carrier.go), `ssh` / `StartForwarder`: uses the application's URL, service-token headers `CF-Access-Client-Id` and `CF-Access-Client-Secret`, and its own User-Agent. The optional `--destination` uses `Cf-Access-Jump-Destination` for bastion mode; OmniTerm does not implement that mode or send that header. OmniTerm identifies itself with User-Agent OmniTerm.
+- [`carrier/websocket.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/carrier/websocket.go), `createWebsocketStream`, `websocketHeaders`, `clientConnect`: HTTP GET to the application with HTTPS switched to WSS for Gorilla. The library supplies Connection/Upgrade, Sec-WebSocket-Key and Version; no subprotocol or compression is requested. Successful upgrade is HTTP 101. OmniTerm uses the same wire contract at HTTPS:443 `/`, with coder/websocket.
+- [`carrier/carrier.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/carrier/carrier.go), `IsAccessResponse` identifies HTTP 302 whose Location path begins `/cdn-cgi/access/login`. Cloudflared then obtains app information and an interactive JWT (`Cf-Access-Token`) and may retry; OmniTerm instead explains that Service Auth is required and stops. HTTP 401/403 is presented as a token/policy rejection (it cannot distinguish revoked/expired credentials from policy refusal). Non-upgrading 200/404 or unrelated redirects say the hostname is not accepting Access TCP; 429/5xx and network/TLS failures say Cloudflare is unreachable. Server bodies and redirect queries never reach diagnostics.
+- [`websocket/connection.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/websocket/connection.go), `GorillaConn.Read/Write`: sends binary messages containing unmodified stream bytes, preserving unread message remainders across small reads. No additional TCP frame header. coder/websocket's NetConn supplies the corresponding binary stream and WebSocket control handling; the dial context does not own the established stream lifetime.
+
+Decision: one saved tunnel holds one published hostname and both encrypted token fields in the existing config, no schema change. The host's Address through the tunnel must equal that hostname; all other targets are refused before dialing. The hostname alone is accepted, no paths, IP literals, ports or custom headers. The host port is deliberately ignored in this carrier (Cloudflare's origin configuration selects the destination) and retained for the direct Wi-Fi route. This is a single service carrier, not a routed network; no UDP, bastion destination or interactive sign-in. Shared host routing, Wi-Fi exception, editor frame, encrypted backup, idle lifecycle and secret storage are reused. No addition to the backup restore method. Saving/start only validates locally; dial/Test makes the opt-in request. TLS uses normal public roots/hostname verification with no skip option. Redirects never followed, neither token is logged or loaded into editor, replacement-only masked fields retain saved values when blank. PRIVACY.md/editor explicitly disclose Cloudflare as a third party.
+
+Contract fixture: `scripts/test-hosts.sh cloudflare-access`, `tunnel/cmd/accesslab`; TLS CA and random service token generated into ignored local files, headers checked, binary WebSocket bridged to existing direct:2222, plus 403/login/non-Access cases. Only the new service starts, no existing fixture is recreated. A separately compiled test AAR uses `omniterm_access_fixture` to inject only fixture CA/endpoint for the four `.access.test` names; TLS chain/hostname checks stay on and the seam is absent from normal builds. This proves our client against our reading of cloudflared, **not interoperability against Cloudflare itself**. No live Cloudflare credentials or service used.
+
+Validation and sizes: recorded below; full bundle gate/hosted gates deferred to orchestrator as instructed. No new module or Gradle dependency: existing coder/websocket v1.8.15 ISC promoted from indirect to direct; module versions and sums unchanged. Shared TCP payload counting extracted from Nebula for reuse.
+
+Cloudflare's current [service-token documentation](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) also confirms Service Auth and both headers: strict service-token authentication returns 401/403 on authentication/authorization failures, while older/non-strict configurations can return the Access login redirect. OmniTerm handles both and never automatically tries interactive authentication.
+
+Cloudflare Access verification complete:
+
+- `scripts/test-tunnel.sh`: 43 top-level tests passed (Access8, Access fixture1, existing34),
+  with strict module verification, host/Android arm64 builds and vet. No tests skipped.
+- Targeted OSS JVM: 33 passed in six classes, none skipped: CloudflareAccessSettingsTest3,
+  CloudflareAccessRobolectricTest2, VpnTunnelBackupRobolectricTest4, TunnelRoutingTest14,
+  TunnelProbeTest4 and TunnelNetworkRouteRobolectricTest6. No native-runtime platform exclusion
+  on this x86_64 host. Normal all-ABI AAR, OSS app/test APKs and lint passed.
+- One-processor repeats: five additional PlayStore debug runs of all six changed classes passed
+  (165 executions), no failures, errors or skips; `repeat-changed-tests.sh --base b726b11 --worktree --cpus 1`.
+- Go guards observed failing (13), followed by the restored full suite passing: saved-hostname
+  boundary; client-ID header; client-secret header; binary framing; established-stream lifetime;
+  redirects never followed; hostname validation; credential/header validation; token-denial
+  message; interactive-login message; private diagnostics; public TLS verification; and failure
+  never falling back to a real answering direct endpoint. Untrusted CA and wrong TLS name are
+  both refused before any token is sent. Test handshake also covers a server offering HTTP/2:
+  the client explicitly uses HTTP/1.1 Upgrade.
+- JVM guards observed failing (10), followed by restored checks passing: editor receives no token
+  fields; diagnostics redact both fields; backup restores the kind; blank edits retain the token;
+  storage encrypts configuration; Test closes its temporary tunnel; Wi-Fi exception follows the
+  shared routing; idle lifecycle stops the carrier; a selected tunnel never becomes direct;
+  and Test actually dials. Each mutation was restored; compile errors in mutation harnesses were
+  corrected and were not counted as guard evidence.
+- API35: `E2eCloudflareAccessTunnelTest`1 passed with `omniterm_e2e_access=yes`, private fixture
+  settings/CA streamed to app files, and repository fixture user/pass. It opens the Access
+  editor, tests good and rejected tokens, login redirects and non-Access responses, verifies
+  encrypted storage and blank reopened fields, chooses Access in the real host form and checks
+  the hostname/port hint, runs SSH through the fake, proves an answering direct host is not used
+  on failure, then proves the Wi-Fi exception and its removal. Separate on-device mutations
+  removing token masking and third-party disclosure each failed at the expected assertion;
+  restored Access passed again. `E2eVpnTunnelTest`1 (`omniterm_e2e_vpn=yes`),
+  `E2eNebulaTunnelTest`1 (`omniterm_e2e_nebula=yes`) and `E2eAppSurfaceStressTest`1
+  (`omniterm_e2e_surfaces=yes`, `omniterm_e2e_sftp_home=/home/<fixture user>`) passed, none skipped.
+- The fake bridges to the existing direct:2222 SSH fixture, so its tunneled and direct Wi-Fi
+  paths have the same host key. An initial internal-a/direct pairing correctly triggered SSH's
+  changed-key refusal; the fixture was corrected and the app reinstalled/reseeded. No trust
+  protection was changed. Only the task's own Access container was recreated, never shared hosts.
+- Test trust/endpoint injection is absent from the normal Java API and all four production native
+  libraries/APK; verified against the separately built fixture AAR where the setter is present.
+  No production certificate bypass or custom-root option exists.
+- No new module or version, no Gradle dependency or verification-metadata change. All 78 Go modules
+  passed the licence gate. Existing coder/websocket1.8.15 ISC became a direct requirement.
+  Duplicate-code gate remains0; pinned-image, shell syntax and whitespace checks passed.
+  Full bundle gate, release graphs and hosted checks remain the orchestrator's later gate, as
+  requested. Actual Cloudflare interoperability remains unverified: this is a contract-fake proof.
+
+Size in bytes, baseline b726b11 and normal all-ABI production build, same flags. APK packaging
+state was regenerated to remove an incremental ZIP hole left by switching the test-only ABI;
+no source or native library was trimmed to reduce the reported size.
+
+| Artifact | Before | After | Increase |
+| --- | ---: | ---: | ---: |
+| Tunnel AAR | 40247749 | 40534414 | 286665 |
+| OSS debug APK | 141136215 | 141750107 | 613892 |
+| arm64-v8a libgojni.so | 25977864 | 26118536 | 140672 |
+| armeabi-v7a libgojni.so | 24951404 | 25098284 | 146880 |
+| x86_64 libgojni.so | 27893512 | 28042504 | 148992 |
+| x86 libgojni.so | 25120876 | 25267020 | 146144 |
+
+## Broadcast typing (Nov 14, Codex bundle lane)
+
+- Terminal options → **Type to several terminals** selects open session IDs, or a snapshot of all
+  open sessions. A later session never joins automatically. A coloured banner above each terminal
+  viewport in single and split view says how many receive; tapping names hosts, shows exclusions,
+  changes the selection or turns it off. The focused terminal may be a transmitter without being
+  selected; its banner explicitly says it is not selected.
+- `TerminalTyping` owns only a runtime selection/revision. The existing `sendBytes` → `sendBytesTo`
+  path is the only fan-out decision. Text, sticky modifiers, control/extra keys, swipe edits and
+  paste keep their order in each existing bounded session queue. Paste framing follows each
+  receiver's bracketed-paste setting and tmux control pane. Protocol replies, mouse/scroll, resize
+  and app-owned password/sudo answers keep their existing isolated paths.
+- INPUT/VIEW now belongs to each `ShellSession` rather than the whole UI. Locked, disconnected,
+  closed and reconnecting sessions never receive broadcast input; the picker names the reason.
+  Unlocking/reconnecting a still-selected session makes it eligible again. A locked or disconnected
+  focused transmitter sends nothing. Read-only scroll-navigation keys retain their single-session
+  behavior.
+- Multiline paste asks once, with the receiver count. Its captured selection, focus, transport,
+  queue, tmux pane and connection state must still match before any receiver is queued. Cancelling
+  sends nothing. Session-owned writer receipts and interrupted/oversized-paste feedback remain.
+  Only the focused pane presents paste feedback, so split panes do not stack progress dialogs.
+- App Lock, a new UI/ViewModel (including a relaunch onto keep-alive shells), and closing/ending the
+  last selected session turn it off. No persistence, settings, backups, schema, Go or dependency
+  changes. Tasker, MCP, schedules and alert runbooks have no interactive terminal entry point;
+  source guards reject adding one or referencing receiver state from storage/unattended code.
+- README warns explicitly that manually typed sudo/login passwords go to every receiver.
+  PRIVACY states the in-memory IDs, existing connections only and no backup or new stored data.
+- Idea credit: [tmux synchronize-panes](https://github.com/tmux/tmux),
+  [ClusterSSH](https://github.com/duncs/clusterssh) and
+  [ServerBox](https://github.com/lollipopkit/flutter_server_box). Independently implemented; no
+  upstream source copied. Credits added to README, NOTICE and the named internal competitor audit.
+- JVM: 43 targeted tests passed, none skipped: `TerminalTypingInputRobolectricTest` 24,
+  `TerminalTypingStateTest` 3, `TerminalTypingBoundaryTest` 3,
+  `TerminalAnswersQueriesRobolectricTest` 1, `TerminalPasteReceiptRobolectricTest` 3,
+  `TerminalPasteOwnershipTest` 8 and `TerminalReadOnlyPolicyTest` 1.
+- Negative JVM evidence: temporary source mutations produced 33 expected test failures, then every
+  source was restored exactly. Selection (3): chosen receivers, snapshot/all-open/new sessions,
+  fixed selection excluding unknown/closed IDs. Eligibility (6): locked receiver, focus-switch lock,
+  reconnecting receiver, closed transport, disconnected receiver and recovery/eligibility labels.
+  Boundaries (18): mouse/resize stays local; App Lock clears; confirmation refuses changed
+  connection, pane, reconnect, lock, selection and focus; app credential answers stay local;
+  multiline paste waits; cancel sends nothing; UI restart resets; ended receiver removes selection;
+  closing the final receiver turns off; cursor/device replies stay local; unattended typing,
+  credential-answer and storage source guards. Removing fan-out (5) failed ordered text/control/
+  extra-key/swipe/paste/password delivery, per-receiver framing/pane, confirmed multiline delivery,
+  chosen-set and fixed all-open checks. Compiler failures during mutation-harness setup are not
+  counted; their logs are kept separately.
+- A further guard caught a busy receiver silently dropping a later confirmed paste. It failed with
+  the later text absent on that receiver, then passed after removing that exclusion: every paste
+  follows the existing ordered queue. An earlier paste receipt cannot replace newer progress.
+- API 35: the new `E2eTerminalTypingTest` passed (1, `omniterm_e2e_terminal_typing=yes`) against
+  distinct repository fixtures on ports 2205 and 2201. It enters a command through the real Compose
+  input field and extra Enter key once and finds its output on both hosts, uses an ordered reply
+  barrier to prove locked exclusion, and opens the picker and banners in single, stacked and
+  side-by-side views. It checks multiline confirmation count/cancel, turning off and App Lock.
+  Removing the banner and removing input-lock exclusion each failed on device at the corresponding
+  visible assertion; both source mutations were restored exactly. An initial ambiguous test selector
+  matched the host header and picker row and was corrected; it is not counted as negative evidence.
+- The restored production build passed `E2eTerminalTypingTest` 1, `E2eTerminalOptionsTest` 1
+  (`omniterm_e2e_terminal_options=yes`, font scales 1/1.5/2 and portrait/landscape),
+  `E2eTerminalPasteOwnershipTest` 1 (`omniterm_e2e_paste_ownership=yes`) and
+  `E2eAppSurfaceStressTest` 1 (`omniterm_e2e_surfaces=yes`, repository runtime fixture home), all
+  on API 35, none skipped. The new suite used `omniterm_e2e_terminal_typing=yes`.
+- Open-source debug lint passed, including instrumentation/unit-source analysis. All 78 existing
+  Go modules passed the licence check; no dependency or checksum metadata changed. Duplicate gate
+  remains 0 known. No schema or migration change. Full bundle gate and hosted exact-head checks
+  belong to the orchestrator, as explicitly requested for this run.
+- Size, same all-ABI open-source debug build and baseline fda23482: tunnel AAR 40,534,414 →
+  40,534,414 bytes (byte-identical); APK 141,750,107 → 141,770,935 bytes (+20,828). Regenerated
+  APK packaging to remove holes from repeated incremental builds; all 1,531 entry payload hashes
+  are identical to the device-validated APK. No code or native library was trimmed.
+- The four changed unit-test classes (31 tests) passed five more runs on one processor through
+  `repeat-changed-tests.sh --cpus 1`, Play Store debug: 155 executions, no failures or skips.
+  Final whitespace and staged-diff checks passed. All task-required local checks are complete;
+  the full bundle gate, release graphs, CodeQL and hosted checks remain deferred to the orchestrator.
+  No physical USB serial or FIDO2 hardware was exercised; the live typing proof uses SSH fixtures.
+
+## Codex lane, reviewed and repaired (Nov 15–16)
+
+The three features above were reviewed on a local review branch, tested again and kept. Round 1
+fixed the secret-scan wording, kept Nebula's `cipher` and `pki.blocklist`, and gave Cloudflare's
+502, 530 and 429 answers their own messages. Round 2 merged the bundle at 73e93ea first (PRIVACY.md
+was the only conflict, both sides kept; the targeted JVM classes of both sides, 82 tests, passed on
+the merge), then again at e294992, which carries main's #151 (no conflicts), and then:
+
+- Cloudflare Access carries only the host's SSH session. Every dial through a tunnel says what it
+  carries (`TunnelUse`), and `TunnelManager.dial` refuses anything but SSH through an Access tunnel
+  for every caller, before dialling (`TunnelCannotCarry`). Before, a TCP port check through Access
+  opened the WebSocket to the published SSH service whatever the port, so every port read as open;
+  a certificate check and Proxmox VE's client were sent into that SSH service. Port and certificate
+  checks now read "Not checked: …" (no value, so no alert), Proxmox VE says why. The callers are
+  named in one test (`everyDialThroughATunnelSaysWhatItCarries`), so a new one must choose.
+- A quiet Access session stays open. Cloudflare closes a WebSocket that carries nothing for a
+  while and asks clients for a ping/pong heartbeat
+  (https://developers.cloudflare.com/network/websockets/), without giving the time. cloudflared
+  at b0297f0b: its client side sends no pings (`carrier/websocket.go`, `createWebsocketStream`);
+  its origin side pings every 54 s (`websocket/connection.go`, `defaultPingPeriod =
+  defaultPongWait * 9 / 10`, `defaultPongWait` 60 s, started by `NewConn` from
+  `ingress/origin_connection.go`). Whether the origin's pings reach the phone through Cloudflare is
+  not known, so the phone pings every 54 s itself while a stream is open. The contract fake
+  (`tunnel/internal/accessfake`, shared by `cmd/accesslab` and the tests) now closes a WebSocket
+  with no data, ping or pong for 100 s: **our assumption, not a Cloudflare figure.**
+- Nebula static endpoints may be host names. They are looked up with the phone's DNS through the
+  same `Resolver` WireGuard's endpoints use, IPv4 first, when the tunnel starts and again after
+  each network change (`ReloadConfigString` when the answers differ); Nebula itself and anything
+  inside the tunnel never resolve a name. A name that cannot be found is left out; no endpoint at
+  all fails the start.
+- `pki.cert` may hold a v1 and a v2 certificate of one host, each checked against the CA, blocklist
+  and the one `pki.key` (so both have that key and curve), and both with the same first address, as
+  Nebula requires; `pki.initiating_version` passes through (0 or 2, or 1 when a v1 certificate is
+  there).
+- Test in a Nebula editor while that tunnel runs goes through the running tunnel when the settings
+  are the same, and leaves it running; with other settings for the same first Nebula address it is
+  refused with a message. Peers keep one tunnel per first address and take the newest handshake
+  (`HandshakeManager.CheckAndComplete`, nebula v1.12.0 `handshake_manager.go`), so a second node
+  would have taken the running one's place and dropped its sessions.
+- By the same rule, two saved Nebula tunnels whose certificates have one Nebula address never run
+  at once. `TunnelManager` takes a tunnel's node (`TunnelEngine.node`) before it starts and gives it
+  back when it stops, goes idle or fails to start; while one holds it, the other is refused, and its
+  card says which tunnel to stop first. Kinds without a node identity (WireGuard) run side by side.
+- Counts read as one or many: the typing banner, the paste confirmation and title, and the sent
+  note ("Typing to 1 terminal", "Paste 1 character?").
+- The Access fixture library is built by `scripts/build-tunnel.sh --access-fixture` to
+  `tunnel/build/fixture/`, never to the app's library, and a test app uses it through
+  `-Pomniterm.tunnelAar`, which Gradle refuses for a release. `scripts/check-tunnel-seam.py`
+  checks every library build-tunnel.sh writes (the fixture one must hold the seam, every other
+  must not) and, in the gate, the library and every app it built; PR Check and the gate run its
+  test.
+- Codex's three device suites run through `./scripts/test-hosts.sh suite` and `E2eArgs`. The runner
+  learned three private fixture files (nebula_config, access_config, access_ca): copied into the
+  app's own files on adb's standard input, passed by file name, removed after the run; the
+  suites read and remove them (`E2eArgs.privateFile`). `second_port` and tcp:8447 were added.
+  `scripts/test-hosts.sh cloudflare-access` now writes phone.json by full path, so it runs from
+  any folder.
+
+Found while proving it, and repaired: a Go test named a certificate version with a `String` method
+`cert.Version` does not have (the package did not compile); the Access idle test asked the test
+server for a name its certificate does not hold, so it never reached the fake; the v1 and v2 key
+and curve comparison could never fail, since each certificate already matched the one `pki.key`,
+so it was removed and the first-address rule, which can fail, got its own case; the Nebula device
+suite had lost its tap on "Add current Wi-Fi" when the Test step was added, so it failed waiting
+for the Wi-Fi chip.
+
+Evidence, under the machine lock, on the merged tree:
+
+- Go: `go vet` clean; the five new tests pass; `scripts/test-tunnel.sh` passes (gofmt, module
+  verify, both builds, vet, every package's tests). Seven guards each failed with their fix removed
+  and passed once restored: no phone pings (`TestAccessPingsKeepAnIdleStreamOpen`), no lookup again
+  after a network change, host names refused, one certificate only, v1 and v2 of other keys, v1 and
+  v2 of other first addresses, node identity by key instead of address (`TestNebulaNodeIdentity`).
+- JVM: 20 targeted classes, 113 tests, none failed or skipped. Eleven guards each failed and were
+  restored exactly: Access carries anything, checks dialled as SSH, Test starts a second node,
+  other settings for the same node, a second saved tunnel with the same address starts, stop keeps
+  the address, a failed start keeps it, Test without the phone's DNS, banner always plural, one
+  terminal read as many. `twoSavedNebulaTunnelsWithOneAddressNeverRunAtOnce` also failed against
+  the code as handed over (the second tunnel started). The four changed classes passed five more
+  runs on one processor (`repeat-changed-tests.sh --cpus 1`, Play Store debug).
+- Lint: `lintOpenSourceDebug` and `lintPlayStoreDebug` passed.
+- API 35 emulator, clean install of the production build, seam check clean on the library and both
+  APKs: the provisioner, then `E2eTerminalTypingTest`, `E2eVpnTunnelTest`,
+  `E2eTailscaleTunnelTest`, `E2eTerminalPasteOwnershipTest` and `E2eNebulaTunnelTest` (after the
+  Wi-Fi fix, again on a clean install) passed, 1 test each, none skipped. The Nebula suite's Test
+  went through the running tunnel and an SSH link opened before it still answered. A Nebula run
+  without its opt-in was skipped (1) and left no private file.
+- Access: the old `test-hosts.sh cloudflare-access` failed from another folder
+  (FileNotFoundError), the new one passed; `build-tunnel.sh --access-fixture` wrote the fixture
+  library (android/amd64) and refused the app's own path; Gradle refused a release with
+  `-Pomniterm.tunnelAar`; the seam check failed with the fixture app in the outputs;
+  `E2eCloudflareAccessTunnelTest` passed on it (1 test, 123 s, with the 110 s idle link); the
+  production build again passed the seam check and both packages were removed.
+- Duplicate gate 0 known; `git diff --check` clean; seam-check test and workflow guards passed.
+- Size, all-ABI production tunnel library, before round 2 → after: AAR 40,512,224 → 40,535,225
+  bytes (+23,001); `libgojni.so` arm64-v8a 26,120,520 → 26,142,632 (+22,112), armeabi-v7a
+  25,100,636 → 25,121,428 (+20,792), x86_64 28,044,680 → 28,068,008 (+23,328), x86 25,269,324 →
+  25,290,476 (+21,152).
+
+Not covered: a real Cloudflare account (the coordinator raises it with the owner), Nebula through a
+real NAT, Cloudflare's actual idle time (100 s is assumed), and a Nebula host-name endpoint on the
+device (JVM and Go only).

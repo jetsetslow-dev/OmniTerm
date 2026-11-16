@@ -46,6 +46,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.TunnelEntity
 import com.jetsetslow.omniterm.data.TunnelKinds
+import com.jetsetslow.omniterm.data.tunnel.CloudflareAccessSettings
+import com.jetsetslow.omniterm.data.tunnel.TunnelProbe
 import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
 import com.jetsetslow.omniterm.data.tunnel.TailscaleSettings
 import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
@@ -88,6 +90,12 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
                         Button(onClick = { adding = TunnelKinds.TAILSCALE }, modifier = Modifier.testTag("vpn.add.tailscale")) {
                             Text(stringResource(R.string.vpn_add_tailscale))
                         }
+                        Button(onClick = { adding = TunnelKinds.NEBULA }, modifier = Modifier.testTag("vpn.add.nebula")) {
+                            Text(stringResource(R.string.vpn_add_nebula))
+                        }
+                        Button(onClick = { adding = TunnelKinds.CLOUDFLARE_ACCESS }, modifier = Modifier.testTag("vpn.add.access")) {
+                            Text(stringResource(R.string.vpn_add_access))
+                        }
                     }
                 }
             }
@@ -117,7 +125,11 @@ fun VpnTunnelsToolView(viewModel: AppViewModel) {
             adding = null
             editing = null
         }
-        if (kind == TunnelKinds.TAILSCALE) TailscaleEditDialog(viewModel, editing, done) else TunnelEditDialog(viewModel, editing, done)
+        when (kind) {
+            TunnelKinds.TAILSCALE -> TailscaleEditDialog(viewModel, editing, done)
+            TunnelKinds.CLOUDFLARE_ACCESS -> AccessEditDialog(viewModel, editing, done)
+            else -> TunnelEditDialog(viewModel, editing, kind, done)
+        }
     }
     deleting?.let { tunnel ->
         var problem by remember(tunnel.id) { mutableStateOf<String?>(null) }
@@ -160,13 +172,24 @@ private fun TunnelCard(
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(tunnel.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Text(
-                stringResource(if (tailscale) R.string.vpn_kind_tailscale else R.string.vpn_kind_wireguard),
+                stringResource(when (tunnel.kind) {
+                    TunnelKinds.TAILSCALE -> R.string.vpn_kind_tailscale
+                    TunnelKinds.NEBULA -> R.string.vpn_kind_nebula
+                    TunnelKinds.CLOUDFLARE_ACCESS -> R.string.vpn_kind_access
+                    else -> R.string.vpn_kind_wireguard
+                }),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("vpn.kind.${tunnel.id}"),
             )
             Text(
-                if (tailscale) tailscaleStatusText(status) else tunnelStatusText(status),
+                if (tunnel.kind == TunnelKinds.CLOUDFLARE_ACCESS) {
+                    stringResource(if (status == null) R.string.vpn_access_idle else R.string.vpn_access_ready)
+                } else if (tailscale) tailscaleStatusText(status) else if (tunnel.kind == TunnelKinds.NEBULA && status != null) {
+                    if (status.state == TunnelStates.RUNNING) {
+                        stringResource(R.string.vpn_nebula_status, status.addresses, status.bytesIn, status.bytesOut)
+                    } else stringResource(R.string.vpn_nebula_failed)
+                } else tunnelStatusText(status),
                 fontSize = 12.sp,
                 modifier = Modifier.testTag("vpn.status.${tunnel.id}"),
             )
@@ -255,7 +278,7 @@ private fun formatAgo(seconds: Long): String = when {
  * and, optionally, replaces its configuration.
  */
 @Composable
-private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, onDone: () -> Unit) {
+private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, kind: String, onDone: () -> Unit) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(existing?.name.orEmpty()) }
     var config by remember { mutableStateOf("") }
@@ -276,10 +299,10 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
         }
     }
     LaunchedEffect(config) {
-        checkMessage = if (config.isBlank()) null else withContext(Dispatchers.Default) { viewModel.checkTunnelConfig(config) }
+        checkMessage = if (config.isBlank()) null else withContext(Dispatchers.Default) { viewModel.checkTunnelConfig(config, kind) }
     }
     TunnelEditorFrame(
-        title = stringResource(if (existing == null) R.string.vpn_add_title else R.string.vpn_edit_title),
+        title = stringResource(if (existing != null) R.string.vpn_edit_title else if (kind == TunnelKinds.NEBULA) R.string.vpn_nebula_add_title else R.string.vpn_add_title),
         name = name,
         onName = { name = it },
         saving = saving,
@@ -287,7 +310,7 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
         onSave = {
             saving = true
             problem = null
-            viewModel.saveTunnel(existing?.id, name, config.takeIf { it.isNotBlank() }, directWifi) { err ->
+            viewModel.saveTunnel(existing?.id, name, config.takeIf { it.isNotBlank() }, directWifi, kind) { err ->
                 saving = false
                 if (err == null) onDone() else problem = err
             }
@@ -299,7 +322,7 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
             onValueChange = { config = it },
             label = { Text(stringResource(R.string.vpn_config)) },
             placeholder = {
-                Text(stringResource(if (existing == null) R.string.vpn_config_hint else R.string.vpn_config_keep), fontSize = 12.sp)
+                Text(stringResource(if (existing != null) R.string.vpn_config_keep else if (kind == TunnelKinds.NEBULA) R.string.vpn_nebula_config_hint else R.string.vpn_config_hint), fontSize = 12.sp)
             },
             textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 11.sp),
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).testTag("vpn.config"),
@@ -310,7 +333,12 @@ private fun TunnelEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, o
         checkMessage?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.check")) }
         problem?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("vpn.problem")) }
         TunnelDirectWifiEditor(directWifi) { directWifi = it }
-        Text(stringResource(R.string.vpn_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (kind == TunnelKinds.NEBULA) {
+            NebulaConfigTest(config, checkMessage == null && config.isNotBlank())
+            Text(stringResource(R.string.vpn_nebula_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text(stringResource(R.string.vpn_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -399,6 +427,70 @@ private fun TailscaleEditDialog(viewModel: AppViewModel, existing: TunnelEntity?
         Text(stringResource(R.string.vpn_ts_routes), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         TunnelDirectWifiEditor(directWifi) { directWifi = it }
         Text(stringResource(R.string.vpn_ts_privacy), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Service tokens are replacement-only fields, always masked, including after reopening. */
+@Composable
+private fun AccessEditDialog(viewModel: AppViewModel, existing: TunnelEntity?, onDone: () -> Unit) {
+    var name by remember { mutableStateOf(existing?.name.orEmpty()) }
+    var hostname by remember { mutableStateOf("") }
+    var clientId by remember { mutableStateOf("") }
+    var secret by remember { mutableStateOf("") }
+    var loaded by remember { mutableStateOf(existing == null) }
+    var busy by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    var result by remember(hostname, clientId, secret) { mutableStateOf<String?>(null) }
+    var directWifi by remember { mutableStateOf(TunnelNetworks.names(existing?.directWifi.orEmpty())) }
+    val scope = rememberCoroutineScope()
+    val success = stringResource(R.string.vpn_access_test_ok)
+    LaunchedEffect(existing?.id) {
+        existing?.let { viewModel.loadAccessSettings(it.id) { saved -> hostname = saved?.hostname.orEmpty(); loaded = true } }
+    }
+    val settings = CloudflareAccessSettings(hostname, clientId, secret)
+    TunnelEditorFrame(
+        title = stringResource(if (existing == null) R.string.vpn_add_access else R.string.vpn_edit_title),
+        name = name, onName = { name = it }, saving = busy, canSave = loaded && !busy,
+        onSave = {
+            busy = true
+            viewModel.saveAccessTunnel(existing?.id, name, settings, directWifi) { err ->
+                busy = false
+                if (err == null) onDone() else problem = err
+            }
+        }, onDone = onDone,
+    ) {
+        Text(stringResource(R.string.vpn_access_privacy), fontSize = 12.sp, color = OmniColors.amber, modifier = Modifier.testTag("vpn.access.privacy"))
+        OutlinedTextField(
+            value = hostname, onValueChange = { hostname = it }, singleLine = true,
+            label = { Text(stringResource(R.string.vpn_access_hostname)) },
+            modifier = Modifier.fillMaxWidth().testTag("vpn.access.hostname"),
+        )
+        listOf(true, false).forEach { idField ->
+            OutlinedTextField(
+                value = if (idField) clientId else secret,
+                onValueChange = { if (idField) clientId = it else secret = it }, singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password),
+                label = { Text(stringResource(if (idField) R.string.vpn_access_client_id else R.string.vpn_access_secret)) },
+                modifier = Modifier.fillMaxWidth().testTag(if (idField) "vpn.access.id" else "vpn.access.secret"),
+            )
+        }
+        Text(stringResource(if (existing == null) R.string.vpn_access_token_help else R.string.vpn_access_keep), fontSize = 11.sp)
+        TextButton(enabled = loaded && !busy, modifier = Modifier.testTag("vpn.access.test"), onClick = {
+            busy = true
+            result = null
+            scope.launch {
+                val config = viewModel.accessConfig(existing?.id, settings)
+                result = withContext(Dispatchers.IO) {
+                    runCatching { TunnelProbe.access(config, hostname.trim()) }.fold({ success }, { it.message ?: "Connection failed." })
+                }
+                busy = false
+            }
+        }) { Text(stringResource(R.string.vpn_access_test)) }
+        result?.let { Text(it, modifier = Modifier.testTag("vpn.access.result"), fontSize = 12.sp) }
+        problem?.let { Text(it, modifier = Modifier.testTag("vpn.problem"), color = MaterialTheme.colorScheme.error) }
+        TunnelDirectWifiEditor(directWifi) { directWifi = it }
+        Text(stringResource(R.string.vpn_access_host_help), fontSize = 11.sp)
     }
 }
 
@@ -599,7 +691,9 @@ internal fun HostVpnTunnelPicker(
             value = tunnelHost,
             onValueChange = onTunnelHostChange,
             label = { Text(stringResource(R.string.vpn_host_address)) },
-            supportingText = { Text(stringResource(R.string.vpn_host_address_help), fontSize = 11.sp) },
+            supportingText = { Text(stringResource(
+                if (tunnels.firstOrNull { it.id == selected }?.kind == TunnelKinds.CLOUDFLARE_ACCESS) R.string.vpn_access_host_help else R.string.vpn_host_address_help,
+            ), fontSize = 11.sp) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().testTag("host.tunnelHost"),
         )

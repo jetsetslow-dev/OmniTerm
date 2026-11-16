@@ -11,6 +11,10 @@ import com.jetsetslow.omniterm.data.ssh.SshTransport
 import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.TerminalSessionManager
+import com.jetsetslow.omniterm.ui.ShellSession
+import com.jetsetslow.omniterm.ui.TerminalInputQueue
+import com.jetsetslow.omniterm.data.term.TerminalEmulator
+import org.junit.Assert.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -62,6 +66,13 @@ class TerminalAnswersQueriesRobolectricTest {
             }
             waitWhileOnMain(main, 10_000) { model.currentSession?.isConnected != true || model.isTerminalConnecting }
 
+            val other = ShellSession(id, "Other query fixture", RecordingShell(), TerminalEmulator()).apply {
+                terminalInputQueue = TerminalInputQueue()
+            }
+            withContext(main) {
+                TerminalSessionManager.addSession(other)
+                model.selectTerminalTyping(model.activeSessions.map { it.id }.toSet())
+            }
             withTimeout(5_000) { while (shell.output.subscriptionCount.value == 0) delay(10) }
 
             shell.output.emit("Welcome\r\n\u001B[c".toByteArray())
@@ -69,6 +80,8 @@ class TerminalAnswersQueriesRobolectricTest {
 
             shell.output.emit("\u001B[2J\u001B[H> \u001B[6n".toByteArray())
             assertEquals(listOf("\u001B[1;3R"), shell.awaitReplies())
+            assertTrue("Device and cursor answers belong only to their requester",
+                checkNotNull(other.terminalInputQueue).channel.tryReceive().isFailure)
         } finally {
             try {
                 clearViewModelsAndAwaitTerminalJobs(store, main)

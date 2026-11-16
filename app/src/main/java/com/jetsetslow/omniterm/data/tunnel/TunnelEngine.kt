@@ -19,6 +19,13 @@ interface TunnelEngine {
      * of a network (Tailscale) keeps what makes it that node in [node].
      */
     fun start(kind: String, config: String, resolve: (String) -> List<String>, node: TunnelNode): RunningTunnel
+
+    /**
+     * What makes a tunnel with [config] one node of its network, such as a Nebula certificate's
+     * first address, or "" when two of them can run side by side. Two running at once with the
+     * same node would take each other's connections.
+     */
+    fun node(kind: String, config: String): String = ""
 }
 
 /**
@@ -83,16 +90,28 @@ object GoTunnelEngine : TunnelEngine {
         return when (kind) {
             TunnelKinds.WIREGUARD -> Omnitunnel.checkWireGuard(config).ifEmpty { null }
             TunnelKinds.TAILSCALE -> Omnitunnel.checkTailscale(config).ifEmpty { null }
+            TunnelKinds.NEBULA -> Omnitunnel.checkNebula(config).ifEmpty { null }
+            TunnelKinds.CLOUDFLARE_ACCESS -> Omnitunnel.checkCloudflareAccess(config).ifEmpty { null }
             else -> "This kind of tunnel is not supported."
         }
     }
 
+    override fun node(kind: String, config: String): String =
+        if (kind == TunnelKinds.NEBULA && unavailable == null) Omnitunnel.nebulaNode(config) else ""
+
     override fun start(kind: String, config: String, resolve: (String) -> List<String>, node: TunnelNode): RunningTunnel {
         unavailable?.let { throw IOException(it) }
         loaded = true
+        // The phone's own DNS, for the names a configuration gives its peers' endpoints.
+        val resolver = Resolver { host -> resolve(host).joinToString(",") }
         val tunnel = try {
             when (kind) {
-                TunnelKinds.WIREGUARD -> Omnitunnel.startWireGuard(config, Resolver { host -> resolve(host).joinToString(",") })
+                TunnelKinds.WIREGUARD -> Omnitunnel.startWireGuard(config, resolver)
+                TunnelKinds.CLOUDFLARE_ACCESS -> Omnitunnel.startCloudflareAccess(config)
+                TunnelKinds.NEBULA -> {
+                    TailscaleNetwork.tellGo()
+                    Omnitunnel.startNebula(config, resolver)
+                }
                 TunnelKinds.TAILSCALE -> {
                     TailscaleNetwork.tellGo()
                     val store = object : StateStore {

@@ -7,6 +7,7 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.HostCredentials
 import com.jetsetslow.omniterm.data.ServerEntity
+import com.jetsetslow.omniterm.data.TunnelKinds
 import com.jetsetslow.omniterm.data.TunnelEntity
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshTransport
@@ -49,8 +50,15 @@ class TunnelNetworkRouteRobolectricTest {
     private val application: Application get() = ApplicationProvider.getApplicationContext()
 
     @Test
-    fun onANamedWifiTheHostIsDialledDirectlyAndAnywhereElseThroughItsTunnel() = withTunnels { repository ->
-        val home = repository.insertTunnel(TunnelEntity(name = "Home", config = CONF, directWifi = TunnelNetworks.stored(listOf("Home", "Office"))))
+    fun onANamedWifiTheHostIsDialledDirectlyAndAnywhereElseThroughItsTunnel() = assertWifiRoute(TunnelKinds.WIREGUARD)
+
+    @Test
+    fun nebulaUsesTheSameWifiRuleAndFailsClosedWhenTheNameIsUnknown() = assertWifiRoute(TunnelKinds.NEBULA)
+
+    @Test fun accessUsesTheSameWifiRuleAndFailsClosedWhenTheNameIsUnknown() = assertWifiRoute(TunnelKinds.CLOUDFLARE_ACCESS)
+
+    private fun assertWifiRoute(kind: String) = withTunnels { repository ->
+        val home = repository.insertTunnel(TunnelEntity(name = "Home", kind = kind, config = CONF, directWifi = TunnelNetworks.stored(listOf("Home", "Office"))))
         val nas = host("nas", tunnelId = home, tunnelHost = "10.9.0.7")
 
         at("Home")

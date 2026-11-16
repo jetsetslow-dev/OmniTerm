@@ -149,12 +149,22 @@ val buildGoTunnel by tasks.registering(Exec::class) {
   description = "Builds tunnel/ into an Android library with gomobile."
   val root = rootProject.layout.projectDirectory
   inputs.dir(root.dir("tunnel/omnitunnel"))
-  inputs.files(root.file("tunnel/go.mod"), root.file("tunnel/go.sum"), root.file("tunnel/build-tags.txt"), root.file("scripts/build-tunnel.sh"), root.file("scripts/go-toolchain.sh"))
+  inputs.files(root.file("tunnel/go.mod"), root.file("tunnel/go.sum"), root.file("tunnel/build-tags.txt"), root.file("scripts/build-tunnel.sh"), root.file("scripts/check-tunnel-seam.py"), root.file("scripts/go-toolchain.sh"))
   inputs.property("targets", providers.environmentVariable("OMNITUNNEL_TARGETS").orElse("all"))
   outputs.file(goTunnelAar)
   val sdk = androidComponents.sdkComponents.sdkDirectory
   doFirst { environment("ANDROID_HOME", sdk.get().asFile.path) }
   commandLine(root.file("scripts/build-tunnel.sh").asFile.path, goTunnelAar.asFile.path)
+}
+// A test build may use another tunnel library instead, given as -Pomniterm.tunnelAar=<file>: the
+// Cloudflare Access device suite's, from scripts/build-tunnel.sh --access-fixture. Gradle never
+// builds that library, no release may use it, and scripts/check-tunnel-seam.py fails any library
+// or app that holds its seam.
+val tunnelAarOverride = providers.gradleProperty("omniterm.tunnelAar").orNull
+if (tunnelAarOverride != null &&
+  gradle.startParameter.taskNames.any { it.substringAfterLast(':').lowercase().let { t -> "release" in t || t == "assemble" || t == "build" || t == "bundle" } }
+) {
+  error("-Pomniterm.tunnelAar is for test builds only: build a release without it.")
 }
 
 val lowResourceBuild = providers.gradleProperty("omniterm.lowResourceBuild")
@@ -226,7 +236,7 @@ dependencies {
   // API, but parses modern keys: OpenSSH containers (-----BEGIN OPENSSH PRIVATE KEY-----, the
   // default from recent ssh-keygen) plus ed25519/ecdsa. Also patches the old JSch CVEs.
   implementation(libs.jsch)
-  implementation(files(goTunnelAar).builtBy(buildGoTunnel))
+  implementation(tunnelAarOverride?.let { files(it) } ?: files(goTunnelAar).builtBy(buildGoTunnel))
   // ed25519/ed448 signing & key parsing. On Android the platform JCA has no EdDSA provider, so
   // JSch selects its `com.jcraft.jsch.bc.*` EdDSA backend, which needs Bouncy Castle's lightweight
   // crypto API on the classpath. Without this, RSA/ECDSA keys authenticate but every modern

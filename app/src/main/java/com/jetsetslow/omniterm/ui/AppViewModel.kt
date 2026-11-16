@@ -31,6 +31,7 @@ import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
 import com.jetsetslow.omniterm.data.tunnel.HostRoute
 import com.jetsetslow.omniterm.data.tunnel.TailscaleNetwork
+import com.jetsetslow.omniterm.data.tunnel.CloudflareAccessSettings
 import com.jetsetslow.omniterm.data.tunnel.TailscaleSettings
 import com.jetsetslow.omniterm.data.tunnel.TunnelManager
 import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
@@ -1373,7 +1374,16 @@ class AppViewModel @JvmOverloads constructor(
     private var pinLockedUntilMs by mutableStateOf(0L)
     var isAppLockEnabled by mutableStateOf(false)
     var useBiometrics by mutableStateOf(false); private set
-    var isAppLocked by mutableStateOf(false)
+    private var appLockEngaged by mutableStateOf(false)
+    var isAppLocked: Boolean
+        get() = appLockEngaged
+        set(value) {
+            if (value) {
+                TerminalSessionManager.terminalTyping.stop()
+                pendingTerminalPaste = null
+            }
+            appLockEngaged = value
+        }
     var currentPinInput by mutableStateOf("")
     var lockScreenError by mutableStateOf<String?>(null)
     var securitySettingsLoaded by mutableStateOf(false)
@@ -2880,13 +2890,26 @@ class AppViewModel @JvmOverloads constructor(
         set(value) { focusedTerminalSession?.shiftArmed = value }
     var isFunctionSetVisible by mutableStateOf(false)
     /** Display-only terminal mode: blocks text/paste keys while retaining scroll navigation. */
-    var terminalReadOnly by mutableStateOf(false)
-        private set
+    val terminalReadOnly: Boolean get() = focusedTerminalSession?.inputLocked == true
+    internal val terminalTyping get() = TerminalSessionManager.terminalTyping
+    internal var showTerminalTypingPicker by mutableStateOf(false)
+    internal var pendingTerminalPaste by mutableStateOf<PendingTerminalPaste?>(null)
+
+    internal fun selectTerminalTyping(ids: Set<String>) {
+        if (isAppLocked) return
+        pendingSwipeFlush?.invoke()
+        terminalTyping.select(ids, activeSessions.toList())
+    }
+
+    internal fun stopTerminalTyping() {
+        terminalTyping.stop()
+        pendingTerminalPaste = null
+    }
 
     fun updateTerminalReadOnly(enabled: Boolean) {
-        terminalReadOnly = enabled
+        focusedTerminalSession?.inputLocked = enabled
         if (enabled) {
-            activeSessions.forEach {
+            listOfNotNull(focusedTerminalSession).forEach {
                 it.ctrlArmed = false
                 it.altArmed = false
                 it.shiftArmed = false
@@ -2990,6 +3013,8 @@ class AppViewModel @JvmOverloads constructor(
                 if (was != now) followNetwork(was, now)
             }
         }
+        // A new Activity/ViewModel must never revive an interactive broadcast from kept-alive shells.
+        TerminalSessionManager.terminalTyping.stop()
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
         SshHostKeyTrust.registerApprovalHandler(hostKeyApprovalOwner) { req ->
@@ -4024,7 +4049,7 @@ class AppViewModel @JvmOverloads constructor(
                             val tunnelNow = HostRoute.tunnelNow(repository, srv.tunnelId)
                             val result = EndpointChecks.run(
                                 rule, srv.host,
-                                tunnel = tunnelNow?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id) } },
+                                tunnel = tunnelNow?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id, com.jetsetslow.omniterm.data.tunnel.TunnelUse.OTHER) } },
                                 tunnelHost = srv.tunnelHost.takeIf { tunnelNow != null }.orEmpty(),
                             )
                             val now = System.currentTimeMillis()
@@ -9296,7 +9321,37 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun sendBytes(bytes: ByteArray) = sendBytesTo(focusedTerminalSession, bytes)
+    /** The only fan-out point: interactive keys/paste only, never protocol or unattended input. */
+    private fun sendBytes(
+        bytes: ByteArray,
+        paste: Boolean = false,
+        target: TerminalPasteTarget? = null,
+        characters: Int = 0,
+        navigationOnly: Boolean = false,
+    ) {
+        if (isAppLocked) return
+        val focused = focusedTerminalSession ?: return
+        val receivers = if (navigationOnly) listOf(focused)
+            else terminalTyping.receivers(focused, activeSessions.toList())
+        if (target != null) {
+            val captured = target.receivers.orEmpty()
+            val rejection = target.rejection(focused, terminalReadOnly)
+                ?: if (target.typingRevision != terminalTyping.revision || captured.map { it.shell } != receivers)
+                    "Typing receivers changed. Paste skipped; check the terminals and paste again." else null
+                ?: captured.firstNotNullOfOrNull { it.rejection(it.shell, it.shell.inputLocked) }
+            if (rejection != null) {
+                focused.pasteFeedback = TerminalPasteFeedback(rejection)
+                return
+            }
+        }
+        receivers.forEach { receiver ->
+            val payload = if (paste) {
+                val bracketed = synchronized(receiver.emulator) { receiver.emulator.bracketedPasteMode }
+                bracketedPastePayload(bytes.decodeToString(), bracketed).toByteArray()
+            } else bytes
+            sendBytesTo(receiver, payload, target?.receivers?.first { it.shell === receiver }, characters)
+        }
+    }
 
     /**
      * Write to a specific session's bounded input channel. Large payloads are chunked and sent with
@@ -9305,8 +9360,15 @@ class AppViewModel @JvmOverloads constructor(
      * split mode so a gesture on one pane reaches THAT pane's remote, not whichever pane currently
      * has keyboard focus.
      */
-    private fun sendBytesTo(session: ShellSession?, bytes: ByteArray) {
+    private fun sendBytesTo(
+        session: ShellSession?, bytes: ByteArray,
+        pasteTarget: TerminalPasteTarget? = null, characters: Int = 0,
+    ) {
         val s = session ?: return
+        if (pasteTarget != null) {
+            sendConfirmedPasteTo(bytes, pasteTarget, characters)
+            return
+        }
         if (s.controlMode) {
             // Control mode: keystrokes become `send-keys -H` command lines (already chunked by
             // the encoder). Input typed before the active pane is known is queued and flushed by
@@ -9403,12 +9465,20 @@ class AppViewModel @JvmOverloads constructor(
         if (terminalReadOnly) return
         val session = focusedTerminalSession ?: return
         if (text.isEmpty() || !session.isConnected) return
+        if (terminalTyping.enabled && text.any { it == '\n' || it == '\r' }) {
+            pendingTerminalPaste = PendingTerminalPaste(text, captureTerminalPasteTarget(session))
+            return
+        }
         val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
-        val bracketed = synchronized(session.emulator) { session.emulator.bracketedPasteMode }
-        sendBytes(bracketedPastePayload(normalized, bracketed).toByteArray())
+        sendBytes(normalized.toByteArray(), paste = true)
     }
 
-    internal fun captureTerminalPasteTarget(session: ShellSession): TerminalPasteTarget = TerminalPasteTarget(session)
+    internal fun captureTerminalPasteTarget(session: ShellSession): TerminalPasteTarget =
+        TerminalPasteTarget(
+            shell = session,
+            typingRevision = terminalTyping.revision,
+            receivers = terminalTyping.receivers(session, activeSessions.toList()).map { TerminalPasteTarget(it) },
+        )
 
     internal fun cancelTerminalPaste(target: TerminalPasteTarget) {
         if (target.shell.pasteFeedback?.busy != true) {
@@ -9416,19 +9486,22 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    /** Explicit/confirmed paste uses one captured target and awaits the ordered writer receipt. */
-    internal fun pasteText(text: String, target: TerminalPasteTarget) {
-        val owner = target.shell
-        if (owner.pasteFeedback?.busy == true) {
-            owner.pasteFeedback = TerminalPasteFeedback("A paste is still being sent. Wait for it to finish.", busy = true)
+    /** The confirmation owns both the receiver selection and each connection generation. */
+    internal fun pasteText(text: String, target: TerminalPasteTarget, confirmed: Boolean = false) {
+        if (!confirmed && terminalTyping.enabled && text.any { it == '\n' || it == '\r' }) {
+            pendingTerminalPaste = PendingTerminalPaste(text, target)
             return
         }
-        fun reject(message: String) { owner.pasteFeedback = TerminalPasteFeedback(message) }
-        if (text.isEmpty()) { reject("Clipboard has no text to paste."); return }
-        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        if (text.isEmpty()) return
         val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
-        val bracketed = synchronized(owner.emulator) { owner.emulator.bracketedPasteMode }
-        val bytes = bracketedPastePayload(normalized, bracketed).toByteArray()
+        sendBytes(normalized.toByteArray(), paste = true, target = target,
+            characters = text.codePointCount(0, text.length))
+    }
+
+    private fun sendConfirmedPasteTo(bytes: ByteArray, target: TerminalPasteTarget, characters: Int) {
+        val owner = target.shell
+        fun reject(message: String) { owner.pasteFeedback = TerminalPasteFeedback(message) }
+        target.rejection(owner, owner.inputLocked)?.let { reject(it); return }
         if (bytes.size > TERMINAL_INPUT_QUEUE_MAX_BYTES) {
             reject("Paste is too large for the input queue. Paste a smaller section and try again.")
             return
@@ -9452,7 +9525,7 @@ class AppViewModel @JvmOverloads constructor(
             return
         }
         // Rendering/encoding must not turn a saved decision into input for a replacement pane.
-        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        target.rejection(owner, owner.inputLocked)?.let { reject(it); return }
         val receipt = CompletableDeferred<TerminalWriteOutcome>()
         val accepted = if (target.controlMode) {
             enqueueControlCommandBatch(owner, chunks, receipt = receipt) != null
@@ -9461,13 +9534,17 @@ class AppViewModel @JvmOverloads constructor(
             reject("Paste could not be queued. Wait for the connection to catch up, then try again.")
             return
         }
-        owner.pasteFeedback = TerminalPasteFeedback("Sending text to ${owner.serverName}…", busy = true)
+        val progress = TerminalPasteFeedback("Sending text to ${owner.serverName}…", busy = true)
+        owner.pasteFeedback = progress
         // The session manager outlives Activity/ViewModel destruction. Cleanup resolves the
         // receipt; completion never re-resolves focus or writes to a new connection.
         TerminalSessionManager.scope.launch(Dispatchers.Main.immediate) {
-            owner.pasteFeedback = when (receipt.await()) {
+            val outcome = receipt.await()
+            // A later paste owns its own progress; an older receipt must not replace it.
+            if (owner.pasteFeedback !== progress) return@launch
+            owner.pasteFeedback = when (outcome) {
                 TerminalWriteOutcome.ACCEPTED -> TerminalPasteFeedback(
-                    "Sent ${text.codePointCount(0, text.length)} characters to terminal.",
+                    getApplication<Application>().resources.getQuantityString(R.plurals.terminal_paste_sent, characters, characters),
                 )
                 TerminalWriteOutcome.UNCERTAIN -> TerminalPasteFeedback(
                     "Paste was interrupted. Some text may have been sent; check the terminal before retrying.",
@@ -9505,7 +9582,7 @@ class AppViewModel @JvmOverloads constructor(
             alt = isAltPressed,
             ctrl = isCtrlPressed,
         )
-        sendBytes(seq)
+        sendBytes(seq, navigationOnly = terminalReadOnly)
         isCtrlPressed = false
         isAltPressed = false
         isShiftPressed = false
@@ -15798,6 +15875,28 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             val settings = withContext(Dispatchers.IO) { repository.getTunnel(id) }?.let { TailscaleSettings.parse(it.config) }
             onResult(settings?.copy(authKey = ""), !settings?.authKey.isNullOrBlank())
+        }
+    }
+
+    /** The saved hostname only; both service-token fields remain off the screen. */
+    fun loadAccessSettings(id: Int, onResult: (CloudflareAccessSettings?) -> Unit) {
+        viewModelScope.launch {
+            val settings = withContext(Dispatchers.IO) { repository.getTunnel(id) }
+                ?.let { CloudflareAccessSettings.parse(it.config) }
+            onResult(settings?.forEditor())
+        }
+    }
+
+    /** Used by both Save and Test; empty token fields retain the encrypted saved token. */
+    suspend fun accessConfig(id: Int?, settings: CloudflareAccessSettings): String {
+        val before = id?.let { withContext(Dispatchers.IO) { repository.getTunnel(it) } }
+            ?.let { CloudflareAccessSettings.parse(it.config) }
+        return settings.keepingToken(before).toConfig()
+    }
+
+    fun saveAccessTunnel(id: Int?, name: String, settings: CloudflareAccessSettings, directWifi: List<String>, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(storeTunnel(id, name, accessConfig(id, settings), directWifi, TunnelKinds.CLOUDFLARE_ACCESS, newNode = false))
         }
     }
 

@@ -27,6 +27,7 @@ object TerminalSessionManager {
 
     /** The list of all active, background-capable SSH terminal sessions. */
     val activeSessions = mutableStateListOf<ShellSession>()
+    internal val terminalTyping = TerminalTyping()
 
     /**
      * Process-scoped terminal attachment state. A Recents swipe destroys the Activity/ViewModel
@@ -90,6 +91,7 @@ object TerminalSessionManager {
     }
 
     private fun release(s: ShellSession) {
+        terminalTyping.remove(s.id)
         val closing = synchronized(s.sessionOwnershipLock) {
             s.isConnected = false
             s.userClosed = true
@@ -173,6 +175,7 @@ object TerminalSessionManager {
     }
 
     private fun clearUiReferences(sessionId: String) {
+        terminalTyping.remove(sessionId)
         if (currentSessionId == sessionId) currentSessionId = null
         if (multiSshSessionId1 == sessionId) multiSshSessionId1 = null
         if (multiSshSessionId2 == sessionId) multiSshSessionId2 = null
@@ -193,6 +196,7 @@ object TerminalSessionManager {
      * Note: the caller should usually call s.session.close() before removing.
      */
     fun clearAll() {
+        terminalTyping.stop()
         activeSessions.forEach {
             val closing = synchronized(it.sessionOwnershipLock) {
                 it.isConnected = false

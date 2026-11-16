@@ -32,6 +32,8 @@ object TailscaleNetwork {
     @Volatile private var defaultInterface: String = ""
     private var callback: ConnectivityManager.NetworkCallback? = null
     @Volatile private var registered = false
+    /** Whether starts have registered the shared Go bridge; both node kinds need it. */
+    internal val followingChanges: Boolean get() = registered
 
     /** Where tunnel [id] keeps what it writes that is no secret; deleted with the tunnel. */
     fun scratch(id: Int): File {
@@ -57,7 +59,7 @@ object TailscaleNetwork {
     private fun moved(name: String) {
         if (name == defaultInterface) return
         defaultInterface = name
-        // Only once a Tailscale tunnel has loaded the library: nothing else needs it loaded.
+        // Only once a node tunnel (Tailscale or Nebula) has registered the shared Go bridge.
         if (registered) runCatching { Omnitunnel.networkChanged(name) }
     }
 

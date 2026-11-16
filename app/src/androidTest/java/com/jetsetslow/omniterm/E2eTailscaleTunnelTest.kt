@@ -65,15 +65,7 @@ class E2eTailscaleTunnelTest {
         val control = "http://10.0.2.2:8085"
         val added = mutableListOf<Int>()
 
-        fun broadcast(serverId: Int, command: String): Pair<BroadcastStatus, String> {
-            composeRule.runOnUiThread { vm.runFleetBroadcast(command, listOf(serverId)) }
-            composeRule.waitUntil(120_000) {
-                composeRule.runOnUiThread { if (vm.pendingHostKeyApproval != null) vm.approveHostKey(true) }
-                !vm.isBroadcastExecuting && vm.broadcastResults.any { it.serverId == serverId && it.status != BroadcastStatus.Running }
-            }
-            val result = vm.broadcastResults.single { it.serverId == serverId }
-            return result.status to result.output
-        }
+        fun broadcast(serverId: Int, command: String) = composeRule.tunnelBroadcast(vm, serverId, command)
 
         fun addHost(name: String, host: String, port: Int, tunnelId: Int?): Int {
             var error: String? = "pending"

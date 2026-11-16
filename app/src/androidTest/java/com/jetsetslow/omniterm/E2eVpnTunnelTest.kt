@@ -64,15 +64,7 @@ class E2eVpnTunnelTest {
         val conf = wireGuardConf(clientKey, serverPub, endpoint = "10.0.2.2:51820", dns = "10.77.0.1")
         val added = mutableListOf<Int>()
 
-        fun broadcast(serverId: Int, command: String): Pair<BroadcastStatus, String> {
-            composeRule.runOnUiThread { vm.runFleetBroadcast(command, listOf(serverId)) }
-            composeRule.waitUntil(90_000) {
-                composeRule.runOnUiThread { if (vm.pendingHostKeyApproval != null) vm.approveHostKey(true) }
-                !vm.isBroadcastExecuting && vm.broadcastResults.any { it.serverId == serverId && it.status != BroadcastStatus.Running }
-            }
-            val result = vm.broadcastResults.single { it.serverId == serverId }
-            return result.status to result.output
-        }
+        fun broadcast(serverId: Int, command: String) = composeRule.tunnelBroadcast(vm, serverId, command)
 
         fun addHost(name: String, host: String, port: Int, tunnelId: Int?, tunnelHost: String = ""): Int {
             var error: String? = "pending"

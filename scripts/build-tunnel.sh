@@ -4,11 +4,31 @@
 # NDK below. Gradle runs this when tunnel/ changes; it can also be run by hand:
 #   ./scripts/build-tunnel.sh [output.aar]
 # OMNITUNNEL_TARGETS narrows the ABIs for a quicker local build (for example android/amd64).
+#
+#   ./scripts/build-tunnel.sh --access-fixture [output.aar]
+# builds the Cloudflare Access device suite's test library instead (Go tag omniterm_access_fixture,
+# scripts/test-hosts/fixtures/cloudflare-access), by default to
+# tunnel/build/fixture/omnitunnel-access-fixture.aar, never to the app's own library. A test APK
+# uses it through -Pomniterm.tunnelAar=<file>. Every build is checked with check-tunnel-seam.py:
+# the fixture library must hold its seam, and every other build must not.
 set -euo pipefail
 
 NDK_VERSION=28.2.13676358
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="${1:-$ROOT/tunnel/build/omnitunnel.aar}"
+PRODUCTION="$ROOT/tunnel/build/omnitunnel.aar"
+FIXTURE=""
+if [[ "${1:-}" == "--access-fixture" ]]; then
+  FIXTURE=1
+  shift
+  OUT="${1:-$ROOT/tunnel/build/fixture/omnitunnel-access-fixture.aar}"
+  mkdir -p "$(dirname "$OUT")"
+  if [[ "$(realpath -m "$OUT")" == "$(realpath -m "$PRODUCTION")" ]]; then
+    echo "build-tunnel: the Access fixture library never goes to $PRODUCTION, which every app build uses" >&2
+    exit 1
+  fi
+else
+  OUT="${1:-$PRODUCTION}"
+fi
 TARGETS="${OMNITUNNEL_TARGETS:-android/arm64,android/arm,android/amd64,android/386}"
 
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -46,6 +66,7 @@ tmp="$OUT.tmp.aar"
 rm -f "$tmp" "${tmp%.aar}-sources.jar"
 # The tags that ship (tunnel/build-tags.txt): gomobile is given them itself too, not only in GOFLAGS.
 TAGS="$(grep -v '^#' "$ROOT/tunnel/build-tags.txt" | tr -d '[:space:]')"
+if [[ -n "$FIXTURE" ]]; then TAGS="$TAGS,omniterm_access_fixture"; fi
 "$RETRY" gomobile bind \
   -target="$TARGETS" \
   -tags="$TAGS" \
@@ -55,6 +76,12 @@ TAGS="$(grep -v '^#' "$ROOT/tunnel/build-tags.txt" | tr -d '[:space:]')"
   -ldflags="-s -w -buildid=" \
   -o "$tmp" \
   ./omnitunnel
+# Checked before it takes the output's place: a library with the wrong seam is never left there.
+if [[ -n "$FIXTURE" ]]; then
+  python3 -I -B "$ROOT/scripts/check-tunnel-seam.py" --expect-fixture "$tmp"
+else
+  python3 -I -B "$ROOT/scripts/check-tunnel-seam.py" "$tmp"
+fi
 mv "$tmp" "$OUT"
 rm -f "${tmp%.aar}-sources.jar"
-echo "build-tunnel: wrote $OUT ($TARGETS)"
+echo "build-tunnel: wrote $OUT ($TARGETS${FIXTURE:+, Cloudflare Access fixture})"

@@ -156,6 +156,7 @@ class ShellSession(
      * carried to another, the next key there would become, say, Ctrl+C on a machine the user never
      * meant it for. Switching back finds them as they were left.
      */
+    var inputLocked by mutableStateOf(false)
     var ctrlArmed by mutableStateOf(false)
     var altArmed by mutableStateOf(false)
     var shiftArmed by mutableStateOf(false)

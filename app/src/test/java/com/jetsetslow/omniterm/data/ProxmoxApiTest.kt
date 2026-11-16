@@ -214,8 +214,8 @@ class ProxmoxApiTest {
         assertThat(Proxmox.snapshotNameProblem("pre_v2-1")).isNull()
     }
 
-    @Test
-    fun aServerBehindATunnelIsDialledOnlyThroughItAtItsTunnelAddress() = runBlocking {
+    /** Tunnel 7, named [name], of [kind]: every connection through it reaches this test's server. */
+    private fun tunnelToServer(name: String, kind: String): MutableList<String> {
         val dials = Collections.synchronizedList(mutableListOf<String>())
         TunnelManager.stopAll()
         TunnelManager.engine = object : TunnelEngine {
@@ -232,7 +232,22 @@ class ProxmoxApiTest {
                 override fun close() {}
             }
         }
-        TunnelManager.attachSource({ TunnelEntity(id = 7, name = "Home", kind = TunnelKinds.WIREGUARD, config = "conf") })
+        TunnelManager.attachSource({ TunnelEntity(id = 7, name = name, kind = kind, config = "conf") })
+        return dials
+    }
+
+    @Test
+    fun aServerBehindACloudflareAccessTunnelIsRefusedNotDialled() = runBlocking {
+        // Access reaches one published SSH service, so the API is never asked through it.
+        val dials = tunnelToServer("Edge", TunnelKinds.CLOUDFLARE_ACCESS)
+        val e = assertThrows(ProxmoxException::class.java) { runBlocking { api(server(host = "pve.home.invalid"), 7).overview() } }
+        assertThat(e.message).contains("Tunnel \"Edge\" is Cloudflare Access: it reaches only the SSH service its hostname publishes")
+        assertThat(dials).isEmpty()
+    }
+
+    @Test
+    fun aServerBehindATunnelIsDialledOnlyThroughItAtItsTunnelAddress() = runBlocking {
+        val dials = tunnelToServer("Home", TunnelKinds.WIREGUARD)
         ServerSocket(0, 5, InetAddress.getByName("127.0.0.1")).use { direct ->
             val accepted = AtomicInteger()
             thread(isDaemon = true) { while (!direct.isClosed) runCatching { direct.accept().close(); accepted.incrementAndGet() } }

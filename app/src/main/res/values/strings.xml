@@ -691,7 +691,10 @@
     <string name="terminal_input">"Terminal input"</string>
     <string name="use_this_when_an_incognito_keyboard">"Use this when an incognito keyboard does not expose clipboard history."</string>
     <string name="terminal_paste">"Terminal paste"</string>
-    <string name="paste_characters">"Paste %1$s characters?"</string>
+    <plurals name="paste_characters">
+        <item quantity="one">"Paste %1$d character?"</item>
+        <item quantity="other">"Paste %1$d characters?"</item>
+    </plurals>
     <string name="read_only_drag_to_scroll">"READ ONLY · drag to scroll"</string>
     <string name="firing_muted">"%1$s firing · %2$s muted"</string>
     <string name="current_threshold">"%1$s · current %2$s · threshold %3$s"</string>
@@ -2052,4 +2055,50 @@
     <string name="vpn_host_tunnel_gone">"This tunnel no longer exists. Pick another, or None."</string>
     <string name="vpn_host_address">"Address through the tunnel (optional)"</string>
     <string name="vpn_host_address_help">"When the host has another address inside the tunnel. Empty uses the host's address above."</string>
+    <string name="vpn_add_nebula">Add Nebula tunnel</string>
+    <string name="vpn_kind_nebula">Nebula</string>
+    <string name="vpn_nebula_add_title">New Nebula tunnel</string>
+    <string name="vpn_nebula_config_hint">Paste your Nebula YAML with pki.ca, pki.cert and pki.key inline (| blocks), static_host_map and lighthouse.hosts.</string>
+    <string name="vpn_nebula_privacy">Your certificates and key stay encrypted on this phone and in encrypted backups. Only your own lighthouses and nodes are contacted. Use numeric Nebula addresses. A static endpoint may be IP:port or a host name and port, which the phone looks up with its own DNS. Unsafe routes are not supported. OmniTerm replaces tun, listen and firewall: no VPN device, only an automatic UDP transport port, outgoing TCP with replies only. Debug, DNS, metrics, control services and relay hosting are disabled. Paste a configuration to test it; an empty edit keeps the stored one.</string>
+    <string name="vpn_nebula_status">Running as %1$s · TCP data: %2$d bytes in, %3$d out · Last handshake unavailable</string>
+    <string name="vpn_nebula_test">Test</string>
+    <string name="vpn_nebula_testing">Testing…</string>
+    <string name="vpn_nebula_test_host">Host’s Nebula IP address to test</string>
+    <string name="vpn_nebula_test_port">Port to test</string>
+    <string name="vpn_nebula_test_ok">Connected through Nebula. The test tunnel is now stopped.</string>
+    <string name="vpn_nebula_test_ok_running">Connected through Nebula, through the tunnel already running with these settings. It keeps running.</string>
+    <string name="vpn_nebula_failed">Nebula stopped. Check its certificate and reconnect.</string>
+    <string name="vpn_add_access">Add Cloudflare Access tunnel</string>
+    <string name="vpn_kind_access">Cloudflare Access</string>
+    <string name="vpn_access_hostname">Access hostname (ssh.example.com)</string>
+    <string name="vpn_access_client_id">Service token client ID</string>
+    <string name="vpn_access_secret">Service token secret</string>
+    <string name="vpn_access_token_help">Create a service token in Cloudflare and allow it in the application’s Service Auth policy. Both fields stay encrypted and are never shown again.</string>
+    <string name="vpn_access_keep">Leave either token field empty to keep its saved value. Saved credentials are never shown again.</string>
+    <string name="vpn_access_privacy">Opt-in: Test and hosts using this tunnel contact Cloudflare, a third party. Cloudflare receives your service token, the hostname and your public IP, and carries your encrypted SSH traffic. Saving alone makes no connection.</string>
+    <string name="vpn_access_host_help">Set the host’s Address through the tunnel to this same Access hostname. Cloudflare selects the SSH destination; the host’s port is used only when connecting directly on a listed Wi-Fi. This tunnel cannot reach other addresses or act as a network VPN.</string>
+    <string name="vpn_access_test">Test hostname</string>
+    <string name="vpn_access_test_ok">Connected through Cloudflare Access.</string>
+    <string name="vpn_access_idle">Starts when a host connects; token checked on each connection.</string>
+    <string name="vpn_access_ready">Ready for connections; each connection checks the token.</string>
+    <string name="type_to_terminals">Type to several terminals</string>
+    <plurals name="terminal_paste_sent">
+        <item quantity="one">Sent %1$d character to terminal.</item>
+        <item quantity="other">Sent %1$d characters to terminal.</item>
+    </plurals>
+    <plurals name="typing_to_terminals">
+        <item quantity="one">Typing to %1$d terminal · tap for hosts</item>
+        <item quantity="other">Typing to %1$d terminals · tap for hosts</item>
+    </plurals>
+    <string name="typing_not_selected">This terminal is not selected</string>
+    <string name="typing_left_out">Left out: %1$s</string>
+    <string name="typing_receiving">Receiving your typing</string>
+    <string name="typing_available">Available</string>
+    <string name="typing_warning">Every key and password you type goes to the selected connected, unlocked terminals. Check the hosts before typing. New terminals never join automatically.</string>
+    <string name="typing_all_open">Select all open terminals</string>
+    <string name="typing_use_selection">Use selection</string>
+    <plurals name="typing_paste_confirmation">
+        <item quantity="one">Paste into %1$d terminal? This text has several lines or is long. Commands may run as soon as they arrive. Check the selected host before continuing.</item>
+        <item quantity="other">Paste into %1$d terminals? This text has several lines or is long. Commands may run as soon as they arrive. Check the selected hosts before continuing.</item>
+    </plurals>
 </resources>

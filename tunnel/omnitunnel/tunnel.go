@@ -308,6 +308,27 @@ func (w *wireGuard) lookup(ctx context.Context, host string) ([]netip.Addr, erro
 	return addrs, nil
 }
 
+// isHostName says whether s is a DNS name with at least two labels, such as ssh.example.com, and
+// no IP address, URL, port or path: the only names the phone ever looks up for a tunnel.
+func isHostName(s string) bool {
+	if len(s) > 253 || !strings.Contains(s, ".") || net.ParseIP(s) != nil {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, ch := range label {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// resolveOne is host's address: host itself when it is one, else the phone's own DNS's answer
+// through resolver, an IPv4 address first. Never the tunnel's DNS or Go's own resolver.
 func resolveOne(host string, resolver Resolver) (netip.Addr, error) {
 	if a, err := netip.ParseAddr(host); err == nil {
 		return a.Unmap(), nil

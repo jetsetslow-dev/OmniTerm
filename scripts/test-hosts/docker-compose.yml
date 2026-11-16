@@ -61,6 +61,20 @@ x-ssh-common: &ssh-common
   restart: "no"
 
 services:
+  cloudflare-access:
+    profiles: [cloudflare-access]
+    container_name: omniterm-test-cloudflare-access
+    build: ./fixtures/cloudflare-access
+    environment:
+      OMNITERM_TEST_ACCESS_ID: "${OMNITERM_TEST_ACCESS_ID:-}"
+      OMNITERM_TEST_ACCESS_SECRET: "${OMNITERM_TEST_ACCESS_SECRET:-}"
+    volumes:
+      - ./.cloudflare-access:/state:ro
+    ports:
+      - "127.0.0.1:8447:443"
+    networks: [edge, internal]
+    restart: "no"
+
   # Baseline host: password auth plus tmux, so persistent-session flows work here.
   direct:
     <<: *ssh-common
@@ -357,6 +371,22 @@ services:
       - /var/lib/tailscale
     networks: [edge, internal]
     depends_on: [headscale, internal-a]
+
+  # Only `test-hosts.sh nebula` starts this: a userspace lighthouse and SSH node leading to
+  # internal-a. Identities are generated on startup into the ignored private .nebula folder.
+  nebula:
+    build: ./fixtures/nebula
+    image: omniterm-test-nebula:local
+    container_name: omniterm-test-nebula
+    profiles: [nebula]
+    user: "${OMNITERM_NEBULA_UID:-1000}:${OMNITERM_NEBULA_GID:-1000}"
+    command: ["-target", "internal-a:2222"]
+    volumes:
+      - ./.nebula:/state:ro
+    ports:
+      - "127.0.0.1:4242:4242/udp"
+    networks: [edge, internal]
+    restart: "no"
 
   # WireGuard peer for the VPN tunnel suite (E2eVpnTunnelTest): UDP 51820 on the host's loopback,
   # which the emulator reaches as 10.0.2.2:51820 (adb reverse carries TCP only). Inside the tunnel it

@@ -29,6 +29,7 @@ func SetNetwork(network Network) {
 // the interface named defaultInterface ("" for none), so they find their paths again at once.
 func NetworkChanged(defaultInterface string) {
 	setDefaultInterface(defaultInterface)
+	nebulaNetworkChanged()
 	live.each(func(ts *tailscale) {
 		if mon, ok := ts.srv.Sys().NetMon.GetOK(); ok {
 			mon.InjectEvent()

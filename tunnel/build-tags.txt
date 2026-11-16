@@ -1,3 +1,5 @@
+# Nebula v1.12.0 offers no service trimming tags. Leave debug and pkcs11 unset: no pprof
+# listener or native PKCS#11 module is compiled. Existing -s -w flags strip symbols for all ABIs.
 # Go build tags for tunnel/: every build, test and vet of it uses them (scripts/go-toolchain.sh).
 # They leave out of Tailscale (tsnet) all it can omit except userspace networking (netstack),
 # MagicDNS (dns), NAT traversal, its event bus (ipnbus), subnet routes (useroutes) and the
