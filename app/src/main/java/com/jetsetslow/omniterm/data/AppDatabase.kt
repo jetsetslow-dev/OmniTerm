@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm.data
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -529,6 +530,12 @@ abstract class AppDatabase : RoomDatabase() {
                 INSTANCE = instance
                 instance
             }
+        }
+
+        /** Tests only: [getDatabase] returns [replacement] until it is replaced again. */
+        @VisibleForTesting
+        internal fun replaceForTests(replacement: AppDatabase) {
+            synchronized(this) { INSTANCE = replacement }
         }
     }
 }

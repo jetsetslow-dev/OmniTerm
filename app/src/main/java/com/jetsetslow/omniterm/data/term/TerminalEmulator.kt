@@ -31,15 +31,25 @@ class TerminalEmulator(
         var italic: Boolean = false,
         var underline: Boolean = false,
         var dim: Boolean = false,
+        var strike: Boolean = false,
+        var hidden: Boolean = false,
     ) {
         fun set(
             value: String, fg: Int, bg: Int, bold: Boolean, inverse: Boolean,
             italic: Boolean = false, underline: Boolean = false, dim: Boolean = false,
-            width: Int = 1,
+            width: Int = 1, strike: Boolean = false, hidden: Boolean = false,
         ) {
             text = value; this.width = width; this.fg = fg; this.bg = bg; this.bold = bold; this.inverse = inverse
             this.italic = italic; this.underline = underline; this.dim = dim
+            this.strike = strike; this.hidden = hidden
         }
+
+        /** This cell becomes a copy of [source], with [text] and [width] in place of its own. */
+        fun setFrom(source: Cell, text: String = source.text, width: Int = source.width) = set(
+            text, source.fg, source.bg, source.bold, source.inverse, source.italic, source.underline,
+            source.dim, width, source.strike, source.hidden,
+        )
+
         fun blank(fg: Int = DEFAULT_FG, bg: Int = DEFAULT_BG) = set(" ", fg, bg, false, false)
     }
 
@@ -76,22 +86,48 @@ class TerminalEmulator(
     private var penItalic = false
     private var penUnderline = false
     private var penDim = false
+    private var penStrike = false
+    private var penHidden = false
     private var cursorVisible = true
     var applicationCursorKeys = false; private set
     var bracketedPasteMode = false; private set
 
-    // saved cursor (DECSC / DECRC)
-    private var savedRow = 0
-    private var savedCol = 0
+    // modes
+    /** DECAWM: text reaching the right edge continues on the next row. */
+    private var autoWrap = true
+    /** IRM: printing moves the rest of the row right. */
+    private var insertMode = false
+    /** DECOM: cursor addresses count from the top of the scroll region and stay inside it. */
+    private var originMode = false
+
+    // character sets: G0..G3 and the one shifted in (SI selects G0, SO selects G1)
+    private enum class Charset { ASCII, UK, DEC_GRAPHICS }
+    private val charsets = arrayOf(Charset.ASCII, Charset.ASCII, Charset.ASCII, Charset.ASCII)
+    private var shiftedSet = 0
+
+    /** The last character printed, for REP. */
+    private var lastGraphic = -1
+
+    // saved cursor (DECSC / DECRC, CSI s / CSI u): position, pen, wrap state, origin mode, charsets
+    private class SavedCursor(
+        val row: Int, val col: Int, val wrapPending: Boolean,
+        val fg: Int, val bg: Int, val bold: Boolean, val inverse: Boolean, val italic: Boolean,
+        val underline: Boolean, val dim: Boolean, val strike: Boolean, val hidden: Boolean,
+        val originMode: Boolean, val charsets: List<Charset>, val shiftedSet: Int,
+    )
+    private var savedCursor: SavedCursor? = null
 
     // scroll region (inclusive, 0-based)
     private var scrollTop = 0
     private var scrollBottom = this.rows - 1
 
+    private var tabStops = defaultTabStops(this.cols)
+
     // ── parser state ──
-    private enum class State { GROUND, ESC, CSI, OSC, DISCARD_STRING, CHARSET }
+    private enum class State { GROUND, ESC, ESC_INTERMEDIATE, CSI, CSI_IGNORE, OSC, DISCARD_STRING }
     private var state = State.GROUND
     private val csiParams = StringBuilder()
+    private val intermediates = StringBuilder()
     private var oscEscSeen = false
     private var discardEscSeen = false
 
@@ -115,9 +151,15 @@ class TerminalEmulator(
         curRow = 0; curCol = 0; wrapPending = false
         resetPen()
         cursorVisible = true; applicationCursorKeys = false; bracketedPasteMode = false
+        autoWrap = true; insertMode = false; originMode = false
+        charsets.fill(Charset.ASCII); shiftedSet = 0
+        lastGraphic = -1
+        savedCursor = null
+        tabStops = defaultTabStops(cols)
         scrollTop = 0; scrollBottom = rows - 1
         state = State.GROUND
         csiParams.setLength(0)
+        intermediates.setLength(0)
         utf8Decoder.reset()
         replies.setLength(0)
     }
@@ -221,6 +263,7 @@ class TerminalEmulator(
         //    padded out to the old width doesn't force phantom wraps at the new width. Empty lines are
         //    preserved (a blank logical line is a real newline).
         cols = nc; rows = nr
+        tabStops = resizedTabStops(tabStops, nc)
         softWrapped.clear()
         scrollbackSpanCache.clear()
         val rewrapped = ArrayList<Array<Cell>>()
@@ -239,9 +282,7 @@ class TerminalEmulator(
                 while (col < content.size) {
                     if (nc == 1 && content[col].width == 2) {
                         val src = content[col]
-                        val chunk = arrayOf(Cell().also {
-                            it.set(src.text, src.fg, src.bg, src.bold, src.inverse, src.italic, src.underline, src.dim, 1)
-                        })
+                        val chunk = arrayOf(Cell().also { it.setFrom(src, width = 1) })
                         rewrapped.add(chunk)
                         col += if (col + 1 < content.size && content[col + 1].width == 0) 2 else 1
                         if (col < content.size) softWrapped[chunk] = 1
@@ -346,12 +387,7 @@ class TerminalEmulator(
         }
 
     private fun cellCopy(source: Cell, text: String = source.text, width: Int = source.width): Cell =
-        Cell().also {
-            it.set(
-                text, source.fg, source.bg, source.bold, source.inverse,
-                source.italic, source.underline, source.dim, width,
-            )
-        }
+        Cell().also { it.setFrom(source, text, width) }
 
     /** Build an immutable, render-ready snapshot (scrollback + visible screen). */
     fun snapshot(): TerminalSnapshot {
@@ -452,47 +488,109 @@ class TerminalEmulator(
 
     private fun processCodePoint(codePoint: Int) {
         if (codePoint > Char.MAX_VALUE.code) {
-            if (state == State.GROUND) putCodePoint(codePoint)
+            if (state == State.GROUND) putGraphic(codePoint)
             return
         }
         val c = codePoint.toChar()
         when (state) {
             State.GROUND -> ground(c)
             State.ESC -> esc(c)
+            State.ESC_INTERMEDIATE -> escIntermediate(c)
             State.CSI -> csi(c)
+            State.CSI_IGNORE -> csiIgnore(c)
             State.OSC -> osc(c)
             State.DISCARD_STRING -> discardString(c)
-            State.CHARSET -> state = State.GROUND // consume the single charset designator
         }
     }
 
     private fun ground(c: Char) {
-        when (c.code) {
-            0x07 -> {}                                  // BEL
-            0x08 -> backspace()                         // BS
-            0x09 -> tab()                               // HT
-            0x0A, 0x0B, 0x0C -> lineFeed()              // LF / VT / FF
-            0x0D -> { curCol = 0; wrapPending = false } // CR
-            0x1B -> state = State.ESC                   // ESC
-            0x7F -> {}                                  // DEL — ignore
-            else -> if (c.code >= 0x20) putCodePoint(c.code) // other C0 controls ignored
+        when {
+            c.code == 0x1B -> enterEscape()
+            c.code < 0x20 -> executeControl(c)
+            c.code == 0x7F -> {}                // DEL
+            c.code in 0x80..0x9F -> {}          // C1 controls sent as UTF-8: nothing to draw
+            else -> putGraphic(c.code)
         }
     }
 
+    /**
+     * A C0 control acts wherever it appears, inside an escape sequence too, as in xterm: a
+     * sequence split by a newline still ends on the right row. ESC, CAN and SUB are the callers'.
+     */
+    private fun executeControl(c: Char) {
+        when (c.code) {
+            0x08 -> backspace()                         // BS
+            0x09 -> tab(1)                              // HT
+            0x0A, 0x0B, 0x0C -> lineFeed()              // LF / VT / FF
+            0x0D -> { curCol = 0; wrapPending = false } // CR
+            0x0E -> shiftedSet = 1                      // SO: G1
+            0x0F -> shiftedSet = 0                      // SI: G0
+            else -> {}                                  // BEL and the rest: nothing
+        }
+    }
+
+    /** CAN and SUB cancel a sequence; ESC starts a new one. True when [c] was one of them. */
+    private fun interrupts(c: Char): Boolean = when (c.code) {
+        0x1B -> { enterEscape(); true }
+        0x18, 0x1A -> { state = State.GROUND; true }
+        else -> false
+    }
+
+    private fun enterEscape() {
+        intermediates.setLength(0)
+        state = State.ESC
+    }
+
     private fun esc(c: Char) {
+        when {
+            interrupts(c) -> {}
+            c.code < 0x20 -> executeControl(c)
+            c.code in 0x20..0x2F -> { intermediates.append(c); state = State.ESC_INTERMEDIATE }
+            c.code == 0x7F -> {}
+            else -> {
+                state = State.GROUND
+                escDispatch(c)
+            }
+        }
+    }
+
+    private fun escDispatch(c: Char) {
         when (c) {
-            '[' -> { csiParams.setLength(0); state = State.CSI }
+            '[' -> { csiParams.setLength(0); intermediates.setLength(0); state = State.CSI }
             ']' -> { oscEscSeen = false; state = State.OSC }
-            'P', '_', '^' -> { discardEscSeen = false; state = State.DISCARD_STRING }
-            '(', ')', '*', '+' -> state = State.CHARSET
-            '=', '>' -> state = State.GROUND       // keypad modes — ignore
-            'M' -> { reverseIndex(); state = State.GROUND }
-            'D' -> { lineFeed(); state = State.GROUND }
-            'E' -> { curCol = 0; lineFeed(); state = State.GROUND }
-            '7' -> { savedRow = curRow; savedCol = curCol; state = State.GROUND }
-            '8' -> { curRow = savedRow.coerceIn(0, rows - 1); curCol = savedCol.coerceIn(0, cols - 1); wrapPending = false; state = State.GROUND }
+            'P', '_', '^', 'X' -> { discardEscSeen = false; state = State.DISCARD_STRING }
+            'M' -> reverseIndex()
+            'D' -> lineFeed()
+            'E' -> { curCol = 0; lineFeed() }
+            'H' -> if (curCol in tabStops.indices) tabStops[curCol] = true // HTS
+            '7' -> saveCursor()
+            '8' -> restoreCursor()
             'c' -> reset()
-            else -> state = State.GROUND
+            else -> {} // keypad modes (= >), single shifts (N O) and the rest: nothing to do
+        }
+    }
+
+    /** ESC with intermediates: a charset designation (ESC ( 0), DECALN (ESC # 8) and the like. */
+    private fun escIntermediate(c: Char) {
+        when {
+            interrupts(c) -> {}
+            c.code < 0x20 -> executeControl(c)
+            c.code in 0x20..0x2F -> if (intermediates.length < MAX_INTERMEDIATES) intermediates.append(c)
+            c.code == 0x7F -> {}
+            else -> {
+                state = State.GROUND
+                val chosen = intermediates.toString()
+                val set = if (chosen.length == 1) "()*+".indexOf(chosen[0]) else -1
+                when {
+                    set >= 0 -> charsets[set] = when (c) {
+                        '0' -> Charset.DEC_GRAPHICS
+                        'A' -> Charset.UK
+                        else -> Charset.ASCII
+                    }
+                    chosen == "#" && c == '8' -> screenAlignment()
+                    else -> {} // ESC % G (UTF-8), ESC SP F and others: nothing to do
+                }
+            }
         }
     }
 
@@ -501,51 +599,102 @@ class TerminalEmulator(
         when {
             c.code == 0x07 -> state = State.GROUND          // BEL
             oscEscSeen && c == '\\' -> state = State.GROUND // ST
+            c.code == 0x18 || c.code == 0x1A -> state = State.GROUND
             else -> oscEscSeen = (c.code == 0x1B)           // ESC seen → maybe ST next
         }
     }
 
     private fun csi(c: Char) {
-        if (c.code in 0x30..0x3F || c == ' ' || c == '!') { // params + intermediates
-            if (csiParams.length < MAX_CONTROL_SEQUENCE_CHARS) csiParams.append(c)
-            else { csiParams.setLength(0); state = State.GROUND }
-            return
+        when {
+            interrupts(c) -> {}
+            c.code < 0x20 -> executeControl(c)
+            c.code in 0x30..0x3F -> when {
+                // A parameter after an intermediate, or a private marker after the first byte,
+                // makes the sequence malformed: it is consumed and ignored, never printed.
+                intermediates.isNotEmpty() -> state = State.CSI_IGNORE
+                c in "<=>?" && csiParams.isNotEmpty() -> state = State.CSI_IGNORE
+                csiParams.length >= MAX_CONTROL_SEQUENCE_CHARS -> state = State.CSI_IGNORE
+                else -> csiParams.append(c)
+            }
+            c.code in 0x20..0x2F ->
+                if (intermediates.length < MAX_INTERMEDIATES) intermediates.append(c) else state = State.CSI_IGNORE
+            c.code in 0x40..0x7E -> {
+                state = State.GROUND
+                dispatchCsi(c)
+            }
+            else -> {} // DEL
         }
-        if (c.code in 0x40..0x7E) {
-            dispatchCsi(c)
-            state = State.GROUND
-            return
+    }
+
+    /** The rest of a sequence that cannot be carried out, up to and including its final byte. */
+    private fun csiIgnore(c: Char) {
+        when {
+            interrupts(c) -> {}
+            c.code < 0x20 -> executeControl(c)
+            c.code in 0x40..0x7E -> state = State.GROUND
         }
-        state = State.GROUND // anything else aborts
     }
 
     private fun discardString(c: Char) {
         when {
             c.code == 0x07 -> { discardEscSeen = false; state = State.GROUND }
             discardEscSeen && c == '\\' -> { discardEscSeen = false; state = State.GROUND }
+            c.code == 0x18 || c.code == 0x1A -> { discardEscSeen = false; state = State.GROUND }
             c.code == 0x1B -> discardEscSeen = true
             else -> discardEscSeen = false
         }
     }
 
+    /**
+     * Carries out a complete control sequence. Only the forms this terminal implements act; any
+     * other private marker or intermediate is ignored as a whole, so xterm, kitty and DEC queries
+     * a program sends to learn what the terminal supports (`CSI > 4 ; 2 m`, `CSI ? 2026 $ p`,
+     * `CSI > 1 u`) change nothing and print nothing.
+     */
     private fun dispatchCsi(final: Char) {
         val raw = csiParams.toString()
-        val priv = raw.startsWith("?")
-        val body = if (priv) raw.substring(1) else raw
-        val params = body.split(';').map { it.toIntOrNull() }
+        val marker = raw.firstOrNull()?.takeIf { it in "<=>?" }
+        val body = if (marker != null) raw.substring(1) else raw
+        val chosen = intermediates.toString()
+        // Each parameter, with its colon sub-parameters (`4:3`, `38:2::r:g:b`).
+        val groups: List<List<Int?>> =
+            if (body.isEmpty()) emptyList()
+            else body.split(';').map { group -> group.split(':').map { it.toIntOrNull()?.coerceAtMost(MAX_PARAMETER) } }
+        val params = groups.map { it.firstOrNull() }
         fun p(i: Int, def: Int = 0) = params.getOrNull(i) ?: def
         fun p1(i: Int) = (params.getOrNull(i) ?: 0).let { if (it == 0) 1 else it }
 
+        if (chosen.isNotEmpty()) {
+            if (marker == null && chosen == "!" && final == 'p') softReset() // DECSTR
+            return // DECSCUSR (SP q), DECRQM ($ p), DECSCA (" q) and the rest: nothing to change
+        }
+        if (marker == '?') {
+            when (final) {
+                'h' -> setDecModes(params, true)
+                'l' -> setDecModes(params, false)
+                'J' -> eraseInDisplay(p(0)) // DECSED: nothing here is protected, so as ED
+                'K' -> eraseInLine(p(0))    // DECSEL: as EL
+            }
+            return
+        }
+        if (marker != null) return // modifyOtherKeys, kitty keyboard, secondary DA, XTVERSION…
+
         when (final) {
-            'A' -> moveCursor(curRow - p1(0), curCol)
-            'B' -> moveCursor(curRow + p1(0), curCol)
-            'C' -> moveCursor(curRow, curCol + p1(0))
+            'A' -> cursorUp(p1(0))
+            'B', 'e' -> cursorDown(p1(0))
+            'C', 'a' -> moveCursor(curRow, curCol + p1(0))
             'D' -> moveCursor(curRow, curCol - p1(0))
-            'E' -> moveCursor(curRow + p1(0), 0)
-            'F' -> moveCursor(curRow - p1(0), 0)
+            'E' -> { cursorDown(p1(0)); curCol = 0 }
+            'F' -> { cursorUp(p1(0)); curCol = 0 }
             'G', '`' -> moveCursor(curRow, p1(0) - 1)
-            'd' -> moveCursor(p1(0) - 1, curCol)
-            'H', 'f' -> moveCursor(p1(0) - 1, p1(1) - 1)
+            'd' -> moveCursorAddressed(p1(0) - 1, curCol)
+            'H', 'f' -> moveCursorAddressed(p1(0) - 1, p1(1) - 1)
+            'I' -> tab(p1(0))
+            'Z' -> backTab(p1(0))
+            'g' -> when (p(0)) {
+                0 -> if (curCol in tabStops.indices) tabStops[curCol] = false
+                3 -> tabStops.fill(false)
+            }
             'J' -> eraseInDisplay(p(0))
             'K' -> eraseInLine(p(0))
             'L' -> insertLines(p1(0))
@@ -554,32 +703,36 @@ class TerminalEmulator(
             '@' -> insertChars(p1(0))
             'X' -> eraseChars(p1(0))
             'S' -> scrollUp(p1(0))
-            'T' -> scrollDown(p1(0))
-            'm' -> applySgr(params)
+            'T' -> if (params.size <= 1) scrollDown(p1(0)) // five parameters: mouse highlight, unsupported
+            'b' -> repeatLastGraphic(p1(0))
+            'm' -> applySgr(groups)
             'r' -> {
-                scrollTop = (p1(0) - 1).coerceIn(0, rows - 1)
-                scrollBottom = (p(1, rows) - 1).coerceIn(scrollTop, rows - 1)
-                curRow = 0; curCol = 0; wrapPending = false
+                // DECSTBM. 0 or nothing means the screen's edge; a region of less than two rows is
+                // ignored, as xterm does.
+                val top = p(0).let { if (it == 0) 1 else it } - 1
+                val bottom = p(1).let { if (it == 0) rows else it }.coerceAtMost(rows) - 1
+                if (top < bottom) {
+                    scrollTop = top; scrollBottom = bottom
+                    moveCursorAddressed(0, 0)
+                }
             }
-            'h' -> setMode(priv, params, true)
-            'l' -> setMode(priv, params, false)
+            'h' -> setAnsiModes(params, true)
+            'l' -> setAnsiModes(params, false)
             // Primary device attributes: a VT100 with advanced video, as xterm and tmux answer.
-            'c' -> if (raw.isEmpty() || raw == "0") reply("\u001B[?1;2c")
-            // Device status: "OK", and the cursor position (1-based).
-            'n' -> when (raw) {
-                "5" -> reply("\u001B[0n")
-                "6" -> reply("\u001B[${curRow + 1};${curCol + 1}R")
+            'c' -> if (params.isEmpty() || params == listOf(0)) reply("\u001B[?1;2c")
+            // Device status: "OK", and the cursor position (1-based; inside the region in origin mode).
+            'n' -> when (p(0)) {
+                5 -> reply("\u001B[0n")
+                6 -> reply("\u001B[${curRow - (if (originMode) scrollTop else 0) + 1};${curCol + 1}R")
             }
             // ANSI SCOSC/SCORC are the bare CSI s/u forms. Modern interactive clients such as
             // Claude and Codex also use Kitty's keyboard protocol, whose push/pop/query controls
-            // end in `u` but carry `<`, `>`, `?`, or `=` parameters. Treating those as SCORC jumps
-            // the cursor to our old save slot just before 1049 saves the primary-screen cursor;
-            // when the TUI exits, the shell then resumes at the top and paints over stale rows.
-            's' -> if (raw.isEmpty()) { savedRow = curRow; savedCol = curCol }
-            'u' -> if (raw.isEmpty()) {
-                curRow = savedRow.coerceIn(0, rows - 1)
-                curCol = savedCol.coerceIn(0, cols - 1)
-            }
+            // end in `u` but carry `<`, `>`, `?`, or `=` parameters (ignored above). Treating those
+            // as SCORC jumps the cursor to our old save slot just before 1049 saves the
+            // primary-screen cursor; when the TUI exits, the shell then resumes at the top and
+            // paints over stale rows.
+            's' -> if (params.isEmpty()) saveCursor()
+            'u' -> if (params.isEmpty()) restoreCursor()
             else -> {} // unsupported — ignore
         }
     }
@@ -589,12 +742,18 @@ class TerminalEmulator(
         if (replies.length + answer.length <= MAX_CONTROL_SEQUENCE_CHARS) replies.append(answer)
     }
 
-    private fun setMode(priv: Boolean, params: List<Int?>, enable: Boolean) {
-        if (!priv) return
+    /** SM / RM: insert mode (IRM) is the only ANSI mode that changes what is drawn. */
+    private fun setAnsiModes(params: List<Int?>, enable: Boolean) {
+        for (code in params) if (code == 4) insertMode = enable
+    }
+
+    private fun setDecModes(params: List<Int?>, enable: Boolean) {
         for (code in params) {
             when (code) {
                 25 -> cursorVisible = enable
                 1 -> applicationCursorKeys = enable
+                6 -> { originMode = enable; moveCursorAddressed(0, 0) }
+                7 -> autoWrap = enable
                 2004 -> bracketedPasteMode = enable
                 // 47/1047 switch buffers only — they must NOT restore the cursor (that is 1048's
                 // job, and 1049's as a combined op). xterm also requires clearing the alternate
@@ -658,6 +817,76 @@ class TerminalEmulator(
         }
     }
 
+    /** DECSC: the position, the pen, the pending wrap, origin mode and the character sets. */
+    private fun saveCursor() {
+        savedCursor = SavedCursor(
+            curRow, curCol, wrapPending, penFg, penBg, penBold, penInverse, penItalic, penUnderline,
+            penDim, penStrike, penHidden, originMode, charsets.toList(), shiftedSet,
+        )
+    }
+
+    /** DECRC: what [saveCursor] kept; with nothing saved, the home position and a plain pen. */
+    private fun restoreCursor() {
+        val saved = savedCursor
+        if (saved == null) {
+            originMode = false
+            resetPen()
+            charsets.fill(Charset.ASCII); shiftedSet = 0
+            moveCursor(0, 0)
+            return
+        }
+        penFg = saved.fg; penBg = saved.bg; penBold = saved.bold; penInverse = saved.inverse
+        penItalic = saved.italic; penUnderline = saved.underline; penDim = saved.dim
+        penStrike = saved.strike; penHidden = saved.hidden
+        originMode = saved.originMode
+        saved.charsets.forEachIndexed { i, set -> charsets[i] = set }
+        shiftedSet = saved.shiftedSet
+        curRow = saved.row.coerceIn(0, rows - 1)
+        curCol = saved.col.coerceIn(0, cols - 1)
+        wrapPending = saved.wrapPending && curCol == cols - 1
+    }
+
+    /** DECSTR: modes, pen, region and charsets back to their defaults; the screen is kept. */
+    private fun softReset() {
+        cursorVisible = true
+        autoWrap = true; insertMode = false; originMode = false
+        applicationCursorKeys = false
+        scrollTop = 0; scrollBottom = rows - 1
+        resetPen()
+        charsets.fill(Charset.ASCII); shiftedSet = 0
+        savedCursor = null
+    }
+
+    /** DECALN: the screen filled with E, for lining up a display. */
+    private fun screenAlignment() {
+        for (row in screen) {
+            for (cell in row) cell.set("E", DEFAULT_FG, DEFAULT_BG, false, false)
+            softWrapped.remove(row)
+        }
+        scrollTop = 0; scrollBottom = rows - 1
+        originMode = false
+        moveCursor(0, 0)
+    }
+
+    /** A printable character after the shifted-in charset has had its say (DEC line drawing). */
+    private fun putGraphic(codePoint: Int) {
+        val mapped = when (charsets[shiftedSet]) {
+            Charset.ASCII -> codePoint
+            Charset.UK -> if (codePoint == '#'.code) 0x00A3 else codePoint
+            Charset.DEC_GRAPHICS ->
+                if (codePoint in DEC_GRAPHICS_FIRST..0x7E) DEC_GRAPHICS[codePoint - DEC_GRAPHICS_FIRST].code else codePoint
+        }
+        if (codePointWidth(mapped) > 0) lastGraphic = mapped
+        putCodePoint(mapped)
+    }
+
+    /** REP: the last printed character again, [count] times (bounded by one screenful). */
+    private fun repeatLastGraphic(count: Int) {
+        val graphic = lastGraphic
+        if (graphic < 0) return
+        repeat(count.coerceAtMost(cols * rows)) { putCodePoint(graphic) }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Grid operations
     // ─────────────────────────────────────────────────────────────────────────
@@ -672,20 +901,28 @@ class TerminalEmulator(
         if (wrapPending) {
             // The previous char filled the last column and more text follows: this row continues
             // onto the next (soft wrap). Record it so resize() can reflow the joined logical line.
-            if (curRow in 0 until rows) softWrapped[screen[curRow]] = cols
-            curCol = 0
-            lineFeed()
+            if (autoWrap) {
+                if (curRow in 0 until rows) softWrapped[screen[curRow]] = cols
+                curCol = 0
+                lineFeed()
+            }
             wrapPending = false
         }
         var width = displayWidth
         if (width == 2 && cols == 1) width = 1
         if (width == 2 && curCol == cols - 1) {
-            // A wide glyph cannot be split. Wrap before it when only one column remains.
-            if (curRow in 0 until rows) softWrapped[screen[curRow]] = curCol
-            curCol = 0
-            lineFeed()
+            if (autoWrap) {
+                // A wide glyph cannot be split. Wrap before it when only one column remains.
+                if (curRow in 0 until rows) softWrapped[screen[curRow]] = curCol
+                curCol = 0
+                lineFeed()
+            } else {
+                curCol = cols - 2
+            }
         }
         if (curRow !in 0 until rows || curCol !in 0 until cols) return
+        // Insert mode (IRM) moves the rest of the row right instead of writing over it.
+        if (insertMode) insertChars(width)
         clearWideGlyphAt(screen[curRow], curCol)
         // Terminal traffic is overwhelmingly printable ASCII. Reusing the immutable one-character
         // strings avoids allocating/classifying a fresh String for every cell while replaying a
@@ -696,18 +933,19 @@ class TerminalEmulator(
             String(Character.toChars(codePoint))
         }
         screen[curRow][curCol].set(
-            value, penFg, penBg, penBold, penInverse, penItalic, penUnderline, penDim, width,
+            value, penFg, penBg, penBold, penInverse, penItalic, penUnderline, penDim, width, penStrike, penHidden,
         )
         if (width == 2) {
             clearWideGlyphAt(screen[curRow], curCol + 1)
             screen[curRow][curCol + 1].set(
-                "", penFg, penBg, penBold, penInverse, penItalic, penUnderline, penDim, 0,
+                "", penFg, penBg, penBold, penInverse, penItalic, penUnderline, penDim, 0, penStrike, penHidden,
             )
         }
         val lastOccupied = curCol + width - 1
         if (lastOccupied == cols - 1) {
             curCol = cols - 1
-            wrapPending = true
+            // With autowrap off (DECAWM reset) the next character overwrites the last column.
+            wrapPending = autoWrap
         } else {
             curCol += width
         }
@@ -811,10 +1049,7 @@ class TerminalEmulator(
                     if (column == row.lastIndex) {
                         cell.blank(bg = cell.bg)
                     } else if (row[column + 1].width != 0) {
-                        row[column + 1].set(
-                            "", cell.fg, cell.bg, cell.bold, cell.inverse,
-                            cell.italic, cell.underline, cell.dim, 0,
-                        )
+                        row[column + 1].setFrom(cell, text = "", width = 0)
                     }
                 }
             }
@@ -834,15 +1069,11 @@ class TerminalEmulator(
             codePoint in 0x1F3FB..0x1F3FF || codePoint in 0xE0020..0xE007F ||
             codePoint in 0xFE00..0xFE0F || codePoint in 0xE0100..0xE01EF
         ) return 0
-        return if (
-            codePoint in 0x1100..0x115F || codePoint in 0x2329..0x232A ||
-            codePoint in 0x2E80..0xA4CF || codePoint in 0xAC00..0xD7A3 ||
-            codePoint in 0xF900..0xFAFF || codePoint in 0xFE10..0xFE19 ||
-            codePoint in 0xFE30..0xFE6F || codePoint in 0xFF00..0xFF60 ||
-            codePoint in 0xFFE0..0xFFE6 || codePoint in 0x1F1E6..0x1F1FF ||
-            codePoint in 0x1F300..0x1FAFF ||
-            codePoint in 0x20000..0x3FFFD
-        ) 2 else 1
+        // The width the programs drawing here assume (Claude Code's string-width, Codex's
+        // unicode-width, tmux): Unicode's wide and emoji-presentation characters. A difference of
+        // one cell moves every later redraw on the row. A lone regional indicator is one cell; a
+        // pair joins into a two-cell flag (see appendJoinedCodePoint).
+        return if (UnicodeWidthTable.isWide(codePoint)) 2 else 1
     }
 
     private fun clusterDisplayWidth(text: String): Int {
@@ -855,17 +1086,33 @@ class TerminalEmulator(
         return points.maxOfOrNull(::codePointWidth)?.coerceAtLeast(1) ?: 1
     }
 
+    /** BS. With a wrap pending the cursor is on the last column, and moves left from there. */
     private fun backspace() {
-        if (wrapPending) { wrapPending = false; return }
+        wrapPending = false
         if (curCol > 0) {
             curCol--
             if (screen[curRow][curCol].width == 0 && curCol > 0) curCol--
         }
     }
 
-    private fun tab() {
+    /** HT / CHT: to the next tab stop, [count] times, or the last column. */
+    private fun tab(count: Int) {
         wrapPending = false
-        curCol = minOf(cols - 1, ((curCol / 8) + 1) * 8)
+        repeat(count.coerceAtMost(cols)) {
+            var column = curCol + 1
+            while (column < cols - 1 && !tabStops[column]) column++
+            curCol = column.coerceAtMost(cols - 1)
+        }
+    }
+
+    /** CBT: back to the previous tab stop, [count] times, or the first column. */
+    private fun backTab(count: Int) {
+        wrapPending = false
+        repeat(count.coerceAtMost(cols)) {
+            var column = curCol - 1
+            while (column > 0 && !tabStops[column]) column--
+            curCol = column.coerceAtLeast(0)
+        }
     }
 
     private fun lineFeed() {
@@ -882,6 +1129,29 @@ class TerminalEmulator(
         curRow = row.coerceIn(0, rows - 1)
         curCol = col.coerceIn(0, cols - 1)
         wrapPending = false
+    }
+
+    /** CUP / VPA: rows count from the top of the scroll region in origin mode, and stay in it. */
+    private fun moveCursorAddressed(row: Int, col: Int) {
+        if (originMode) {
+            curRow = (scrollTop + row).coerceIn(scrollTop, scrollBottom)
+            curCol = col.coerceIn(0, cols - 1)
+            wrapPending = false
+        } else {
+            moveCursor(row, col)
+        }
+    }
+
+    /** CUU: a cursor inside the scroll region stops at its top, as in xterm. */
+    private fun cursorUp(n: Int) {
+        val limit = if (curRow >= scrollTop) scrollTop else 0
+        moveCursor((curRow - n).coerceAtLeast(limit), curCol)
+    }
+
+    /** CUD: a cursor inside the scroll region stops at its bottom. */
+    private fun cursorDown(n: Int) {
+        val limit = if (curRow <= scrollBottom) scrollBottom else rows - 1
+        moveCursor((curRow + n).coerceAtMost(limit), curCol)
     }
 
     private fun scrollUp(n: Int) {
@@ -910,8 +1180,10 @@ class TerminalEmulator(
 
     private fun blankRowWithPenBg(): Array<Cell> = Array(cols) { Cell(bg = penBg) }
 
+    /** IL. Like DL it also moves the cursor to the first column. */
     private fun insertLines(n: Int) {
         if (curRow < scrollTop || curRow > scrollBottom) return
+        curCol = 0; wrapPending = false
         val count = n.coerceIn(1, scrollBottom - curRow + 1)
         repeat(count) {
             for (r in scrollBottom downTo curRow + 1) screen[r] = screen[r - 1]
@@ -921,6 +1193,7 @@ class TerminalEmulator(
 
     private fun deleteLines(n: Int) {
         if (curRow < scrollTop || curRow > scrollBottom) return
+        curCol = 0; wrapPending = false
         val count = n.coerceIn(1, scrollBottom - curRow + 1)
         repeat(count) {
             for (r in curRow until scrollBottom) screen[r] = screen[r + 1]
@@ -935,7 +1208,7 @@ class TerminalEmulator(
         if (curCol + count < cols) clearWideGlyphAt(line, curCol + count)
         for (col in cols - 1 downTo curCol + count) {
             val src = line[col - count]
-            line[col].set(src.text, src.fg, src.bg, src.bold, src.inverse, src.italic, src.underline, src.dim, src.width)
+            line[col].setFrom(src)
         }
         for (col in curCol until curCol + count) line[col].blank(bg = penBg)
         normalizeWideCells(line)
@@ -949,7 +1222,7 @@ class TerminalEmulator(
         if (curCol + count < cols) clearWideGlyphAt(line, curCol + count)
         for (col in curCol until cols - count) {
             val src = line[col + count]
-            line[col].set(src.text, src.fg, src.bg, src.bold, src.inverse, src.italic, src.underline, src.dim, src.width)
+            line[col].setFrom(src)
         }
         for (col in cols - count until cols) line[col].blank(bg = penBg)
         normalizeWideCells(line)
@@ -1002,16 +1275,14 @@ class TerminalEmulator(
                 }
                 eraseInLine(1)
             }
-            2, 3 -> {
+            2 -> {
                 for (r in 0 until rows) {
                     for (col in 0 until cols) screen[r][col].blank(bg = penBg)
                     softWrapped.remove(screen[r])
                 }
-                if (mode == 3) {
-                    scrollback.clear()
-                    scrollbackSpanCache.clear()
-                }
             }
+            // xterm's "erase saved lines": the scrollback only. `clear` sends 2J first.
+            3 -> clearScrollback()
         }
     }
 
@@ -1019,54 +1290,80 @@ class TerminalEmulator(
     // SGR (colours / attributes)
     // ─────────────────────────────────────────────────────────────────────────
 
-    private fun applySgr(params: List<Int?>) {
-        if (params.isEmpty() || (params.size == 1 && params[0] == null)) { resetPen(); return }
+    /** SGR, with each parameter's colon sub-parameters ([groups]). */
+    private fun applySgr(groups: List<List<Int?>>) {
+        if (groups.isEmpty()) { resetPen(); return }
         var i = 0
-        while (i < params.size) {
-            when (val code = params[i] ?: 0) {
+        while (i < groups.size) {
+            val group = groups[i]
+            when (val code = group.firstOrNull() ?: 0) {
                 0 -> resetPen()
                 1 -> penBold = true
                 2 -> penDim = true
                 3 -> penItalic = true
-                4 -> penUnderline = true
+                // 4:0 is "no underline"; 4:1 to 4:5 (single, double, curly…) are drawn as one line.
+                4 -> penUnderline = (group.getOrNull(1) ?: 1) != 0
+                7 -> penInverse = true
+                8 -> penHidden = true
+                9 -> penStrike = true
+                21 -> penUnderline = true // double underline, drawn single
                 22 -> { penBold = false; penDim = false }
                 23 -> penItalic = false
                 24 -> penUnderline = false
-                7 -> penInverse = true
                 27 -> penInverse = false
+                28 -> penHidden = false
+                29 -> penStrike = false
                 in 30..37 -> penFg = PALETTE_256[code - 30]
+                38 -> i = parseExtendedColor(groups, i) { penFg = it }
                 39 -> penFg = DEFAULT_FG
                 in 40..47 -> penBg = PALETTE_256[code - 40]
+                48 -> i = parseExtendedColor(groups, i) { penBg = it }
                 49 -> penBg = DEFAULT_BG
+                58 -> i = parseExtendedColor(groups, i) {} // underline colour: not drawn
                 in 90..97 -> penFg = PALETTE_256[8 + (code - 90)]
                 in 100..107 -> penBg = PALETTE_256[8 + (code - 100)]
-                38 -> i = parseExtendedColor(params, i) { penFg = it }
-                48 -> i = parseExtendedColor(params, i) { penBg = it }
-                else -> {}
+                else -> {} // blink (5, 6) is drawn steady; overline and fonts are not drawn
             }
             i++
         }
     }
 
-    private inline fun parseExtendedColor(params: List<Int?>, start: Int, set: (Int) -> Unit): Int {
-        return when (params.getOrNull(start + 1)) {
+    /**
+     * A 38/48/58 colour, in its colon form inside one parameter (`38:5:n`, `38:2:r:g:b`, or
+     * `38:2:id:r:g:b` with an empty or given colour space), or its semicolon form over the parameters
+     * that follow (`38;5;n`, `38;2;r;g;b`). Returns the index of the last parameter it used.
+     */
+    private fun parseExtendedColor(groups: List<List<Int?>>, start: Int, set: (Int) -> Unit): Int {
+        val group = groups[start]
+        if (group.size > 1) {
+            when (group[1]) {
+                5 -> set(PALETTE_256[(group.getOrNull(2) ?: 0).coerceIn(0, 255)])
+                2 -> {
+                    val rgb = if (group.size >= 6) group.subList(3, 6) else group.drop(2)
+                    if (rgb.size == 3) set(rgbColor(rgb[0], rgb[1], rgb[2]))
+                }
+            }
+            return start
+        }
+        fun at(offset: Int) = groups.getOrNull(start + offset)?.firstOrNull()
+        return when (at(1)) {
             5 -> {
-                val idx = (params.getOrNull(start + 2) ?: 0).coerceIn(0, 255)
-                set(PALETTE_256[idx]); start + 2
+                set(PALETTE_256[(at(2) ?: 0).coerceIn(0, 255)]); start + 2
             }
             2 -> {
-                val r = (params.getOrNull(start + 2) ?: 0).coerceIn(0, 255)
-                val g = (params.getOrNull(start + 3) ?: 0).coerceIn(0, 255)
-                val b = (params.getOrNull(start + 4) ?: 0).coerceIn(0, 255)
-                set(0xFF000000.toInt() or (r shl 16) or (g shl 8) or b); start + 4
+                set(rgbColor(at(2), at(3), at(4))); start + 4
             }
             else -> start
         }
     }
 
+    private fun rgbColor(r: Int?, g: Int?, b: Int?): Int =
+        0xFF000000.toInt() or ((r ?: 0).coerceIn(0, 255) shl 16) or ((g ?: 0).coerceIn(0, 255) shl 8) or
+            (b ?: 0).coerceIn(0, 255)
+
     private fun resetPen() {
         penFg = DEFAULT_FG; penBg = DEFAULT_BG; penBold = false; penInverse = false
-        penItalic = false; penUnderline = false; penDim = false
+        penItalic = false; penUnderline = false; penDim = false; penStrike = false; penHidden = false
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1084,11 +1381,12 @@ class TerminalEmulator(
         val glyphWidths = ArrayList<Int>()
         var fg = row[0].fg; var bg = row[0].bg; var bold = row[0].bold; var inv = row[0].inverse
         var ita = row[0].italic; var und = row[0].underline; var dim = row[0].dim
+        var strike = row[0].strike; var hidden = row[0].hidden
         fun flushSpan() {
             spans.add(
                 TermSpan(
                     sb.toString(), fg, bg, bold, inv, ita, und, dim,
-                    glyphs.toList(), glyphWidths.toList(),
+                    glyphs.toList(), glyphWidths.toList(), strike, hidden,
                 )
             )
             sb.setLength(0)
@@ -1098,11 +1396,13 @@ class TerminalEmulator(
         for (col in 0..last) {
             val cell = row[col]
             if (cell.fg != fg || cell.bg != bg || cell.bold != bold || cell.inverse != inv ||
-                cell.italic != ita || cell.underline != und || cell.dim != dim
+                cell.italic != ita || cell.underline != und || cell.dim != dim ||
+                cell.strike != strike || cell.hidden != hidden
             ) {
                 flushSpan()
                 fg = cell.fg; bg = cell.bg; bold = cell.bold; inv = cell.inverse
                 ita = cell.italic; und = cell.underline; dim = cell.dim
+                strike = cell.strike; hidden = cell.hidden
             }
             if (cell.width > 0) {
                 sb.append(cell.text)
@@ -1131,6 +1431,20 @@ class TerminalEmulator(
             (ASCII_FIRST + index).toChar().toString()
         }
         private const val MAX_CONTROL_SEQUENCE_CHARS = 1024
+        private const val MAX_INTERMEDIATES = 4
+        private const val MAX_PARAMETER = 65_535
+
+        /** DEC Special Graphics (`ESC ( 0`) for `_` to `~`: the line drawing ncurses asks for. */
+        private const val DEC_GRAPHICS_FIRST = 0x5F
+        private const val DEC_GRAPHICS =
+            "\u0020\u25C6\u2592\u2409\u240C\u240D\u240A\u00B0\u00B1\u2424\u240B\u2518\u2510\u250C\u2514\u253C" +
+                "\u23BA\u23BB\u2500\u23BC\u23BD\u251C\u2524\u2534\u252C\u2502\u2264\u2265\u03C0\u2260\u00A3\u00B7"
+
+        private fun defaultTabStops(columns: Int) = BooleanArray(columns) { it > 0 && it % 8 == 0 }
+
+        /** Tab stops kept for the columns that remain; new columns get the default every 8. */
+        private fun resizedTabStops(old: BooleanArray, columns: Int) =
+            BooleanArray(columns) { if (it < old.size) old[it] else it > 0 && it % 8 == 0 }
         const val DEFAULT_FG: Int = 0xFFC8D4E8.toInt() // Nexus.textPrimary
         const val DEFAULT_BG: Int = 0xFF000000.toInt() // Nexus.bg0 (AMOLED black)
 
@@ -1177,6 +1491,10 @@ data class TermSpan(
     /** Grapheme-like terminal glyphs and their display-cell widths; empty for legacy callers. */
     val glyphs: List<String> = emptyList(),
     val glyphWidths: List<Int> = emptyList(),
+    /** SGR 9: struck through. */
+    val strike: Boolean = false,
+    /** SGR 8: concealed; the cells keep their text for copying but nothing is drawn. */
+    val hidden: Boolean = false,
 ) {
     /**
      * The span's glyphs and the cells each one takes. A legacy span without glyphs gets one per

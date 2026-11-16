@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.testTag
@@ -668,54 +669,43 @@ private fun EditorBody(
             .verticalScrollWithIndicators(verticalScroll),
     ) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
-        // When NOT wrapping, every logical line is exactly one visual line, so a plain stacked Column
-        // of numbers lines up with the text. When wrapping, a logical line can span several visual
-        // lines, so we measure each logical line's height from the text layout and stretch its number
-        // row to match — keeping the gutter aligned (and visible) instead of dropping it.
-        Column(
+        // Each number is drawn at the top of its line's first row in the field's own layout, so it
+        // stays beside its line whatever the line's height: a wrapped line, an emoji or CJK line
+        // drawn in a taller fallback font. Numbers laid out as separate text drifted several lines
+        // per screen, because the text style they inherited had a taller line height than the
+        // field's. Only the numbers in view are drawn.
+        val numberStyle = TextStyle(
+            fontFamily = OmniFonts.mono,
+            fontSize = fontSize,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+        )
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer(cacheSize = 256)
+        val digits = lineCount.toString().length
+        val gutterWidthPx = remember(digits, numberStyle) { measurer.measure("0".repeat(digits), numberStyle).size.width }
+        val layout = textLayoutResult
+        val layoutLineStarts = remember(layout) { layout?.let { logicalLineStartOffsets(it.layoutInput.text.text) } }
+        val contentHeightPx = maxOf(viewportHeight, (layout?.size?.height ?: 0) + (fieldPadTopPx * 2).toInt())
+        androidx.compose.foundation.Canvas(
             modifier = Modifier
                 .background(MaterialTheme.colorScheme.surfaceContainer)
-                .padding(horizontal = 6.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.End,
+                .padding(horizontal = 6.dp)
+                .width(with(density) { gutterWidthPx.toDp() })
+                .height(with(density) { contentHeightPx.toDp() })
+                .testTag("code-editor-gutter"),
         ) {
-            // Offset of the first char of each logical line, so we can find its starting VISUAL line
-            // in the wrapped layout and size each number to match that logical line's total height.
-            val layout = textLayoutResult
-            if (lineCount > LARGE_EDITOR_GUTTER_LINE_THRESHOLD) {
-                // Thousands of individual Text composables made large YAML editors spend seconds
-                // just constructing the gutter. One multi-line layout has identical non-wrapped
-                // metrics and remains a safe, responsive approximation when word-wrap is enabled.
-                Text(
-                    remember(lineCount) { (1..lineCount).joinToString("\n") },
-                    fontFamily = OmniFonts.mono,
-                    fontSize = fontSize,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    textAlign = TextAlign.End,
+            val shown = layout ?: return@Canvas
+            val starts = layoutLineStarts ?: return@Canvas
+            val visibleTop = verticalScroll.value - fieldPadTopPx
+            val visibleBottom = visibleTop + verticalScroll.viewportSize.coerceAtLeast(1)
+            for (row in gutterRows(starts, shown, visibleTop, visibleBottom)) {
+                val label = measurer.measure(row.number.toString(), numberStyle)
+                drawText(
+                    label,
+                    topLeft = androidx.compose.ui.geometry.Offset(
+                        size.width - label.size.width,
+                        fieldPadTopPx + row.baseline - label.firstBaseline,
+                    ),
                 )
-            } else {
-                val lineStartOffsets = remember(field.text) { logicalLineStartOffsets(field.text) }
-                for (n in 1..lineCount) {
-                    // Height this logical line occupies on screen. When wrapping, that's the sum of all
-                    // its visual (wrapped) rows; otherwise it's a single row. Once measured, we lock each
-                    // number's row to that height so it stays aligned with the text it labels.
-                    val rowHeight = if (wrap && layout != null) {
-                        val startOffset = lineStartOffsets.getOrElse(n - 1) { 0 }
-                        val endOffset = lineStartOffsets.getOrNull(n)?.minus(1) ?: field.text.length
-                        val firstVisual = layout.getLineForOffset(startOffset)
-                        val lastVisual = layout.getLineForOffset(endOffset.coerceAtLeast(startOffset))
-                        with(density) {
-                            (layout.getLineBottom(lastVisual) - layout.getLineTop(firstVisual)).toDp()
-                        }
-                    } else null
-                    Text(
-                        n.toString(),
-                        fontFamily = OmniFonts.mono,
-                        fontSize = fontSize,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        textAlign = TextAlign.End,
-                        modifier = if (rowHeight != null) Modifier.height(rowHeight) else Modifier,
-                    )
-                }
             }
         }
         BasicTextField(
@@ -739,7 +729,61 @@ private fun EditorBody(
     }
 }
 
-private const val LARGE_EDITOR_GUTTER_LINE_THRESHOLD = 2_000
+/** A line number in the gutter: the logical line and the baseline of its first row. */
+internal data class GutterRow(val number: Int, val baseline: Float)
+
+/**
+ * The line numbers to draw for the rows between [visibleTop] and [visibleBottom] (in the field's
+ * layout coordinates), each at the baseline of its line's first visual row in [layout]. [lineStarts]
+ * are the offsets the layout's own text starts its logical lines at.
+ */
+internal fun gutterRows(
+    lineStarts: List<Int>,
+    layout: androidx.compose.ui.text.TextLayoutResult,
+    visibleTop: Float,
+    visibleBottom: Float,
+): List<GutterRow> {
+    val length = layout.layoutInput.text.length
+    return gutterRows(
+        lineStarts,
+        visualLineOf = { offset -> layout.getLineForOffset(offset.coerceIn(0, length)) },
+        lineTop = layout::getLineTop,
+        lineBottom = layout::getLineBottom,
+        lineBaseline = layout::getLineBaseline,
+        visibleTop = visibleTop,
+        visibleBottom = visibleBottom,
+    )
+}
+
+/** [gutterRows] over any layout, for unit tests. */
+internal fun gutterRows(
+    lineStarts: List<Int>,
+    visualLineOf: (Int) -> Int,
+    lineTop: (Int) -> Float,
+    lineBottom: (Int) -> Float,
+    lineBaseline: (Int) -> Float,
+    visibleTop: Float,
+    visibleBottom: Float,
+): List<GutterRow> {
+    if (lineStarts.isEmpty()) return emptyList()
+    // The first logical line whose first row ends below the top of the view (rows only grow down).
+    var low = 0
+    var high = lineStarts.lastIndex
+    while (low < high) {
+        val mid = (low + high) ushr 1
+        val nextTop = lineStarts.getOrNull(mid + 1)?.let { lineTop(visualLineOf(it)) } ?: Float.MAX_VALUE
+        if (nextTop <= visibleTop) low = mid + 1 else high = mid
+    }
+    val rows = ArrayList<GutterRow>()
+    var line = low
+    while (line < lineStarts.size) {
+        val visual = visualLineOf(lineStarts[line])
+        if (lineTop(visual) > visibleBottom) break
+        if (lineBottom(visual) >= visibleTop) rows += GutterRow(line + 1, lineBaseline(visual))
+        line++
+    }
+    return rows
+}
 
 /**
  * Character offset of the first char of each logical (newline-delimited) line in [text]. The gutter
