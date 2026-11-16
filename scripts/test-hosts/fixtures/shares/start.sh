@@ -27,10 +27,11 @@ vsftpd /etc/vsftpd/vsftpd.conf &
 # a root-owned file would be unwritable over the other two protocols. Unprivileged means it cannot
 # bind 80, so the share answers on 8080 and compose maps the host's 8082 onto it. The config path is
 # kept out of /srv/share, which is the user's home and would otherwise gain a .config directory that
-# shows up in every fixture listing.
+# shows up in every fixture listing. Its login comes from the environment (rclone reads each flag
+# from RCLONE_<FLAG>), not its command line, which `ps` shows to every user of the machine; `verify`
+# checks that a wrong password is still refused.
+export RCLONE_USER="$OMNITERM_TEST_USER" RCLONE_PASS="$OMNITERM_TEST_PASSWORD"
 exec su-exec "$OMNITERM_TEST_USER" rclone serve webdav /srv/share \
   --addr 0.0.0.0:8080 \
   --baseurl /fixture \
-  --config /var/lib/rclone/rclone.conf \
-  --user "$OMNITERM_TEST_USER" \
-  --pass "$OMNITERM_TEST_PASSWORD"
+  --config /var/lib/rclone/rclone.conf

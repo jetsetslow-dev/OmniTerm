@@ -535,6 +535,10 @@ case "${1:-}" in
       curl --silent --show-error --fail --user "$USER_NAME:$PASSWORD" \
         -X PROPFIND -H 'Depth: 1' -o /dev/null -w '%{http_code}' \
         http://127.0.0.1:8082/fixture/
+    # The share takes its login from the environment, not a flag: if rclone ever stopped reading
+    # it there, it would serve everyone, and every check above would still pass.
+    check "WebDAV refuses a wrong password :8082" \
+      bash -c '[ "$(curl --silent -o /dev/null -w "%{http_code}" --user "$1:not-the-password" -X PROPFIND -H "Depth: 0" http://127.0.0.1:8082/fixture/)" = 401 ] && echo 401' _ "$USER_NAME"
     # Reads alone are not enough. Every share protocol passed `verify` for weeks while WebDAV PUT
     # returned 500 on the device, because nothing here ever wrote. Each probe writes a uniquely
     # named file, reads the same bytes back and removes it, leaving the seeded baseline untouched.
