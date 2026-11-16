@@ -31,6 +31,13 @@ PATENTS = """Additional IP Rights Grant (Patents)
 Google as part of the Go project.
 ... to make, have made, use, offer to sell, sell, import, transfer and otherwise
 run, modify and propagate the contents of this implementation of Go, ..."""
+BSD2_VIEWS = """Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met: ...
+
+The views and conclusions contained in the software and documentation
+are those of the authors and should not be interpreted as representing
+official policies, either expressed or implied, of Richard Crowley."""
 MIT = """Permission is hereby granted, free of charge, to any person obtaining a copy of this
 software and associated documentation files (the "Software"), to deal in the Software ..."""
 APACHE = """                                 Apache License
@@ -56,6 +63,8 @@ AGPL = """GNU AFFERO GENERAL PUBLIC LICENSE Version 3, 19 November 2007 ... the 
 
 expect(check.licences_in(BSD3), {"BSD-3-Clause"}, "the three-clause BSD is not also called two-clause")
 expect(check.licences_in(BSD2), {"BSD-2-Clause"}, "the two-clause BSD")
+expect(check.licences_in(BSD2_VIEWS), {"BSD-2-Clause-Views"},
+       "the FreeBSD licence (go-metrics'), which Dependency review names apart from BSD-2-Clause")
 expect(check.licences_in(PATENTS), {"LicenseRef-scancode-google-patent-license-golang"}, "Go's PATENTS file")
 expect(check.licences_in(TAILSCALE_PATENTS), {"LicenseRef-scancode-google-patent-license-golang"},
        "Tailscale's PATENTS file, Go's grant with Tailscale's name")
@@ -111,6 +120,9 @@ with tempfile.TemporaryDirectory() as tmp:
     expect(check.problems([module("copyleft", COPYING=GPL)], allowed),
            [("copyleft", "COPYING is GPL, which allow-licenses does not list")], "a GPL module")
     expect(check.problems([module("bare")], allowed), [("bare", "has no licence file")], "no licence file")
+    expect(check.problems([module("go-metrics", LICENSE=BSD2_VIEWS)], allowed | {"BSD-2-Clause"}),
+           [("go-metrics", "LICENSE is BSD-2-Clause-Views, which allow-licenses does not list")],
+           "the FreeBSD licence Dependency review rejected on PR #154 is not let through as BSD-2-Clause")
     # tailscale.com's license_test.go is code that checks its files' headers, not a licence file.
     ts = tmp / "tailscale"
     ts.mkdir()

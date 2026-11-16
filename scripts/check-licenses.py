@@ -41,6 +41,11 @@ SIGNATURES = [
     ("BSD-3-Clause", ["redistribution and use in source and binary forms",
                       "may be used to endorse or promote products derived from this software"]),
     ("BSD-2-Clause", ["redistribution and use in source and binary forms"]),
+    # The FreeBSD licence: the two clauses and a "views and conclusions" disclaimer, which SPDX and
+    # Dependency review name apart from plain BSD-2-Clause (rcrowley/go-metrics, through Nebula).
+    ("BSD-2-Clause-Views", ["redistribution and use in source and binary forms",
+                            "the views and conclusions contained in the software and documentation are "
+                            "those of the authors and should not be interpreted as representing official policies"]),
     # Google's extra patent grant beside the BSD-3-Clause licence of the Go project's libraries.
     ("LicenseRef-scancode-google-patent-license-golang",
      ["additional ip rights grant patents", "implementation of go"]),
@@ -58,7 +63,7 @@ SIGNATURES = [
     ("SSPL-1.0", ["server side public license"]),
 ]
 # A licence whose phrases include another's: the wider one is named alone.
-WIDER = {"BSD-3-Clause": "BSD-2-Clause", "AGPL": "GPL", "LGPL": "GPL"}
+WIDER = {"BSD-3-Clause": "BSD-2-Clause", "BSD-2-Clause-Views": "BSD-2-Clause", "AGPL": "GPL", "LGPL": "GPL"}
 
 
 def normalise(text):

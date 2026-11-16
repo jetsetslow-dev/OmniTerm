@@ -74,7 +74,7 @@ The VPN tunnel library (`tunnel/`) is built from these, each under its own licen
 - gomobile (BSD-3-Clause), used to build the Android library — https://pkg.go.dev/golang.org/x/mobile
 - google/btree (Apache-2.0) — https://github.com/google/btree
 - Nebula v1.12.0 userspace service (MIT), Copyright (c) 2018-2019 Slack Technologies, Inc. — https://github.com/slackhq/nebula (licence below)
-- The other modules Tailscale and Nebula need, each listed in `tunnel/go.mod`, are under BSD-2-Clause, BSD-3-Clause, MIT, ISC or Apache-2.0; `scripts/check-licenses.py` reads every one
+- The other modules Tailscale and Nebula need, each listed in `tunnel/go.mod`, are under BSD-2-Clause, BSD-2-Clause-Views (the FreeBSD licence, rcrowley/go-metrics), BSD-3-Clause, MIT, ISC or Apache-2.0; `scripts/check-licenses.py` reads every one
 
 ### Nebula MIT licence
 
