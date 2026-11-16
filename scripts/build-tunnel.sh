@@ -3,7 +3,9 @@
 # pinned Go toolchain (scripts/go-toolchain.sh), gomobile at the version tunnel/go.mod pins, and the
 # NDK below. Gradle runs this when tunnel/ changes; it can also be run by hand:
 #   ./scripts/build-tunnel.sh [output.aar]
-# OMNITUNNEL_TARGETS narrows the ABIs for a quicker local build (for example android/amd64).
+# It is built for the ABIs the app ships, arm64-v8a, armeabi-v7a and x86_64; not 32-bit x86, which
+# app/build.gradle.kts leaves out of every APK and bundle. OMNITUNNEL_TARGETS narrows the ABIs for a
+# quicker local build (for example android/amd64).
 #
 #   ./scripts/build-tunnel.sh --access-fixture [output.aar]
 # builds the Cloudflare Access device suite's test library instead (Go tag omniterm_access_fixture,
@@ -29,7 +31,7 @@ if [[ "${1:-}" == "--access-fixture" ]]; then
 else
   OUT="${1:-$PRODUCTION}"
 fi
-TARGETS="${OMNITUNNEL_TARGETS:-android/arm64,android/arm,android/amd64,android/386}"
+TARGETS="${OMNITUNNEL_TARGETS:-android/arm64,android/arm,android/amd64}"
 
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [[ -z "$SDK" && -f "$ROOT/local.properties" ]]; then

@@ -117,6 +117,7 @@ jobs:
           ./scripts/test-retry-network.sh
           ./scripts/test-tunnel.sh
           python3 -I -B ./scripts/test-check-tunnel-seam.py
+          python3 -I -B ./scripts/test-verify-release-apks.py
 
       # Same check as scripts/local-pr-check.sh: a new copy-pasted block fails the build.
       - name: Check for new duplicated code

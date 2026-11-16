@@ -135,6 +135,25 @@ android {
     disable += "GradleDependency"
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+
+  // GitHub releases carry the open-source app as one APK per architecture next to a universal APK
+  // that works on every phone. The release workflow asks for them (-Pomniterm.abiSplits=true); every
+  // other build makes one APK. Each keeps the release's own version code, as the Play bundle does:
+  // Play gets only the bundle and serves each phone its part, so per-architecture codes would buy
+  // nothing, and equal codes let a phone move between the universal APK and its own either way.
+  // scripts/verify-release-apks.py checks the built files.
+  splits {
+    abi {
+      isEnable = providers.gradleProperty("omniterm.abiSplits").map { it.toBoolean() }.getOrElse(false)
+      reset()
+      include("arm64-v8a", "armeabi-v7a", "x86_64")
+      isUniversalApk = true
+    }
+  }
+  // 32-bit x86 is not built. The Go tunnel library has no x86 copy (scripts/build-tunnel.sh), so no
+  // other library's x86 copy ships either: an x86 device refuses the install rather than getting an
+  // app whose tunnels cannot load.
+  packaging { jniLibs { excludes += "lib/x86/**" } }
 }
 
 ksp {
@@ -142,8 +161,8 @@ ksp {
   arg("room.schemaLocation", "$projectDir/schemas")
 }
 
-// The Go tunnel library (tunnel/), built for every Android ABI with the repository's pinned Go
-// toolchain and NDK. It is rebuilt only when its sources or the scripts that build it change.
+// The Go tunnel library (tunnel/), built for the three ABIs the app ships (arm64-v8a, armeabi-v7a,
+// x86_64) with the repository's pinned Go toolchain and NDK. It is rebuilt only when its sources or the scripts that build it change.
 val goTunnelAar = rootProject.layout.projectDirectory.file("tunnel/build/omnitunnel.aar")
 val buildGoTunnel by tasks.registering(Exec::class) {
   description = "Builds tunnel/ into an Android library with gomobile."

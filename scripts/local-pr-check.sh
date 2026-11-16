@@ -87,6 +87,8 @@ python3 ./scripts/check-duplicates.py --baseline scripts/duplicate-code-baseline
 ./scripts/test-tunnel.sh
 # The Cloudflare Access test seam ships in no library or app (scripts/check-tunnel-seam.py).
 python3 -I -B ./scripts/test-check-tunnel-seam.py
+# The check the release workflow runs on its APKs and bundle, refusing a release with one file wrong.
+python3 -I -B ./scripts/test-verify-release-apks.py
 # Dependency review's licence policy on the Go modules, from the same allow-licenses list.
 (eval "$(./scripts/go-toolchain.sh)" && python3 -I ./scripts/check-licenses.py)
 
@@ -149,6 +151,21 @@ if command -v adb >/dev/null 2>&1 &&
   ./gradlew connectedOpenSourceDebugAndroidTest "${GRADLE_ARGS[@]}"
 else
   echo "Device matrix (Room migrations + UI instrumentation): no Android device/emulator available; deferred to PR CI"
+fi
+if [[ "$MODE" == "--full" ]]; then
+  # The release build only main's release workflow made before: R8 on both flavors, the Play bundle
+  # and one open-source APK per architecture plus the universal one, collected and checked as the
+  # workflow does before it uploads. Signed with the debug key and the workflow's dry-run AdMob
+  # placeholders; a local build is version 0.0.0-dev, code 1.
+  KEYSTORE_PATH="$ROOT/debug.keystore" STORE_PASSWORD=android KEY_ALIAS=androiddebugkey KEY_PASSWORD=android \
+    ADMOB_APP_ID="ca-app-pub-0000000000000000~0000000000" ADMOB_BANNER_UNIT_ID="ca-app-pub-0000000000000000/0000000000" \
+    VERSION_NAME=0.0.0-dev VERSION_CODE=1 \
+    ./gradlew :app:bundlePlayStoreRelease :app:assembleOpenSourceRelease -Pomniterm.abiSplits=true "${GRADLE_ARGS[@]}"
+  RELEASE_APKS="$(mktemp -d)"
+  ./scripts/collect-release-apks.sh v0.0.0-dev "$RELEASE_APKS"
+  python3 -I ./scripts/verify-release-apks.py --label v0.0.0-dev --version-code 1 --apks "$RELEASE_APKS" \
+    --bundle app/build/outputs/bundle/playStoreRelease/app-playStore-release.aab
+  rm -rf "$RELEASE_APKS"
 fi
 # The tunnel library and every app built above: none holds the Access fixture's seam.
 python3 -I -B ./scripts/check-tunnel-seam.py --built
