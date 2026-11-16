@@ -10,6 +10,7 @@ import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * Protocol-agnostic remote filesystem operations, so the Shares browser and the cross-endpoint
@@ -129,4 +130,24 @@ internal fun copyWithProgress(
     }
     onProgress?.invoke(copied, if (totalBytes > 0) totalBytes else copied)
     return copied
+}
+
+/** The waits between tries of [removeStagedFile]: under four seconds in all. */
+internal val STAGED_FILE_RETRY_MS = listOf(250L, 500L, 1_000L, 2_000L)
+
+/**
+ * Removes the hidden staging file of an upload or copy that did not finish; never throws. A server
+ * can still hold the aborted upload open for a moment after the phone gives up on it: a WebDAV
+ * server then refuses the delete (423 Locked) and, once the upload ends, keeps what it had received.
+ * So while the file is still listed, a refused delete is tried again after each of [retryDelaysMs].
+ * A file that is not listed, or a folder that cannot be listed (the network is gone), ends it.
+ */
+internal suspend fun RemoteFsClient.removeStagedFile(path: String, retryDelaysMs: List<Long> = STAGED_FILE_RETRY_MS) {
+    val parent = path.substringBeforeLast('/', "").ifEmpty { "/" }
+    val name = path.substringAfterLast('/')
+    for (wait in listOf(0L) + retryDelaysMs) {
+        delay(wait)
+        if (runCatching { delete(path, false) }.isSuccess) return
+        if (runCatching { list(parent).any { it.name == name } }.getOrNull() != true) return
+    }
 }

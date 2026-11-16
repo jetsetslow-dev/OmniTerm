@@ -48,6 +48,7 @@ import com.jetsetslow.omniterm.data.telnet.TelnetSession
 import com.jetsetslow.omniterm.data.term.ByteStreamTerminalSession
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
+import com.jetsetslow.omniterm.data.shares.removeStagedFile
 import com.jetsetslow.omniterm.data.ssh.INTERACTIVE_AUTH_CANCELLED
 import com.jetsetslow.omniterm.data.ssh.InteractiveAuth
 import com.jetsetslow.omniterm.data.ssh.InteractiveAuthRequest
@@ -12721,7 +12722,7 @@ class AppViewModel @JvmOverloads constructor(
             discardStagedFile(client, stagedPath)
             throw e
         } catch (e: Exception) {
-            runCatching { client.delete(stagedPath, false) }
+            discardStagedFile(client, stagedPath)
             throw e
         }
     }
@@ -14197,7 +14198,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Removes an unfinished staged copy, so a failed transfer never leaves a partial file behind. */
     private suspend fun discardStagedFile(client: RemoteFsClient, stagedPath: String) {
-        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+        withContext(NonCancellable + Dispatchers.IO) { client.removeStagedFile(stagedPath) }
     }
 
     /** A picked device file's name for its remote copy; [index] keeps unnamed picks in one batch apart. */
@@ -14241,6 +14242,10 @@ class AppViewModel @JvmOverloads constructor(
         context.contentResolver.openOutputStream(uri).use { output ->
             output ?: throw java.io.IOException("Could not open destination.")
             client.downloadTo(remotePath, output, transferProgress(transferId))
+        }.also {
+            // Cancelling closes the client's stream, which some clients (JSch) then read as the end
+            // of the file: without this, a cancelled download ended as a success with a short file.
+            if (transferId in cancelledTransferIds) throw TransferCancelledException()
         }
     }
 
