@@ -2053,3 +2053,52 @@ Evidence:
 
 Open: the Actions allowlist check could not ask GitHub (HTTP 403 for the current gh account); no
 `uses:` line changed. The full gate was not run (one gate per push).
+
+## File editor: Markdown preview, Markdown and JSON colours (Nov 16)
+
+The owner asked for a preview of `.md` files in the file editor (investigation of Nov 13, part D).
+Files come from servers, so the preview is built to do only what the app allows.
+
+- Parser: JetBrains Markdown, `org.jetbrains:markdown` 0.7.18 (Apache-2.0, GFM flavour; its one
+  dependency, kotlin-stdlib 2.0.0, is below the app's held 2.4.0). Multiplatform, so the planned iOS
+  build can use it. Checksums added with `refresh-verification-metadata.sh --write` (only the
+  `markdown` and `markdown-jvm` entries changed); the release SBOM baselines still match. Its HTML
+  generator is never used (it is the only part that touches `java.net`, for URI handling).
+- `ui/markdown/MarkdownDocument.kt` turns the parser's tree into flat blocks (headings, paragraphs,
+  code pieces, table rows, rules) with list and quote levels as numbers; every walk keeps its own
+  stack. Plain Kotlin and coroutines only. `MarkdownPreview.kt` draws them in a `LazyColumn` with
+  Compose and Material 3; its only Android-only part is the string resources.
+- Safety rules, each with a test that fails when the rule is taken out (checked by removing each
+  rule in turn): an image is its alt text and "image not loaded", its address never read; raw HTML is
+  text; only http(s) with a host and mailto are links (javascript:, file:, content:, intent:, data:,
+  relative paths, entity- or escape-hidden schemes, white space, control and bidi characters are
+  not); a tap only opens a question with the whole address, and Open is the one call that opens; the
+  parse runs on `Dispatchers.Default`; over 200,000 characters nothing is parsed ("too large"); a
+  parse over 8 s gives up ("too slow"); tables show 30 columns and say how many more. A source
+  guard checks the preview's imports and that it names no image loader, web view, socket, URL
+  handler or intent.
+- Found while testing: the parser's time and memory grow with the square of one line's nesting;
+  20,000 `>` on one line (20 KB) ran it out of heap. Markers past 32 on a line are now escaped
+  before parsing, so the rest of the line reads as text.
+- Editor: the preview button shows for `.md`, `.markdown` and similar names, `README`, `CHANGELOG`
+  and `CONTRIBUTING`. The editor stays composed under the preview, hidden and out of the semantics
+  tree; it lets go of focus and keyboard, ignores the selection collapse that losing focus causes,
+  and gets its focus back on return, so text, cursor, selection and scroll are kept. Turning Edit on
+  or pressing Back leaves the preview; preview on or off is part of the draft. Links open the way
+  the user chose (Custom Tab or browser; mailto always outside).
+- Highlighter: Markdown (headings, list markers and task boxes, quote markers, emphasis markers,
+  code spans, link addresses, rules, table pipes, HTML comments across lines; fenced code coloured
+  as its named language in that language's own state) and JSON (keys, strings, numbers with signed
+  exponents, literals, line and block comments). Hostile lines stay linear.
+
+Proof: `MarkdownDocumentTest` (23), `MarkdownPreviewSourceGuardTest`, `MarkdownPreviewRobolectricTest`
+(link question, javascript: link, image marker, size notice, the editor round trip), new cases in
+`CodeHighlighterStateTest`; with the editor, highlighter and source-scan suites, 87 cases pass.
+Lint passes for both flavours. On the API 35 emulator, `E2eMarkdownPreviewTest` (new, opt-in
+`omniterm_e2e_markdown_preview`) passed three runs on a Markdown file written to the lab host's
+home: unsaved edit shown in the preview, heading, table, YAML code block, `<script>` as text,
+"image not loaded", the link question with the whole address, no question for a javascript: link,
+and back in the editor the same text, selection and scroll position. `E2eCodeEditorGutterTest`
+gained Markdown and JSON pictures (4 tests pass); line numbers sit beside their lines.
+
+Open: the full gate was not run (one gate per push).

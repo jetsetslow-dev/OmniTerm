@@ -1381,6 +1381,20 @@
     <string name="you_have_unsaved_edits_to_discard">"You have unsaved edits to %1$s. Discard them?"</string>
     <string name="edit_mode_on">"Edit mode: on"</string>
     <string name="edit_mode_off_read_only">"Edit mode: off (read-only)"</string>
+    <string name="markdown_preview_on">"Markdown preview: on"</string>
+    <string name="markdown_preview_off">"Markdown preview: off"</string>
+    <string name="markdown_image_not_loaded">"image not loaded"</string>
+    <string name="markdown_preparing_preview">"Preparing the preview…"</string>
+    <string name="markdown_too_large_to_preview">"This file is too large to preview. The preview shows files of up to %1$s characters; the editor still opens it as text."</string>
+    <string name="markdown_too_slow_to_preview">"This file takes too long to lay out, so it is not previewed. The editor still opens it as text."</string>
+    <string name="markdown_cannot_preview">"This file cannot be previewed. The editor still opens it as text."</string>
+    <string name="markdown_open_link_title">"Open this link?"</string>
+    <string name="markdown_open_link_body">"The link goes to this address. Check it before you open it."</string>
+    <string name="markdown_open_link">"Open"</string>
+    <plurals name="markdown_more_columns">
+        <item quantity="one">"%1$d more column not shown"</item>
+        <item quantity="other">"%1$d more columns not shown"</item>
+    </plurals>
     <string name="save_as_root_on">"Save as root: on"</string>
     <string name="save_as_root_off">"Save as root: off"</string>
     <string name="remove_on">"Remove %1$s on %2$s?"</string>

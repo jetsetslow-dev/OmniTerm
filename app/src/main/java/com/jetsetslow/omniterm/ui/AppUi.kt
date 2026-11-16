@@ -847,6 +847,7 @@ fun MainAppScreen(viewModel: AppViewModel) {
                 confirm = editorConfirm,
                 highlightLimit = viewModel.editorHighlightLimit,
                 draftSlot = viewModel.sftpEditorDraft,
+                linkOpenInApp = viewModel.linkOpenInApp,
             )
             ConfirmHost(editorConfirm)
         }
@@ -876,6 +877,7 @@ fun MainAppScreen(viewModel: AppViewModel) {
                 highlightLimit = viewModel.editorHighlightLimit,
                 showSudo = false,
                 draftSlot = viewModel.shareEditorDraft,
+                linkOpenInApp = viewModel.linkOpenInApp,
             )
             ConfirmHost(shareEditorConfirm)
         }

@@ -7,7 +7,7 @@ import androidx.compose.runtime.setValue
 import com.jetsetslow.omniterm.data.SftpFile
 
 /**
- * An open file editor's unsaved text and edit mode.
+ * An open file editor's unsaved text, edit mode, and whether it shows the Markdown preview.
  *
  * The ViewModel keeps it, not the screen: App Lock removes the whole app from the screen while it
  * is locked, and a rotation or a theme change rebuilds it, and the text typed so far must still be
@@ -19,6 +19,7 @@ class EditorDraft internal constructor(
 ) {
     var text by mutableStateOf(file.content)
     var editMode by mutableStateOf(file.content.isEmpty())
+    var preview by mutableStateOf(false)
 }
 
 /** One editor's draft. A draft belongs to the file object it was opened for. */

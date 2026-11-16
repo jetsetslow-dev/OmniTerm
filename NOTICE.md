@@ -46,6 +46,13 @@ features. No code from them is included; see the README's Acknowledgements for w
 - string-width — https://github.com/sindresorhus/string-width
 - unicode-width — https://github.com/unicode-rs/unicode-width
 
+## Markdown parser
+
+The file editor's Markdown preview reads Markdown with JetBrains Markdown
+(`org.jetbrains:markdown`, version 0.7.18), https://github.com/JetBrains/markdown, licensed under
+the Apache License 2.0. The preview draws the parser's result itself; the library's HTML output is
+not used.
+
 ## Unicode data
 
 The terminal's table of double-width characters

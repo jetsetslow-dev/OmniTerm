@@ -48,10 +48,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
@@ -90,6 +98,12 @@ fun CodeEditor(
     language: CodeLanguage = CodeLanguage.NONE,
     /** Max chars to highlight before falling back to plain text (user-configurable; 0 disables). */
     highlightMaxChars: Int = HIGHLIGHT_MAX_CHARS_DEFAULT,
+    /**
+     * Covered by something else, such as a Markdown preview: the editor lets go of the focus and the
+     * keyboard, and when it shows again its cursor, selection and scroll position are as they were,
+     * and so is the focus if it had it.
+     */
+    hidden: Boolean = false,
 ) {
     // Internal TextFieldValue keeps the selection/cursor in sync so find and go-to-line can move it.
     // Kept aligned to the external [value] string whenever the parent changes it out from under us.
@@ -97,6 +111,31 @@ fun CodeEditor(
     if (field.text != value) {
         val newSelection = if (value.length < field.selection.start) TextRange(value.length) else field.selection
         field = field.copy(text = value, selection = newSelection)
+    }
+
+    // A field that loses the focus collapses its selection, which would also scroll to the collapsed
+    // cursor. While hidden, a change that leaves the text as it is (that collapse) is ignored.
+    val hiddenNow by rememberUpdatedState(hidden)
+    val inputFocus = remember { FocusRequester() }
+    var inputFocused by remember { mutableStateOf(false) }
+    var refocus by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    androidx.compose.runtime.LaunchedEffect(hidden) {
+        if (hidden) {
+            refocus = inputFocused
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+        } else if (refocus) {
+            refocus = false
+            runCatching { inputFocus.requestFocus() }
+        }
+    }
+    val change: (TextFieldValue) -> Unit = { next ->
+        if (!hiddenNow || next.text != field.text) {
+            field = next
+            onValueChange(next.text)
+        }
     }
 
     var showFind by remember { mutableStateOf(false) }
@@ -187,7 +226,7 @@ fun CodeEditor(
             NativeLargeEditorBody(
                 modifier = Modifier.weight(1f),
                 field = field,
-                onChange = { field = it; onValueChange(it.text) },
+                onChange = change,
                 enabled = enabled,
                 readOnly = readOnly,
                 fontSize = fontSize,
@@ -199,13 +238,15 @@ fun CodeEditor(
                 modifier = Modifier.weight(1f),
                 scrollToCursorTrigger = scrollToCursorTrigger,
                 field = field,
-                onChange = { field = it; onValueChange(it.text) },
+                onChange = change,
                 enabled = enabled,
                 readOnly = readOnly,
                 fontSize = fontSize,
                 language = language,
                 highlightMaxChars = highlightMaxChars,
                 wrap = wrap,
+                inputFocus = inputFocus,
+                onInputFocus = { inputFocused = it },
             )
         }
     }
@@ -400,6 +441,12 @@ fun FullScreenCodeEditor(
     language: CodeLanguage = CodeLanguage.NONE,
     highlightMaxChars: Int = HIGHLIGHT_MAX_CHARS_DEFAULT,
     topBarAction: @Composable (() -> Unit)? = null,
+    /**
+     * Shown in place of the text while not null, such as a Markdown preview. The editor stays as it
+     * was underneath, hidden, so its text, cursor, selection and scroll position are all still there
+     * when the preview goes away.
+     */
+    preview: (@Composable () -> Unit)? = null,
 ) {
     androidx.activity.compose.BackHandler(enabled = true) { onClose() }
 
@@ -473,16 +520,29 @@ fun FullScreenCodeEditor(
             },
             contentWindowInsets = androidx.compose.foundation.layout.WindowInsets.safeDrawing,
         ) { innerPadding ->
-            CodeEditor(
-                value = value,
-                onValueChange = onValueChange,
-                enabled = !saving,
-                readOnly = readOnly,
-                fontSize = fontSize,
-                language = language,
-                highlightMaxChars = highlightMaxChars,
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-            )
+            Box(Modifier.fillMaxSize().padding(innerPadding)) {
+                // Hidden rather than removed while the preview shows: removing it would lose the
+                // cursor and scroll position. Out of sight it is out of reach of touch and of
+                // accessibility services too, as the preview covers it and its semantics are cleared.
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .then(if (preview != null) Modifier.alpha(0f).clearAndSetSemantics {} else Modifier),
+                ) {
+                    CodeEditor(
+                        value = value,
+                        onValueChange = onValueChange,
+                        enabled = !saving,
+                        readOnly = readOnly,
+                        fontSize = fontSize,
+                        language = language,
+                        highlightMaxChars = highlightMaxChars,
+                        hidden = preview != null,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                if (preview != null) preview()
+            }
         }
     }
 }
@@ -592,6 +652,8 @@ private fun EditorBody(
     language: CodeLanguage,
     highlightMaxChars: Int,
     wrap: Boolean,
+    inputFocus: FocusRequester,
+    onInputFocus: (Boolean) -> Unit,
 ) {
     val palette = rememberHighlightPalette()
     val limit = remember(highlightMaxChars) { clampHighlightLimit(highlightMaxChars) }
@@ -721,6 +783,8 @@ private fun EditorBody(
                 .fillMaxSize()
                 .heightIn(min = with(density) { viewportHeight.toDp() })
                 .testTag("code-editor-input")
+                .focusRequester(inputFocus)
+                .onFocusChanged { onInputFocus(it.isFocused) }
                 // Wrap mode: soft-wrap and no horizontal scroll. Otherwise: scroll horizontally so
                 // long lines extend off-screen instead of wrapping.
                 .then(if (wrap) Modifier else Modifier.horizontalScrollWithIndicators(horizontalScroll))

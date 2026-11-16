@@ -314,6 +314,9 @@ dependencies {
   // The MCP server reads and writes JSON-RPC with its tree API (no compiler plugin), which the
   // shared Kotlin module can use unchanged.
   implementation(libs.kotlinx.serialization.json)
+  // The file editor's Markdown preview parses with JetBrains' Kotlin Multiplatform parser
+  // (Apache-2.0, depends on kotlin-stdlib only) and draws with the app's own renderer.
+  implementation(libs.markdown)
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)

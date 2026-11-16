@@ -18,6 +18,7 @@ OmniTerm uses open-source libraries and assets. Third-party copyrights remain wi
 - Apache Commons Net: Apache License 2.0.
 - SNMP4J (`org.snmp4j:snmp4j`, Tools → SNMP devices): Apache License 2.0.
 - AndroidX Browser: Apache License 2.0.
+- JetBrains Markdown (`org.jetbrains:markdown`, the file editor's Markdown preview): Apache License 2.0.
 - Google Play Billing, In-App Review, Mobile Ads, and User Messaging Platform libraries are distributed under their respective Google SDK terms and only ship in the Play Store flavor.
 
 ## Test And Build Dependencies
