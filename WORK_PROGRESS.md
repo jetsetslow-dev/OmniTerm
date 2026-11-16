@@ -1963,3 +1963,93 @@ Evidence, under the machine lock, on the merged tree:
 Not covered: a real Cloudflare account (the coordinator raises it with the owner), Nebula through a
 real NAT, Cloudflare's actual idle time (100 s is assumed), and a Nebula host-name endpoint on the
 device (JVM and Go only).
+
+## Release packaging: one APK per architecture, no 32-bit x86 (Nov 16)
+
+The tunnel libraries made the app large: the tunnel AAR was 40.5 MB and the universal APK carried
+a 25 to 28 MB native library for each of four architectures. The owner kept every tunnel kind and
+chose to fix it by packaging.
+
+- GitHub releases publish one open-source APK per architecture next to the universal APK, which
+  keeps the name the single APK always had: `OmniTerm-OpenSource-<tag>.apk` and
+  `OmniTerm-OpenSource-<tag>-arm64-v8a.apk`, `-armeabi-v7a.apk`, `-x86_64.apk`. The release build
+  passes `-Pomniterm.abiSplits=true` (`app/build.gradle.kts`, `splits.abi`); every other build still
+  makes one APK. `scripts/collect-release-apks.sh` names them, for the workflow and the gate.
+- 32-bit x86 is dropped everywhere: `scripts/build-tunnel.sh` builds android/arm64, arm and amd64
+  only (the `--access-fixture` library too, it shares the target list), and the app leaves
+  `lib/x86/**` out of every APK and the bundle, so an x86 device refuses the install instead of
+  getting tunnels that cannot load (`libandroidx.graphics.path.so` had an x86 copy too). The Play
+  bundle changes in nothing else.
+- Version codes: every APK of a release has the release's own version code, the same as the
+  bundle's (AGP's default for splits; nothing overrides it). Per-architecture offsets exist for
+  uploading several APKs to Play, which gets only the bundle here; the APKs are another package
+  (`.oss`), so sharing the code with the bundle collides with nothing. Equal codes let a phone move
+  between the universal APK and its own either way (an equal code installs as an update; a
+  release*10+slot scheme, as the first draft had, made per-architecture to universal a downgrade
+  and cut the version space from major 200 to major 20 under Play's 2,100,000,000 ceiling). No
+  in-app update check reads release assets (searched: the only update check is for container
+  images), and the repository has no F-Droid metadata.
+- `scripts/verify-release-apks.py` checks the built files before anything is hashed, attested or
+  uploaded: exactly the four APK names; each per-architecture APK holds native code for its own
+  architecture only, the universal APK and the bundle for all three; package, version name and
+  code of every APK and the bundle; every APK signed, all by one certificate. It runs as a plain
+  step in the release workflow after collecting, and in `local-pr-check.sh --full` on a release build
+  (`bundlePlayStoreRelease` + `assembleOpenSourceRelease`, debug key, dry-run AdMob placeholders,
+  version 0.0.0-dev): 298 s on this machine, both release Kotlin compilations and R8 included.
+  `scripts/test-verify-release-apks.py` (gate, every mode, and PR Check) builds small real APKs and
+  a bundle with aapt2 and apksigner and shows 20 wrong releases refused, each with its own message;
+  four mutants of the checker (no architecture rule, no version rule, no certificate rule, no
+  unexpected-file rule) each failed it. `scripts/test-workflow-guards.sh` now also fails the release
+  job without `-Pomniterm.abiSplits=true`, without the check, with the check after the checksums or
+  before the APKs are collected (each shown on a broken copy).
+- The release workflow's build step runs with `-Xmx4g` (was 2g): the Kotlin daemon takes Gradle's
+  heap, and building both flavors' release code at 2g failed after 28 minutes with "Not enough memory
+  to run compilation" (Kotlin daemon log: OutOfMemoryError). One flavor at 2g compiled (the "before"
+  build below); both at 4g compiled in the dry run. The test step above it already ran at 4g.
+- README, the site's Getting started and home page say which file to pick for which device, that the
+  universal APK works everywhere but is the largest, how to read the processor type in the ABI row,
+  and that 32-bit Intel devices are no longer supported. RELEASE_RUNBOOK.md and AGENTS.md describe
+  the files and the check.
+
+Sizes in bytes, each from an emptied `app/build` (and, for the libraries, a fresh gomobile build).
+Before: HEAD 932e744, all four ABIs, the one universal APK releases had. After: this change, the
+release workflow's own build step.
+
+| File | Before | After |
+|---|---|---|
+| Tunnel AAR | 40,535,332 | 29,904,085 (−10,631,247) |
+| `libgojni.so` arm64-v8a | 26,142,632 | 26,142,632 (same bytes) |
+| `libgojni.so` armeabi-v7a | 25,121,428 | 25,121,428 (same bytes) |
+| `libgojni.so` x86_64 | 28,068,008 | 28,068,008 (same bytes) |
+| `libgojni.so` x86 | 25,290,476 | not built |
+| Universal APK | 115,627,520 | 90,314,097 (−25,313,423) |
+| arm64-v8a APK | — | 37,073,717 (41% of universal, 32% of the old one) |
+| armeabi-v7a APK | — | 36,052,521 (40%, 31%) |
+| x86_64 APK | — | 38,999,087 (43%, 34%) |
+| Play bundle | not built | 78,660,231 |
+
+Native libraries are stored uncompressed in the APKs (AGP's default for minSdk 24), so each
+architecture adds its whole library to an APK.
+
+Evidence:
+
+- Release dry run (`android-release.yml`'s own step text, run in order from an emptied
+  `app/build`; repo debug key copy for the release key, workflow dry-run AdMob placeholders,
+  v1.2.3-rc.2 / 10200302, no CI variable so no build scan): build 360 s; the delete-key step removed
+  the key copy; collect wrote the four APKs; the check passed (and passed bundle-only, as with
+  `build_apk=false`); R8 mapping present; both SBOMs generated and their native baselines matched;
+  SHA256SUMS.txt lists the four APKs and two SBOMs and `sha256sum -c` passes. Upload-artifact,
+  provenance, release assets and both SBOM attestations pick up the expected files by their globs
+  (attest-sbom's `subject-path` takes a glob, per its action.yml at the pinned commit); the Play
+  upload's `playstore-artifacts/*.aab` is the one bundle; all four APKs share one signing
+  certificate; `jarsigner` verifies the bundle.
+- On real files the check refused the arm64 APK under the x86_64 name, HEAD's four-ABI universal
+  APK, and an APK of another version.
+- API 35 x86_64 emulator, after removing the open-source package: the x86_64 APK installed
+  (primaryCpuAbi x86_64, 10200302) and opened on Servers; the universal APK installed over it, and the
+  x86_64 APK over that again, each with the same code, each launch without a crash. Removed after.
+- `test-workflow-guards.sh`, `test-verify-release-apks.py`, the gate's new segment cut from
+  `local-pr-check.sh` (then `check-tunnel-seam.py --built`, 6 files clean), `git diff --check`.
+
+Open: the Actions allowlist check could not ask GitHub (HTTP 403 for the current gh account); no
+`uses:` line changed. The full gate was not run (one gate per push).

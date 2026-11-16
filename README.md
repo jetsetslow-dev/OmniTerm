@@ -37,7 +37,18 @@ OmniTerm ships in two builds with the exact same core features. They differ only
 ### Open-source build
 Install the APK from the OmniTerm GitHub release page. It has **no host limits, no ads, and no in-app purchases** — no Play Billing code and no ad SDK. It uses the application ID `com.jetsetslow.omniterm.app.oss` so it can co-exist with the Play Store package (`com.jetsetslow.omniterm.app`).
 
-1. Download the latest APK from the GitHub release page.
+Each release has one APK for each kind of phone processor, plus a universal APK that works on all of them:
+
+| The file name ends in | Pick it for |
+|---|---|
+| `-arm64-v8a.apk` | Most phones and tablets: any with a 64-bit ARM processor |
+| `-armeabi-v7a.apk` | Older or low-cost phones with a 32-bit ARM processor |
+| `-x86_64.apk` | Chromebooks and other Android devices with an Intel or AMD processor |
+| the version, with no processor named (`OmniTerm-OpenSource-v1.2.3.apk`) | Any of these. It is the largest download, because it carries all three |
+
+Not sure which processor you have? Install the universal APK. **Tools → About OmniTerm → Device & diagnostics** then shows it in the ABI row, and the matching smaller APK of the same release installs over the universal one, or the other way round, keeping your hosts and settings. Any APK of a newer release updates any older one. Devices with a 32-bit Intel processor (`x86`) are no longer supported.
+
+1. Download the APK for your phone from the latest GitHub release.
 2. Allow installing apps from your download source in Android settings.
 3. Open the APK and install OmniTerm.
 

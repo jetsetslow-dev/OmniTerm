@@ -33,7 +33,17 @@
 </tbody></table>
 <p>The open-source build uses the application ID <code>com.jetsetslow.omniterm.app.oss</code>, so it can sit beside the Play Store package. It contains no Play Billing code and no ad SDK. The Unlock purchase also enables Quick connect, Telnet and USB serial terminals in the Play Store build. The Play Store build adds Google's proprietary billing, ads, consent and in-app review libraries, which are not part of the repository. The licence is stated on the <a href="../index.html#licence">home page</a>.</p>
 <h3>Install the APK</h3>
-<ol><li>Download the latest APK from the GitHub releases page.</li><li>Allow installs from your download source in Android settings.</li><li>Open the APK and install it.</li></ol>
+<p>Each release has one APK for each kind of phone processor, plus a universal APK that works on all of them:</p>
+<table>
+<thead><tr><th scope="col">The file name ends in</th><th scope="col">Pick it for</th></tr></thead>
+<tbody>
+<tr><th scope="row"><code>-arm64-v8a.apk</code></th><td>Most phones and tablets: any with a 64-bit ARM processor</td></tr>
+<tr><th scope="row"><code>-armeabi-v7a.apk</code></th><td>Older or low-cost phones with a 32-bit ARM processor</td></tr>
+<tr><th scope="row"><code>-x86_64.apk</code></th><td>Chromebooks and other Android devices with an Intel or AMD processor</td></tr>
+<tr><th scope="row">the version, with no processor named (<code>OmniTerm-OpenSource-v1.2.3.apk</code>)</th><td>Any of these. It is the largest download, because it carries all three</td></tr>
+</tbody></table>
+<p>Not sure which processor you have? Install the universal APK. <strong>Tools &rarr; About OmniTerm &rarr; Device &amp; diagnostics</strong> then shows it in the ABI row, and the matching smaller APK of the same release installs over the universal one, or the other way round, keeping your hosts and settings. Any APK of a newer release updates any older one. Devices with a 32-bit Intel processor (<code>x86</code>) are no longer supported.</p>
+<ol><li>Download the APK for your phone from the latest GitHub release.</li><li>Allow installs from your download source in Android settings.</li><li>Open the APK and install it.</li></ol>
 <h2>Add your first host</h2>
 <ol>
 <li>Open <strong>Servers</strong> and add a host: a display name, hostname or IP address, SSH port, user name and sign-in method.</li>

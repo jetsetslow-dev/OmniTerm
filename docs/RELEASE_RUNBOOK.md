@@ -26,6 +26,10 @@ The public Git history was intentionally reset after `v0.9.239` to remove creden
 
 For an explicit version use `./scripts/release.sh --tag vMAJOR.MINOR.PATCH[-SUFFIX]`. For an additional prerelease line use `./scripts/release.sh --prerelease rc.2`. The helper refuses non-increasing versions and existing tags.
 
+## What a release publishes
+
+Google Play gets the bundle. The GitHub release gets the open-source app as one APK per architecture, `OmniTerm-OpenSource-<tag>-arm64-v8a.apk`, `-armeabi-v7a.apk` and `-x86_64.apk`, next to the universal `OmniTerm-OpenSource-<tag>.apk` (the build passes `-Pomniterm.abiSplits=true`; 32-bit x86 is not built). Every APK carries the release's own versionCode, the same as the bundle's: Play never receives these APKs, so per-architecture offsets buy nothing, and equal codes let a phone move between the universal and its own APK in either direction. Before anything is hashed, attested or uploaded, `scripts/verify-release-apks.py` checks each file's package, version name and code, that it holds native code for exactly the architectures its name says, and that every APK is signed by one certificate; `scripts/test-workflow-guards.sh` keeps that step ahead of the uploads.
+
 ## Publication transaction and retries
 
 CI creates or updates a GitHub **draft**, uploads the AAB and matching R8 mapping directly to Play, then a separate finalization job publishes the GitHub Release. A Play failure therefore leaves a draft and never presents the APK as successfully shipped. If only finalization fails, use **Rerun failed jobs** so the Play upload is not repeated. A rerun after full success sees the published release marker and skips the external uploads.

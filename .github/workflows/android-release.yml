@@ -375,8 +375,13 @@ jobs:
           if [ "$BUILD_APK" = "true" ] || [ -z "$BUILD_APK" ]; then
             TASKS+=(":app:assembleOpenSourceRelease")
           fi
+          # omniterm.abiSplits: the open-source APK as one APK per architecture plus the universal
+          # one. The bundle is not affected; Play splits it per phone itself.
+          # -Xmx4g, as the test step above: the Kotlin daemon takes Gradle's heap, and at 2g both
+          # flavors' release compilations ran out of memory after 28 minutes ("Not enough memory to
+          # run compilation"), measured on this build before it was raised.
           ./gradlew "${TASKS[@]}" --no-daemon \
-            -Dorg.gradle.jvmargs=-Xmx2g -Domniterm.publishScan=true
+            -Dorg.gradle.jvmargs=-Xmx4g -Domniterm.publishScan=true -Pomniterm.abiSplits=true
 
       # Signing is done; remove the decoded keystore immediately so no later step (artifact
       # upload, third-party actions) can ever see it, even though the runner is ephemeral.
@@ -385,16 +390,27 @@ jobs:
         run: rm -f "$KEYSTORE_PATH"
 
       - name: Collect GitHub Release outputs (APK)
-        run: |
-          mkdir -p github-artifacts
-          if [ -d "app/build/outputs/apk" ]; then
-            find app/build/outputs/apk -name "*.apk" -exec cp {} "github-artifacts/OmniTerm-OpenSource-${RELEASE_LABEL}.apk" \;
-          fi
+        # The universal APK keeps the name the single APK always had; each architecture's APK adds
+        # its architecture (OmniTerm-OpenSource-<tag>-arm64-v8a.apk).
+        run: ./scripts/collect-release-apks.sh "$RELEASE_LABEL" github-artifacts
 
       - name: Collect Play Store output (AAB)
         run: |
           mkdir -p playstore-artifacts
           find app/build/outputs/bundle -name "*.aab" -exec cp {} "playstore-artifacts/OmniTerm-PlayStore-${RELEASE_LABEL}.aab" \;
+
+      # Before anything is uploaded: every APK there, each with exactly the architectures its name
+      # says, all signed alike and, like the bundle, with this release's version name and code.
+      - name: Verify release APKs and bundle
+        env:
+          BUILD_APK: ${{ inputs.build_apk }}
+        run: |
+          ARGS=(--label "$RELEASE_LABEL" --version-code "$VERSION_CODE"
+            --bundle "playstore-artifacts/OmniTerm-PlayStore-${RELEASE_LABEL}.aab")
+          if [ "$BUILD_APK" = "true" ] || [ -z "$BUILD_APK" ]; then
+            ARGS+=(--apks github-artifacts)
+          fi
+          python3 scripts/verify-release-apks.py "${ARGS[@]}"
 
       # Upload the Play mapping directly to Play below. Ordinary Actions artifacts in a public
       # repository are not private storage and must not be used to retain obfuscation mappings.
@@ -472,7 +488,8 @@ jobs:
         if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true' && (github.event_name != 'workflow_dispatch' || inputs.build_apk)
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4
         with:
-          subject-path: github-artifacts/OmniTerm-OpenSource-${{ env.RELEASE_LABEL }}.apk
+          # The universal APK and each architecture's (a glob, which attest-sbom takes).
+          subject-path: github-artifacts/OmniTerm-OpenSource-${{ env.RELEASE_LABEL }}*.apk
           sbom-path: github-artifacts/OmniTerm-SourceAvailable-${{ env.RELEASE_LABEL }}.cdx.json
 
       - name: Stage GitHub Release as draft
@@ -503,7 +520,7 @@ jobs:
             PREV_TAG=$(gh release list --limit 50 --json tagName \
               --jq '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName' 2>/dev/null || true)
             {
-            echo "Signed Android release build. Download the .apk to install the open-source version."
+            echo "Signed Android release build. To install the open-source version, download the APK for your phone's processor: the one ending in -arm64-v8a.apk for most phones, -armeabi-v7a.apk for older 32-bit phones, or -x86_64.apk for Chromebooks with an Intel or AMD processor. The APK with no processor in its name works on all of them but is the largest download."
               echo
               echo "## Changes${PREV_TAG:+ since $PREV_TAG}"
               if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then

@@ -47,7 +47,10 @@ These rules apply to every contributor and automation tool working in this repos
   workflow's CLI version and `security-extended` queries, over the test sources too, which only
   main's run compiles; it prints how to install the Java CLI and
   fetches the Go bundle itself, checked against its digest). Bump the CLI pin and both digests in
-  that script with the `github/codeql-action` pin in `codeql.yml`.
+  that script with the `github/codeql-action` pin in `codeql.yml`. It also makes the release build
+  the release workflow makes (R8 on both flavors, the Play bundle, one open-source APK per
+  architecture plus the universal one) and checks it with `scripts/verify-release-apks.py`, as the
+  workflow does before it uploads; the workflow guards keep that check ahead of every upload.
 - Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.
   `scripts/check-duplicates.py` fails the gate and CI on a new copied block. Its baseline
   (`scripts/duplicate-code-baseline.json`) is empty; only `--update-baseline` adds to it, and that
