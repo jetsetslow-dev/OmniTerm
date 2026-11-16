@@ -14,6 +14,7 @@ OmniTerm stores the following data locally on the user's device when the user en
 - VPN tunnels the user adds under Tools → VPN tunnels: a name and the WireGuard configuration, including its private key, stored encrypted on the device; and, per host, which tunnel it goes through and its address inside the tunnel.
 - AI assistant (MCP) settings, if the user turns that on under Tools → AI assistants: which hosts assistants may see, whether any command may be asked for, the ports, the host the server is reached through, and a SHA-256 fingerprint of its token, never the token itself. The last 200 calls are kept: when, the client's own name, the tool, whether it worked, and the first line of its answer. App backups include these settings and the token's fingerprint unless the user unticks Automation & AI assistants; the assistant's switch is not included, and a restore leaves it off. The calls are included unless the user unticks AI assistant log, and the user can clear them.
 - Alert forwarding settings, if the user sets them up: the service, its address and topic, and an optional access token (stored encrypted).
+- While App Lock is on and the user leaves OmniTerm unlocked, a note of when it left: the time since the phone started, which start of the phone that was, the app's process number and when the app was installed. It lets the unlocked time carry on if Android closes the app in the background. It holds no PIN or other secret, is deleted when the user returns or the app locks, and is never part of a backup.
 
 ## Network Use
 

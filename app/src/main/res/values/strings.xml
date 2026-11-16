@@ -783,7 +783,9 @@
     <string name="this_may_take_a_little_while">"This may take a little while. Please wait."</string>
     <string name="free_play_store_restore_is_limited">"Free Play Store restore is limited to %1$s host%2$s."</string>
     <string name="lock_when_returning_after">"Lock when returning after"</string>
-    <string name="the_countdown_starts_once_omniterm_is">"The countdown starts once OmniTerm is no longer visible. Rotation doesn't start it; a full process restart always locks."</string>
+    <string name="the_countdown_starts_once_omniterm_is">"The countdown starts once OmniTerm is no longer visible. Rotation doesn't start it, and on Android 11 and later it keeps running if Android closes OmniTerm in the background. Restarting the phone, a force stop, a crash or an update always locks."</string>
+    <string name="lock_now">"Lock now"</string>
+    <string name="lock_now_after_saving">"Save or discard your changes to lock now."</string>
     <string name="custom">"Custom"</string>
     <string name="custom_duration">"Custom duration"</string>
     <string name="choose_a_duration_up_to_24">"Choose a duration up to 24 hours"</string>

@@ -3817,7 +3817,21 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                     }
                                 )
                             }
-                            TextButton(onClick = { showPinDialog = true }) { Text(stringResource(R.string.change_pin)) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = { showPinDialog = true }) { Text(stringResource(R.string.change_pin)) }
+                                // Locks at once, whatever the time below. Unsaved changes here would be
+                                // lost with the screen, so it waits until they are saved or discarded.
+                                TextButton(
+                                    onClick = { viewModel.lockApp() },
+                                    enabled = viewModel.isAppLockEnabled && !dirty,
+                                ) { Text(stringResource(R.string.lock_now)) }
+                            }
+                            if (viewModel.isAppLockEnabled && dirty) {
+                                Text(
+                                    stringResource(R.string.lock_now_after_saving),
+                                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
 
                             Spacer(Modifier.height(8.dp))
                             Text(stringResource(R.string.lock_when_returning_after), fontSize = 13.sp)

@@ -90,6 +90,7 @@ Open **Term** for an interactive SSH shell on the selected host.
 - **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically. Remove one you no longer need from the session picker: **Forget** drops it from this device and leaves it running, **End session** stops it on the server too. On a Mac, OmniTerm finds tmux installed with Homebrew or MacPorts, and can install it with Homebrew.
 - Multiple background sessions with session switching and explicit disconnect prompts. The session list and the **OPEN** menu both show when each session started and, once it is in the background, since when.
 - When a shell ends on the server (you type `exit`, or tmux ends), its terminal stays open with its scrollback and says how it ended, for example "Session ended (exit 0). Scrollback kept.". Tap **Dismiss** or **✕** when you are done with it.
+- Full-screen programs such as Claude Code, Codex, vim and htop draw as they do in a desktop terminal. The screen shows a program's last update as soon as it arrives, even when nothing follows it, so there is no need to hide the keyboard to see what you typed. Emoji take the width these programs expect, so their redraws land in the right columns; line drawing shows as boxes; and strike-through text is drawn. A session opened while the keyboard was coming up or the screen was rotating takes the terminal's real size.
 - Adjustable, persisted font size with reflowing scrollback on resize.
 - Themes: App theme (follows app light/dark/AMOLED/high-contrast), Omni Dark, Solarized Dark, Matrix, and Light.
 - Hardware and soft keyboard input, a compact special-key bar, and swipe-typing mode.
@@ -106,6 +107,7 @@ Open **Files** to work with remote filesystems.
 
 **SFTP** browses the selected SSH host (the host picker lives here):
 - Upload, download, rename, delete, create folders, start a **new text file**, and **edit text files** in the built-in code editor (line numbers, syntax highlighting, find/replace, sudo-assisted writes).
+- The editor colours shell scripts and YAML the way they read: a string or heredoc that runs over several lines stays a string to its end, a YAML `|` or `>` block stays text, and an apostrophe in a word (`Don't`) or a keyword inside a word (`--local`, `$done`) no longer starts a colour. It also recognises `.bashrc`, `.zshrc`, `.profile`, `.env` files, `Dockerfile.prod`, `Containerfile`, `.j2` and `.tmpl` templates of YAML files, and scripts without an extension that start with a shell `#!` line. Line numbers stay beside their lines in long files, with emoji or wrapped lines.
 - **New file** shows progress and stays on the host and folder where you started it. Switching hosts while it finishes never opens a file from the new host. A stale browsing connection is replaced once; a failed fresh sign-in is reported without asking for a second one-time code.
 - **Multi-select** for batch copy/cut/download/delete; **sort** by name/size/date/type; **search** with a live folder filter, recursive tree search, and glob wildcards.
 - **Archive** the selection to zip/tar/tar.gz, or **extract here** an archive into a same-named subfolder — all server-side.
@@ -247,9 +249,14 @@ Open **Tools → App backup** to export or restore a selective backup of OmniTer
 - **On-device encryption** — credentials, private keys, sudo passwords, and proxy passwords use AES-GCM with an Android Keystore-managed key (hardware-backed where the device supports it).
 - **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it. If you reject a host's key, OmniTerm stops asking about it from background checks; it asks again when you connect to that host, tap **Retry** on it, or test its connection.
 - **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust. When a program on that host asks to use a security key through it, OmniTerm says so, and the user it is signing in as; cancel unless you started it. Such a request waits 20 seconds for the touch, including when the security key uses an SSH certificate.
-- **Biometric app lock** — lock the whole app behind biometrics or a PIN. Cold starts always lock;
-  warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration
-  up to 24 hours. Rotation does not start the background timer.
+- **Biometric app lock** — lock the whole app behind biometrics or a PIN. Choose how long it stays
+  unlocked after you leave OmniTerm: lock immediately, after 30 seconds, 1 minute, 5 minutes, or a
+  custom time up to 24 hours. The time counts from when you left. Switching apps, rotating the
+  phone, or Android closing OmniTerm in the background to free memory does not lock it sooner, and
+  changing the phone's clock does not change the time. It always locks when the time is up, when
+  the phone restarts, after a force stop, a crash or an update, and when you tap **Lock now** in
+  Settings. On Android 10 and older, and on Android 11 to 14 after you swipe OmniTerm away in
+  Recents, a fresh start always locks, because those versions do not say why the app closed.
 - **Authenticated sudo** — everything that runs with sudo asks first, every time: Read with sudo, installing a helper program or tmux, reboot, service control, and turning on sudo mode in Files. With App Lock on, OmniTerm asks for your App Lock fingerprint or PIN; otherwise your phone's own screen lock (on Android 11 and later, a fingerprint or a face unlock Android rates as secure also works); and on a phone without a screen lock, it asks you to confirm.
 - **Automation is opt-in** — other apps can run your scripts only after you turn on **Tools → Automation** and give them a token, and then only that token's script on its hosts. A request with a token OmniTerm does not know gets no answer at all.
 - **VPN tunnels stay inside OmniTerm** — a tunnel's configuration, with its private key, is stored encrypted on the phone; the app talks only to the peer it names, and a host with a tunnel is never dialled directly.
@@ -285,6 +292,7 @@ bug reports that shaped features here:
 - [ConnectBot](https://github.com/connectbot/connectbot) — installing a key on a host from the phone, as `ssh-copy-id` does (ConnectBot#428, ConnectBot#666).
 - [Material Files](https://github.com/zhanghai/MaterialFiles) — sharing files from any app to save them where you choose (MaterialFiles#976).
 - [Haven](https://github.com/GlassHaven/Haven), [ConnectBot](https://github.com/connectbot/connectbot), [ServerBox](https://github.com/lollipopkit/flutter_server_box), [Nexterm](https://github.com/gnmyt/Nexterm), [Beszel](https://github.com/henrygd/beszel), [Uptime Kuma](https://github.com/louislam/uptime-kuma) and [Home Assistant for Android](https://github.com/home-assistant/android) — feature and bug reviews for the homelab and server-admin features OmniTerm covers.
+- [xterm](https://invisible-island.net/xterm/)'s [control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html) — how the terminal reads the escape sequences programs send. [string-width](https://github.com/sindresorhus/string-width) (used by Claude Code), [unicode-width](https://github.com/unicode-rs/unicode-width) (used by Codex) and [tmux](https://github.com/tmux/tmux) — how wide each character is, so the terminal and the program agree; the width table comes from [Unicode's data files](https://www.unicode.org/ucd/).
 - [Haven](https://github.com/GlassHaven/Haven) — per-host WireGuard and Tailscale tunnels inside the app, built from Go with gomobile; read as a reference only. OmniTerm's tunnels use [wireguard-go](https://git.zx2c4.com/wireguard-go) with [gVisor](https://github.com/google/gvisor)'s network stack, bound with [gomobile](https://pkg.go.dev/golang.org/x/mobile).
 
 ## Support the project
