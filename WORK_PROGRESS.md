@@ -664,7 +664,7 @@ changed there). The user then asked for it in the same PR: "merge that into the 
     the settings-backup case of `E2eSettingsStateStressTest` pass.
   - Unrelated and already broken: that class's opt-in battery-saver case fails without B1 too. It
     waits for the saver without accepting the prompt that #98 added, and it needs a lab host
-    ("E2E Foreground Demo") that the fixtures do not have. Left for later.
+    ("E2E Foreground Demo") that the fixtures do not have. Brought up to date in the bundle (Nov 16).
 
 ## Bundle after #147 — more tunnels, homelab, Fleet (branch `kotlin-homelab-bundle`)
 
@@ -1348,11 +1348,59 @@ there is one full gate when the bundle is complete, and targeted tests per piece
     router node, which headscale still showed online, so the new router offered nothing ("not in
     this tailnet"). `tailnet_up` now waits for a router newer than every node there was. The
     runner also counts a failed assumption (an opt-in not given) as skipped, not passed.
-  - Not covered: there is no Kubernetes device suite (only `KubeTest` and `KubeDirectTest` on the
-    JVM; the k3s lab is a QEMU VM checked by hand), so the `JsonTree` move has its unit tests only.
-    `E2eTerminalNetworkRecoveryStressTest` and `E2eFileTransferLifecycleStressTest` still turn off
-    only Wi-Fi with the lab host on 127.0.0.1, so on the emulator they never lose it either; they
-    were not run here. The shares fixture starts rclone with its password on the command line.
+  - Suite fixes and small items (Nov 16), each its own commit, all on the API 35 emulator through
+    the shared runner with repository fixtures only:
+    - The two network-cut suites save their own hosts and shares at `network_host` with
+      `E2eLabHosts.save` and cut the network with `PhoneOffline`, like the alert suite.
+      `E2eTerminalNetworkRecoveryStressTest` (tmux, HTTP and SOCKS5 proxies, SSH jump to
+      internal-a) passed; it now asserts no session stays connected while offline, and prints its
+      markers from a format, since the shell's echo of `printf 'NET-TMUX-END'` had satisfied the
+      check that tmux output survived. `E2eFileTransferLifecycleStressTest` uses the shares
+      fixture's FTP, SMB and WebDAV and the lab host's SFTP; its network cut moved from FTP to SMB,
+      because the fixture's passive FTP data address is 127.0.0.1, adb's reverse port on the
+      emulator, which no network loss touches. Guard: with mobile data left on, the terminal suite
+      failed "Still connected with the phone offline" (all four hosts) and the transfer suite "the
+      share is still reachable with the phone offline".
+    - The transfer suite found three defects. Fixed, each first seen failing in the suite: a
+      cancelled WebDAV upload left its hidden staging file, because the server still held the
+      aborted PUT and answered the delete 423 Locked (seen with curl against the fixture), so
+      `removeStagedFile` (one copy, used by every staging cleanup) tries again while the file is
+      still listed, under 4 s in all (`RemoveStagedFileTest`, 5 tests, 4 failing with the old single
+      delete); and a cancelled SFTP download to the phone ended as a success with a short file
+      (868014 of 32 MiB bytes), because closing JSch's stream reads as the end of the file, so
+      `downloadToDevice` now ends a cancelled download as cancelled and deletes the document.
+      Open, written down rather than fixed, as neither is small: an SMB upload takes about 15.7 s
+      to cancel, past the suite's 12 s bound (the same with the old cleanup; forcing smbj's
+      connection closed did not help, so the wait is likely its 15 s response timeout,
+      `SmbFsClient` `withTimeout(15 s)`), and an SMB upload cancelled while the phone is offline
+      leaves `.<name>.omniterm-part-<uuid>` on the share, since its cleanup cannot reach the share
+      then and nothing tries later. The user sees the row stay running for 15 s after Cancel, and a
+      hidden partial file in the folder. To reproduce, run the suite: it records both and fails at
+      its end, after every other check has passed (cancel and staging on four protocols, a large
+      upload across activity recreation, retry to the original endpoint, cross-protocol overwrite
+      and move, dual-pane SFTP).
+    - Battery saver (`E2eSettingsStateStressTest`): its Fleet host is saved from the fixtures; after
+      `cmd battery set level 1` it waits for #98's "Battery saver available" prompt, checks the
+      saver is not on by itself and the screen still kept on, taps **Start saving** as a user
+      would, then waits for the saver; `cmd battery reset` runs whether it passes or fails. Passed
+      with the other two tests of the class; guard: without the tap it failed "battery saver engage
+      did not finish within 10000ms", and the battery was back afterwards.
+    - AGENTS.md states the owner's Nov 9 rule once, under the validation gates: one full gate per
+      push, fixes batched into the pull request in flight.
+    - The shares fixture's rclone takes its login from `RCLONE_USER` and `RCLONE_PASS` in the
+      container, not flags: after `rebuild shares` no process shows it (`fixture containers: 0` in
+      the process watcher), WebDAV answers 207 with the login and 401 with a wrong one or none, and
+      `verify` checks the wrong one is refused. `verify` itself still passes the lab password to
+      `sshpass -p`, `curl --user` and `smbclient -U` on the host; its three key and certificate
+      sign-in checks failed against keyauth and certauth containers that are 13 days old.
+    - Kubernetes on a device: `E2eKubernetesClusterTest` opens the real Kubernetes tab with the
+      app's own `KubeApi` and `JsonTree` against `E2eKubeApiServer`, a small HTTPS server inside the
+      test on the phone's loopback, saved as a cluster from its kubeconfig, which is the existing
+      seam (the cluster address). This is the smallest honest way: no new dependency, no fixture,
+      no cluster. Its objects are samples in the shapes the Kubernetes API reference documents, not
+      recordings; one per page, so every list is read with `continue`. It checks pod, deployment,
+      service and node cards, the namespace filter's namespaced paths, and that nothing but lists
+      was asked for. Guard: with whole numbers written as `4.0`, the pod card's "Restarts 4" failed.
 
 ## Decision pivot — 2026-11-08
 

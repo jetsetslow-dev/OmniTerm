@@ -137,6 +137,24 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Loader synchronization observes both loading-state edges, preventing a false pass or stale error before a launched coroutine starts.
 - The first hosted PR run found one Gitleaks false positive in the deliberately fake private-key redaction fixture; no real credential was present. The fixture now assembles its PEM sentinel at runtime, and the exact historical finding is narrowly fingerprint-ignored so full-history scanning remains enabled.
 
+## On the API 35 emulator, repository fixtures only (Nov 16)
+
+Through `./scripts/test-hosts.sh suite`, with each suite's own hosts and shares at `network_host`
+(10.0.2.2), so `PhoneOffline` (Wi-Fi and mobile data off) really takes them away:
+
+- `E2eTerminalNetworkRecoveryStressTest` passed (41.5 s): persistent tmux, HTTP, SOCKS5 and SSH-jump
+  sessions all dropped while offline and recovered with their panes and tmux output. Its markers are
+  printed from a format, so the shell's echo of a command no longer satisfies a check.
+- `E2eSettingsStateStressTest` passed, 3 tests, the battery-saver case included: it answers the
+  low-battery prompt with **Start saving** and resets the battery when it ends.
+- `E2eKubernetesClusterTest` passed against its in-test API server.
+- `E2eFileTransferLifecycleStressTest` runs to its end and fails on two open SMB defects: an SMB
+  upload takes about 15.7 s to cancel (bound 12 s), and an SMB upload cancelled while the phone is
+  offline leaves its staging file. It found and now covers two fixed ones: a cancelled WebDAV upload
+  left its staging file, and a cancelled SFTP download ended as a success with a short file.
+- Guards seen failing with what each depends on removed: mobile data left on (both network suites),
+  no tap on **Start saving**, and `JsonTree` writing whole numbers as `4.0`.
+
 ## Remaining critical coverage
 
 1. Inspect final PR checks and remove disposable lab artifacts only after their evidence is no longer needed.
@@ -162,15 +180,15 @@ Run the previously verified opt-in suites through the shared runner, which rever
 ```bash
 ./scripts/test-hosts.sh suite E2eTerminalStressTest omniterm_e2e_terminal=yes
 ./scripts/test-hosts.sh suite E2eTerminalLifecycleStressTest omniterm_e2e_terminal_lifecycle=yes
-./scripts/test-hosts.sh suite E2eTerminalNetworkRecoveryStressTest omniterm_e2e_terminal_network=yes
+./scripts/test-hosts.sh suite E2eTerminalNetworkRecoveryStressTest omniterm_e2e_terminal_network=yes network_host port user pass
 ./scripts/test-hosts.sh suite E2eComposeBuilderUiStressTest omniterm_e2e_compose_ui=yes
 ./scripts/test-hosts.sh suite E2eComposeDeployStressTest omniterm_e2e_compose_deploy=yes
 ./scripts/test-hosts.sh suite E2eNetworkToolsTest omniterm_e2e_network=yes
 ./scripts/test-hosts.sh suite E2eAlertLifecycleStressTest omniterm_e2e_alerts=yes network_host port user pass
 ./scripts/test-hosts.sh suite E2eRemoteFilesStressTest omniterm_e2e_remote_files=yes
 ./scripts/test-hosts.sh suite E2eFilesUiStressTest omniterm_e2e_files_ui=yes
-./scripts/test-hosts.sh suite E2eFileTransferLifecycleStressTest omniterm_e2e_transfer_lifecycle=yes
-./scripts/test-hosts.sh suite E2eSettingsStateStressTest omniterm_e2e_settings_state=yes
+./scripts/test-hosts.sh suite E2eFileTransferLifecycleStressTest omniterm_e2e_transfer_lifecycle=yes network_host port user pass omniterm_e2e_sftp_home
+./scripts/test-hosts.sh suite E2eSettingsStateStressTest omniterm_e2e_settings_state=yes host port user pass
 ./scripts/test-hosts.sh suite E2eForegroundServiceProofTest omniterm_e2e_foreground_proof=yes
 ./scripts/test-hosts.sh suite E2eTerminalNavigationMatrixTest omniterm_e2e_terminal_nav_matrix=yes
 ```
