@@ -12,6 +12,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
+import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupSelection
 import com.jetsetslow.omniterm.ui.Screen
@@ -28,7 +29,13 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 
-/** Settings boundaries, lock lifecycle, backup rollback, battery saver, Fleet, and auto-refresh. */
+/**
+ * Settings boundaries, lock lifecycle, backup rollback, battery saver, Fleet, and auto-refresh. The
+ * battery saver test sets the phone's battery level and charger state itself (`cmd battery`) and
+ * puts them back when it ends, pass or fail; its Fleet part runs on a lab host the suite saves from
+ * the repository's fixtures. Run with `./scripts/test-hosts.sh suite E2eSettingsStateStressTest
+ * omniterm_e2e_settings_state=yes host port user pass`.
+ */
 class E2eSettingsStateStressTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
 
@@ -192,6 +199,14 @@ class E2eSettingsStateStressTest {
             "keep_screen_on", "battery_saver_enabled", "battery_saver_threshold", "telemetry_interval",
         )
         val before = repository.getAllSettings().filter { it.key in touched }.associateBy { it.key }
+        composeRule.runOnUiThread { vm.isAppLocked = false }
+        val host = E2eLabHosts.save(
+            vm,
+            ServerEntity(
+                name = FLEET_HOST, host = E2eArgs.require("host"), port = E2eArgs.get("port")?.toIntOrNull() ?: 2205,
+                username = E2eArgs.require("user"), authPassword = E2eArgs.require("pass"),
+            ),
+        ).also { E2eLabHosts.connectOnce(vm, it) }
         try {
             vm.saveKeepScreenOnToggle(true)
             vm.saveBatterySaverThreshold(50)
@@ -202,6 +217,11 @@ class E2eSettingsStateStressTest {
             DeviceShell.run("cmd battery unplug")
             DeviceShell.run("cmd battery set status 3")
             DeviceShell.run("cmd battery set level 1")
+            // Reaching the threshold only asks; the user starts saving from the prompt.
+            composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("Battery saver available").fetchSemanticsNodes().isNotEmpty() }
+            assertFalse("nothing changes before the user answers", vm.batterySaverActive)
+            assertTrue(vm.isKeepScreenOnEnabled)
+            composeRule.onNodeWithText("Start saving").performClick()
             await("battery saver engage", 10_000) { vm.batterySaverActive }
             assertFalse(vm.isKeepScreenOnEnabled)
             vm.refreshAllServers()
@@ -209,8 +229,6 @@ class E2eSettingsStateStressTest {
             vm.saveKeepScreenOnToggle(true)
             await("keep screen on restored for Fleet", 5_000) { vm.isKeepScreenOnEnabled }
 
-            await("Fleet test host", 10_000) { vm.servers.value.any { it.name == "E2E Foreground Demo" } }
-            val host = requireNotNull(vm.servers.value.find { it.name == "E2E Foreground Demo" })
             vm.selectedServerId = host.id
             vm.runFleetBroadcast("printf 'FLEET-SMALL-END\\n'", listOf(host.id))
             await("small Fleet connectivity probe", 20_000) {
@@ -248,8 +266,11 @@ class E2eSettingsStateStressTest {
                 val original = before[key]
                 if (original == null) repository.deleteSetting(key) else repository.insertSetting(key, original.value)
             }
+            E2eLabHosts.remove(vm, FLEET_HOST)
         }
     }
+
+    private companion object { const val FLEET_HOST = "E2E settings Fleet host" }
 
     private suspend fun await(label: String, timeoutMs: Long, predicate: suspend () -> Boolean) {
         try { withTimeout(timeoutMs) { while (!predicate()) delay(100) } }
