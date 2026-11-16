@@ -23,6 +23,7 @@ import java.security.MessageDigest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,22 +33,52 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 
-/** Destructive only inside unique directories on the disposable lab. */
+/**
+ * Destructive only inside unique directories on the disposable lab. The suite saves its own four
+ * shares and one host on the repository's fixtures, at `network_host`, the address the phone's own
+ * network reaches them at (10.0.2.2 from the emulator): FTP, SMB and WebDAV on the shares fixture,
+ * SFTP on the lab host. Run with `./scripts/test-hosts.sh suite E2eFileTransferLifecycleStressTest
+ * omniterm_e2e_transfer_lifecycle=yes network_host port user pass omniterm_e2e_sftp_home`.
+ *
+ * It stays opt-in and fails, at its end, on two open SMB defects (Nov 16, WORK_PROGRESS.md):
+ * cancelling an SMB upload takes about 15.7 s, past the 12 s bound, and an SMB upload cancelled
+ * while the phone is offline leaves its hidden staging file on the share. Every other check passes.
+ */
 class E2eFileTransferLifecycleStressTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
     fun transfersCancelRecoverRetryAndCrossEndpointsWithoutPartialData() = runBlocking {
-        assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_transfer_lifecycle") == "yes")
+        assumeTrue(E2eArgs.on("omniterm_e2e_transfer_lifecycle"))
         ensureDeviceAwake()
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         val repository = AppRepository(AppDatabase.getDatabase(context))
-        val shares = repository.getAllNetworkShares().filter { it.name.startsWith("E2E ") }.sortedBy { it.protocol }
+        val network = E2eArgs.require("network_host")
+        val port = E2eArgs.get("port")?.toIntOrNull() ?: 2205
+        val user = E2eArgs.require("user")
+        val pass = E2eArgs.require("pass")
+        suspend fun removeShares() = repository.getAllNetworkShares().filter { it.name.startsWith(PREFIX) }.forEach { repository.deleteNetworkShare(it) }
+        removeShares()
+        // As a user adds them: the shares fixture's FTP, SMB (its "fixture" share) and WebDAV (plain
+        // HTTP under /fixture), and SFTP on the lab host, which opens in the user's home.
+        listOf(
+            NetworkShareEntity(name = "$PREFIX FTP", protocol = "FTP", address = network, port = 21, sharePath = "/"),
+            NetworkShareEntity(name = "$PREFIX SMB", protocol = "SMB", address = network, port = 445, sharePath = "fixture", workgroup = "WORKGROUP"),
+            NetworkShareEntity(name = "$PREFIX WebDAV", protocol = "WEBDAV", address = network, port = 8082, sharePath = "/fixture"),
+            NetworkShareEntity(name = "$PREFIX SFTP", protocol = "SFTP", address = network, port = port),
+        ).forEach { repository.insertNetworkShare(it.copy(username = user, password = pass, anonymous = false)) }
+        val shares = repository.getAllNetworkShares().filter { it.name.startsWith(PREFIX) }.sortedBy { it.protocol }
         assertEquals(setOf("FTP", "SMB", "SFTP", "WEBDAV"), shares.map { it.protocol.uppercase() }.toSet())
+        // The lab host for the dual-pane part; connecting once also trusts the SFTP share's host key.
+        val host = E2eLabHosts.add(vm, HOST, network, port, user, pass).also { E2eLabHosts.connectOnce(vm, it) }
+        var offline: PhoneOffline? = null
+        // Cancels that ended, but later than their bound: reported together at the end, so the
+        // checks after them still run (an SMB upload takes about 15.7 s to cancel on the fixture).
+        val slowCancels = mutableListOf<String>()
         val authority = "${context.packageName}.slowtransfer"
         val runId = System.currentTimeMillis().toString(36)
         val roots = linkedMapOf<NetworkShareEntity, String>()
@@ -80,10 +111,9 @@ class E2eFileTransferLifecycleStressTest {
                 await("${share.protocol} upload progress", 20_000) {
                     vm.sftpTransfers.find { it.id == row.id }?.bytesTransferred ?: 0L >= 256 * 1024
                 }
+                val cancelledAt = System.nanoTime()
                 vm.cancelSftpTransfer(row.id)
-                await("${share.protocol} bounded cancel", 12_000) {
-                    vm.sftpTransfers.find { it.id == row.id }?.status == SftpTransferStatus.Failure
-                }
+                awaitCancelled(vm, row.id, "${share.protocol} upload", cancelledAt, 12_000, slowCancels)
                 assertEquals(TRANSFER_CANCELLED_MESSAGE, vm.sftpTransfers.find { it.id == row.id }?.message)
                 client(share).use { fs ->
                     val names = fs.list(root).map { it.name }
@@ -126,11 +156,12 @@ class E2eFileTransferLifecycleStressTest {
             await("download progress", 20_000) {
                 vm.sftpTransfers.find { it.id == downloadRow.id }?.bytesTransferred ?: 0L >= 256 * 1024
             }
+            val downloadCancelledAt = System.nanoTime()
             vm.cancelSftpTransfer(downloadRow.id)
-            await("download cancellation", 12_000) {
-                vm.sftpTransfers.find { it.id == downloadRow.id }?.status == SftpTransferStatus.Failure
+            awaitCancelled(vm, downloadRow.id, "SFTP download", downloadCancelledAt, 12_000, slowCancels)
+            if (vm.sftpTransfers.find { it.id == downloadRow.id }?.status == SftpTransferStatus.Failure) {
+                assertTrue("partial SAF download was not deleted", downloadUri.toString() in SlowTransferContentProvider.deletedUris)
             }
-            assertTrue("partial SAF download was not deleted", downloadUri.toString() in SlowTransferContentProvider.deletedUris)
 
             // A provider that ends halfway must fail before commit. Retry then reopens the source,
             // and must target the original FTP path even after the UI has moved to another share.
@@ -154,28 +185,33 @@ class E2eFileTransferLifecycleStressTest {
             client(ftp).use { fs -> assertEquals(6L * MIB, fs.list(ftpRoot).single { it.name == retryName }.size) }
             client(smb).use { fs -> assertFalse(fs.list(requireNotNull(roots[smb])).any { it.name == retryName }) }
 
-            // Real Wi-Fi loss during an active upload, followed by a user cancellation, must return
-            // control within the same bound even if a protocol socket would otherwise wait longer.
-            openShare(vm, ftp, ftpRoot)
-            val wifiName = "wifi-loss.bin"
-            val wifiUri = slowUri(authority, "upload", wifiName, 64L * MIB, delayMs = 5)
-            vm.shareUploadMany(listOf(wifiUri), context)
-            val wifiRow = awaitRunning(vm, wifiName)
-            await("Wi-Fi upload progress", 20_000) {
-                vm.sftpTransfers.find { it.id == wifiRow.id }?.bytesTransferred ?: 0L >= 512 * 1024
+            // A real network loss during an active upload, followed by a user cancellation, must
+            // return control within the same bound even if a protocol socket would otherwise wait
+            // longer. SMB, whose one connection the loss takes away: FTP's data connection would not
+            // go, as the fixture names 127.0.0.1 for it, which on the emulator is adb's reverse port.
+            val smbRoot = requireNotNull(roots[smb])
+            openShare(vm, smb, smbRoot)
+            val lossName = "network-loss.bin"
+            val lossUri = slowUri(authority, "upload", lossName, 64L * MIB, delayMs = 5)
+            vm.shareUploadMany(listOf(lossUri), context)
+            val lossRow = awaitRunning(vm, lossName)
+            await("upload progress before the network loss", 20_000) {
+                vm.sftpTransfers.find { it.id == lossRow.id }?.bytesTransferred ?: 0L >= 512 * 1024
             }
-            DeviceShell.run("svc wifi disable")
+            offline = PhoneOffline()
             delay(2_000)
-            vm.cancelSftpTransfer(wifiRow.id)
-            DeviceShell.run("svc wifi enable")
-            await("Wi-Fi-loss cancellation", 15_000) {
-                vm.sftpTransfers.find { it.id == wifiRow.id }?.status == SftpTransferStatus.Failure
-            }
-            await("Wi-Fi reconnect", 30_000) { canList(ftp, ftpRoot) }
-            client(ftp).use { fs ->
-                val names = fs.list(ftpRoot).map { it.name }
-                assertFalse(wifiName in names)
-                assertFalse(names.any { ".omniterm-part-" in it })
+            assertFalse("the share is still reachable with the phone offline", canList(smb, smbRoot))
+            val lossCancelledAt = System.nanoTime()
+            vm.cancelSftpTransfer(lossRow.id)
+            offline?.close()
+            offline = null
+            awaitCancelled(vm, lossRow.id, "SMB upload during the network loss", lossCancelledAt, 15_000, slowCancels)
+            await("the share back after the network", 30_000) { canList(smb, smbRoot) }
+            client(smb).use { fs ->
+                val names = fs.list(smbRoot).map { it.name }
+                assertFalse(lossName in names)
+                // Reported at the end with the slow cancels, so the checks after it still run.
+                names.filter { ".omniterm-part-" in it }.forEach { slowCancels += "SMB kept the staging file $it after the network loss" }
             }
 
             // Cross-protocol overwrite confirmation is exercised through the visible UI. Copy FTP
@@ -205,14 +241,14 @@ class E2eFileTransferLifecycleStressTest {
 
             // Dual-pane navigation is independent: pane B can traverse a nested SFTP path without
             // changing pane A's selected host or directory.
-            val host = requireNotNull(vm.servers.value.find { it.name == "E2E Foreground Demo" })
+            val labDir = (E2eArgs.get("omniterm_e2e_sftp_home") ?: "/home/${host.username}") + "/omniterm-e2e"
             vm.selectedServerId = host.id
-            vm.loadSftp("/home/${host.username}/omniterm-e2e")
+            vm.loadSftp(labDir)
             await("primary SFTP pane", 25_000) { !vm.sftpLoading && vm.sftpError.isNullOrBlank() }
             val primaryPath = vm.sftpPath
             if (!vm.dualPaneEnabled) vm.toggleDualPane()
             vm.paneBSelectServer(host.id)
-            vm.loadPaneB("/home/${host.username}/omniterm-e2e")
+            vm.loadPaneB(labDir)
             await("secondary SFTP pane", 25_000) { !vm.paneBLoading && vm.paneBError.isNullOrBlank() }
             val nested = vm.paneBEntries.firstOrNull { it.isDirectory }
             if (nested != null) {
@@ -222,8 +258,9 @@ class E2eFileTransferLifecycleStressTest {
                 vm.paneBNavigateUp()
                 await("secondary navigate up", 25_000) { !vm.paneBLoading && vm.paneBPath == primaryPath }
             }
+            assertTrue("cancels over their bound, or what they left: $slowCancels", slowCancels.isEmpty())
         } finally {
-            DeviceShell.run("svc wifi enable")
+            offline?.close()
             composeRule.runOnUiThread {
                 vm.cancelAllRunningTransfers()
                 vm.closeShareBrowser()
@@ -231,6 +268,8 @@ class E2eFileTransferLifecycleStressTest {
             for ((share, root) in roots.entries.reversed()) {
                 runCatching { client(share).use { deleteTree(it, root) } }
             }
+            removeShares()
+            E2eLabHosts.remove(vm, HOST)
         }
     }
 
@@ -294,6 +333,23 @@ class E2eFileTransferLifecycleStressTest {
         }
     }
 
+    /**
+     * Waits for the cancelled transfer [rowId] to end as failed, a minute at most. One that took
+     * [boundMs] or longer from [cancelledAt] (System.nanoTime), or had not ended after the minute,
+     * is added to [slow] with what its row showed.
+     */
+    private suspend fun awaitCancelled(vm: AppViewModel, rowId: String, label: String, cancelledAt: Long, boundMs: Long, slow: MutableList<String>) {
+        val ended = withTimeoutOrNull(60_000) {
+            while (vm.sftpTransfers.find { it.id == rowId }?.status != SftpTransferStatus.Failure) delay(100)
+        } != null
+        val tookMs = (System.nanoTime() - cancelledAt) / 1_000_000
+        val row = vm.sftpTransfers.find { it.id == rowId }
+        when {
+            !ended -> slow += "$label had not ended $tookMs ms after the cancel (${row?.status}, ${row?.bytesTransferred} bytes)"
+            tookMs >= boundMs -> slow += "$label $tookMs ms (bound ${boundMs / 1000} s)"
+        }
+    }
+
     private suspend fun <T : Any> awaitValue(label: String, timeoutMs: Long, value: () -> T?): T {
         var result: T? = null
         await(label, timeoutMs) { value()?.also { result = it } != null }
@@ -302,5 +358,9 @@ class E2eFileTransferLifecycleStressTest {
 
     private fun join(parent: String, child: String): String = if (parent == "/") "/$child" else "${parent.trimEnd('/')}/$child"
 
-    private companion object { const val MIB = 1024L * 1024L }
+    private companion object {
+        const val MIB = 1024L * 1024L
+        const val PREFIX = "E2E transfer"
+        const val HOST = "E2E transfer host"
+    }
 }

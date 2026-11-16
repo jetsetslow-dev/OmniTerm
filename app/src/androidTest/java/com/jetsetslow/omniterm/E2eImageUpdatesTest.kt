@@ -106,14 +106,14 @@ class E2eImageUpdatesTest {
         val user = E2eArgs.require("user")
         val pass = E2eArgs.require("pass")
         val vm = model()
-        val host = E2eLabHosts.add(composeRule, vm, PODMAN_HOST, "127.0.0.1", 2206, user, pass)
+        val host = E2eLabHosts.add(vm, PODMAN_HOST, "127.0.0.1", 2206, user, pass)
         try {
             // The fixture's own host key, on first use.
             E2eLabHosts.connectOnce(vm, host)
             withContainers(vm, host, "podman") { checkImages(vm, host, "podman") }
         } finally {
             composeRule.runOnUiThread { vm.selectedServerId = null }
-            E2eLabHosts.remove(composeRule, vm, PODMAN_HOST)
+            E2eLabHosts.remove(vm, PODMAN_HOST)
         }
     }
 

@@ -42,7 +42,7 @@ class E2eAlertLifecycleStressTest {
         }
         val host = runBlocking {
             E2eLabHosts.add(
-                composeRule, vm, HOST, E2eArgs.require("network_host"), E2eArgs.get("port")?.toIntOrNull() ?: 2205,
+                vm, HOST, E2eArgs.require("network_host"), E2eArgs.get("port")?.toIntOrNull() ?: 2205,
                 E2eArgs.require("user"), E2eArgs.require("pass"),
             ).also { E2eLabHosts.connectOnce(vm, it) }
         }
@@ -183,7 +183,7 @@ class E2eAlertLifecycleStressTest {
             vm.saveTelemetryInterval(originalInterval.toInt())
             vm.saveAlertsEnabled(originalAlertsEnabled)
             vm.alertRules.value.filter { it.notes == NOTE }.forEach(vm::deleteAlertRule)
-            runBlocking { E2eLabHosts.remove(composeRule, vm, HOST) }
+            runBlocking { E2eLabHosts.remove(vm, HOST) }
         }
     }
 

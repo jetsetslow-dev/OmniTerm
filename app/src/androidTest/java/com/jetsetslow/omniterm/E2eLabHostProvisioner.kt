@@ -57,7 +57,7 @@ class E2eLabHostProvisioner {
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
 
-        E2eLabHosts.add(composeRule, vm, HOST_NAME, host, port, user, pass, keepExisting = true)
+        E2eLabHosts.add(vm, HOST_NAME, host, port, user, pass, keepExisting = true)
         Unit
     }
 

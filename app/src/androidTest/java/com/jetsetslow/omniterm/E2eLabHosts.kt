@@ -1,6 +1,8 @@
 package com.jetsetslow.omniterm
 
-import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.test.platform.app.InstrumentationRegistry
+import com.jetsetslow.omniterm.data.AppDatabase
+import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.ui.AppViewModel
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +21,6 @@ internal object E2eLabHosts {
      * or, with [keepExisting], returned as it is.
      */
     suspend fun add(
-        rule: ComposeTestRule,
         vm: AppViewModel,
         name: String,
         host: String,
@@ -29,42 +30,66 @@ internal object E2eLabHosts {
         keepExisting: Boolean = false,
     ): ServerEntity {
         vm.servers.value.firstOrNull { it.name == name }?.let { if (keepExisting) return it }
-        remove(rule, vm, name)
+        remove(vm, name)
         var added: String? = "pending"
-        rule.runOnUiThread {
-            vm.addServer(name, host, port, user, null, "password", "", 0, false, "", password = pass) { added = it }
-        }
+        onMain { vm.addServer(name, host, port, user, null, "password", "", 0, false, "", password = pass) { added = it } }
         await("$name added") { vm.servers.value.any { it.name == name } }
         check(added == null) { "addServer reported: $added" }
         return vm.servers.value.single { it.name == name }
     }
 
     /**
-     * Runs one command on [host], approving its host key if this is the first connection to it, so
-     * no later connection waits on that question. Returns what the command printed.
+     * Saves [server] as it is, its proxy or jump route included, replacing an earlier host of its
+     * name. Unlike [add] it skips the form's one-host-per-address rule, as a restored backup can, so
+     * several routes to one machine can be saved side by side.
      */
-    suspend fun connectOnce(vm: AppViewModel, host: ServerEntity): String = coroutineScope {
+    suspend fun save(vm: AppViewModel, server: ServerEntity): ServerEntity {
+        remove(vm, server.name)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        AppRepository(AppDatabase.getDatabase(context)).insertServer(server)
+        await("${server.name} added") { vm.servers.value.any { it.name == server.name } }
+        return vm.servers.value.single { it.name == server.name }
+    }
+
+    /**
+     * Runs one command on [host], approving its host key if this is the first connection to it (and
+     * its proxy's or jump host's, for a host behind one), so no later connection waits on that
+     * question. Returns what the command printed.
+     */
+    suspend fun connectOnce(vm: AppViewModel, host: ServerEntity): String =
+        approvingHostKeys(vm, listOf(host.host, host.proxyHost)) {
+            vm.executeSshCommand(host, "printf 'OT-READY\\n'").also {
+                check("OT-READY" in it) { "${host.name} did not answer: ${it.take(200)}" }
+            }
+        }
+
+    /**
+     * Runs [block], answering yes, as the user would, to every first-use host key question about one
+     * of [hosts] it raises: the lab's own hosts, whose keys a fresh device has never seen.
+     */
+    suspend fun <T> approvingHostKeys(vm: AppViewModel, hosts: Collection<String>, block: suspend () -> T): T = coroutineScope {
+        val names = hosts.filter { it.isNotBlank() }
         val approve = launch(Dispatchers.Main) {
             while (true) {
-                vm.pendingHostKeyApproval?.let { if (host.host in it.host) vm.approveHostKey(true) }
+                vm.pendingHostKeyApproval?.let { request -> if (names.any { it in request.host }) vm.approveHostKey(true) }
                 delay(100)
             }
         }
         try {
-            vm.executeSshCommand(host, "printf 'OT-READY\\n'").also {
-                check("OT-READY" in it) { "${host.name} did not answer: ${it.take(200)}" }
-            }
+            block()
         } finally {
             approve.cancel()
         }
     }
 
     /** Removes every host named [name]. */
-    suspend fun remove(rule: ComposeTestRule, vm: AppViewModel, name: String) {
-        rule.runOnUiThread { if (vm.servers.value.any { it.id == vm.selectedServerId && it.name == name }) vm.selectedServerId = null }
+    suspend fun remove(vm: AppViewModel, name: String) {
+        onMain { if (vm.servers.value.any { it.id == vm.selectedServerId && it.name == name }) vm.selectedServerId = null }
         vm.servers.value.filter { it.name == name }.forEach { vm.deleteServer(it) }
         await("$name removed") { vm.servers.value.none { it.name == name } }
     }
+
+    private fun onMain(block: () -> Unit) = InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
 
     private suspend fun await(what: String, predicate: () -> Boolean) {
         try {
