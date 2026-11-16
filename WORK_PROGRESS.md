@@ -2116,3 +2116,24 @@ The full gate on 93826ee found two things, each fixed in its own commit before t
   `scripts/test-tunnel.sh` and the licence check passing.
 
 The gate's numbers, the device sweep and CI are in the pull request.
+
+The device sweep on the API 35 emulator, against the repository's own fixtures, then found seven
+device suites that no longer matched the app or the fixtures. Each was a test problem, not an app
+one, and each passed on its rerun after the fix:
+
+- `E2eTerminalNavigationMatrixTest` turned read-only on before any terminal existed, which no longer
+  does anything; its terminals are now made locked.
+- `E2eDocsScreenshotsTest`: Fleet now shows hosts that end the same way as one card, and both
+  runtime fixtures print the same `uname` and `uptime`; the broadcast adds `hostname`.
+- `E2eDirectSshFailureFeedbackTest` (both the error row and the connect box offer Retry) and
+  `E2ePlayStoreScreenshotFixture` (a host card also names its group) now pick the node they mean.
+- `E2eMarkdownPreviewTest` saves its host directly, so it can sit at the provisioned lab host's
+  address; `E2eLabHosts.add` reports a refused host instead of timing out.
+- `E2eTerminalStressTest` waits for the screen change after a kept tmux session saves its recovery.
+
+Set-up notes for the next sweep: the foreground-service proof needs a fresh install's permissions (no
+notification permission, not exempt from battery optimisation); the Podman runtime variant needs the
+app data wiped before provisioning port 2206; the Compose builder stress test takes
+`omniterm_e2e_compose_path=/fixtures/large-stack.yml` on a runtime fixture; the network tools take
+`host=10.0.2.2` on the emulator, after `E2eLabSeedTest` seeded with `port=2201`; and the terminal
+stress suites run after `E2eLabSeedTest` seeded with `port=2205`.
