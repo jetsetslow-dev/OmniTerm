@@ -1694,7 +1694,7 @@ GPL/AGPL/BSL dependency added. Added modules (exact versions/licences):
 | github.com/prometheus/client_model | v0.6.3 | Apache-2.0 |
 | github.com/prometheus/common | v0.72.0 | Apache-2.0 |
 | github.com/prometheus/procfs | v0.22.0 | Apache-2.0 |
-| github.com/rcrowley/go-metrics | v0.0.0-20201227073835-cf1acfcdf475 | BSD-2-Clause |
+| github.com/rcrowley/go-metrics | v0.0.0-20201227073835-cf1acfcdf475 | BSD-2-Clause-Views |
 | github.com/stefanberger/go-pkcs11uri | v0.0.0-20230803200340-78284954bff6 | Apache-2.0 |
 | github.com/vishvananda/netns | v0.0.5 | Apache-2.0 |
 | google.golang.org/protobuf | v1.36.12 | BSD-3-Clause, LicenseRef-scancode-google-patent-license-golang |
@@ -2137,3 +2137,15 @@ app data wiped before provisioning port 2206; the Compose builder stress test ta
 `omniterm_e2e_compose_path=/fixtures/large-stack.yml` on a runtime fixture; the network tools take
 `host=10.0.2.2` on the emulator, after `E2eLabSeedTest` seeded with `port=2201`; and the terminal
 stress suites run after `E2eLabSeedTest` seeded with `port=2205`.
+
+The pull request's first push then raised two more, fixed on top of it:
+
+- Dependency review rejected `github.com/rcrowley/go-metrics` (through Nebula) as
+  `BSD-2-Clause-Views`, which `allow-licenses` did not list. Its LICENSE at that version is the
+  two-clause BSD text plus the "views and conclusions" disclaimer: the FreeBSD licence, permissive.
+  `scripts/check-licenses.py` had read it as plain BSD-2-Clause and passed. It now names it apart,
+  failed on it before the licence was added to `allow-licenses`, and passes with it.
+- GitHub's secret scanner flagged the made-up Tailscale key in `tunnel/omnitunnel/tailscale_test.go`
+  as a Tailscale API key. That key and the other test keys of that shape, in that file and two
+  Kotlin unit tests, are now built from parts, so no line has the shape of a real key. AGENTS.md
+  now says test credentials must never have that shape.
