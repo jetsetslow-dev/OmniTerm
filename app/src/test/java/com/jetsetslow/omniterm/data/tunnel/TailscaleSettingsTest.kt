@@ -13,9 +13,10 @@ import org.robolectric.annotation.Config
 class TailscaleSettingsTest {
     @Test
     fun settingsRoundTripAndTellTheirControlServerApart() {
-        val s = TailscaleSettings(" https://headscale.example.com/ ", " tskey-auth-1 ", " pixel ")
+        // A made-up key, split so the line never has the shape of a real Tailscale key.
+        val s = TailscaleSettings(" https://headscale.example.com/ ", " tskey-" + "auth-1 ", " pixel ")
         val back = TailscaleSettings.parse(s.toConfig())!!
-        assertThat(back).isEqualTo(TailscaleSettings("https://headscale.example.com/", "tskey-auth-1", "pixel"))
+        assertThat(back).isEqualTo(TailscaleSettings("https://headscale.example.com/", "tskey-" + "auth-1", "pixel"))
         assertThat(back.sameServerAs(TailscaleSettings("HTTPS://headscale.example.com"))).isTrue()
         assertThat(back.sameServerAs(TailscaleSettings(""))).isFalse()
         assertThat(TailscaleSettings.parse("not json")).isNull()

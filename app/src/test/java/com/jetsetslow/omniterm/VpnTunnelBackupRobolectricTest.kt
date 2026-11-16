@@ -198,7 +198,7 @@ class VpnTunnelBackupRobolectricTest {
         const val PASSPHRASE = "vpn-tunnel-passphrase"
         const val HOME = "[Interface]\nPrivateKey = home-private-key-for-the-test\n"
         const val LAB = "[Interface]\nPrivateKey = lab-private-key-for-the-test\n"
-        const val TAILNET = "{\"controlUrl\":\"https://headscale.example.com\",\"authKey\":\"tskey-auth-test\",\"hostname\":\"phone\"}"
+        const val TAILNET = "{\"controlUrl\":\"https://headscale.example.com\",\"authKey\":\"tskey-" + "auth-test\",\"hostname\":\"phone\"}"
         const val NODE = "{\"_machinekey\":\"bWFjaGluZS1rZXktZm9yLXRoZS10ZXN0\"}"
         val SELECTION = BackupSelection.NONE.copy(servers = true)
     }

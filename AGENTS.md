@@ -154,6 +154,10 @@ state that a screen reads.
   JVM replay. Dispatch on the complete control sequence, not only its final byte: modern Kitty
   keyboard-protocol controls such as `CSI < u` and `CSI >1 u` share `u` with ANSI restore-cursor
   but must never move the terminal cursor.
+- Test and example credentials must not have the shape of a real provider key (`tskey-auth-…`,
+  `ghp_…`, `AKIA…`, `xoxb-…`, `sk_live_…` and the like) anywhere in the repository, because
+  GitHub's secret scanner alerts on that shape publicly even when the value is made up. Build such
+  a value from parts (`"tskey-" + "auth-…"`) or drop the prefix where the code does not read it.
 
 ## Required pre-merge evidence
 

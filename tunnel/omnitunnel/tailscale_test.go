@@ -33,7 +33,9 @@ import (
 // The far side of these tests is a real Tailscale control server, DERP relay and peer, all in this
 // process: tailscale.com's own test control server (testcontrol), as tsnet's tests use it.
 
-const testKey = "tskey-auth-omniterm-test"
+// Made-up keys, split so no line has the shape of a real Tailscale key: GitHub's secret scanner
+// alerts on that shape publicly. The test control server compares the whole string only.
+const testKey = "tskey-" + "auth-omniterm-test"
 
 func startTestControl(t *testing.T, configure func(*testcontrol.Server)) *testcontrol.Server {
 	t.Helper()
@@ -301,7 +303,7 @@ func TestWithoutAKeyTheTunnelGivesASignInPageAndRunsOnceSignedIn(t *testing.T) {
 
 func TestAKeyTheControlServerRefusesStopsTheStart(t *testing.T) {
 	control := startTestControl(t, func(c *testcontrol.Server) { c.RequireAuthKey = testKey })
-	_, err := StartTailscale(tsConf(control, "tskey-auth-wrong"), t.TempDir(), &memoryStore{}, 60_000)
+	_, err := StartTailscale(tsConf(control, "tskey-"+"auth-wrong"), t.TempDir(), &memoryStore{}, 60_000)
 	if err == nil || !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), "invalid authkey") {
 		t.Fatalf("got %v", err)
 	}
@@ -436,16 +438,16 @@ func TestClosingATailscaleTunnelEndsItsConnections(t *testing.T) {
 func TestTailscaleSettingsAreChecked(t *testing.T) {
 	for conf, want := range map[string]string{
 		`{}`: "",
-		`{"controlUrl":"https://headscale.example.com","authKey":"tskey-auth-abc","hostname":"pixel-8"}`: "",
-		`{"controlUrl":"http://10.0.2.2:8085/"}`:                                                         "",
-		`{"controlUrl":"headscale.example.com"}`:                                                         "control server",
-		`{"controlUrl":"ftp://headscale.example.com"}`:                                                   "control server",
-		`{"controlUrl":"https://user@headscale.example.com"}`:                                            "control server",
-		`{"controlUrl":"https://h.example.com/x?y=1"}`:                                                   "control server",
-		`{"authKey":"tskey auth"}`:                                                                       "spaces",
-		`{"hostname":"-phone"}`:                                                                          "device name",
-		`{"hostname":"my phone"}`:                                                                        "device name",
-		`{"hostname":"` + strings.Repeat("a", 64) + `"}`:                                                 "device name",
+		`{"controlUrl":"https://headscale.example.com","authKey":"tskey-` + `auth-abc","hostname":"pixel-8"}`: "",
+		`{"controlUrl":"http://10.0.2.2:8085/"}`:              "",
+		`{"controlUrl":"headscale.example.com"}`:              "control server",
+		`{"controlUrl":"ftp://headscale.example.com"}`:        "control server",
+		`{"controlUrl":"https://user@headscale.example.com"}`: "control server",
+		`{"controlUrl":"https://h.example.com/x?y=1"}`:        "control server",
+		`{"authKey":"tskey auth"}`:                            "spaces",
+		`{"hostname":"-phone"}`:                               "device name",
+		`{"hostname":"my phone"}`:                             "device name",
+		`{"hostname":"` + strings.Repeat("a", 64) + `"}`:      "device name",
 		`not json`: "could not be read",
 	} {
 		got := CheckTailscale(conf)
