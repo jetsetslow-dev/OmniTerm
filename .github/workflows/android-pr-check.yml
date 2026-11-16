@@ -91,7 +91,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The repeat step grows with the test classes a pull request changes. With 52 of them (#154)
+    # the unit tests and lint took 18 minutes, and the job was cut off at 30 during the fifth
+    # repeat, the first four having passed.
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
