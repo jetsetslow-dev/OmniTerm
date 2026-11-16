@@ -2149,3 +2149,6 @@ The pull request's first push then raised two more, fixed on top of it:
   as a Tailscale API key. That key and the other test keys of that shape, in that file and two
   Kotlin unit tests, are now built from parts, so no line has the shape of a real key. AGENTS.md
   now says test credentials must never have that shape.
+- PR Check's Build & Test job ran out of its 30 minutes while repeating the 52 changed test classes
+  five times: four repeats had passed (1 min 38 s each) when it was cut off. Its limit is now 60
+  minutes; every test still runs.
