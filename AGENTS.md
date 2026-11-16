@@ -21,6 +21,9 @@ These rules apply to every contributor and automation tool working in this repos
 
 - For any build-affecting change, run `./scripts/local-pr-check.sh --full` before the final commit
   or push. `--quick` is for intermediate iteration only and is not a final validation result.
+- One full gate per push (owner, Nov 9): batch fixes, checkpoints, bot findings and pending
+  Dependabot updates into the pull request in flight, with targeted tests in between. Open a
+  separate pull request only for work the owner has split out.
 - Never report a suite as passing if Gradle excluded or skipped part of it. State the exact
   platform-specific exclusions and the gate that will exercise them.
 - Keep `scripts/local-pr-check.sh` aligned with `.github/workflows/android-pr-check.yml` whenever
