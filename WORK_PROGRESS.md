@@ -2102,3 +2102,17 @@ and back in the editor the same text, selection and scroll position. `E2eCodeEdi
 gained Markdown and JSON pictures (4 tests pass); line numbers sit beside their lines.
 
 Open: the full gate was not run (one gate per push).
+
+## Release pass (Nov 16)
+
+The full gate on 93826ee found two things, each fixed in its own commit before the gate that counts:
+
+- `TerminalNavigationRobolectricTest.armedKeyBarModifiersStayWithTheirOwnTerminal` still expected
+  read-only to cover the whole screen and disarm every terminal's modifiers. Since the typing round,
+  read-only is each terminal's own (the Input button locks only its session), so the test now checks
+  that another terminal keeps its armed Ctrl and that read-only disarms the terminal it locks. With
+  that disarm removed from `updateTerminalReadOnly`, it fails.
+- Dependabot would propose `go.yaml.in/yaml/v3` v3.0.5 → v3.0.6 for `tunnel/go.mod`; taken, with
+  `scripts/test-tunnel.sh` and the licence check passing.
+
+The gate's numbers, the device sweep and CI are in the pull request.
