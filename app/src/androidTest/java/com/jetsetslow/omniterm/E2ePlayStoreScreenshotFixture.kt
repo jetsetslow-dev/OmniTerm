@@ -1,8 +1,9 @@
 package com.jetsetslow.omniterm
 
 import android.graphics.Bitmap
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -95,7 +96,8 @@ class E2ePlayStoreScreenshotFixture {
 
             composeRule.runOnUiThread { vm.navigateTo(Screen.Servers) }
             composeRule.waitForIdle()
-            composeRule.onNodeWithText("Production").performClick()
+            // The group filter chip, not a host card that also names its group.
+            composeRule.onNode(hasText("Production") and isSelectable()).performClick()
             awaitFrame()
             capture(instrumentation, outDir, "04-server-dashboard")
             // Real lab rows are needed again as soon as anything dials the lab.

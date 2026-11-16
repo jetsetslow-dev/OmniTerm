@@ -26,6 +26,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
 import kotlinx.coroutines.Job
@@ -63,8 +64,14 @@ class E2eMarkdownPreviewTest {
         composeRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         val home = E2eArgs.require("omniterm_e2e_sftp_home")
-        val host = E2eLabHosts.add(
-            vm, HOST, E2eArgs.require("host"), E2eArgs.get("port")?.toIntOrNull() ?: 2205, E2eArgs.require("user"), E2eArgs.require("pass"),
+        // Saved as it is rather than through the form: the provisioned lab host is usually at this
+        // same address already, and the form allows one saved host per address.
+        val host = E2eLabHosts.save(
+            vm,
+            ServerEntity(
+                name = HOST, host = E2eArgs.require("host"), port = E2eArgs.get("port")?.toIntOrNull() ?: 2205,
+                username = E2eArgs.require("user"), authPassword = E2eArgs.require("pass"),
+            ),
         ).also { E2eLabHosts.connectOnce(vm, it) }
         val name = "omniterm-e2e-preview-${System.currentTimeMillis().toString(36)}.md"
         val path = "$home/$name"

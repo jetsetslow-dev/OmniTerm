@@ -71,15 +71,18 @@ class E2eDocsScreenshotsTest {
             val docker = vm.servers.value.single { it.name == "lab-docker" }
             val podman = vm.servers.value.single { it.name == "lab-podman" }
 
-            // Fleet Broadcast first: it also trusts both host keys for the rest of the run.
+            // Fleet Broadcast first: it also trusts both host keys for the rest of the run. Both
+            // fixtures share one kernel, so `uname` and `uptime` alone read the same on each and
+            // Fleet shows them as one "same result" card; the host name keeps a card per host.
+            val command = "uname -sr; uptime; hostname"
             composeRule.runOnUiThread {
                 vm.navigateTo(Screen.Fleet)
                 vm.fleetTabIndex = 1
                 vm.broadcastTargetMode = FleetTargetMode.Servers
                 vm.broadcastTargetServerIds.clear()
                 vm.broadcastTargetServerIds.addAll(listOf(docker.id, podman.id))
-                vm.broadcastCommandText = "uname -sr; uptime"
-                vm.runFleetBroadcast("uname -sr; uptime", listOf(docker.id, podman.id))
+                vm.broadcastCommandText = command
+                vm.runFleetBroadcast(command, listOf(docker.id, podman.id))
             }
             await("broadcast settles", 90_000) {
                 approveHostKey(vm)

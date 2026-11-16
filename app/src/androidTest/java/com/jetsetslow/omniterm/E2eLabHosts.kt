@@ -33,8 +33,11 @@ internal object E2eLabHosts {
         remove(vm, name)
         var added: String? = "pending"
         onMain { vm.addServer(name, host, port, user, null, "password", "", 0, false, "", password = pass) { added = it } }
-        await("$name added") { vm.servers.value.any { it.name == name } }
+        // The form's answer first: a refusal, such as another saved host at this address, then
+        // says why instead of surfacing as a host that never appears.
+        await("$name answered") { added != "pending" }
         check(added == null) { "addServer reported: $added" }
+        await("$name added") { vm.servers.value.any { it.name == name } }
         return vm.servers.value.single { it.name == name }
     }
 
