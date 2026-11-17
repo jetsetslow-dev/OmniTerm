@@ -37,7 +37,7 @@ fun rememberHighlightPalette(): HighlightPalette {
 private fun Color.luminance(): Float = 0.299f * red + 0.587f * green + 0.114f * blue
 
 /** Editor languages we do lightweight highlighting for. Picked by file extension at the call site. */
-enum class CodeLanguage { NONE, YAML, SHELL }
+enum class CodeLanguage { NONE, YAML, SHELL, MARKDOWN, JSON }
 
 /** Semantic token kinds. Colour is resolved later from the active theme (see [HighlightPalette]). */
 enum class HiKind { COMMENT, STRING, NUMBER, KEY, KEYWORD }
@@ -87,6 +87,13 @@ private val SHELL_DOTFILES = setOf(
 
 private val SHELL_INTERPRETERS = setOf("sh", "bash", "zsh", "ksh", "mksh", "dash", "ash")
 
+private val MARKDOWN_EXTENSIONS = setOf("md", "markdown", "mdown", "mkd", "mkdn", "mdwn")
+
+/** Files that are Markdown by convention without saying so in their name. */
+private val MARKDOWN_NAMES = setOf("readme", "changelog", "contributing")
+
+private val JSON_EXTENSIONS = setOf("json", "jsonc", "json5", "geojson", "webmanifest")
+
 /**
  * Map a file to a [CodeLanguage] by its name, or, for a name that says nothing, by a shell
  * [firstLine] (`#!/bin/sh`, `#!/usr/bin/env bash`). Pure for unit-testing.
@@ -97,6 +104,8 @@ fun languageForFileName(name: String, firstLine: String? = null): CodeLanguage {
     val ext = lower.substringAfterLast('.', "")
     return when {
         ext == "yml" || ext == "yaml" -> CodeLanguage.YAML
+        ext in MARKDOWN_EXTENSIONS || lower in MARKDOWN_NAMES -> CodeLanguage.MARKDOWN
+        ext in JSON_EXTENSIONS -> CodeLanguage.JSON
         ext == "sh" || ext == "bash" || ext == "zsh" || ext == "ksh" -> CodeLanguage.SHELL
         lower in SHELL_DOTFILES -> CodeLanguage.SHELL
         lower == "dockerfile" || lower == "containerfile" || lower.startsWith("dockerfile.") ||
@@ -108,6 +117,29 @@ fun languageForFileName(name: String, firstLine: String? = null): CodeLanguage {
         else -> CodeLanguage.NONE
     }
 }
+
+/** Whether the file editor offers a preview for [name]: `.md`, `.markdown` and the like, and `README`. */
+fun isMarkdownFileName(name: String): Boolean = languageForFileName(name) == CodeLanguage.MARKDOWN
+
+/**
+ * The language a Markdown code fence names in its info string (```` ```yaml ````, ```` ```bash title ````):
+ * the names people use for shell sessions, then the same names files have as extensions.
+ */
+fun languageForFenceInfo(info: String): CodeLanguage {
+    // Pandoc and others write the name in braces with a dot: {.yaml}, {.bash .numberLines}.
+    val word = info.trim().removePrefix("{").trimStart().removePrefix(".")
+        .takeWhile { !it.isWhitespace() && it != '{' && it != '}' && it != ',' && it != ';' }
+        .lowercase()
+    return when {
+        word.isEmpty() -> CodeLanguage.NONE
+        word in SHELL_FENCE_NAMES -> CodeLanguage.SHELL
+        else -> languageForFileName("fence.$word")
+    }
+}
+
+private val SHELL_FENCE_NAMES = setOf(
+    "shell", "console", "shellsession", "sh-session", "terminal", "dockerfile", "containerfile", "docker", "env", "dotenv",
+)
 
 /** `#!/bin/bash`, `#!/usr/bin/env -S zsh -e` and the like. */
 internal fun isShellShebang(line: String): Boolean {
@@ -141,6 +173,15 @@ sealed interface LineState {
 
     /** YAML: inside a `|` or `>` block, which lasts while lines are indented past [parentIndent]. */
     data class InBlockScalar(val parentIndent: Int) : LineState
+
+    /**
+     * Markdown: inside a code block fenced by [length] [fence] characters, whose lines are coloured as
+     * [language], each from the [inner] state the line before it left.
+     */
+    data class InFence(val fence: Char, val length: Int, val language: CodeLanguage, val inner: LineState) : LineState
+
+    /** Inside a comment that ends at [close]: a JSONC block comment, or an HTML comment (`-->`) in Markdown. */
+    data class InComment(val close: String) : LineState
 }
 
 /** One line's tokens (offsets within the line) and the state the next line starts in. */
@@ -159,6 +200,8 @@ fun lexLine(line: String, lang: CodeLanguage, state: LineState): LexedLine = whe
     CodeLanguage.NONE -> LexedLine(emptyList(), LineState.Plain)
     CodeLanguage.SHELL -> ShellLexer(line, state).lex()
     CodeLanguage.YAML -> YamlLexer(line, state).lex()
+    CodeLanguage.MARKDOWN -> MarkdownLexer(line, state).lex()
+    CodeLanguage.JSON -> JsonLexer(line, state).lex()
 }
 
 /** A trailing `\r` (a CRLF file) is part of the line ending, not of the text. */
@@ -170,7 +213,7 @@ private fun isNumberStart(line: String, i: Int, end: Int): Boolean {
     return (c == '-' || c == '+') && i + 1 < end && line[i + 1].isDigit()
 }
 
-/** End of a number at [i]: decimal (`12`, `-3`, `12.5`, `1e3`) or hexadecimal (`0x1F`). */
+/** End of a number at [i]: decimal (`12`, `-3`, `12.5`, `1e3`, `2E-5`) or hexadecimal (`0x1F`). */
 private fun numberEnd(line: String, i: Int, end: Int): Int {
     var j = i
     if (line[j] == '-' || line[j] == '+') j++
@@ -180,9 +223,13 @@ private fun numberEnd(line: String, i: Int, end: Int): Int {
         return j
     }
     while (j < end && (line[j].isDigit() || line[j] == '.' || line[j] == '_')) j++
-    if (j < end && (line[j] == 'e' || line[j] == 'E') && j + 1 < end && line[j + 1].isDigit()) {
-        j++
-        while (j < end && line[j].isDigit()) j++
+    if (j < end && (line[j] == 'e' || line[j] == 'E')) {
+        var k = j + 1
+        if (k < end && (line[k] == '+' || line[k] == '-')) k++
+        if (k < end && line[k].isDigit()) {
+            j = k
+            while (j < end && line[j].isDigit()) j++
+        }
     }
     return j
 }
@@ -461,6 +508,397 @@ private class YamlLexer(private val line: String, private val start: LineState) 
 }
 
 /**
+ * Markdown as it is written: headings, list markers and task boxes, quote markers, emphasis markers,
+ * code spans, link addresses, rules, table pipes and HTML comments. A fenced code block is coloured
+ * as the language its fence names, line by line in that language's own state. Only colours change,
+ * never the text's size or weight, so the editor's lines keep their places. Linear in the line's
+ * length: the editor colours on the main thread.
+ */
+private class MarkdownLexer(private val line: String, private val start: LineState) {
+    private val end = contentEnd(line)
+    private val tokens = ArrayList<HiToken>()
+
+    /** Set once a `](` on this line found no closing `)`: later ones will not either. */
+    private var noClosingParen = false
+
+    fun lex(): LexedLine {
+        when (start) {
+            is LineState.InFence -> return fenceLine(start)
+            is LineState.InComment -> {
+                val close = line.indexOf(start.close)
+                if (close < 0 || close + start.close.length > end) {
+                    if (end > 0) tokens += HiToken(0, end, HiKind.COMMENT)
+                    return LexedLine(tokens, start)
+                }
+                val after = close + start.close.length
+                tokens += HiToken(0, after, HiKind.COMMENT)
+                return LexedLine(tokens, inline(after))
+            }
+            else -> {}
+        }
+        var i = spaces(0)
+        var quoted = false
+        while (i < end && line[i] == '>') {
+            tokens += HiToken(i, i + 1, HiKind.COMMENT)
+            quoted = true
+            i = spaces(i + 1)
+        }
+        fenceOpen(i, quoted)?.let { return it }
+        if (i < end && line[i] == '#') {
+            var j = i
+            while (j < end && line[j] == '#') j++
+            if (j - i <= 6 && (j == end || line[j] == ' ' || line[j] == '\t')) {
+                tokens += HiToken(i, end, HiKind.KEY)
+                return LexedLine(tokens, LineState.Plain)
+            }
+        }
+        if (isRule(i) || isTableDelimiterRow(i)) {
+            tokens += HiToken(i, end, HiKind.COMMENT)
+            return LexedLine(tokens, LineState.Plain)
+        }
+        return LexedLine(tokens, inline(listMarker(i)))
+    }
+
+    private fun spaces(from: Int): Int {
+        var i = from
+        while (i < end && (line[i] == ' ' || line[i] == '\t')) i++
+        return i
+    }
+
+    /** ```` ``` ```` or `~~~` and an info string. A fence inside a quote is coloured, not followed. */
+    private fun fenceOpen(at: Int, quoted: Boolean): LexedLine? {
+        if (at >= end || (line[at] != '`' && line[at] != '~')) return null
+        val fence = line[at]
+        var j = at
+        while (j < end && line[j] == fence) j++
+        val length = j - at
+        if (length < 3) return null
+        val info = line.substring(j, end)
+        if (fence == '`' && '`' in info) return null
+        tokens += HiToken(at, end, HiKind.COMMENT)
+        if (quoted) return LexedLine(tokens, LineState.Plain)
+        val language = languageForFenceInfo(info).let { if (it == CodeLanguage.MARKDOWN) CodeLanguage.NONE else it }
+        return LexedLine(tokens, LineState.InFence(fence, length, language, LineState.Plain))
+    }
+
+    private fun fenceLine(state: LineState.InFence): LexedLine {
+        val i = spaces(0)
+        var j = i
+        while (j < end && line[j] == state.fence) j++
+        if (j - i >= state.length && spaces(j) == end) {
+            tokens += HiToken(i, end, HiKind.COMMENT)
+            return LexedLine(tokens, LineState.Plain)
+        }
+        if (state.language == CodeLanguage.NONE) {
+            if (end > 0) tokens += HiToken(0, end, HiKind.STRING)
+            return LexedLine(tokens, state)
+        }
+        val inner = lexLine(line, state.language, state.inner)
+        return LexedLine(inner.tokens, state.copy(inner = inner.endState))
+    }
+
+    /** `---`, `***`, `___`, or a setext heading's `===`: three or more of one of them, and spaces. */
+    private fun isRule(from: Int): Boolean {
+        if (from >= end) return false
+        val c = line[from]
+        if (c != '-' && c != '*' && c != '_' && c != '=') return false
+        var count = 0
+        for (k in from until end) {
+            when (line[k]) {
+                c -> count++
+                ' ', '\t' -> {}
+                else -> return false
+            }
+        }
+        return count >= 3
+    }
+
+    /** A table's `| --- | :-: |` row. */
+    private fun isTableDelimiterRow(from: Int): Boolean {
+        var pipes = 0
+        var dashes = 0
+        for (k in from until end) {
+            when (line[k]) {
+                '|' -> pipes++
+                '-' -> dashes++
+                ':', ' ', '\t' -> {}
+                else -> return false
+            }
+        }
+        return pipes > 0 && dashes > 0
+    }
+
+    /** A list marker (`-`, `*`, `+`, `1.`, `2)`) and a task box after it; returns where the text starts. */
+    private fun listMarker(at: Int): Int {
+        if (at >= end) return at
+        val c = line[at]
+        var j = at
+        when {
+            c == '-' || c == '*' || c == '+' -> j = at + 1
+            c.isDigit() -> {
+                while (j < end && j - at < 9 && line[j].isDigit()) j++
+                if (j < end && (line[j] == '.' || line[j] == ')')) j++ else return at
+            }
+            else -> return at
+        }
+        if (j < end && line[j] != ' ' && line[j] != '\t') return at
+        tokens += HiToken(at, j, HiKind.KEYWORD)
+        var k = spaces(j)
+        if (k + 2 < end && line[k] == '[' && line[k + 2] == ']' && line[k + 1] in " xX" && (k + 3 == end || line[k + 3] == ' ')) {
+            tokens += HiToken(k, k + 3, HiKind.KEYWORD)
+            k += 3
+        }
+        return k
+    }
+
+    /** Inline markup from [from]; returns the state the next line starts in. */
+    private fun inline(from: Int): LineState {
+        var i = from
+        // Backtick run lengths with no closing run later on this line: not searched for again.
+        var failedTicks: HashSet<Int>? = null
+        while (i < end) {
+            val c = line[i]
+            when {
+                c == '\\' -> i += 2
+                c == '`' -> {
+                    var j = i
+                    while (j < end && line[j] == '`') j++
+                    val run = j - i
+                    val close = if (failedTicks?.contains(run) == true) -1 else closingTicks(j, run)
+                    if (close < 0) {
+                        if (failedTicks == null) failedTicks = HashSet()
+                        failedTicks.add(run)
+                        i = j
+                    } else {
+                        tokens += HiToken(i, close + run, HiKind.STRING)
+                        i = close + run
+                    }
+                }
+                c == '<' && line.startsWith("<!--", i) -> {
+                    val close = line.indexOf("-->", i + 4)
+                    if (close < 0 || close + 3 > end) {
+                        tokens += HiToken(i, end, HiKind.COMMENT)
+                        return LineState.InComment("-->")
+                    }
+                    tokens += HiToken(i, close + 3, HiKind.COMMENT)
+                    i = close + 3
+                }
+                c == '<' -> {
+                    val close = autolinkEnd(i)
+                    if (close > 0) {
+                        tokens += HiToken(i, close, HiKind.NUMBER)
+                        i = close
+                    } else {
+                        i++
+                    }
+                }
+                c == ']' && i + 1 < end && line[i + 1] == '(' && !noClosingParen -> {
+                    val close = closingParen(i + 1)
+                    if (close < 0) {
+                        noClosingParen = true
+                        i++
+                    } else {
+                        tokens += HiToken(i + 1, close + 1, HiKind.NUMBER)
+                        i = close + 1
+                    }
+                }
+                c == ']' && i + 1 < end && line[i + 1] == '[' -> {
+                    val close = line.indexOf(']', i + 2)
+                    if (close in i + 2 until end) {
+                        tokens += HiToken(i + 1, close + 1, HiKind.NUMBER)
+                        i = close + 1
+                    } else {
+                        i++
+                    }
+                }
+                c == ']' && i + 1 < end && line[i + 1] == ':' -> {
+                    // A reference definition: `[label]: address`.
+                    val from2 = spaces(i + 2)
+                    var j = from2
+                    while (j < end && !line[j].isWhitespace()) j++
+                    if (j > from2) tokens += HiToken(from2, j, HiKind.NUMBER)
+                    i = j
+                }
+                c == '*' || c == '_' || c == '~' -> i = delimiter(i)
+                c == '|' -> {
+                    tokens += HiToken(i, i + 1, HiKind.KEYWORD)
+                    i++
+                }
+                (c == 'h' || c == 'H') && isBareUrl(i) -> {
+                    var j = i
+                    while (j < end && !line[j].isWhitespace() && line[j] != '<' && line[j] != '>' && line[j] != ')' && line[j] != ']') j++
+                    tokens += HiToken(i, j, HiKind.NUMBER)
+                    i = j
+                }
+                else -> i++
+            }
+        }
+        return LineState.Plain
+    }
+
+    /** Start of the next run of exactly [run] backticks from [from], or -1. */
+    private fun closingTicks(from: Int, run: Int): Int {
+        var k = from
+        while (k < end) {
+            if (line[k] == '`') {
+                var m = k
+                while (m < end && line[m] == '`') m++
+                if (m - k == run) return k
+                k = m
+            } else {
+                k++
+            }
+        }
+        return -1
+    }
+
+    /** The `)` that closes the `(` at [open], counting nested pairs, or -1. */
+    private fun closingParen(open: Int): Int {
+        var depth = 0
+        var k = open
+        while (k < end) {
+            when (line[k]) {
+                '\\' -> k++
+                '(' -> depth++
+                ')' -> {
+                    depth--
+                    if (depth == 0) return k
+                }
+            }
+            k++
+        }
+        return -1
+    }
+
+    /** Just past an autolink at [open] (`<https://...>`, `<me@example.org>`), or -1. */
+    private fun autolinkEnd(open: Int): Int {
+        var k = open + 1
+        var marked = false
+        while (k < end) {
+            val c = line[k]
+            if (c == '>') return if (marked && k > open + 1) k + 1 else -1
+            if (c.isWhitespace() || c == '<') return -1
+            if (c == ':' || c == '@') marked = true
+            k++
+        }
+        return -1
+    }
+
+    private fun isBareUrl(at: Int): Boolean =
+        (at == 0 || !line[at - 1].isLetterOrDigit()) &&
+            (line.startsWith("http://", at, ignoreCase = true) || line.startsWith("https://", at, ignoreCase = true))
+
+    /** A run of `*`, `_` or `~~` that can open or close emphasis; `snake_case` and `a * b` are text. */
+    private fun delimiter(at: Int): Int {
+        val c = line[at]
+        var j = at
+        while (j < end && line[j] == c) j++
+        val before = if (at > 0) line[at - 1] else ' '
+        val after = if (j < end) line[j] else ' '
+        val flanking = !after.isWhitespace() || !before.isWhitespace()
+        val intraword = before.isLetterOrDigit() && after.isLetterOrDigit()
+        val emphasis = flanking && when (c) {
+            '_' -> !intraword
+            '~' -> j - at == 2
+            else -> true
+        }
+        if (emphasis) tokens += HiToken(at, j, HiKind.KEYWORD)
+        return j
+    }
+}
+
+/**
+ * JSON, and the comments and unquoted keys JSONC and JSON5 files have: keys, strings, numbers,
+ * `true`/`false`/`null`, line and block comments. A string never runs past its line, which JSON
+ * does not allow, so one missing quote colours one line, not the rest of the file.
+ */
+private class JsonLexer(private val line: String, private val start: LineState) {
+    private val end = contentEnd(line)
+    private val tokens = ArrayList<HiToken>()
+
+    fun lex(): LexedLine {
+        var i = 0
+        if (start is LineState.InComment) {
+            val close = line.indexOf("*/")
+            if (close < 0 || close + 2 > end) {
+                if (end > 0) tokens += HiToken(0, end, HiKind.COMMENT)
+                return LexedLine(tokens, start)
+            }
+            tokens += HiToken(0, close + 2, HiKind.COMMENT)
+            i = close + 2
+        }
+        while (i < end) {
+            val c = line[i]
+            when {
+                c == '"' || c == '\'' -> {
+                    val close = stringEnd(i + 1, c)
+                    val stop = if (close < 0) end else close
+                    tokens += HiToken(i, stop, if (close > 0 && isKey(close)) HiKind.KEY else HiKind.STRING)
+                    i = stop
+                }
+                c == '/' && i + 1 < end && line[i + 1] == '/' -> {
+                    tokens += HiToken(i, end, HiKind.COMMENT)
+                    i = end
+                }
+                c == '/' && i + 1 < end && line[i + 1] == '*' -> {
+                    val close = line.indexOf("*/", i + 2)
+                    if (close < 0 || close + 2 > end) {
+                        tokens += HiToken(i, end, HiKind.COMMENT)
+                        return LexedLine(tokens, LineState.InComment("*/"))
+                    }
+                    tokens += HiToken(i, close + 2, HiKind.COMMENT)
+                    i = close + 2
+                }
+                isNumberStart(line, i, end) && (i == 0 || line[i - 1] in BEFORE_VALUE) -> {
+                    val j = numberEnd(line, i, end)
+                    if (j == end || line[j] in AFTER_VALUE) tokens += HiToken(i, j, HiKind.NUMBER)
+                    i = maxOf(j, i + 1)
+                }
+                c.isLetter() || c == '_' || c == '$' -> {
+                    var j = i + 1
+                    while (j < end && (line[j].isLetterOrDigit() || line[j] == '_' || line[j] == '$')) j++
+                    when {
+                        line.regionMatches(i, "true", 0, 4) && j - i == 4 -> tokens += HiToken(i, j, HiKind.KEYWORD)
+                        line.regionMatches(i, "false", 0, 5) && j - i == 5 -> tokens += HiToken(i, j, HiKind.KEYWORD)
+                        line.regionMatches(i, "null", 0, 4) && j - i == 4 -> tokens += HiToken(i, j, HiKind.KEYWORD)
+                        isKey(j) -> tokens += HiToken(i, j, HiKind.KEY)
+                    }
+                    i = j
+                }
+                else -> i++
+            }
+        }
+        return LexedLine(tokens, LineState.Plain)
+    }
+
+    /** Whether a `:` follows [after], past spaces: what makes a string a key. */
+    private fun isKey(after: Int): Boolean {
+        var k = after
+        while (k < end && (line[k] == ' ' || line[k] == '\t')) k++
+        return k < end && line[k] == ':'
+    }
+
+    /** Just past the closing [quote] from [from] (`\"` escapes), or -1 when the line ends first. */
+    private fun stringEnd(from: Int, quote: Char): Int {
+        var i = from
+        while (i < end) {
+            if (line[i] == '\\') {
+                i += 2
+                continue
+            }
+            if (line[i] == quote) return i + 1
+            i++
+        }
+        return -1
+    }
+
+    private companion object {
+        val BEFORE_VALUE = setOf(' ', '\t', '[', ',', ':')
+        val AFTER_VALUE = setOf(' ', '\t', ',', ']', '}', '\r', '/')
+    }
+}
+
+/**
  * All tokens for the whole text, each line starting in the state the one before ended in. Pure for
  * unit-testing; the editor gets the same tokens from an [IncrementalHighlighter] it keeps.
  */
@@ -502,6 +940,10 @@ internal class IncrementalHighlighter(private val lang: CodeLanguage) {
     }
 }
 
+/** [text] coloured by [tokens] in [palette]: the editor's colouring, which the Markdown preview's code blocks use too. */
+fun highlightedText(text: String, tokens: List<HiToken>, palette: HighlightPalette): AnnotatedString =
+    AnnotatedString(text, tokens.map { AnnotatedString.Range(SpanStyle(color = palette.colorFor(it.kind)), it.start, it.end) })
+
 /**
  * [VisualTransformation] that colours the buffer for [lang] using [palette] without changing its
  * layout (offsets map 1:1, so cursor/selection math is untouched). Highlighting is skipped when the
@@ -518,12 +960,6 @@ class CodeHighlightTransformation(
         if (lang == CodeLanguage.NONE || maxChars <= 0 || text.length > maxChars) {
             return TransformedText(text, OffsetMapping.Identity)
         }
-        val spans = highlighter.tokens(text.text).map {
-            AnnotatedString.Range(SpanStyle(color = palette.colorFor(it.kind)), it.start, it.end)
-        }
-        return TransformedText(
-            AnnotatedString(text.text, spans),
-            OffsetMapping.Identity,
-        )
+        return TransformedText(highlightedText(text.text, highlighter.tokens(text.text), palette), OffsetMapping.Identity)
     }
 }

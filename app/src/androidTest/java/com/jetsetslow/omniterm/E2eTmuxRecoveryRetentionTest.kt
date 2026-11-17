@@ -35,10 +35,8 @@ import org.junit.Test
  * the thing this test exists to check.
  *
  * ```
- * adb shell am instrument -w -e omniterm_e2e_tmux_retention yes \
- *   -e host 10.0.2.2 -e port 2205 -e username omniterm -e password '<fixture password>' \
- *   -e class com.jetsetslow.omniterm.E2eTmuxRecoveryRetentionTest \
- *   com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+ * ./scripts/test-hosts.sh suite E2eTmuxRecoveryRetentionTest omniterm_e2e_tmux_retention=yes \
+ *   host port username=@OMNITERM_TEST_USER password=@OMNITERM_TEST_PASSWORD
  * ```
  */
 class E2eTmuxRecoveryRetentionTest {
@@ -46,10 +44,10 @@ class E2eTmuxRecoveryRetentionTest {
     fun ambiguityKeepsTheRecoveryRowAndConfirmedAbsenceAloneRemovesIt() = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_tmux_retention") == "yes")
-        val host = requireNotNull(args.getString("host")) { "-e host <ip> is required" }
-        val port = requireNotNull(args.getString("port")?.toIntOrNull()) { "-e port <n> is required" }
-        val username = requireNotNull(args.getString("username")) { "-e username <name> is required" }
-        val password = requireNotNull(args.getString("password")) { "-e password <secret> is required" }
+        val host = E2eArgs.require("host")
+        val port = E2eArgs.require("port").toInt()
+        val username = E2eArgs.require("username")
+        val password = E2eArgs.require("password")
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val repository = AppRepository(AppDatabase.getDatabase(context))

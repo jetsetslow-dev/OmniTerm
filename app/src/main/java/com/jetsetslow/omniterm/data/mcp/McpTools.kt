@@ -48,7 +48,7 @@ interface McpBackend {
     /** The danger list's hits for [command], shown when approving. */
     fun dangerHits(command: String): List<String>
     /** Runs [script] on [servers]; [values] fill its `{{values}}`, and null runs the command exactly as typed. */
-    suspend fun run(script: QuickScriptEntity, servers: List<ServerEntity>, values: Map<String, String>?): Automation.RunResult
+    suspend fun run(script: QuickScriptEntity, servers: List<ServerEntity>, values: Map<String, String>?, by: String): Automation.RunResult
 }
 
 /**
@@ -137,7 +137,9 @@ class McpTools(private val backend: McpBackend) {
         readOnly = true, destructive = false, idempotent = true, openWorld = true,
     ) { args, _ ->
         val srv = host(args.requiredInt("host_id"))
-        val containers = backend.containers(srv).getOrElse { throw McpToolError(it.message ?: "Could not list containers on ${srv.name}") }
+        val containers = backend.containers(srv).getOrElse {
+            throw McpToolError(it.message ?: "Could not list containers on ${srv.name}", refused = false)
+        }
         val rows = buildJsonArray {
             containers.forEach { c ->
                 add(
@@ -255,7 +257,7 @@ class McpTools(private val backend: McpBackend) {
             McpApprovalRequest(caller.clientName, action, hosts.map { it.name }, shown, backend.dangerHits(shown)),
         )
         if (!approved) throw McpToolError("The OmniTerm user did not approve this run, so nothing ran")
-        val result = backend.run(script, hosts, values)
+        val result = backend.run(script, hosts, values, caller.clientName)
         result.error?.let { throw McpToolError(it) }
         val rows = buildJsonArray {
             result.hosts.forEach { h ->
@@ -278,6 +280,8 @@ class McpTools(private val backend: McpBackend) {
                 put("hosts", rows)
             },
             isError = !result.succeeded,
+            runKey = result.runKey,
+            detail = result.useDetail(),
         )
     }
 

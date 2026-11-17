@@ -78,7 +78,11 @@ object AutomationJobs {
     private const val JOB_ID_BASE = 0x4F_4D_00_00
     private val nextJobId = AtomicInteger(Random.nextInt(0, 0x8000))
 
-    fun repository(context: Context) = AppRepository(AppDatabase.getDatabase(context.applicationContext))
+    fun repository(context: Context): AppRepository {
+        // A background run follows the tunnels' Wi-Fi rule too, from what the app last saw.
+        com.jetsetslow.omniterm.data.tunnel.TunnelManager.follow(context)
+        return AppRepository(AppDatabase.getDatabase(context.applicationContext))
+    }
 
     /**
      * Starts [request]'s run as soon as Android allows: an expedited job on Android 12 and later,
@@ -143,14 +147,51 @@ object AutomationReplies {
     }
 }
 
-/** Runs one [AutomationRequest] and sends its result, however the run ends. */
-class AutomationJobService : JobService() {
+/**
+ * A job that runs one script run in the background: automation's, a schedule's, or an alert's
+ * runbook. Each job's work runs in its own coroutine; Android stopping the job cancels it, and the
+ * work says how far it got. Never rescheduled: a run that did not finish is in the history as such.
+ */
+abstract class RunJobService : JobService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val runs = ConcurrentHashMap<Int, Job>()
 
-    override fun onStartJob(params: JobParameters): Boolean {
-        val request = AutomationRequest.from(params.extras) ?: return false
+    /** The work [params] asks for, or null when they name none, which ends the job at once. */
+    protected abstract fun workFor(params: JobParameters): (suspend () -> Unit)?
+
+    final override fun onStartJob(params: JobParameters): Boolean {
+        val work = workFor(params) ?: return false
         runs[params.jobId] = scope.launch {
+            try {
+                work()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("OmniTermRunJob", "The run failed", e)
+            }
+            runs.remove(params.jobId)
+            jobFinished(params, false)
+        }
+        return true
+    }
+
+    /** Android stopped the job: the run ends, and its record says so. */
+    final override fun onStopJob(params: JobParameters): Boolean {
+        runs.remove(params.jobId)?.cancel()
+        return false
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+}
+
+/** Runs one [AutomationRequest] and sends its result, however the run ends. */
+class AutomationJobService : RunJobService() {
+    override fun workFor(params: JobParameters): (suspend () -> Unit)? {
+        val request = AutomationRequest.from(params.extras) ?: return null
+        return {
             val transport = JschSshTransport()
             val result = try {
                 AutomationRunner(applicationContext, AutomationJobs.repository(applicationContext), transport)
@@ -164,20 +205,6 @@ class AutomationJobService : JobService() {
                 transport.shutdown()
             }
             AutomationReplies.deliver(applicationContext, request, result)
-            runs.remove(params.jobId)
-            jobFinished(params, false)
         }
-        return true
-    }
-
-    /** Android stopped the job: the run ends, and its result says so. */
-    override fun onStopJob(params: JobParameters): Boolean {
-        runs.remove(params.jobId)?.cancel()
-        return false
-    }
-
-    override fun onDestroy() {
-        scope.cancel()
-        super.onDestroy()
     }
 }

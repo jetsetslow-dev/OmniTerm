@@ -123,6 +123,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.ceil
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
@@ -360,6 +361,7 @@ private fun terminalPalette(key: String): TerminalPalette {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ShellScreen(viewModel: AppViewModel) {
+    TerminalTypingPicker(viewModel)
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val chrome = shellChromePalette()
@@ -1969,7 +1971,12 @@ private fun PaneTerminal(
 ) {
     // Session-owned dialogs and gesture state must not retain another host's captured text.
     key(session.id) {
-        PaneTerminalContent(viewModel, session, confirm, isFocused, onRequestFocus)
+        Column(Modifier.fillMaxSize()) {
+            TerminalTypingBanner(viewModel, session)
+            Box(Modifier.weight(1f)) {
+                PaneTerminalContent(viewModel, session, confirm, isFocused, onRequestFocus)
+            }
+        }
     }
 }
 
@@ -1994,7 +2001,6 @@ private fun PaneTerminalContent(
     var showCopyOptions by remember { mutableStateOf(false) }
     var copyDialogTitle by remember { mutableStateOf<String?>(null) }
     var copyDialogText by remember { mutableStateOf("") }
-    var pendingLargePaste by remember { mutableStateOf<PendingTerminalPaste?>(null) }
     var hidePasteFeedback by remember(currentSession.pasteFeedback) { mutableStateOf(false) }
     val viewport = remember(sessionId) { TerminalViewportState() }
     var visibleRowCount by remember(sessionId) { mutableStateOf(1) }
@@ -2455,6 +2461,19 @@ private fun PaneTerminalContent(
                 // command typed by swipe (or a momentary multi-word composing region the IME hands us
                 // mid-gesture) was being misread as a paste and popped the confirm dialog.
                 val prevText = fieldBuffer.onEdit(newText)
+                val insertedDelta = insertedCodePointDelta(prevText, newText)
+                if (insertedDelta > 100 || (viewModel.terminalTyping.enabled &&
+                        !isSingleTerminalEnter(newText.removePrefix(prevText)) &&
+                        newText.removePrefix(prevText).any { it == '\n' || it == '\r' })) {
+                    // Large paste: defer to the paste dialog and clear the field. The text before it
+                    // has already been sent.
+                    viewModel.pendingTerminalPaste = PendingTerminalPaste(
+                        newText.removePrefix(prevText),
+                        viewModel.captureTerminalPasteTarget(currentSession),
+                    )
+                    inputField = TextFieldValue("")
+                    return@BasicTextField
+                }
                 // A sticky Ctrl/Alt/Shift modifier (armed from the key bar) transforms the next
                 // typed character (control/meta byte, or uppercase). That can't be expressed as an
                 // editor-style line diff, so when one is armed we route the freshly-inserted text
@@ -2472,17 +2491,6 @@ private fun PaneTerminalContent(
                         val inserted = newText.substring(p, end)
                         if (inserted.isNotEmpty()) viewModel.typeText(inserted)
                     }
-                    inputField = TextFieldValue("")
-                    return@BasicTextField
-                }
-                val insertedDelta = insertedCodePointDelta(prevText, newText)
-                if (insertedDelta > 100) {
-                    // Large paste: defer to the paste dialog and clear the field. The text before it
-                    // has already been sent.
-                    pendingLargePaste = PendingTerminalPaste(
-                        newText.removePrefix(prevText),
-                        viewModel.captureTerminalPasteTarget(currentSession),
-                    )
                     inputField = TextFieldValue("")
                     return@BasicTextField
                 }
@@ -2544,6 +2552,7 @@ private fun PaneTerminalContent(
             ),
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .testTag("terminal.input.$sessionId")
                 .size(2.dp)
                 .alpha(0.01f)
                 .focusRequester(focusRequester)
@@ -2677,7 +2686,7 @@ private fun PaneTerminalContent(
                                         ).show()
                                         TerminalClipboardPasteAction.CONFIRM -> {
                                             showCopyOptions = false
-                                            pendingLargePaste = PendingTerminalPaste(text.orEmpty(), pasteTarget)
+                                            viewModel.pendingTerminalPaste = PendingTerminalPaste(text.orEmpty(), pasteTarget)
                                         }
                                         TerminalClipboardPasteAction.SEND -> {
                                             showCopyOptions = false
@@ -2711,6 +2720,12 @@ private fun PaneTerminalContent(
                                 // Rendered as Switch rows: the switch shows current state at a glance, and
                                 // flipping it acts immediately. Unlike the copy actions, these stay on the
                                 // menu after toggling so the user can adjust both without re-opening it.
+                                OutlinedButton(onClick = {
+                                    showCopyOptions = false
+                                    viewModel.showTerminalTypingPicker = true
+                                }, modifier = Modifier.fillMaxWidth().testTag("terminal.typing.options")) {
+                                    Text(stringResource(R.string.type_to_terminals))
+                                }
                                 Text(stringResource(R.string.this_session), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                                 TerminalToggleRow(
                                     title = stringResource(R.string.swipe_typing),
@@ -2832,7 +2847,7 @@ private fun PaneTerminalContent(
             }
         }
 
-        currentSession.pasteFeedback?.let { feedback ->
+        currentSession.pasteFeedback?.takeIf { isFocused }?.let { feedback ->
             if (feedback.busy) {
                 LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
             }
@@ -2861,19 +2876,21 @@ private fun PaneTerminalContent(
             }
         }
 
-        pendingLargePaste?.let { pending ->
+        viewModel.pendingTerminalPaste?.takeIf { isFocused }?.let { pending ->
             fun cancelPaste() {
-                pendingLargePaste = null
+                viewModel.pendingTerminalPaste = null
                 viewModel.cancelTerminalPaste(pending.target)
             }
             AlertDialog(
                 onDismissRequest = { cancelPaste() },
-                title = { Text(stringResource(R.string.paste_characters, pending.text.length)) },
-                text = { Text(stringResource(R.string.you_re_about_to_paste_a)) },
+                title = { Text(pluralStringResource(R.plurals.paste_characters, pending.text.length, pending.text.length)) },
+                text = { Text(if (pending.target.receivers.orEmpty().size > 1 || viewModel.terminalTyping.enabled)
+                    pending.target.receivers.orEmpty().size.let { pluralStringResource(R.plurals.typing_paste_confirmation, it, it) }
+                    else stringResource(R.string.you_re_about_to_paste_a)) },
                 confirmButton = {
                     TextButton(onClick = {
-                        pendingLargePaste = null
-                        viewModel.pasteText(pending.text, pending.target)
+                        viewModel.pendingTerminalPaste = null
+                        viewModel.pasteText(pending.text, pending.target, confirmed = true)
                     }) { Text(stringResource(R.string.paste)) }
                 },
                 dismissButton = {

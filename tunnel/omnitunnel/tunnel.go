@@ -1,6 +1,7 @@
 // Package omnitunnel carries OmniTerm's connections to a host through a tunnel the user set up for
-// it, entirely inside the app: the tunnel's network stack is gVisor's netstack, so the phone's
-// system VPN slot is never used and nothing else on the phone goes through it.
+// it, entirely inside the app: a WireGuard tunnel or a Tailscale (or Headscale) node, each on
+// gVisor's netstack, so the phone's system VPN slot is never used and nothing else on the phone
+// goes through it.
 //
 // Kotlin asks a running [Tunnel] to dial a host and gets back one end of a private socket pair; the
 // other end is joined to the TCP connection inside the tunnel. Nothing listens on any port.
@@ -31,17 +32,42 @@ type Resolver interface {
 	Resolve(host string) (string, error)
 }
 
-// Tunnel is one running tunnel.
+// Tunnel is one running tunnel, of any kind: what reaches the hosts is its carrier, and what is
+// common to every kind (the connections handed to the app, Close) is here.
 type Tunnel struct {
-	dev      *device.Device
-	tnet     *netstack.Net
-	allowed  []netip.Prefix
-	hasDNS   bool
-	resolver Resolver
+	carrier carrier
 
 	mu     sync.Mutex
 	closed bool
 	pairs  map[*pair]struct{}
+}
+
+// carrier is what one kind of tunnel does: WireGuard's device, or a Tailscale node.
+type carrier interface {
+	// dial connects to host:port inside the tunnel before deadline, and never anywhere else.
+	dial(ctx context.Context, host string, port int, deadline time.Time) (net.Conn, error)
+	hasDNS() bool
+	lastHandshake() int64
+	bytesIn() int64
+	bytesOut() int64
+	state() string
+	authURL() string
+	problem() string
+	addresses() string
+	close()
+}
+
+// The states a tunnel reports (State): only a running one carries connections.
+const (
+	StateRunning       = "running"
+	StateStarting      = "starting"
+	StateNeedsLogin    = "needs-login"
+	StateNeedsApproval = "needs-approval"
+	StateFailed        = "failed"
+)
+
+func newTunnel(c carrier) *Tunnel {
+	return &Tunnel{carrier: c, pairs: map[*pair]struct{}{}}
 }
 
 // CheckWireGuard says what is wrong with a wg-quick configuration, or "" when it can be used.
@@ -50,6 +76,16 @@ func CheckWireGuard(conf string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// wireGuard carries a tunnel over WireGuard on its own netstack.
+type wireGuard struct {
+	dev      *device.Device
+	tnet     *netstack.Net
+	allowed  []netip.Prefix
+	dns      bool
+	resolver Resolver
+	addrs    string
 }
 
 // StartWireGuard brings a WireGuard tunnel up from a wg-quick configuration.
@@ -83,14 +119,18 @@ func StartWireGuard(conf string, resolver Resolver) (*Tunnel, error) {
 		dev.Close()
 		return nil, fmt.Errorf("The tunnel could not start: %v", err)
 	}
-	return &Tunnel{
+	var addrs []string
+	for _, a := range c.addresses {
+		addrs = append(addrs, a.String())
+	}
+	return newTunnel(&wireGuard{
 		dev:      dev,
 		tnet:     tnet,
 		allowed:  c.allowedPrefixes(),
-		hasDNS:   len(c.dns) > 0,
+		dns:      len(c.dns) > 0,
 		resolver: resolver,
-		pairs:    map[*pair]struct{}{},
-	}, nil
+		addrs:    strings.Join(addrs, ","),
+	}), nil
 }
 
 // DialFd connects to host:port through the tunnel and returns the app's end of a socket pair
@@ -111,19 +151,31 @@ func (t *Tunnel) DialFd(host string, port int, timeoutMs int) (int, error) {
 	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-
-	addrs, err := t.lookup(ctx, host)
+	tcp, err := t.carrier.dial(ctx, host, port, deadline)
 	if err != nil {
 		return -1, err
 	}
+	fd, err := t.join(tcp)
+	if err != nil {
+		tcp.Close()
+		return -1, err
+	}
+	return fd, nil
+}
+
+func (w *wireGuard) dial(ctx context.Context, host string, port int, deadline time.Time) (net.Conn, error) {
+	addrs, err := w.lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
 	var inside []netip.Addr
 	for _, a := range addrs {
-		if t.routes(a) {
+		if w.routes(a) {
 			inside = append(inside, a)
 		}
 	}
 	if len(inside) == 0 {
-		return -1, fmt.Errorf("%s is outside this tunnel's AllowedIPs.", host)
+		return nil, fmt.Errorf("%s is outside this tunnel's AllowedIPs.", host)
 	}
 	var lastErr error
 	for i, a := range inside {
@@ -133,27 +185,28 @@ func (t *Tunnel) DialFd(host string, port int, timeoutMs int) (int, error) {
 		}
 		share := left / time.Duration(len(inside)-i)
 		dctx, dcancel := context.WithTimeout(ctx, share)
-		tcp, err := t.tnet.DialContextTCPAddrPort(dctx, netip.AddrPortFrom(a, uint16(port)))
+		tcp, err := w.tnet.DialContextTCPAddrPort(dctx, netip.AddrPortFrom(a, uint16(port)))
 		dcancel()
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		fd, err := t.join(tcp)
-		if err != nil {
-			tcp.Close()
-			return -1, err
-		}
-		return fd, nil
+		return tcp, nil
 	}
-	if lastErr == nil || errors.Is(lastErr, context.DeadlineExceeded) || strings.Contains(lastErr.Error(), "timed out") {
-		return -1, errors.New("timeout: socket is not established")
-	}
-	return -1, fmt.Errorf("Connection refused through the tunnel: %v", lastErr)
+	return nil, dialFailure(lastErr)
 }
 
-// HasDNS says whether the configuration names DNS servers inside the tunnel.
-func (t *Tunnel) HasDNS() bool { return t.hasDNS }
+// dialFailure is what the app shows when no address answered: a timeout, or the refusal.
+func dialFailure(lastErr error) error {
+	if lastErr == nil || errors.Is(lastErr, context.DeadlineExceeded) || strings.Contains(lastErr.Error(), "timed out") {
+		return errors.New("timeout: socket is not established")
+	}
+	return fmt.Errorf("Connection refused through the tunnel: %v", lastErr)
+}
+
+// HasDNS says whether the tunnel finds names itself: a WireGuard configuration's DNS servers, or
+// Tailscale's MagicDNS.
+func (t *Tunnel) HasDNS() bool { return t.carrier.hasDNS() }
 
 // Connections is how many connections are open through the tunnel.
 func (t *Tunnel) Connections() int {
@@ -163,13 +216,34 @@ func (t *Tunnel) Connections() int {
 }
 
 // LastHandshake is when the newest handshake with any peer completed, in Unix seconds, or 0.
-func (t *Tunnel) LastHandshake() int64 { return t.stat("last_handshake_time_sec", true) }
+func (t *Tunnel) LastHandshake() int64 { return t.carrier.lastHandshake() }
 
 // BytesIn is how much has come in from every peer.
-func (t *Tunnel) BytesIn() int64 { return t.stat("rx_bytes", false) }
+func (t *Tunnel) BytesIn() int64 { return t.carrier.bytesIn() }
 
 // BytesOut is how much has gone out to every peer.
-func (t *Tunnel) BytesOut() int64 { return t.stat("tx_bytes", false) }
+func (t *Tunnel) BytesOut() int64 { return t.carrier.bytesOut() }
+
+// State is one of the State constants: a WireGuard tunnel is running from the start, a Tailscale
+// one once it has signed in.
+func (t *Tunnel) State() string {
+	t.mu.Lock()
+	closed := t.closed
+	t.mu.Unlock()
+	if closed {
+		return StateFailed
+	}
+	return t.carrier.state()
+}
+
+// AuthURL is the page where the user signs this tunnel in, while it needs that; else "".
+func (t *Tunnel) AuthURL() string { return t.carrier.authURL() }
+
+// Problem is why the tunnel is not running, in the user's words, or "".
+func (t *Tunnel) Problem() string { return t.carrier.problem() }
+
+// Addresses are the phone's own addresses inside the tunnel, joined by commas.
+func (t *Tunnel) Addresses() string { return t.carrier.addresses() }
 
 // Close takes the tunnel down and ends every connection through it.
 func (t *Tunnel) Close() {
@@ -185,11 +259,22 @@ func (t *Tunnel) Close() {
 	for p := range pairs {
 		p.close()
 	}
-	t.dev.Close()
+	t.carrier.close()
 }
 
-func (t *Tunnel) routes(a netip.Addr) bool {
-	for _, p := range t.allowed {
+func (w *wireGuard) hasDNS() bool      { return w.dns }
+func (w *wireGuard) state() string     { return StateRunning }
+func (w *wireGuard) authURL() string   { return "" }
+func (w *wireGuard) problem() string   { return "" }
+func (w *wireGuard) close()            { w.dev.Close() }
+func (w *wireGuard) bytesIn() int64    { return w.stat("rx_bytes", false) }
+func (w *wireGuard) bytesOut() int64   { return w.stat("tx_bytes", false) }
+func (w *wireGuard) addresses() string { return w.addrs }
+
+func (w *wireGuard) lastHandshake() int64 { return w.stat("last_handshake_time_sec", true) }
+
+func (w *wireGuard) routes(a netip.Addr) bool {
+	for _, p := range w.allowed {
 		if p.Contains(a.Unmap()) {
 			return true
 		}
@@ -197,22 +282,22 @@ func (t *Tunnel) routes(a netip.Addr) bool {
 	return false
 }
 
-func (t *Tunnel) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
+func (w *wireGuard) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
 	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 	if a, err := netip.ParseAddr(host); err == nil {
 		return []netip.Addr{a.Unmap()}, nil
 	}
-	if t.hasDNS {
-		names, err := t.tnet.LookupContextHost(ctx, host)
+	if w.dns {
+		names, err := w.tnet.LookupContextHost(ctx, host)
 		if err != nil || len(names) == 0 {
 			return nil, fmt.Errorf("%s could not be found through the tunnel's DNS.", host)
 		}
 		return parseAddrs(names), nil
 	}
-	if t.resolver == nil {
+	if w.resolver == nil {
 		return nil, fmt.Errorf("%s could not be found.", host)
 	}
-	text, err := t.resolver.Resolve(host)
+	text, err := w.resolver.Resolve(host)
 	if err != nil {
 		return nil, fmt.Errorf("%s could not be found.", host)
 	}
@@ -223,6 +308,27 @@ func (t *Tunnel) lookup(ctx context.Context, host string) ([]netip.Addr, error) 
 	return addrs, nil
 }
 
+// isHostName says whether s is a DNS name with at least two labels, such as ssh.example.com, and
+// no IP address, URL, port or path: the only names the phone ever looks up for a tunnel.
+func isHostName(s string) bool {
+	if len(s) > 253 || !strings.Contains(s, ".") || net.ParseIP(s) != nil {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, ch := range label {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// resolveOne is host's address: host itself when it is one, else the phone's own DNS's answer
+// through resolver, an IPv4 address first. Never the tunnel's DNS or Go's own resolver.
 func resolveOne(host string, resolver Resolver) (netip.Addr, error) {
 	if a, err := netip.ParseAddr(host); err == nil {
 		return a.Unmap(), nil
@@ -257,8 +363,8 @@ func parseAddrs(items []string) []netip.Addr {
 	return out
 }
 
-func (t *Tunnel) stat(key string, newest bool) int64 {
-	text, err := t.dev.IpcGet()
+func (w *wireGuard) stat(key string, newest bool) int64 {
+	text, err := w.dev.IpcGet()
 	if err != nil {
 		return 0
 	}

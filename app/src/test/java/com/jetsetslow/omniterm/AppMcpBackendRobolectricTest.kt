@@ -9,6 +9,7 @@ import com.jetsetslow.omniterm.data.AlertRuleEntity
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.McpCallEntity
+import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
@@ -92,6 +93,7 @@ class AppMcpBackendRobolectricTest {
                 McpSettings.PORT to "80",
                 McpSettings.TUNNEL_HOST to "4",
                 McpSettings.TUNNEL_PORT to "50000",
+                McpSettings.NOTIFY to RunNotify.ALWAYS,
             ),
         )
         assertThat(config.enabled).isTrue()
@@ -100,6 +102,7 @@ class AppMcpBackendRobolectricTest {
         assertThat(config.tunnelHostId).isEqualTo(4)
         assertThat(config.tunnelPort).isEqualTo(50_000)
         assertThat(config.anyCommand).isTrue()
+        assertThat(config.notify).isEqualTo(RunNotify.ALWAYS)
 
         val off = McpConfig.from(mapOf(McpSettings.TOKEN_HASH to "short", McpSettings.TUNNEL_HOST to ""))
         assertThat(off.enabled).isFalse()
@@ -107,6 +110,8 @@ class AppMcpBackendRobolectricTest {
         assertThat(off.tunnelHostId).isNull()
         assertThat(off.hostIds).isEmpty()
         assertThat(off.anyCommand).isFalse()
+        assertWithMessage("runs show progress and failures until the user picks").that(off.notify).isEqualTo(RunNotify.FAILURES)
+        assertWithMessage("an unknown choice is the default").that(McpConfig.from(mapOf(McpSettings.NOTIFY to "loud")).notify).isEqualTo(RunNotify.FAILURES)
 
         assertWithMessage("restoring a backup never turns AI access on").that(DEVICE_LOCAL_SETTINGS).containsAtLeastElementsIn(McpSettings.ALL)
     }

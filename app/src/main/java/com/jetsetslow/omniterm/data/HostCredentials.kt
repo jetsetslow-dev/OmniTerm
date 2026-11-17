@@ -33,7 +33,10 @@ object HostCredentials {
             }
         }
         val proxyKey = srv.proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
-        if (srv.tunnelId != null) com.jetsetslow.omniterm.data.tunnel.TunnelManager.attach(repository)
+        // Through its tunnel, or directly on a Wi-Fi the tunnel is not needed on: decided here, for
+        // every connection the app makes to the host.
+        val tunnelNow = com.jetsetslow.omniterm.data.tunnel.HostRoute.tunnelNow(repository, srv.tunnelId)
+        if (tunnelNow != null) com.jetsetslow.omniterm.data.tunnel.TunnelManager.attach(repository)
         return SshCredentials(
             srv.host, srv.port, user, pass, key?.privateKey,
             proxyType = srv.proxyType,
@@ -48,8 +51,8 @@ object HostCredentials {
             compression = srv.sshCompression,
             agentForwarding = srv.agentForwarding,
             posixShell = posixShell,
-            tunnelId = srv.tunnelId,
-            tunnelHost = srv.tunnelHost,
+            tunnelId = tunnelNow,
+            tunnelHost = srv.tunnelHost.takeIf { tunnelNow != null }.orEmpty(),
         )
     }
 }

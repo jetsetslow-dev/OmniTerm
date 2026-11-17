@@ -37,6 +37,8 @@ class McpToolsTest {
         var answer = true
         val approvals = mutableListOf<McpApprovalRequest>()
         val runs = mutableListOf<Triple<QuickScriptEntity, List<Int>, Map<String, String>?>>()
+        val runBy = mutableListOf<String>()
+        var containersFail = false
 
         override suspend fun exposedHosts() = listOf(shared, alsoShared, hidden).filter { it.id in exposed }
         override suspend fun latestMetric(serverId: Int) =
@@ -45,7 +47,9 @@ class McpToolsTest {
             if (serverId == 1) listOf(McpAlert("Disk Usage", "/srv", 90f, 85f, "WARNING", 4_000, false)) else emptyList()
         override suspend fun scripts() = listOf(backup, uptime)
         override suspend fun anyCommandAllowed() = anyCommand
-        override suspend fun containers(server: ServerEntity) = Result.success(
+        override suspend fun containers(server: ServerEntity) = if (containersFail) {
+            Result.failure(IllegalStateException("${server.name} did not answer"))
+        } else Result.success(
             listOf(
                 SimContainer("abc", "jellyfin", "jellyfin/jellyfin", "8096->8096/tcp", "running", "media", server.id, health = "healthy"),
                 SimContainer("def", "db", "postgres:16", "", "exited", "standalone", server.id),
@@ -53,9 +57,10 @@ class McpToolsTest {
         )
         override suspend fun approve(request: McpApprovalRequest): Boolean { approvals += request; return answer }
         override fun dangerHits(command: String) = if ("rm -rf" in command) listOf("rm -rf") else emptyList()
-        override suspend fun run(script: QuickScriptEntity, servers: List<ServerEntity>, values: Map<String, String>?): Automation.RunResult {
+        override suspend fun run(script: QuickScriptEntity, servers: List<ServerEntity>, values: Map<String, String>?, by: String): Automation.RunResult {
             runs += Triple(script, servers.map { it.id }, values)
-            return Automation.RunResult(servers.map { Automation.HostResult(it.id, it.name, 0, "ok from ${it.name}\n") })
+            runBy += by
+            return Automation.RunResult(servers.map { Automation.HostResult(it.id, it.name, 0, "ok from ${it.name}\n") }, runKey = "automation-run-1")
         }
     }
 
@@ -68,7 +73,7 @@ class McpToolsTest {
         try {
             tool.call(Json.parseToJsonElement(args).jsonObject, caller)
         } catch (e: McpToolError) {
-            McpToolResult(e.message.orEmpty(), isError = true)
+            McpToolResult(e.message.orEmpty(), isError = true, refused = e.refused)
         }
     }
 
@@ -165,6 +170,26 @@ class McpToolsTest {
         assertThat(fake.runs.single().third).containsExactly("tag", "nightly")
         assertThat(ran.structured!!["succeeded"]!!.jsonPrimitive.content).isEqualTo("true")
         assertThat(ran.text).contains("ok from nas")
+    }
+
+    @Test
+    fun theRecordOfCallsTellsRefusedFromFailedAndLinksTheRun() {
+        fake.answer = false
+        val notApproved = call("run_script", """{"script_id":11,"host_ids":[1]}""")
+        assertWithMessage("a run the user did not approve was refused").that(notApproved.refused).isTrue()
+        assertWithMessage("a host that is not shared is refused").that(call("host_status", """{"host_id":3}""").refused).isTrue()
+
+        fake.containersFail = true
+        val unreachable = call("list_containers", """{"host_id":1}""")
+        assertThat(unreachable.isError).isTrue()
+        assertWithMessage("a host that did not answer is a failure, not a refusal").that(unreachable.refused).isFalse()
+
+        fake.answer = true
+        val ran = call("run_script", """{"script_id":11,"host_ids":[2,1]}""")
+        assertThat(ran.refused).isFalse()
+        assertWithMessage("the call links the run it started").that(ran.runKey).isEqualTo("automation-run-1")
+        assertWithMessage("its line names the hosts it ran on").that(ran.detail).isEqualTo("pi, nas")
+        assertWithMessage("the run's notification names the assistant").that(fake.runBy).containsExactly("Claude Code")
     }
 
     @Test

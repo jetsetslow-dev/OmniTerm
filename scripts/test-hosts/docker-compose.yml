@@ -23,6 +23,8 @@
 #                    internal-a       reached via bastion          proxyType=ssh    (jump path)
 #                                     or via proxy                 proxyType=socks5 / http
 #                                     or via wireguard (UDP :51820) tunnelId  (VPN tunnel, 10.77.0.1:22)
+#                                     or via the tailnet: headscale (:8085) and tailnet-router, a
+#                                     subnet router for the internal network (internal-a:2222)
 #
 # HTTP/SOCKS5 proxies ride inside the session (JschSession.applyProxy); SSH jump uses a separate
 # jump session plus a local forward (buildJumpedJschSession). internal-a is the only way to prove a
@@ -59,6 +61,20 @@ x-ssh-common: &ssh-common
   restart: "no"
 
 services:
+  cloudflare-access:
+    profiles: [cloudflare-access]
+    container_name: omniterm-test-cloudflare-access
+    build: ./fixtures/cloudflare-access
+    environment:
+      OMNITERM_TEST_ACCESS_ID: "${OMNITERM_TEST_ACCESS_ID:-}"
+      OMNITERM_TEST_ACCESS_SECRET: "${OMNITERM_TEST_ACCESS_SECRET:-}"
+    volumes:
+      - ./.cloudflare-access:/state:ro
+    ports:
+      - "127.0.0.1:8447:443"
+    networks: [edge, internal]
+    restart: "no"
+
   # Baseline host: password auth plus tmux, so persistent-session flows work here.
   direct:
     <<: *ssh-common
@@ -145,6 +161,8 @@ services:
     environment:
       OMNITERM_TEST_USER: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
       OMNITERM_TEST_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      # The fixture backup repositories' password; without it they are not made.
+      OMNITERM_TEST_BACKUP_PASSWORD: "${OMNITERM_TEST_BACKUP_PASSWORD:-}"
     volumes:
       - runtime-docker-run:/var/run
       - ./fixtures/runtime-stack:/fixtures/runtime-stack:ro
@@ -256,6 +274,119 @@ services:
       USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
       USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
     networks: [internal]
+
+  # A private HTTPS registry for the image-update check (E2eImageUpdatesTest), reached by name on
+  # the edge network only. `./scripts/test-hosts.sh registry` makes its CA and certificate
+  # (.registry/, gitignored), starts it, hands the CA to the Docker and Podman fixtures and pushes
+  # the images the suite reads. In its own profile, so `up` does not start it without its certificate.
+  registry:
+    image: registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+    container_name: omniterm-test-registry
+    profiles: [registry]
+    environment:
+      REGISTRY_HTTP_ADDR: 0.0.0.0:5000
+      REGISTRY_HTTP_TLS_CERTIFICATE: /certs/server.crt
+      REGISTRY_HTTP_TLS_KEY: /certs/server.key
+    volumes:
+      - ./.registry:/certs:ro
+    networks: [edge]
+    restart: "no"
+
+  # A read-only SNMP agent for the SNMP device suite (E2eSnmpDevicesTest): net-snmp on Alpine,
+  # with a v2c community and a v3 user (SHA-256 and AES) from .env, on UDP 127.0.0.1:1161 only.
+  # It also reports a UPS on battery (UPS-MIB) and has an interface with no link, for those readings.
+  # NET_ADMIN only to make that interface (a veth pair) inside its own network namespace.
+  # `./scripts/test-hosts.sh snmp` builds and starts it; in its own profile, so `up` does not.
+  snmp-device:
+    build:
+      context: ./fixtures/snmp-device
+    image: omniterm-test-snmp-device:local
+    container_name: omniterm-test-snmp-device
+    profiles: [snmp]
+    cap_add: [NET_ADMIN]
+    environment:
+      SNMP_COMMUNITY: "${OMNITERM_TEST_SNMP_COMMUNITY:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      SNMP_PASSWORD: "${OMNITERM_TEST_SNMP_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    ports:
+      - "127.0.0.1:1161:1161/udp"
+    networks: [edge]
+    restart: "no"
+
+  # A contract fake of the Proxmox VE API for the Proxmox suite (E2eProxmoxTest): the documented
+  # shapes of the calls OmniTerm makes, over HTTPS with its own self-signed certificate, on
+  # 127.0.0.1:8006 only. Not Proxmox: it proves OmniTerm's client. Tokens' secrets from .env.
+  # Also on the internal network, which the tailnet router serves, so the suite can reach it
+  # through a Tailscale tunnel at its internal address.
+  # `./scripts/test-hosts.sh proxmox` builds and starts it; in its own profile, so `up` does not.
+  proxmox-api:
+    build:
+      context: ./fixtures/proxmox-api
+    image: omniterm-test-proxmox-api:local
+    container_name: omniterm-test-proxmox-api
+    profiles: [proxmox]
+    environment:
+      PVE_TOKEN_SECRET: "${OMNITERM_TEST_PVE_TOKEN:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      PVE_AUDIT_TOKEN_SECRET: "${OMNITERM_TEST_PVE_AUDIT_TOKEN:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    ports:
+      - "127.0.0.1:8006:8006"
+    networks: [edge, internal]
+    restart: "no"
+
+  # Headscale, the control server for the Tailscale tunnel suite (E2eTailscaleTunnelTest). Images
+  # are pinned by digest. `./scripts/test-hosts.sh up` makes its user and auth keys (the phone's
+  # goes into .env as OMNITERM_TEST_TS_PHONE_KEY), then starts the router with its own.
+  headscale:
+    image: headscale/headscale:0.27.1@sha256:cd37b30018575fd62f18419138d4e526bcf894e1d4e1aa1b08699cec1891ac23
+    container_name: omniterm-test-headscale
+    command: serve
+    restart: "no"
+    volumes:
+      - ./fixtures/headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - ./.tailnet:/etc/headscale/tailnet:ro
+    tmpfs:
+      - /var/lib/headscale
+      - /var/run/headscale
+    ports:
+      - "127.0.0.1:8085:8080"
+    networks: [edge]
+
+  # A tailnet node and subnet router for the internal network, in userspace mode: the phone reaches
+  # internal-a through it at its internal address, port 2222, and no other way. Started by `up` once
+  # its key exists, with the internal network's range (docker picks it) as its route.
+  tailnet-router:
+    image: tailscale/tailscale:v1.104.4@sha256:ed6480b33c6eb67c9cbd203ed42b9fb57e361986725b6856def71b7a3d9e276c
+    container_name: omniterm-test-tailnet-router
+    profiles: [tailnet]
+    restart: "no"
+    environment:
+      TS_AUTHKEY: "${OMNITERM_TEST_TS_ROUTER_KEY:-}"
+      TS_EXTRA_ARGS: "--login-server=http://headscale:8080"
+      TS_HOSTNAME: router
+      TS_ROUTES: "${OMNITERM_TEST_TS_ROUTES:-}"
+      TS_USERSPACE: "true"
+      TS_ACCEPT_DNS: "false"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_TAILSCALED_EXTRA_ARGS: "--port=41641 --no-logs-no-support"
+    tmpfs:
+      - /var/lib/tailscale
+    networks: [edge, internal]
+    depends_on: [headscale, internal-a]
+
+  # Only `test-hosts.sh nebula` starts this: a userspace lighthouse and SSH node leading to
+  # internal-a. Identities are generated on startup into the ignored private .nebula folder.
+  nebula:
+    build: ./fixtures/nebula
+    image: omniterm-test-nebula:local
+    container_name: omniterm-test-nebula
+    profiles: [nebula]
+    user: "${OMNITERM_NEBULA_UID:-1000}:${OMNITERM_NEBULA_GID:-1000}"
+    command: ["-target", "internal-a:2222"]
+    volumes:
+      - ./.nebula:/state:ro
+    ports:
+      - "127.0.0.1:4242:4242/udp"
+    networks: [edge, internal]
+    restart: "no"
 
   # WireGuard peer for the VPN tunnel suite (E2eVpnTunnelTest): UDP 51820 on the host's loopback,
   # which the emulator reaches as 10.0.2.2:51820 (adb reverse carries TCP only). Inside the tunnel it

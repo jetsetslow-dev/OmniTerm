@@ -10,6 +10,14 @@
 # CI's instrumentation coverage is the emulator-based Room migration matrix, which needs no hosts.
 #
 #   ./scripts/test-hosts.sh up       # generate keys if needed, start, wait until SSH answers
+#   ./scripts/test-hosts.sh tailnet-phone # refresh only the phone key; keep shared nodes running
+#   ./scripts/test-hosts.sh cloudflare-access # TLS/WebSocket service-token contract fake
+#   ./scripts/test-hosts.sh nebula   # start only the Nebula lighthouse and SSH node
+#   ./scripts/test-hosts.sh tailnet  # start only headscale and the tailnet router, with fresh keys
+#   ./scripts/test-hosts.sh rebuild <service> # rebuild and recreate one fixture only
+#   ./scripts/test-hosts.sh registry # start the image-update registry and push its images
+#   ./scripts/test-hosts.sh snmp     # start the SNMP device (net-snmp on UDP 127.0.0.1:1161)
+#   ./scripts/test-hosts.sh proxmox  # start the Proxmox VE API contract fake (HTTPS 127.0.0.1:8006)
 #   ./scripts/test-hosts.sh down     # stop and remove (host keys and volumes discarded)
 #   ./scripts/test-hosts.sh status   # container state and port mapping
 #   ./scripts/test-hosts.sh verify   # prove every auth mode and proxy path actually works
@@ -17,6 +25,22 @@
 #   ./scripts/test-hosts.sh fleet    # print the settings to enter in OmniTerm
 #   ./scripts/test-hosts.sh android [serial] # reverse the fixture ports to a physical device
 #   ./scripts/test-hosts.sh android-clear [serial] # remove only those reverse mappings
+#   ./scripts/test-hosts.sh suite <Suite>[#test] [name | name=value | name=@VARIABLE ...]
+#                                    # run one device suite against these fixtures (see below)
+#
+# `suite` runs com.jetsetslow.omniterm.<Suite> on $ANDROID_SERIAL, or the one device attached,
+# after reversing the fixture ports to it. Each argument becomes one instrumentation argument: a
+# bare name is filled in from these fixtures (host, port, user, pass, network_host,
+# omniterm_e2e_sftp_home, backup_pass, snmp_community, snmp_pass, wg_client_key, wg_server_pub,
+# ts_key, ts_behind, pve_token, pve_audit_token, pve_fingerprint, pve_behind, second_port), name=value
+# is passed as written (an opt-in such as omniterm_e2e_proxmox=yes), and name=@VARIABLE takes the
+# value of that environment variable (or of .env). The whole `am instrument` line goes to the device
+# on adb's standard input, so no password, key or token is ever on a command line on this machine,
+# where `ps` shows it to every user; those values are masked in what it prints. It exits 0 only
+# when the run ends OK, and says how many tests were skipped by their opt-in.
+# A few names stand for a private fixture file instead (nebula_config, access_config, access_ca):
+# the file is copied into the app's own private files with run-as, on adb's standard input, the
+# suite gets only its file name, and the copy is removed after the run.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -68,6 +92,17 @@ ensure_env() {
     umask "$old_umask"
     echo "added WireGuard fixture keys to $ENV_FILE"
   fi
+  # Fixture passwords added after the first .env was made, each generated once: the backup
+  # repositories' password, the SNMP device's v2c community and v3 password, and the Proxmox
+  # fake's two token secrets.
+  local name
+  for name in OMNITERM_TEST_BACKUP_PASSWORD OMNITERM_TEST_SNMP_COMMUNITY OMNITERM_TEST_SNMP_PASSWORD \
+    OMNITERM_TEST_PVE_TOKEN OMNITERM_TEST_PVE_AUDIT_TOKEN OMNITERM_TEST_ACCESS_ID OMNITERM_TEST_ACCESS_SECRET; do
+    if ! grep -q "^$name=" "$ENV_FILE"; then
+      (umask 077; echo "$name=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)" >>"$ENV_FILE")
+      echo "added $name to $ENV_FILE"
+    fi
+  done
   # shellcheck disable=SC1090
   set -a; . "$ENV_FILE"; set +a
 }
@@ -97,7 +132,12 @@ EDGE_HOSTS=(
 )
 PROXY_PORTS=(1080 8888)
 SHARE_PORTS=(21 445 8082)
-ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2207 2299 8080 8081 8082 8888)
+ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2207 2299 8006 8080 8081 8082 8447 8888)
+# The lab host the device suites share ("E2E Foreground Demo"): the Docker runtime fixture.
+LAB_PORT=2205
+LAB_CONTAINER=omniterm-test-runtime-docker
+APP=com.jetsetslow.omniterm.app.oss
+RUNNER=$APP.test/androidx.test.runner.AndroidJUnitRunner
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
@@ -105,6 +145,64 @@ ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Connect
 require_docker() {
   command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
   docker info >/dev/null 2>&1 || { echo "cannot talk to the docker daemon" >&2; exit 1; }
+}
+
+# reverse_ports android|android-clear <serial>: the fixture ports to or from a device's 127.0.0.1.
+reverse_ports() {
+  local p
+  for p in "${ANDROID_PORTS[@]}" $(seq 21100 21110); do
+    if [ "$1" = android ]; then
+      adb -s "$2" reverse "tcp:$p" "tcp:$p" >/dev/null
+    else
+      adb -s "$2" reverse --remove "tcp:$p" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+# One word for the device's shell, quoted so it is passed exactly as written.
+device_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+# What a device suite gets for a bare argument name in `suite`; empty when that fixture is not up.
+fixture_value() {
+  case "$1" in
+    host) echo 127.0.0.1 ;; # through `android`'s reverse mappings
+    port) echo "$LAB_PORT" ;;
+    user) echo "$USER_NAME" ;;
+    pass) echo "$PASSWORD" ;;
+    # The fixtures as the phone's own network reaches them, not through adb: what a Wi-Fi or mobile
+    # data loss takes away. The emulator's address for this machine, or OMNITERM_TEST_NETWORK_HOST.
+    network_host)
+      if [ -n "${OMNITERM_TEST_NETWORK_HOST:-}" ]; then echo "$OMNITERM_TEST_NETWORK_HOST"
+      elif [[ "$serial" == emulator-* ]]; then echo 10.0.2.2
+      fi ;;
+    # The lab user's home on the lab host, as that fixture has it.
+    omniterm_e2e_sftp_home) docker exec "$LAB_CONTAINER" getent passwd "$USER_NAME" 2>/dev/null | cut -d: -f6 ;;
+    backup_pass) echo "${OMNITERM_TEST_BACKUP_PASSWORD:-}" ;;
+    snmp_community) echo "${OMNITERM_TEST_SNMP_COMMUNITY:-}" ;;
+    snmp_pass) echo "${OMNITERM_TEST_SNMP_PASSWORD:-}" ;;
+    wg_client_key) echo "${OMNITERM_TEST_WG_CLIENT_KEY:-}" ;;
+    wg_server_pub) echo "${OMNITERM_TEST_WG_SERVER_PUB:-}" ;;
+    ts_key) echo "${OMNITERM_TEST_TS_PHONE_KEY:-}" ;;
+    ts_behind) echo "${OMNITERM_TEST_TS_BEHIND:-}" ;;
+    pve_token) echo "${OMNITERM_TEST_PVE_TOKEN:-}" ;;
+    pve_audit_token) echo "${OMNITERM_TEST_PVE_AUDIT_TOKEN:-}" ;;
+    # The Proxmox fake's certificate, as `openssl x509 -fingerprint -sha256` prints it.
+    pve_fingerprint) openssl s_client -connect 127.0.0.1:8006 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 ;;
+    pve_behind) docker inspect omniterm-test-proxmox-api --format '{{(index .NetworkSettings.Networks "omniterm-test-internal").IPAddress}}' 2>/dev/null ;;
+    # A second SSH fixture with the lab user's login (direct), for a suite that needs two hosts.
+    second_port) echo 2201 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The private fixture file a bare argument name in `suite` stands for, if it is one.
+fixture_file() {
+  case "$1" in
+    nebula_config) echo "$DIR/.nebula/phone.json" ;;           # `nebula`: the phone's Nebula identity
+    access_config) echo "$DIR/.cloudflare-access/phone.json" ;; # `cloudflare-access`: the service token
+    access_ca) echo "$DIR/.cloudflare-access/ca.crt" ;;         # and the contract fake's CA
+    *) return 1 ;;
+  esac
 }
 
 ensure_keys() {
@@ -139,6 +237,120 @@ certificate_current() {
   [ -n "$until" ] && [ "$(date -d "$until" +%s 2>/dev/null || echo 0)" -gt "$(date -d '+7 days' +%s)" ]
 }
 
+# Sets NAME=value in $ENV_FILE, replacing an older value; prints neither.
+set_env() {
+  local name="$1" value="$2" tmp
+  tmp=$(mktemp "$ENV_FILE.XXXXXX")
+  grep -v "^$name=" "$ENV_FILE" >"$tmp" || true
+  printf '%s=%s\n' "$name" "$value" >>"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$ENV_FILE"
+}
+
+# The tailnet for the Tailscale tunnel suite: a user and two auth keys on headscale (the phone's,
+# ephemeral, into .env; the router's, only to start it), then the router, whose route to the
+# internal network is approved here. .env also gets that route and internal-a's address in it.
+# Keys are made again every time, as headscale keeps nothing across a restart.
+# The relay map headscale reads: one region whose STUN is headscale itself, at [address] (its own
+# address on the edge network, which the emulator and the router both reach), and whose relay
+# port is closed. Before headscale has an address, a placeholder at loopback.
+tailnet_map() {
+  local address="${1:-127.0.0.1}"
+  mkdir -p "$DIR/.tailnet"
+  cat >"$DIR/.tailnet/derp.yaml.new" <<EOF_MAP
+# Written by scripts/test-hosts.sh: the tailnet fixture's relay map (STUN only).
+regions:
+  999:
+    regionid: 999
+    regioncode: fixture
+    regionname: Fixture
+    nodes:
+      - name: 999a
+        regionid: 999
+        hostname: $address
+        ipv4: $address
+        ipv6: none
+        stunport: 3478
+        derpport: 9
+EOF_MAP
+  if cmp -s "$DIR/.tailnet/derp.yaml.new" "$DIR/.tailnet/derp.yaml"; then
+    rm "$DIR/.tailnet/derp.yaml.new"
+    return 1
+  fi
+  mv "$DIR/.tailnet/derp.yaml.new" "$DIR/.tailnet/derp.yaml"
+}
+
+# The registry fixture's CA and server certificate, made once into .registry/ (gitignored).
+registry_certs() {
+  fixture_certs "$DIR/.registry" omniterm-test-registry
+}
+
+# Shared TLS fixture generation; an existing fixture is never rotated by another fixture.
+fixture_certs() {
+  local d="$1" cert_name="$2"
+  [ -s "$d/ca.crt" ] && [ -s "$d/server.crt" ] && [ -s "$d/server.key" ] && return 0
+  mkdir -p "$d" || return 1
+  local old_umask rc; old_umask=$(umask); umask 077
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=OmniTerm fixture CA" \
+    -keyout "$d/ca.key" -out "$d/ca.crt" 2>/dev/null &&
+    openssl req -newkey rsa:2048 -nodes -subj "/CN=$cert_name" \
+      -keyout "$d/server.key" -out "$d/server.csr" 2>/dev/null &&
+    printf 'subjectAltName=DNS:%s\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n' "$cert_name" >"$d/server.ext" &&
+    openssl x509 -req -in "$d/server.csr" -CA "$d/ca.crt" -CAkey "$d/ca.key" -CAcreateserial -days 3650 \
+      -extfile "$d/server.ext" -out "$d/server.crt" 2>/dev/null
+  rc=$?
+  umask "$old_umask"
+  chmod 644 "$d/ca.crt" "$d/server.crt" 2>/dev/null
+  return $rc
+}
+
+# Minting a phone key must not recreate the shared router or reset Headscale.
+headscale_user_id() {
+  docker exec omniterm-test-headscale headscale users list -o json |
+    python3 -I -c 'import json,sys; print(next(u["id"] for u in json.load(sys.stdin) if u["name"] == "lab"))'
+}
+
+headscale_key() {
+  local uid="$1"; shift
+  docker exec omniterm-test-headscale headscale preauthkeys create --user "$uid" --reusable --expiration 24h "$@" -o json |
+    python3 -I -c 'import json,sys; print(json.load(sys.stdin)["key"])'
+}
+
+tailnet_up() {
+  local hs=(docker exec omniterm-test-headscale headscale) i uid router_key phone_key node routes behind address last
+  address=$(docker inspect omniterm-test-headscale --format '{{(index .NetworkSettings.Networks "omniterm-test-edge").IPAddress}}')
+  [ -n "$address" ] || { echo "headscale has no address on the edge network" >&2; return 1; }
+  # A new address in the map takes a restart, which also forgets headscale's nodes and keys.
+  if tailnet_map "$address"; then docker restart omniterm-test-headscale >/dev/null; fi
+  wait_for_port 8085 || return 1
+  for i in $(seq 1 30); do "${hs[@]}" users list >/dev/null 2>&1 && break; sleep 1; done
+  "${hs[@]}" users create lab >/dev/null 2>&1 || true
+  uid=$(headscale_user_id) || return 1
+  router_key=$(headscale_key "$uid") || return 1
+  phone_key=$(headscale_key "$uid" --ephemeral) || return 1
+  routes=$(docker network inspect omniterm-test-internal --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' | awk '{print $1}')
+  behind=$(docker inspect omniterm-test-internal-a --format '{{(index .NetworkSettings.Networks "omniterm-test-internal").IPAddress}}')
+  [ -n "$routes" ] && [ -n "$behind" ] || { echo "the internal network has no range, or internal-a no address" >&2; return 1; }
+  set_env OMNITERM_TEST_TS_PHONE_KEY "$phone_key"
+  set_env OMNITERM_TEST_TS_ROUTES "$routes"
+  set_env OMNITERM_TEST_TS_BEHIND "$behind"
+  # The recreated router joins as a new node. Until headscale sees the old one go, that one still
+  # shows online, so wait for a router newer than every node there was, or its routes are never
+  # approved and nothing is reachable through the tailnet.
+  last=$("${hs[@]}" nodes list -o json 2>/dev/null | python3 -I -c 'import json,sys; print(max([int(n["id"]) for n in json.load(sys.stdin) or []], default=0))')
+  OMNITERM_TEST_TS_ROUTER_KEY="$router_key" OMNITERM_TEST_TS_ROUTES="$routes" \
+    compose --profile tailnet up -d --no-deps --force-recreate tailnet-router
+  for i in $(seq 1 60); do
+    node=$("${hs[@]}" nodes list -o json 2>/dev/null |
+      python3 -I -c 'import json,sys; ids=[int(n["id"]) for n in json.load(sys.stdin) or [] if n.get("given_name", "").startswith("router") and n.get("online") and int(n["id"]) > int(sys.argv[1])]; print(max(ids) if ids else "")' "${last:-0}")
+    [ -n "$node" ] && break
+    sleep 2
+  done
+  [ -n "$node" ] || { echo "the tailnet router did not join headscale" >&2; return 1; }
+  "${hs[@]}" nodes approve-routes --identifier "$node" --routes "$routes" >/dev/null
+  echo "tailnet ready: headscale at 10.0.2.2:8085 (emulator), router offering $routes"
+}
+
 wait_for_port() {
   local port="$1" i
   for i in $(seq 1 60); do
@@ -169,6 +381,7 @@ case "${1:-}" in
   up)
     require_docker
     ensure_keys
+    [ -f "$DIR/.tailnet/derp.yaml" ] || tailnet_map || true
     # Fail loudly on a port owned by something else -- this machine may also run a real homelab.
     for entry in "${EDGE_HOSTS[@]}"; do
       p="${entry#*:}"; p="${p%%:*}"
@@ -192,12 +405,118 @@ case "${1:-}" in
     wait_for_auth 2203 || exit 1
     wait_for_auth 2205 || exit 1
     wait_for_auth 2206 || exit 1
+    tailnet_up || exit 1
     echo "test fleet ready. Run './scripts/test-hosts.sh fleet' for the settings to enter."
+    ;;
+
+  cloudflare-access)
+    require_docker
+    eval "$("$ROOT/scripts/go-toolchain.sh")"
+    mkdir -p "$DIR/fixtures/cloudflare-access/.build"
+    (cd "$ROOT/tunnel" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$DIR/fixtures/cloudflare-access/.build/accesslab" ./cmd/accesslab) || exit 1
+    fixture_certs "$DIR/.cloudflare-access" '*.access.test' || exit 1
+    # By its full path: the script runs from any folder.
+    (umask 077; python3 -I -c 'import json,os,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps(dict(hostname="ssh.access.test",clientId=os.environ["OMNITERM_TEST_ACCESS_ID"],clientSecret=os.environ["OMNITERM_TEST_ACCESS_SECRET"])))' "$DIR/.cloudflare-access/phone.json") || exit 1
+    compose --profile cloudflare-access up -d --build --no-deps cloudflare-access || exit 1
+    wait_for_port 8447 || exit 1
+    echo "Access contract fake ready on TLS 127.0.0.1:8447; private phone settings and CA in .cloudflare-access"
+    ;;
+
+  nebula)
+    # Caller holds the shared machine lock when building on a relay machine. No other fixture
+    # is recreated: internal-a must already be up, as it is for the WireGuard and tailnet suites.
+    require_docker
+    ensure_env
+    eval "$("$ROOT/scripts/go-toolchain.sh")"
+    mkdir -p "$DIR/fixtures/nebula/.build"
+    (cd "$ROOT/tunnel" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$DIR/fixtures/nebula/.build/nebulalab" ./cmd/nebulalab) || exit 1
+    (umask 077; "$DIR/fixtures/nebula/.build/nebulalab" -generate -state "$DIR/.nebula" -endpoint "${OMNITERM_NEBULA_ENDPOINT:-10.0.2.2:4242}") || exit 1
+    export OMNITERM_NEBULA_UID="$(id -u)" OMNITERM_NEBULA_GID="$(id -g)"
+    compose --profile nebula up -d --build --no-deps --force-recreate nebula || exit 1
+    ready=false
+    for i in $(seq 1 30); do
+      if docker logs omniterm-test-nebula 2>&1 | grep -q 'Nebula fixture ready'; then ready=true; break; fi
+      sleep 1
+    done
+    "$ready" || { echo "Nebula fixture did not start" >&2; exit 1; }
+    echo "Nebula ready: lighthouse UDP 127.0.0.1:4242, SSH node 10.88.0.3:22; phone config in scripts/test-hosts/.nebula/phone.json (private)"
+    ;;
+
+  tailnet-phone)
+    require_docker
+    uid=$(headscale_user_id) || exit 1
+    phone_key=$(headscale_key "$uid" --ephemeral) || exit 1
+    set_env OMNITERM_TEST_TS_PHONE_KEY "$phone_key"
+    echo "refreshed the disposable phone key; Headscale and the router were not restarted"
+    ;;
+
+  tailnet)
+    # Only the tailnet, without touching the other fixtures.
+    require_docker
+    [ -f "$DIR/.tailnet/derp.yaml" ] || tailnet_map || true
+    compose up -d --no-deps headscale
+    tailnet_up || exit 1
+    ;;
+
+  registry)
+    # The image-update check's registry (see docker-compose.yml). Each runtime host ends with two
+    # images from it: omniterm/steady:1, current, and omniterm/app:latest, one push behind the
+    # registry. Safe to run again: it rebuilds the same state.
+    require_docker
+    registry_certs || exit 1
+    compose --profile registry up -d --no-deps registry || exit 1
+    reg=omniterm-test-registry:5000
+    # Docker reads certs.d on every connection, so no daemon restart; the check's curl uses it too.
+    for c in omniterm-test-runtime-docker-engine omniterm-test-runtime-docker; do
+      docker exec -i "$c" sh -c "mkdir -p /etc/docker/certs.d/$reg && cat >/etc/docker/certs.d/$reg/ca.crt" <"$DIR/.registry/ca.crt" || exit 1
+    done
+    docker exec -i omniterm-test-runtime-podman sh -c "mkdir -p /etc/containers/certs.d/$reg && cat >/etc/containers/certs.d/$reg/ca.crt" <"$DIR/.registry/ca.crt" || exit 1
+    # Images made with `docker import` from one small file: nothing to pull from the internet.
+    push() { # name, content
+      docker exec -i omniterm-test-runtime-docker sh -c \
+        'set -e; t=$(mktemp -d); cd "$t"; printf "%s\n" "$2" >f; tar -cf - f | docker import --change "LABEL omniterm.fixture=$2" - "$1" >/dev/null; docker push -q "$1" >/dev/null; rm -rf "$t"' \
+        sh "$reg/omniterm/$1" "$2" || return 1
+    }
+    push steady:1 steady && push app:latest "v1-$(date +%s)" || exit 1
+    v1=$(docker exec omniterm-test-runtime-docker docker image inspect --format '{{.Id}}' "$reg/omniterm/app:latest") || exit 1
+    for i in steady:1 app:latest; do
+      docker exec omniterm-test-runtime-podman podman pull -q "$reg/omniterm/$i" >/dev/null || exit 1
+    done
+    # A newer app:latest in the registry; both hosts keep the one they pulled.
+    push app:latest "v2-$(date +%s)" || exit 1
+    docker exec omniterm-test-runtime-docker docker tag "$v1" "$reg/omniterm/app:latest" || exit 1
+    echo "registry ready: $reg/omniterm/steady:1 is current, $reg/omniterm/app:latest has an update"
+    ;;
+
+  snmp)
+    # The SNMP device for E2eSnmpDevicesTest (see docker-compose.yml): net-snmp, read-only, with
+    # the v2c community and a v3 user from .env. The emulator reaches it at 10.0.2.2:1161 (UDP,
+    # which adb reverse cannot carry).
+    require_docker
+    compose --profile snmp up -d --build --no-deps snmp-device || exit 1
+    echo "snmp device ready: udp 127.0.0.1:1161 (v2c community and v3 user 'omniterm' from .env)"
+    ;;
+
+  proxmox)
+    # The Proxmox VE API contract fake for E2eProxmoxTest (see docker-compose.yml). The emulator
+    # reaches it at 10.0.2.2:8006, or at 127.0.0.1:8006 once `android` reverses the ports; its
+    # certificate is made on start, so trust it again in the app.
+    require_docker
+    compose --profile proxmox up -d --build --no-deps proxmox-api || exit 1
+    echo "proxmox api ready: https://127.0.0.1:8006 (tokens omniterm@pve!e2e and audit@pve!e2e from .env)"
+    ;;
+
+  rebuild)
+    # One fixture, rebuilt and recreated, without touching the others: e.g. `rebuild runtime-docker`
+    # after its Dockerfile changed. Its host key changes, so trust it again in the app.
+    require_docker
+    [ -n "${2:-}" ] || { echo "usage: $0 rebuild <service>" >&2; exit 1; }
+    compose up -d --build --no-deps --force-recreate "$2"
     ;;
 
   down)
     require_docker
-    compose down -v --remove-orphans
+    compose --profile tailnet --profile registry --profile snmp --profile proxmox down -v --remove-orphans
     echo "test fleet removed"
     ;;
 
@@ -291,6 +610,10 @@ case "${1:-}" in
       curl --silent --show-error --fail --user "$USER_NAME:$PASSWORD" \
         -X PROPFIND -H 'Depth: 1' -o /dev/null -w '%{http_code}' \
         http://127.0.0.1:8082/fixture/
+    # The share takes its login from the environment, not a flag: if rclone ever stopped reading
+    # it there, it would serve everyone, and every check above would still pass.
+    check "WebDAV refuses a wrong password :8082" \
+      bash -c '[ "$(curl --silent -o /dev/null -w "%{http_code}" --user "$1:not-the-password" -X PROPFIND -H "Depth: 0" http://127.0.0.1:8082/fixture/)" = 401 ] && echo 401' _ "$USER_NAME"
     # Reads alone are not enough. Every share protocol passed `verify` for weeks while WebDAV PUT
     # returned 500 on the device, because nothing here ever wrote. Each probe writes a uniquely
     # named file, reads the same bytes back and removes it, leaving the seeded baseline untouched.
@@ -377,19 +700,72 @@ EOF
       }
       serial="${devices[0]}"
     fi
-    for p in "${ANDROID_PORTS[@]}" $(seq 21100 21110); do
-      if [ "$1" = android ]; then
-        adb -s "$serial" reverse "tcp:$p" "tcp:$p" >/dev/null
-      else
-        adb -s "$serial" reverse --remove "tcp:$p" >/dev/null 2>&1 || true
-      fi
-    done
+    reverse_ports "$1" "$serial"
     if [ "$1" = android ]; then
       echo "fixture ports reversed to $serial; use 127.0.0.1 in OmniTerm"
       adb -s "$serial" reverse --list
     else
       echo "fixture reverse mappings removed from $serial"
     fi
+    ;;
+
+  suite)
+    command -v adb >/dev/null || { echo "adb is required" >&2; exit 1; }
+    [ $# -ge 2 ] || { echo "usage: $0 suite <Suite>[#test] [name | name=value | name=@VARIABLE ...]" >&2; exit 2; }
+    target="$2"
+    shift 2
+    serial="${ANDROID_SERIAL:-}"
+    if [ -z "$serial" ]; then
+      mapfile -t devices < <(adb devices | awk 'NR > 1 && $2 == "device" { print $1 }')
+      [ "${#devices[@]}" -eq 1 ] || { echo "set ANDROID_SERIAL (found ${#devices[@]} devices)" >&2; exit 1; }
+      serial="${devices[0]}"
+    fi
+    line="am instrument -w -r"
+    masked=()
+    copied=()
+    for a in "$@"; do
+      name="${a%%=*}"
+      [[ "$name" =~ ^[A-Za-z0-9_]+$ ]] || { echo "not an argument name: $name" >&2; exit 2; }
+      if [ "$a" = "$name" ] && file=$(fixture_file "$name"); then
+        [ -s "$file" ] || { echo "$name: its fixture is not set up (see this script's usage)" >&2; exit 1; }
+        value="e2e-$name"
+        # Only the file name is on a command line; its content goes on adb's standard input.
+        adb -s "$serial" shell "run-as $APP sh -c 'mkdir -p files && cat > files/$value'" <"$file" >/dev/null ||
+          { echo "$name: could not copy it into $APP's private files (install the debug app first)" >&2; exit 1; }
+        copied+=("$value")
+      elif [ "$a" = "$name" ]; then
+        value=$(fixture_value "$name") || { echo "$name is not a fixture value: pass $name=value or $name=@VARIABLE" >&2; exit 2; }
+        [ -n "$value" ] || { echo "$name: its fixture is not set up (see this script's usage)" >&2; exit 1; }
+        case "$name" in pass | backup_pass | snmp_* | wg_* | ts_key | pve_token | pve_audit_token) masked+=("$value") ;; esac
+      else
+        value="${a#*=}"
+        if [[ "$value" == @* ]]; then
+          var="${value#@}"
+          [[ "$var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "not a variable name: $var" >&2; exit 2; }
+          value="${!var:-}"
+          [ -n "$value" ] || { echo "$var is not set" >&2; exit 1; }
+          masked+=("$value")
+        fi
+      fi
+      line+=" -e $name $(device_quote "$value")"
+    done
+    line+=" -e class $(device_quote "com.jetsetslow.omniterm.$target") $RUNNER"
+    # The device may not listen on ports below 1024 (21, 445): those mappings fail, as in `android`.
+    reverse_ports android "$serial" 2>/dev/null
+    adb -s "$serial" shell input keyevent KEYCODE_WAKEUP
+    adb -s "$serial" shell wm dismiss-keyguard
+    # printf is a shell builtin: the line goes to adb's standard input, never into an argument list.
+    out=$(printf '%s; exit\n' "$line" | adb -s "$serial" shell 2>&1)
+    for m in "${masked[@]}"; do out="${out//"$m"/***}"; done
+    printf '%s\n' "$out"
+    # -3 is an ignored test, -4 a failed assumption: an opt-in it was not given.
+    skipped=$(grep -cE '^INSTRUMENTATION_STATUS_CODE: -(3|4)' <<<"$out")
+    echo "== $target: $(grep -E '^OK \(|^Tests run|INSTRUMENTATION_FAILED' <<<"$out" | head -2 | tr '\n' ' ')($skipped skipped by their opt-in)"
+    ok=1
+    grep -q '^OK (' <<<"$out" && ! grep -q 'FAILURES!!!' <<<"$out" && ok=0
+    # A suite removes a private file when it reads it; one it never read (skipped) goes here.
+    for f in "${copied[@]}"; do adb -s "$serial" shell "run-as $APP rm -f files/$f" >/dev/null 2>&1; done
+    exit "$ok"
     ;;
 
   *)

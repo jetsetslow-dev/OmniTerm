@@ -62,7 +62,19 @@ test.txt
 # Generated SSH keys for the local test fleet (scripts/test-hosts.sh)
 /scripts/test-hosts/keys/
 /scripts/test-hosts/.env
+# The tailnet fixture's relay map, written with headscale's address by scripts/test-hosts.sh
+/scripts/test-hosts/.tailnet/
+# The image-update registry fixture's CA and certificate, made by scripts/test-hosts.sh registry
+/scripts/test-hosts/.registry/
 
 # Repo-local Go toolchain, modules and build cache (scripts/go-toolchain.sh), and the CodeQL Go
 # bundle scripts/local-codeql.sh fetches beside it.
 /.go-toolchain/
+
+# Fresh Nebula fixture identities and its repository-built executable (never commit either).
+/scripts/test-hosts/.nebula/
+/scripts/test-hosts/fixtures/nebula/.build/
+
+# Cloudflare Access contract fake TLS and generated token/config.
+/scripts/test-hosts/.cloudflare-access/
+/scripts/test-hosts/fixtures/cloudflare-access/.build/

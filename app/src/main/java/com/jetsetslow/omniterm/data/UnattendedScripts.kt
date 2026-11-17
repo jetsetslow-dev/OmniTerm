@@ -1,14 +1,17 @@
 package com.jetsetslow.omniterm.data
 
 /**
- * Saved scripts that run with nobody there to confirm each run: script checks and automation
- * (Tasker and other apps). Both refuse the same scripts, for the same reasons.
+ * Saved scripts that run with nobody there to confirm each run: script checks, automation (Tasker
+ * and other apps), Fleet's schedules and runbooks an alert runs on its own. All refuse the same
+ * scripts, for the same reasons.
  */
 object UnattendedScripts {
     /** What runs the script, for the refusal's wording. */
     enum class Runner(val runsWithoutAsking: String, val nobodyToAsk: String) {
         CHECK("A check runs every minute without asking", "a check has nobody to ask"),
         AUTOMATION("Automation runs it without asking", "an automation has nobody to ask"),
+        SCHEDULE("A schedule runs it without asking", "a schedule has nobody to ask"),
+        ALERT("An alert runs it without asking", "an alert has nobody to ask"),
     }
 
     /**

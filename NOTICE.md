@@ -14,14 +14,18 @@ this repository.
 
 ## Acknowledgements
 
-OmniTerm credits the open-source projects whose ideas and bug reports shaped its features. No
-code from them is included; see the README's Acknowledgements for what came from each.
+OmniTerm credits the projects, most of them open source, whose ideas and bug reports shaped its
+features. No code from them is included; see the README's Acknowledgements for what came from each.
 
 - Semaphore UI — https://github.com/semaphoreui/semaphore
 - Termix — https://github.com/Termix-SSH/Termix
+- Termius (not open source; ideas only) — https://termius.com
 - ssh-mcp-server — https://github.com/classfang/ssh-mcp-server
 - ssh-mcp — https://github.com/tufantunc/ssh-mcp
 - Komodo — https://github.com/moghtech/komodo
+- Ansible — https://github.com/ansible/ansible
+- ClusterShell — https://github.com/cea-hpc/clustershell
+- pdsh — https://github.com/chaos/pdsh
 - Haven — https://github.com/GlassHaven/Haven
 - ConnectBot — https://github.com/connectbot/connectbot
 - ServerBox — https://github.com/lollipopkit/flutter_server_box
@@ -32,10 +36,22 @@ code from them is included; see the README's Acknowledgements for what came from
 - Termux:Tasker — https://github.com/termux/termux-tasker
 - electerm — https://github.com/electerm/electerm
 - Material Files — https://github.com/zhanghai/MaterialFiles
+- Watchtower — https://github.com/containrrr/watchtower
+- Cup — https://github.com/sergi0g/cup
+- LibreNMS — https://github.com/librenms/librenms
+- Proxmox VE API documentation — https://pve.proxmox.com/pve-docs/api-viewer/
+- Kubernetes API reference — https://kubernetes.io/docs/reference/kubernetes-api/
 - Model Context Protocol specification — https://modelcontextprotocol.io
 - xterm control sequences — https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
 - string-width — https://github.com/sindresorhus/string-width
 - unicode-width — https://github.com/unicode-rs/unicode-width
+
+## Markdown parser
+
+The file editor's Markdown preview reads Markdown with JetBrains Markdown
+(`org.jetbrains:markdown`, version 0.7.18), https://github.com/JetBrains/markdown, licensed under
+the Apache License 2.0. The preview draws the parser's result itself; the library's HTML output is
+not used.
 
 ## Unicode data
 
@@ -52,7 +68,49 @@ https://www.unicode.org/license.txt and https://www.unicode.org/terms_of_use.htm
 The VPN tunnel library (`tunnel/`) is built from these, each under its own licence; the full module list with versions is in `tunnel/go.mod`:
 
 - wireguard-go (MIT) — https://git.zx2c4.com/wireguard-go
+- Tailscale's `tsnet` and the libraries it is built on (BSD-3-Clause, with Tailscale's patent grant in its PATENTS file) — https://github.com/tailscale/tailscale
 - gVisor network stack (Apache-2.0) — https://github.com/google/gvisor
 - Go extended libraries golang.org/x/crypto, net, sys, time (BSD-3-Clause) — https://go.googlesource.com
 - gomobile (BSD-3-Clause), used to build the Android library — https://pkg.go.dev/golang.org/x/mobile
 - google/btree (Apache-2.0) — https://github.com/google/btree
+- Nebula v1.12.0 userspace service (MIT), Copyright (c) 2018-2019 Slack Technologies, Inc. — https://github.com/slackhq/nebula (licence below)
+- The other modules Tailscale and Nebula need, each listed in `tunnel/go.mod`, are under BSD-2-Clause, BSD-2-Clause-Views (the FreeBSD licence, rcrowley/go-metrics), BSD-3-Clause, MIT, ISC or Apache-2.0; `scripts/check-licenses.py` reads every one
+
+### Nebula MIT licence
+
+Copyright (c) 2018-2019 Slack Technologies, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### Cloudflare Access protocol and WebSocket library
+
+[cloudflared](https://github.com/cloudflare/cloudflared), Apache-2.0, is credited as the protocol
+reference for service-token TCP/SSH over WebSockets. OmniTerm independently implements that
+protocol; it does not bundle cloudflared code or its executable.
+
+[coder/websocket](https://github.com/coder/websocket) v1.8.15 (already in the module graph) is now
+also used directly for this carrier, under ISC:
+
+Copyright (c) 2025 Coder
+
+Permission to use, copy, modify, and distribute this software for any purpose with or without
+fee is hereby granted, provided that the above copyright notice and this permission notice
+appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
+SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL
+THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,
+NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE
+OF THIS SOFTWARE.
+
+## Broadcast typing idea
+
+Sending typing to several open terminals was inspired by tmux synchronize-panes
+(https://github.com/tmux/tmux), ClusterSSH (https://github.com/duncs/clusterssh) and
+ServerBox (https://github.com/lollipopkit/flutter_server_box). These are references for the
+idea only; no source code or dependency from these projects is included by this feature.

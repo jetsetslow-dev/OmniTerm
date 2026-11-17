@@ -5,9 +5,10 @@ import java.util.Locale
 /**
  * Alert rules about a host's state rather than a usage figure: whether it answers at all, failed
  * services, containers in trouble, storage health, the last ZFS scrub, a UPS on battery, a
- * pending reboot, and a saved script's exit status ([ScriptChecks]). Each reading is a plain
- * number, so it fits the same incident and history rows as every other metric: a count, a number
- * of days, an exit status, or 1 for yes.
+ * pending reboot, a saved script's exit status ([ScriptChecks]), and the age of the newest backup
+ * in a repository ([BackupChecks]), and the images with a newer build in their registry
+ * ([ImageUpdates]). Each reading is a plain number, so it fits the same incident and
+ * history rows as every other metric: a count, a number of days or hours, an exit status, or 1 for yes.
  *
  * Credit: the alert classes follow Beszel (henrygd/beszel#437 host down, #716 containers, #1813
  * systemd services) and Uptime Kuma (louislam/uptime-kuma#177, #819).
@@ -21,10 +22,12 @@ object HostChecks {
     const val UPS_ON_BATTERY = "UPS On Battery"
     const val REBOOT_REQUIRED = "Reboot Required"
     const val SCRIPT_CHECK = "Script Check"
+    const val BACKUP_AGE = "Backup Age"
+    const val IMAGE_UPDATES = "Image Updates"
 
     val ALL = listOf(
         HOST_OFFLINE, FAILED_SERVICES, CONTAINER_PROBLEMS, STORAGE_HEALTH, SCRUB_AGE, UPS_ON_BATTERY, REBOOT_REQUIRED,
-        SCRIPT_CHECK,
+        SCRIPT_CHECK, BACKUP_AGE, IMAGE_UPDATES,
     )
 
     fun isHostCheck(metricName: String) = metricName in ALL
@@ -32,8 +35,12 @@ object HostChecks {
     /** Checks that run a command on the host. Host Offline comes from the reachability probe itself. */
     fun runsOnHost(metricName: String) = isHostCheck(metricName) && metricName != HOST_OFFLINE
 
-    /** Checks read with [PROBE]. A script check runs its own script ([ScriptChecks]). */
-    fun needsProbe(metricName: String) = runsOnHost(metricName) && metricName != SCRIPT_CHECK
+    /**
+     * Checks read with [PROBE]. A script check runs its own script ([ScriptChecks]); a backup
+     * check reads its own repository ([BackupChecks]); an image check asks registries ([ImageUpdates]).
+     */
+    fun needsProbe(metricName: String) =
+        runsOnHost(metricName) && metricName != SCRIPT_CHECK && metricName != BACKUP_AGE && metricName != IMAGE_UPDATES
 
     /**
      * Yes-or-no checks: the threshold is fixed at 0, so the rule editor does not ask for one. A
@@ -43,12 +50,20 @@ object HostChecks {
         metricName == HOST_OFFLINE || metricName == UPS_ON_BATTERY || metricName == REBOOT_REQUIRED ||
             metricName == SCRIPT_CHECK
 
-    fun defaultThreshold(metricName: String): Float = if (metricName == SCRUB_AGE) 35f else 0f
+    fun defaultThreshold(metricName: String): Float = when (metricName) {
+        SCRUB_AGE -> 35f
+        BACKUP_AGE -> BackupChecks.DEFAULT_THRESHOLD_HOURS
+        else -> 0f
+    }
 
-    /** How long a reading must hold before it alerts; a pending reboot or an old scrub at once. */
+    /** Whether [value] alerts against [threshold]. A backup check's errors read below 0 and alert too. */
+    fun breached(metricName: String, value: Float, threshold: Float): Boolean =
+        if (metricName == BACKUP_AGE) BackupChecks.breached(value, threshold) else value > threshold
+
+    /** How long a reading must hold before it alerts; a pending reboot, an old scrub or backup at once. */
     fun defaultWindow(metricName: String): String = when (metricName) {
         HOST_OFFLINE, SCRIPT_CHECK -> "2m"
-        REBOOT_REQUIRED, SCRUB_AGE -> "0m"
+        REBOOT_REQUIRED, SCRUB_AGE, BACKUP_AGE, IMAGE_UPDATES -> "0m"
         else -> "5m"
     }
 
@@ -191,6 +206,8 @@ object HostChecks {
         CONTAINER_PROBLEMS -> plural(value.toInt(), "container in trouble", "containers in trouble")
         STORAGE_HEALTH -> plural(value.toInt(), "storage problem")
         SCRIPT_CHECK -> if (value > 0f) "exit ${value.toInt()}" else "passed"
+        BACKUP_AGE -> BackupChecks.describe(value)
+        IMAGE_UPDATES -> plural(value.toInt(), "image with an update", "images with updates")
         else -> value.toString()
     }
 
@@ -209,6 +226,7 @@ object HostChecks {
             SCRUB_AGE -> (if (listed.isEmpty()) "Last scrub" else "Pool $listed last scrubbed") +
                 " ${value.toInt()} days ago (limit ${threshold.toInt()})"
             REBOOT_REQUIRED -> "Updates need a reboot"
+            IMAGE_UPDATES -> if (listed.isEmpty()) describe(metricName, value) else "Updates for $listed"
             UPS_ON_BATTERY -> if (listed.isEmpty()) "A UPS is on battery" else "On battery: $listed"
             else -> describe(metricName, value) + if (listed.isNotEmpty()) ": $listed" else ""
         }

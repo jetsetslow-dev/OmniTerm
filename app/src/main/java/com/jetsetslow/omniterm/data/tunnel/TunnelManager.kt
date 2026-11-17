@@ -1,7 +1,10 @@
 package com.jetsetslow.omniterm.data.tunnel
 
+import android.content.Context
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.TunnelEntity
+import com.jetsetslow.omniterm.data.TunnelKinds
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,7 +26,27 @@ data class TunnelStatus(
     val lastHandshake: Long,
     val bytesIn: Long,
     val bytesOut: Long,
+    /** One of [TunnelStates]; a tunnel that is up but not running (signing in) carries nothing. */
+    val state: String = TunnelStates.RUNNING,
+    /** The page to sign the tunnel in at, while it needs that. */
+    val authUrl: String = "",
+    /** The phone's own addresses inside the tunnel. */
+    val addresses: String = "",
+    /** What the user should know about the tunnel now, or "". */
+    val problem: String = "",
 )
+
+/** What a connection through a tunnel carries. Every caller of [TunnelManager.dial] says which. */
+enum class TunnelUse {
+    /** The host's SSH session, with SFTP, port forwards and jump hosts inside it. */
+    SSH,
+
+    /** Anything else: a port or certificate check, a web API, a test of a port. */
+    OTHER,
+}
+
+/** A tunnel that cannot carry a connection said so, in the user's words; nothing was dialled. */
+class TunnelCannotCarry(message: String) : IOException(message)
 
 /**
  * Runs the tunnels hosts go through. A tunnel starts when a connection first needs it and stops
@@ -34,18 +57,60 @@ object TunnelManager {
     @Volatile internal var engine: TunnelEngine = GoTunnelEngine
     @Volatile internal var clock: () -> Long = System::currentTimeMillis
     @Volatile private var source: (suspend (Int) -> TunnelEntity?) = { null }
+    @Volatile private var nodes: NodeStates = NodeStates.NONE
     private var watcher: Job? = null
 
-    private class Running(val tunnel: RunningTunnel, val fingerprint: String) {
+    private class Running(
+        val tunnel: RunningTunnel,
+        val fingerprint: String,
+        val name: String,
+        val kind: String,
+        /** What makes it one node of its network ([TunnelEngine.node]), or "". */
+        val node: String,
+    ) {
         @Volatile var lastUsed: Long = 0
     }
 
     private val running = ConcurrentHashMap<Int, Running>()
     private val locks = ConcurrentHashMap<Int, Any>()
+
+    /** The saved tunnel that is running, or starting, as a node of its network. */
+    private class Holder(val id: Int, val name: String)
+
+    /**
+     * Which tunnel holds each node ([TunnelEngine.node]), taken before it starts and given back
+     * when it stops, so two saved tunnels with one Nebula address never run at once.
+     */
+    private val holders = ConcurrentHashMap<String, Holder>()
     private val _statuses = MutableStateFlow<Map<Int, TunnelStatus>>(emptyMap())
+    private val _problems = MutableStateFlow<Map<Int, String>>(emptyMap())
 
     /** The tunnels that are up, by id. */
     val statuses: StateFlow<Map<Int, TunnelStatus>> = _statuses.asStateFlow()
+
+    /** Why each tunnel that last failed to start did, by id, until it starts or is stopped. */
+    val problems: StateFlow<Map<Int, String>> = _problems.asStateFlow()
+
+    /** Where a tunnel's node state is read and kept: the database, or a test's own. */
+    internal class NodeStates(
+        val load: suspend (Int) -> String,
+        val save: suspend (Int, String) -> Unit,
+        val scratch: (Int) -> File = TailscaleNetwork::scratch,
+    ) {
+        companion object {
+            val NONE = NodeStates({ "" }, { _, _ -> })
+        }
+    }
+
+    /**
+     * Follows what tunnels depend on as the phone moves between networks: the Wi-Fi it is on
+     * ([CurrentWifi]) and the interface its connections go over ([TailscaleNetwork]). Called from
+     * every way into the app.
+     */
+    fun follow(context: Context) {
+        CurrentWifi.start(context)
+        TailscaleNetwork.start(context)
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -57,6 +122,7 @@ object TunnelManager {
     @Synchronized
     fun attach(repository: AppRepository) {
         source = { repository.getTunnel(it) }
+        nodes = NodeStates(repository::tunnelNodeState, repository::saveTunnelNodeState)
         if (watcher?.isActive == true) return
         watcher = scope.launch {
             while (isActive) {
@@ -67,21 +133,30 @@ object TunnelManager {
         }
     }
 
-    internal fun attachSource(lookup: suspend (Int) -> TunnelEntity?) {
+    internal fun attachSource(lookup: suspend (Int) -> TunnelEntity?, states: NodeStates = NodeStates.NONE) {
         source = lookup
+        nodes = states
     }
 
     /** What is wrong with [config], or null when it can be used. */
     fun check(kind: String, config: String): String? = engine.check(kind, config)
 
     /**
-     * Connects to [host]:[port] through tunnel [tunnelId], starting it first if it is not up.
-     * Blocks; call it from the thread that dials.
+     * Connects to [host]:[port] through tunnel [tunnelId] for [use], starting it first if it is not
+     * up. Blocks; call it from the thread that dials. Throws [TunnelCannotCarry] for a use the
+     * tunnel cannot carry, decided here for every caller.
      */
-    fun dial(tunnelId: Int, host: String, port: Int, timeoutMs: Int): TunnelLink {
+    fun dial(tunnelId: Int, host: String, port: Int, timeoutMs: Int, use: TunnelUse): TunnelLink {
         val run = runningFor(tunnelId)
+        // Cloudflare Access opens a WebSocket to the one SSH service its hostname publishes, whatever
+        // port is asked for: a port check through it would find "open" because the WebSocket opened.
+        if (use != TunnelUse.SSH && run.kind in SSH_ONLY) {
+            throw TunnelCannotCarry("Tunnel \"${run.name}\" is Cloudflare Access: it reaches only the SSH service its hostname publishes, so this cannot go through it.")
+        }
         run.lastUsed = clock()
         try {
+            // A tunnel that is up but not signed in fails closed here, whatever its kind.
+            notRunning(run)?.let { throw IOException(it) }
             return run.tunnel.dial(host, port, timeoutMs)
         } finally {
             run.lastUsed = clock()
@@ -89,21 +164,92 @@ object TunnelManager {
         }
     }
 
+    /**
+     * Brings tunnel [id] up without a connection, so a Tailscale tunnel can be signed in before a
+     * host needs it. Blocks; throws what a dial would. Returns its status.
+     */
+    fun start(id: Int): TunnelStatus {
+        val run = runningFor(id)
+        run.lastUsed = clock()
+        refresh()
+        return status(run)
+    }
+
+    /**
+     * The id of the running tunnel that is already [config] of [kind], so a test of [config] goes
+     * through it instead of starting a second node with its identity; null when none runs it.
+     * Throws when a running tunnel is the same [node] of its network with other settings: a second
+     * node with that Nebula address would take its place at its peers and drop its connections.
+     * Starting a second saved tunnel as that node is refused by the same rule ([claim]).
+     */
+    internal fun runningAs(kind: String, config: String, node: String): Int? {
+        val fingerprint = fingerprint(kind, config)
+        running.entries.firstOrNull { it.value.fingerprint == fingerprint }?.let { return it.key }
+        if (node.isEmpty()) return null
+        holders[node]?.let {
+            throw IOException("Tunnel \"${it.name}\" is running with this certificate's Nebula address. Testing these settings as well would drop that tunnel's connections: stop it under Tools, VPN tunnels, first, or save them and use the tunnel.")
+        }
+        return null
+    }
+
+    /**
+     * Takes [node] for tunnel [id] before it starts. Returns the other tunnel that holds it, which
+     * keeps it, or null when [id] now holds it (or [node] is "": such tunnels run side by side).
+     */
+    private fun claim(node: String, id: Int, name: String): Holder? {
+        if (node.isEmpty()) return null
+        val mine = Holder(id, name)
+        val held = holders.compute(node) { _, current -> if (current == null || current.id == id) mine else current }
+        return held.takeIf { it !== mine }
+    }
+
+    /** Gives [node] back, if tunnel [id] holds it. */
+    private fun release(node: String, id: Int) {
+        if (node.isNotEmpty()) holders.computeIfPresent(node) { _, current -> current.takeIf { it.id != id } }
+    }
+
+    /** Why [run] carries no connection now, or null when it does. */
+    private fun notRunning(run: Running): String? = when (run.tunnel.state) {
+        TunnelStates.RUNNING -> null
+        TunnelStates.NEEDS_LOGIN -> "Tunnel \"${run.name}\" is not signed in. Sign it in under Tools, VPN tunnels."
+        TunnelStates.NEEDS_APPROVAL -> "Tunnel \"${run.name}\" is waiting for its tailnet's admin to approve this device."
+        else -> "Tunnel \"${run.name}\" is not connected yet."
+    }
+
     private fun runningFor(id: Int): Running = synchronized(locks.getOrPut(id) { Any() }) {
         val entity = runBlocking(Dispatchers.IO) { source(id) }
             ?: throw IOException("This host's tunnel no longer exists. Pick another in the host's settings.")
-        val fingerprint = fingerprint(entity)
+        val fingerprint = fingerprint(entity.kind, entity.config)
         running[id]?.let { current ->
             if (current.fingerprint == fingerprint) return current
             running.remove(id)
+            release(current.node, id)
             current.tunnel.close()
         }
-        val tunnel = try {
-            engine.start(entity.kind, entity.config, ::systemResolve)
-        } catch (e: IOException) {
-            throw IOException("Tunnel \"${entity.name}\" could not start: ${e.message}", e)
+        // Two nodes with one Nebula address would take each other's place at their peers.
+        val identity = engine.node(entity.kind, entity.config)
+        claim(identity, id, entity.name)?.let { holder ->
+            val message = "Tunnel \"${entity.name}\" could not start: tunnel \"${holder.name}\" is running with this certificate's Nebula address. Running both would drop each other's connections: stop \"${holder.name}\" under Tools, VPN tunnels, first."
+            _problems.value = _problems.value + (id to message)
+            throw IOException(message)
         }
-        Running(tunnel, fingerprint).also {
+        val states = nodes
+        val node = object : TunnelNode {
+            override val scratch: File get() = states.scratch(id)
+            override fun load(): String = runBlocking(Dispatchers.IO) { states.load(id) }
+            override fun save(state: String) = runBlocking(Dispatchers.IO) { states.save(id, state) }
+        }
+        val tunnel = try {
+            engine.start(entity.kind, entity.config, ::systemResolve, node)
+        } catch (e: Throwable) {
+            release(identity, id)
+            if (e !is IOException) throw e
+            val message = "Tunnel \"${entity.name}\" could not start: ${e.message}"
+            _problems.value = _problems.value + (id to message)
+            throw IOException(message, e)
+        }
+        _problems.value = _problems.value - id
+        Running(tunnel, fingerprint, entity.name, entity.kind, identity).also {
             it.lastUsed = clock()
             running[id] = it
             refresh()
@@ -113,8 +259,12 @@ object TunnelManager {
     /** Takes tunnel [id] down, ending every connection through it. */
     fun stop(id: Int) {
         synchronized(locks.getOrPut(id) { Any() }) {
-            running.remove(id)?.tunnel?.close()
+            running.remove(id)?.let {
+                release(it.node, id)
+                it.tunnel.close()
+            }
         }
+        _problems.value = _problems.value - id
         refresh()
     }
 
@@ -129,6 +279,7 @@ object TunnelManager {
                 synchronized(locks.getOrPut(id) { Any() }) {
                     if (running[id] === run && run.tunnel.connections == 0) {
                         running.remove(id)
+                        release(run.node, id)
                         run.tunnel.close()
                     }
                 }
@@ -138,15 +289,20 @@ object TunnelManager {
     }
 
     internal fun refresh() {
-        _statuses.value = running.mapValues { (_, run) ->
-            val t = run.tunnel
-            TunnelStatus(t.connections, t.lastHandshake, t.bytesIn, t.bytesOut)
-        }
+        _statuses.value = running.mapValues { (_, run) -> status(run) }
     }
 
-    private fun fingerprint(entity: TunnelEntity): String =
-        MessageDigest.getInstance("SHA-256").digest("${entity.kind}\n${entity.config}".toByteArray())
+    private fun status(run: Running): TunnelStatus {
+        val t = run.tunnel
+        return TunnelStatus(t.connections, t.lastHandshake, t.bytesIn, t.bytesOut, t.state, t.authUrl, t.addresses, t.problem)
+    }
+
+    private fun fingerprint(kind: String, config: String): String =
+        MessageDigest.getInstance("SHA-256").digest("$kind\n$config".toByteArray())
             .joinToString("") { "%02x".format(it) }
+
+    /** Kinds that carry only a host's SSH session ([TunnelUse.SSH]). */
+    private val SSH_ONLY = setOf(TunnelKinds.CLOUDFLARE_ACCESS)
 
     /** A tunnel nothing has used for this long is taken down. */
     const val IDLE_STOP_MS = 5 * 60_000L

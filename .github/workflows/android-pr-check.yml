@@ -91,7 +91,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The repeat step grows with the test classes a pull request changes. With 52 of them (#154)
+    # the unit tests and lint took 18 minutes, and the job was cut off at 30 during the fifth
+    # repeat, the first four having passed.
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -114,7 +117,10 @@ jobs:
           python3 -I -B ./scripts/test-check-pinned-images.py
           python3 -I -B ./scripts/check-pinned-images.py
           ./scripts/test-workflow-guards.sh
+          ./scripts/test-retry-network.sh
           ./scripts/test-tunnel.sh
+          python3 -I -B ./scripts/test-check-tunnel-seam.py
+          python3 -I -B ./scripts/test-verify-release-apks.py
 
       # Same check as scripts/local-pr-check.sh: a new copy-pasted block fails the build.
       - name: Check for new duplicated code

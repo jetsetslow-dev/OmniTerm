@@ -168,8 +168,27 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
             destructive = danger.isNotEmpty(),
         ) { viewModel.runStreamingAction(title, command, inLoginShell = true) }
     }
+    // The host's own details ({{host.name}} and the like) go in with the values.
+    fun confirmTemplate(title: String, template: String, values: Map<String, String>) {
+        val filled = try {
+            ScriptParams.fill(template, values, ScriptParams.shellFor(hostOs), ScriptParams.HostVars.of(srv, hostOs))
+        } catch (e: ScriptParams.UnsafeValueException) {
+            confirm.ask(
+                title = confirm.str(R.string.script_params_cannot_run, srv.name),
+                message = e.message.orEmpty(),
+                confirmLabel = confirm.str(R.string.ok),
+                destructive = false,
+            ) {}
+            return
+        }
+        confirmFilled(title, filled)
+    }
     fun confirmAndRun(title: String, command: String) {
-        if (ScriptParams.hasParams(command)) paramsRequest = title to command else confirmFilled(title, command)
+        when {
+            ScriptParams.hasParams(command) -> paramsRequest = title to command
+            ScriptParams.usesHostVars(command) -> confirmTemplate(title, command, emptyMap())
+            else -> confirmFilled(title, command)
+        }
     }
     paramsRequest?.let { (title, template) ->
         ScriptParamsDialog(
@@ -179,7 +198,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
             onDismiss = { paramsRequest = null },
             onSubmit = { values ->
                 paramsRequest = null
-                confirmFilled(title, ScriptParams.fill(template, values, ScriptParams.shellFor(hostOs)))
+                confirmTemplate(title, template, values)
             },
         )
     }

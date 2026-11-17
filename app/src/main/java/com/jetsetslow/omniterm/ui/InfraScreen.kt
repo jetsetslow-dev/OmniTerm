@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -317,7 +318,24 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     // row scrolls out of the LazyColumn viewport, so an expanded stack collapsed itself as soon as
     // the user scrolled past it.
     val host = viewModel.selectedServer?.id
+    val imageUpdates = host?.let { viewModel.imageUpdateReports[it] }?.updates?.size ?: 0
     OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // The last image check found updates: say so here too, and lead to Images.
+        if (imageUpdates > 0) {
+            item {
+                Text(
+                    pluralStringResource(R.plurals.image_updates_banner, imageUpdates, imageUpdates),
+                    fontSize = 13.sp,
+                    color = OmniColors.amber,
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(OmniColors.amber.copy(alpha = 0.12f))
+                        .clickable { viewModel.activeInfraTab = 2 }
+                        .padding(12.dp)
+                        .testTag("stacks.imageUpdates"),
+                )
+            }
+        }
         editBuilderError?.let { msg ->
             item {
                 Row(
@@ -851,7 +869,9 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
     val isSelectionMode = selection.isSelecting(server?.id)
     val picked = images.filter { selection.isPicked(server?.id, imageKey(it)) }
 
+    val updates = server?.id?.let { viewModel.imageUpdateReports[it] }
     OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item { ImageUpdatesHeader(viewModel, updates, checking = server?.id in viewModel.imageUpdatesChecking) }
         item {
             PruneListHeader(
                 confirm = confirm,
@@ -888,6 +908,7 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("${img.repository}:${img.tag}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(stringResource(R.string.id, img.id), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
+                            updates?.images?.firstOrNull { ImageUpdates.matches(it, img.runtime, img.repository, img.tag) }?.let { ImageUpdateLine(it, Modifier.testTag("images.update.${img.runtime}.${img.repository}:${img.tag}")) }
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(img.size, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = OmniColors.cyan)
@@ -921,6 +942,53 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
         }
     }
 }
+}
+
+/**
+ * Containers → Images: when the host's images were last checked against their registries, how
+ * many have an update, and the button that checks now (at most every 10 minutes).
+ */
+@Composable
+private fun ImageUpdatesHeader(viewModel: AppViewModel, report: ImageUpdates.Report?, checking: Boolean) {
+    val fresh = report != null && System.currentTimeMillis() - report.checkedAt < ImageUpdates.MANUAL_INTERVAL_MS
+    OmniCard(modifier = Modifier.fillMaxWidth().testTag("images.updates")) {
+        Row(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                val line = when {
+                    checking -> stringResource(R.string.image_updates_checking)
+                    report == null -> stringResource(R.string.image_updates_not_checked_yet)
+                    report.problem != null -> stringResource(R.string.image_not_checked, report.problem)
+                    else -> pluralStringResource(R.plurals.image_updates_found, report.updates.size, report.updates.size)
+                }
+                Text(line, fontSize = 13.sp, color = if ((report?.updates?.size ?: 0) > 0) OmniColors.amber else MaterialTheme.colorScheme.onSurface)
+                if (report != null && !checking) {
+                    Text(
+                        ageText(R.string.image_updates_checked_ago, R.string.image_updates_checked_just_now, report.checkedAt),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            OmniButton(
+                label = stringResource(R.string.image_updates_check),
+                onClick = viewModel::checkImageUpdates,
+                enabled = !checking && !fresh,
+                small = true,
+                modifier = Modifier.testTag("images.updates.check"),
+            )
+        }
+    }
+}
+
+/** What the last check found for one image: an update, up to date, or why it was not checked. */
+@Composable
+private fun ImageUpdateLine(status: ImageUpdates.Status, modifier: Modifier = Modifier) {
+    val (text, color) = when (status.state) {
+        ImageUpdates.State.UPDATE -> stringResource(R.string.image_update_available) to OmniColors.amber
+        ImageUpdates.State.CURRENT -> stringResource(R.string.image_up_to_date) to OmniColors.green
+        ImageUpdates.State.NOT_CHECKED -> stringResource(R.string.image_not_checked, status.reason) to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(text, fontSize = 11.sp, color = color, fontWeight = if (status.state == ImageUpdates.State.UPDATE) FontWeight.Bold else null, modifier = modifier)
 }
 
 @Composable

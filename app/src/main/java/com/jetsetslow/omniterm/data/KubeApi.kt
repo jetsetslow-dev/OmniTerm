@@ -1,7 +1,5 @@
 package com.jetsetslow.omniterm.data
 
-import com.jetsetslow.omniterm.data.KubeApi.Companion.list
-import com.jetsetslow.omniterm.data.KubeApi.Companion.text
 import com.jetsetslow.omniterm.data.term.ByteStreamTerminalSession
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.CompletableDeferred
@@ -368,17 +366,6 @@ class KubeApi(private val cluster: KubeClusterEntity, baseClient: OkHttpClient =
             val message = runCatching { json.fromJson(body).text("message") }.getOrNull().orEmpty()
             return message.ifBlank { "The cluster answered HTTP ${response.code}" }
         }
-
-        internal fun Any?.at(vararg path: String): Any? = path.fold(this) { node, key -> (node as? Map<*, *>)?.get(key) }
-
-        /** The value at [path] as kubectl's jsonpath prints it: whole numbers without ".0", missing as "". */
-        internal fun Any?.text(vararg path: String): String = when (val value = at(*path)) {
-            null -> ""
-            is Double -> if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
-            else -> value.toString()
-        }
-
-        internal fun Any?.list(vararg path: String): List<Any?> = at(*path) as? List<*> ?: emptyList()
 
         private fun List<Any?>.words(vararg path: String) = map { it.text(*path) }.filter { it.isNotEmpty() }.joinToString(" ")
 

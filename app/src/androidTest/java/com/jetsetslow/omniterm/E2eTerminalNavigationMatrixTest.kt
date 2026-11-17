@@ -55,7 +55,6 @@ class E2eTerminalNavigationMatrixTest {
     fun switchingSameSizeSessionsRefreshesViewportAndVisibleCopy() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString(ARGUMENT) == "yes")
         vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
-        val wasReadOnly = vm.terminalReadOnly
         val repository = AppRepository(AppDatabase.getDatabase(composeRule.activity))
         val createdHosts = mutableListOf<ServerEntity>()
         try {
@@ -65,8 +64,8 @@ class E2eTerminalNavigationMatrixTest {
             }
             await("fixture hosts loaded", 5_000) { createdHosts.all { host -> vm.servers.value.any { it.id == host.id } } }
             // Keep IME geometry stable: a keyboard resize must not accidentally repair the switch.
-            composeRule.runOnUiThread { vm.updateTerminalReadOnly(true) }
-            val sessions = seed(vm, persistent = listOf(false, false), split = false, serverIds = createdHosts.map { it.id })
+            // Read-only belongs to each terminal, so both are made locked.
+            val sessions = seed(vm, persistent = listOf(false, false), split = false, serverIds = createdHosts.map { it.id }, readOnly = true)
             // Establish the same host-selection chrome for BOTH synthetic hosts. Leaving a real
             // saved host selected initially can change the layout at the second attach and mask
             // the bug with an unrelated resize.
@@ -122,10 +121,7 @@ class E2eTerminalNavigationMatrixTest {
             composeRule.onNodeWithText("Show visible screen").assertIsDisplayed()
             clickText("Close")
         } finally {
-            composeRule.runOnUiThread {
-                vm.updateTerminalReadOnly(wasReadOnly)
-                TerminalSessionManager.clearAll()
-            }
+            composeRule.runOnUiThread { TerminalSessionManager.clearAll() }
             createdHosts.forEach { repository.deleteServerAndDependents(it.id) }
         }
     }
@@ -350,6 +346,7 @@ class E2eTerminalNavigationMatrixTest {
         split: Boolean,
         createdTmuxNames: MutableSet<String> = linkedSetOf(),
         serverIds: List<Int>? = null,
+        readOnly: Boolean = false,
     ): List<ShellSession> {
         lateinit var result: List<ShellSession>
         composeRule.runOnUiThread {
@@ -366,6 +363,7 @@ class E2eTerminalNavigationMatrixTest {
                     id = id,
                 ).also { session ->
                     session.persistent = isPersistent
+                    session.inputLocked = readOnly
                     if (isPersistent) {
                         session.tmuxName = "omniterm-e2e-navigation-${System.nanoTime()}-$index"
                         createdTmuxNames += session.tmuxName

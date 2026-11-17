@@ -901,7 +901,52 @@ object RemoteCommands {
     fun rebootLabel(os: String): String =
         if (normaliseOs(os) == "Windows") "shutdown /r /t 0" else "sudo ${rebootCommand(os)}"
 
-    fun rebootUsesSudo(os: String): Boolean = normaliseOs(os) != "Windows"
+    fun rebootUsesSudo(os: String): Boolean = hasSudo(os)
+
+    /** Whether a host with this [os] has sudo at all: Windows does not. */
+    fun hasSudo(os: String): Boolean = normaliseOs(os) != "Windows"
+
+    /**
+     * What sudo itself said when it refused to run a command, or null when it ran it: no password
+     * where one is needed, a wrong one, or a login that may not use sudo. Anything sudo has to say
+     * comes before the command's own output, so only the first lines are read, and a command that
+     * prints "permission denied" of its own is not taken for a refusal.
+     */
+    fun sudoRefusal(output: String): String? =
+        output.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.take(4).firstOrNull { line ->
+            line.startsWith("sudo:") || line.startsWith("Sorry, try again") || SUDO_REFUSALS.any { line.contains(it, ignoreCase = true) }
+        }
+
+    private val SUDO_REFUSALS = listOf("a password is required", "incorrect password", "is not in the sudoers", "not allowed to run sudo")
+
+    /** Starts the line a [sudoInstallFile] script prints once the file is in place, before its path. */
+    const val SUDO_PUSHED_MARKER = "omniterm_pushed"
+    private const val SUDO_PUSH_NO_FOLDER = "omniterm_push_no_folder"
+
+    /**
+     * The script, for [sudoShWrap], that puts a file the login uploaded to [stage] at [dest] as
+     * root: a Fleet push to a folder the login may not write to. A [dest] that is a folder gets the
+     * file inside it as [fileName]. The file is completed beside its destination and moved over it
+     * in one step, so a failure never leaves half a file, and it takes the owner and permissions of
+     * the file it replaces. [stage] is removed either way.
+     */
+    fun sudoInstallFile(stage: String, dest: String, fileName: String): String =
+        "s=${shellQuote(stage)}; d=${shellQuote(dest)}; trap 'rm -f -- \"\$s\"' EXIT; " +
+            "if [ -d \"\$d\" ]; then d=\"\${d%/}/\"${shellQuote(fileName)}; fi; " +
+            "p=\$(dirname \"\$d\"); " +
+            "[ -d \"\$p\" ] || { echo \"$SUDO_PUSH_NO_FOLDER \$p\"; exit 3; }; " +
+            "t=\"\$p/.omniterm-push-\$\$.part\"; " +
+            "if [ -f \"\$d\" ]; then cp -p -- \"\$d\" \"\$t\" || { rm -f -- \"\$t\"; exit 4; }; fi; " +
+            "{ cat -- \"\$s\" > \"\$t\" && mv -f -- \"\$t\" \"\$d\"; } || { rm -f -- \"\$t\"; exit 4; }; " +
+            "printf '%s %s\\n' '$SUDO_PUSHED_MARKER' \"\$d\""
+
+    /** Where a [sudoInstallFile] script put the file, from its [output]; null when it did not. */
+    fun sudoPushedPath(output: String): String? =
+        output.lineSequence().firstOrNull { it.startsWith("$SUDO_PUSHED_MARKER ") }?.removePrefix("$SUDO_PUSHED_MARKER ")?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** The folder a [sudoInstallFile] script found missing, from its [output]; null when it was there. */
+    fun sudoPushMissingFolder(output: String): String? =
+        output.lineSequence().firstOrNull { it.startsWith("$SUDO_PUSH_NO_FOLDER ") }?.removePrefix("$SUDO_PUSH_NO_FOLDER ")?.trim()
 
     private fun rebootCommand(os: String) = when (normaliseOs(os)) {
         "FreeBSD", "Darwin" -> "shutdown -r now"

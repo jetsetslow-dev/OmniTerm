@@ -6,6 +6,8 @@ import android.content.Intent
 import android.util.Log
 import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.Automation
+import com.jetsetslow.omniterm.data.AutomationUseEntity
+import com.jetsetslow.omniterm.data.UseOutcome
 import kotlinx.coroutines.launch
 
 /**
@@ -37,8 +39,13 @@ private fun BroadcastReceiver.checkThenRun(
             val req = request(grant.id, grant.tokenHash)
             started = AutomationJobs.schedule(app, req)
             if (started != true) {
-                AutomationReplies.replyIntent(req, Automation.RunResult(emptyList(), app.getString(R.string.automation_not_started)))
+                val reason = app.getString(R.string.automation_not_started)
+                AutomationReplies.replyIntent(req, Automation.RunResult(emptyList(), reason))
                     ?.let { runCatching { app.sendBroadcast(it) } }
+                // The token's history shows it was used, and why nothing ran.
+                repository.recordAutomationUse(
+                    AutomationUseEntity(grantId = grant.id, at = System.currentTimeMillis(), outcome = UseOutcome.FAILED, detail = reason),
+                )
             }
         } catch (e: Exception) {
             Log.w("OmniTermAutomation", "Checking a request failed", e)

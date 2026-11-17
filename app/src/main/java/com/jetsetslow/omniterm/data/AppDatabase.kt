@@ -26,18 +26,23 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StackRegistryEntity::class,
         TelnetHostEntity::class,
         KubeClusterEntity::class,
+        SnmpDeviceEntity::class,
+        ProxmoxServerEntity::class,
         FleetRunEntity::class,
         FleetRunHostEntity::class,
         AutomationGrantEntity::class,
         McpCallEntity::class,
         TunnelEntity::class,
+        AutomationUseEntity::class,
+        FleetTargetSetEntity::class,
+        FleetScheduleEntity::class,
     ],
     // NOTE: bump this whenever any @Entity schema changes, and add a real Migration for the bump.
     // Schemas are exported to app/schemas/ (committed) so migrations can be written and tested
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 29,
+    version = 30,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -57,10 +62,15 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun stackRegistryDao(): StackRegistryDao
     abstract fun telnetHostDao(): TelnetHostDao
     abstract fun kubeClusterDao(): KubeClusterDao
+    abstract fun snmpDeviceDao(): SnmpDeviceDao
+    abstract fun proxmoxServerDao(): ProxmoxServerDao
     abstract fun fleetRunDao(): FleetRunDao
     abstract fun automationGrantDao(): AutomationGrantDao
     abstract fun mcpCallDao(): McpCallDao
     abstract fun tunnelDao(): TunnelDao
+    abstract fun automationUseDao(): AutomationUseDao
+    abstract fun fleetTargetSetDao(): FleetTargetSetDao
+    abstract fun fleetScheduleDao(): FleetScheduleDao
 
     companion object {
         @Volatile
@@ -373,6 +383,60 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Runs other apps and AI assistants start, as they run: each automation token's
+        // notification choice and use history, and the run each AI assistant call started. Hosts'
+        // tags, Fleet's saved target sets and schedules, the file a Fleet push sent, and whether a
+        // Fleet run used sudo. Whether an alert rule runs its runbook on its own, and the run an
+        // incident's runbook made. The Wi-Fi networks a tunnel is not needed on, and a Tailscale
+        // tunnel's node state. A Backup Age rule's repository password, encrypted.
+        private val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `automation_grants` ADD COLUMN `notify` TEXT NOT NULL DEFAULT 'failures'")
+                db.execSQL("ALTER TABLE `mcp_calls` ADD COLUMN `runKey` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `automation_uses` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`grantId` INTEGER NOT NULL, `at` INTEGER NOT NULL, `outcome` TEXT NOT NULL, " +
+                        "`detail` TEXT NOT NULL, `runKey` TEXT)"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_automation_uses_grantId_at` ON `automation_uses` (`grantId`, `at`)")
+                db.execSQL("ALTER TABLE `servers` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `tunnels` ADD COLUMN `directWifi` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `tunnels` ADD COLUMN `nodeState` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `pushedFile` TEXT")
+                db.execSQL("ALTER TABLE `fleet_runs` ADD COLUMN `sudo` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `alert_rules` ADD COLUMN `runbookAuto` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `alert_rules` ADD COLUMN `runbookNotify` TEXT NOT NULL DEFAULT 'failures'")
+                db.execSQL("ALTER TABLE `alert_rules` ADD COLUMN `secret` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE `active_alerts` ADD COLUMN `runbookRunKey` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `fleet_schedules` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `scriptId` INTEGER NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, " +
+                        "`groups` TEXT NOT NULL, `tags` TEXT NOT NULL, `allTags` INTEGER NOT NULL, `repeat` TEXT NOT NULL, " +
+                        "`everyMinutes` INTEGER NOT NULL, `minuteOfDay` INTEGER NOT NULL, `dayOfWeek` INTEGER NOT NULL, " +
+                        "`enabled` INTEGER NOT NULL, `notify` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `nextRunAt` INTEGER, " +
+                        "`lastRunAt` INTEGER, `lastOutcome` TEXT, `lastDetail` TEXT NOT NULL, `lastRunKey` TEXT)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `fleet_target_sets` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `mode` TEXT NOT NULL, `serverIds` TEXT NOT NULL, `groups` TEXT NOT NULL, " +
+                        "`tags` TEXT NOT NULL, `allTags` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `snmp_devices` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `version` INTEGER NOT NULL, " +
+                        "`community` TEXT NOT NULL, `user` TEXT NOT NULL, `authProtocol` TEXT NOT NULL, " +
+                        "`authPassword` TEXT NOT NULL, `privProtocol` TEXT NOT NULL, `privPassword` TEXT NOT NULL, " +
+                        "`tunnelId` INTEGER, `notes` TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `proxmox_servers` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `tokenId` TEXT NOT NULL, " +
+                        "`tokenSecret` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, `tunnelId` INTEGER, " +
+                        "`tunnelHost` TEXT NOT NULL, `notes` TEXT NOT NULL)"
+                )
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -449,6 +513,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_26_27,
             MIGRATION_27_28,
             MIGRATION_28_29,
+            MIGRATION_29_30,
         )
 
         fun getDatabase(context: Context): AppDatabase {

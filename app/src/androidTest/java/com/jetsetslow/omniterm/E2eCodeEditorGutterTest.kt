@@ -22,9 +22,9 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Pictures of the editor on a device for a person to compare: a long shell script and a long YAML
- * file scrolled to about line 60, with emoji and CJK lines (taller fallback glyphs) and strings,
- * heredocs and blocks that span lines. Line 60's number must sit beside line 60, and the colours
+ * Pictures of the editor on a device for a person to compare: a long shell script, YAML file,
+ * Markdown file and JSON file scrolled to about line 60, with emoji and CJK lines (taller fallback
+ * glyphs) and strings, heredocs, blocks, fenced code and comments that span lines. Line 60's number must sit beside line 60, and the colours
  * must follow the constructs. Saved in the app's external files directory, `editor-*.png`.
  *
  * Opt in with `-e omniterm_e2e_editor_gutter yes`. Uses only the editor's public API, so the same
@@ -43,6 +43,18 @@ class E2eCodeEditorGutterTest {
     fun longYamlKeepsNumbersBesideTheirLines() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_editor_gutter") == "yes")
         shoot("editor-yml", CodeLanguage.YAML, yamlFile())
+    }
+
+    @Test
+    fun longMarkdownKeepsNumbersBesideTheirLines() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_editor_gutter") == "yes")
+        shoot("editor-md", CodeLanguage.MARKDOWN, markdownFile())
+    }
+
+    @Test
+    fun longJsonKeepsNumbersBesideTheirLines() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_editor_gutter") == "yes")
+        shoot("editor-json", CodeLanguage.JSON, jsonFile())
     }
 
     private fun shoot(name: String, language: CodeLanguage, text: String) {
@@ -97,5 +109,39 @@ class E2eCodeEditorGutterTest {
                 else -> appendLine("      - name: line $n Don't stop  # comment")
             }
         }
+    }
+
+    private fun markdownFile() = buildString {
+        appendLine("# Line 1, a heading")
+        for (n in 2..120) {
+            when {
+                n == 20 -> appendLine("```yaml")
+                n == 21 -> appendLine("key: line $n # a YAML comment")
+                n == 22 -> appendLine("```")
+                n == 40 -> appendLine("<!-- line $n, a comment")
+                n == 41 -> appendLine("that ends on line $n -->")
+                n == 50 -> appendLine("| line | $n |")
+                n == 51 -> appendLine("|------|----|")
+                n % 10 == 0 -> appendLine("## Line $n, a heading")
+                n % 7 == 0 -> appendLine("> line $n ✅ 東京 🙂 *quoted*")
+                n % 3 == 0 -> appendLine("- [x] line $n with `code` and [a link](https://example.org/$n)")
+                else -> appendLine("Line $n is **plain** text with snake_case words.")
+            }
+        }
+    }
+
+    private fun jsonFile() = buildString {
+        appendLine("{")
+        for (n in 2..119) {
+            when {
+                n == 30 -> appendLine("  /* line $n, a comment")
+                n == 31 -> appendLine("     that ends on line $n */")
+                n % 7 == 0 -> appendLine("  \"line$n\": \"✅ 東京 🙂\",")
+                n % 5 == 0 -> appendLine("  \"line$n\": [true, false, null], // line $n")
+                else -> appendLine("  \"line$n\": $n.5e-3,")
+            }
+        }
+        appendLine("  \"end\": 120")
+        appendLine("}")
     }
 }

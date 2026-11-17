@@ -58,6 +58,8 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import com.jetsetslow.omniterm.data.HostTags
+import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import kotlinx.coroutines.launch
@@ -786,10 +788,7 @@ fun HostPickerDialog(
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val filtered = if (query.isBlank()) servers else servers.filter {
-        it.name.contains(query, ignoreCase = true) || it.host.contains(query, ignoreCase = true) ||
-            (it.groupName ?: "").contains(query, ignoreCase = true)
-    }
+    val filtered = servers.filter { hostMatchesSearch(it, query) }
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
@@ -945,4 +944,27 @@ fun OmniPasswordField(
             }
         },
     )
+}
+
+/**
+ * The warning an editor shows under an address that will be used over plain HTTP: what an
+ * unencrypted connection gives away there ([message]). WebDAV shares and Tailscale control servers
+ * show it.
+ */
+@Composable
+fun PlainHttpWarning(message: String, modifier: Modifier = Modifier) {
+    Text(message, fontSize = 12.sp, color = OmniColors.amber, modifier = modifier.fillMaxWidth())
+}
+
+/** Tags shown on a host's card; the rest are in its editor. */
+internal const val HOST_CARD_TAGS = 3
+
+/** Whether a host search for [query] finds [server]: by name, address, group or tag. */
+internal fun hostMatchesSearch(server: ServerEntity, query: String): Boolean {
+    val q = query.trim()
+    if (q.isEmpty()) return true
+    return server.name.contains(q, ignoreCase = true) ||
+        server.host.contains(q, ignoreCase = true) ||
+        server.groupName.orEmpty().contains(q, ignoreCase = true) ||
+        HostTags.parse(server.tags).any { it.contains(q.removePrefix("#"), ignoreCase = true) }
 }

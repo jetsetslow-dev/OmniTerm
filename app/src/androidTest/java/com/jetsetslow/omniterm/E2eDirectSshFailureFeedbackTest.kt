@@ -1,6 +1,8 @@
 package com.jetsetslow.omniterm
 
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -57,7 +59,8 @@ class E2eDirectSshFailureFeedbackTest {
                 }
 
                 composeRule.onNodeWithText("CONNECTION FAILED").assertExists()
-                composeRule.onNodeWithText("Retry").assertExists()
+                // Both the error row and the connect box offer Retry; either one will do.
+                composeRule.onAllNodesWithText("Retry").onFirst().assertExists()
             } finally {
                 repository.deleteServerAndDependents(id)
             }

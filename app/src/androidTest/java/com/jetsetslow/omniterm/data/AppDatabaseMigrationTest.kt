@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 29
+        const val CURRENT_VERSION = 30
     }
 
     @get:Rule
@@ -460,6 +460,169 @@ class AppDatabaseMigrationTest {
             }
             db.execSQL("INSERT INTO tunnels (name, kind, config, createdAt) VALUES ('Home', 'wireguard', 'enc:v1:x', 1)")
             db.execSQL("UPDATE servers SET tunnelId = 1, tunnelHost = '100.64.0.5' WHERE name = 'nas'")
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToThirtyGivesTokensTheDefaultNotificationAndAnEmptyHistory() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-29-run-visibility"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 29).use { db ->
+            db.execSQL("INSERT INTO automation_grants (scriptId, serverIds, tokenHash, label, createdAt, lastUsedAt) VALUES (7, '1,2', 'aa', 'Tasker', 1, 5)")
+            db.execSQL("INSERT INTO mcp_calls (at, client, tool, outcome, detail) VALUES (1, 'Claude Code', 'run_script', 'ok', 'nas')")
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT notify, lastUsedAt FROM automation_grants").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an existing token shows progress and failures", "failures", cursor.getString(0))
+                assertEquals("and keeps when it was last used", 5L, cursor.getLong(1))
+            }
+            db.query("SELECT runKey FROM mcp_calls").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue("an earlier call links no run", cursor.isNull(0))
+            }
+            db.query("SELECT COUNT(*) FROM automation_uses").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade invents no use", 0, cursor.getInt(0))
+            }
+            db.execSQL("INSERT INTO automation_uses (grantId, at, outcome, detail, runKey) VALUES (1, 9, 'refused', 'Automation is off', NULL)")
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToThirtyGivesHostsNoTagsAddsNoSavedTargetsOrSchedulesAndKeepsRunsAsCommands() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-29-host-tags"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 29).use { db ->
+            db.execSQL(
+                "INSERT INTO servers (name, host, port, username, serverColor, authType, sudoPassword, notes, keepAlive, " +
+                    "sshCompression, persistentSession, proxyCommand, proxyType, proxyHost, proxyPort, proxyUser, proxyPassword, " +
+                    "agentForwarding, healthScore, lastLatency, status, authStatus, tunnelHost) VALUES ('nas', '192.168.1.5', 22, 'u', " +
+                    "'Default', 'password', '', '', 30, 0, 0, '', 'none', '', 0, '', '', 0, -1, 0, 'offline', 'unknown', '')"
+            )
+            db.execSQL("INSERT INTO fleet_runs (runKey, startedAt, finishedAt, command, scriptName, source) VALUES ('r1', 1, 2, 'uptime', NULL, 'fleet')")
+            db.execSQL("INSERT INTO tunnels (name, kind, config, createdAt) VALUES ('Home', 'wireguard', 'enc:v1:x', 1)")
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT tags FROM servers WHERE name = 'nas'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgraded host has no tags", "", cursor.getString(0))
+            }
+            db.query("SELECT directWifi, nodeState, kind FROM tunnels WHERE name = 'Home'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgraded tunnel is needed on every network, as before", "", cursor.getString(0))
+                assertEquals("an upgraded tunnel has no node state", "", cursor.getString(1))
+                assertEquals("and stays a WireGuard tunnel", "wireguard", cursor.getString(2))
+            }
+            db.query("SELECT COUNT(*) FROM fleet_target_sets").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade saves no targets", 0, cursor.getInt(0))
+            }
+            db.query("SELECT COUNT(*) FROM fleet_schedules").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("an upgrade schedules nothing", 0, cursor.getInt(0))
+            }
+            db.query("SELECT command, pushedFile, sudo FROM fleet_runs WHERE runKey = 'r1'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("uptime", cursor.getString(0))
+                assertTrue("an earlier run ran a command, not a push", cursor.isNull(1))
+                assertEquals("and not with sudo", 0, cursor.getInt(2))
+            }
+            db.execSQL("UPDATE servers SET tags = 'nas, prod' WHERE name = 'nas'")
+            db.execSQL("INSERT INTO fleet_target_sets (name, mode, serverIds, groups, tags, allTags) VALUES ('Prod', 'Tags', '[]', '[]', '[\"prod\"]', 0)")
+            db.execSQL(
+                "INSERT INTO fleet_schedules (name, scriptId, mode, serverIds, groups, tags, allTags, repeat, everyMinutes, minuteOfDay, " +
+                    "dayOfWeek, enabled, notify, createdAt, lastDetail) VALUES ('Nightly', 1, 'Tags', '[]', '[]', '[\"prod\"]', 0, 'daily', 60, 180, 1, 1, 'failures', 1, '')"
+            )
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    /**
+     * Homelab checks: a rule from before keeps everything and holds no password; a Backup Age
+     * rule's (encrypted) password then saves and reads back.
+     */
+    @Test
+    fun migrationToThirtyGivesExistingRulesNoPassword() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-29-homelab-checks"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 29).use { db ->
+            db.execSQL(
+                "INSERT INTO alert_rules (id, serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, presetKey, target) " +
+                    "VALUES (7, 2, 'Script Check', '/', 0.0, 'WARNING', '2m', 1, 'backups', NULL, '4')"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query("SELECT serverId, metricName, target, enabled, secret FROM alert_rules WHERE id = 7").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
+                assertEquals("Script Check", cursor.getString(1))
+                assertEquals("4", cursor.getString(2))
+                assertEquals(1, cursor.getInt(3))
+                assertEquals("an upgraded rule holds no password", "", cursor.getString(4))
+            }
+            db.execSQL(
+                "INSERT INTO alert_rules (serverId, metricName, mountPoint, thresholdValue, severity, triggerWindow, enabled, notes, target, " +
+                    "runbookAuto, runbookNotify, secret) VALUES (2, 'Backup Age', '/', 26.0, 'WARNING', '0m', 1, '', 'restic\n/srv/restic', 0, 'failures', 'enc:v1:x')"
+            )
+            db.query("SELECT secret FROM alert_rules WHERE metricName = 'Backup Age'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("enc:v1:x", cursor.getString(0))
+            }
+            // SNMP devices start empty, and take a device with its tunnel.
+            db.query("SELECT COUNT(*) FROM snmp_devices").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.execSQL(
+                "INSERT INTO snmp_devices (name, host, port, version, community, user, authProtocol, authPassword, privProtocol, privPassword, tunnelId, notes) " +
+                    "VALUES ('Core switch', '192.0.2.10', 161, 3, '', 'monitor', 'SHA-256', 'enc:v1:a', 'AES', 'enc:v1:p', 4, '')"
+            )
+            db.query("SELECT version, user, tunnelId FROM snmp_devices").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(3, cursor.getInt(0))
+                assertEquals("monitor", cursor.getString(1))
+                assertEquals(4, cursor.getInt(2))
+            }
+            // Proxmox servers start empty too, and take a server with its token and tunnel.
+            db.query("SELECT COUNT(*) FROM proxmox_servers").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.execSQL(
+                "INSERT INTO proxmox_servers (name, host, port, tokenId, tokenSecret, fingerprint, tunnelId, tunnelHost, notes) " +
+                    "VALUES ('Lab', '192.0.2.20', 8006, 'monitor@pve!phone', 'enc:v1:t', 'AB:CD', 4, '100.64.0.9', '')"
+            )
+            db.query("SELECT port, tokenId, tunnelId, tunnelHost FROM proxmox_servers").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(8006, cursor.getInt(0))
+                assertEquals("monitor@pve!phone", cursor.getString(1))
+                assertEquals(4, cursor.getInt(2))
+                assertEquals("100.64.0.9", cursor.getString(3))
+            }
         }
         context.deleteDatabase(databaseName)
     }

@@ -1,6 +1,7 @@
 FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS docker-host
 
-RUN apk add --no-cache openssh-server shadow sudo tmux curl docker-cli docker-cli-compose \
+# restic and Borg give the Backup Age check real repositories to read (see start.sh).
+RUN apk add --no-cache openssh-server shadow sudo tmux curl docker-cli docker-cli-compose restic borgbackup \
     && mkdir -p /fixtures /run/sshd
 
 COPY start.sh /usr/local/bin/omniterm-runtime-host

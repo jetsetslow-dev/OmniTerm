@@ -83,6 +83,56 @@ class ScriptParamsTest {
         assertEquals(Shell.Posix, ScriptParams.shellFor(""))
     }
 
+    private val web = ScriptParams.HostVars("web 1", "10.0.0.5", "deploy", 2222, "Linux", "prod")
+
+    @Test
+    fun eachHostFillsInItsOwnDetailsAndNoneIsAsked() {
+        val command = "echo {{host.name}} {{host.address}}:{{host.port}} {{host.user}} {{host.os}} {{host.group}} {{svc=nginx}}"
+        assertEquals("only the value is asked", listOf(ScriptParams.Param("svc", "nginx")), ScriptParams.parse(command))
+        assertTrue(ScriptParams.usesHostVars(command))
+        assertTrue(ScriptParams.needsFill("uptime; echo {{host.name}}"))
+        assertFalse(ScriptParams.hasParams("uptime; echo {{host.name}}"))
+        assertEquals(
+            "echo 'web 1' 10.0.0.5:2222 deploy linux prod nginx",
+            ScriptParams.fill(command, emptyMap(), Shell.Posix, web),
+        )
+        assertEquals(
+            listOf("windows", "macos", "bsd", "linux"),
+            listOf("Windows", "Darwin", "FreeBSD", "Linux").map { ScriptParams.fill("{{host.os}}", emptyMap(), Shell.Posix, web.copy(os = it)) },
+        )
+    }
+
+    @Test
+    fun aHostsDetailIsQuotedLikeAnyValue() {
+        assertEquals(
+            "echo 'x; id'",
+            ScriptParams.fill("echo {{host.name}}", emptyMap(), Shell.Posix, web.copy(name = "x; id")),
+        )
+        val error = assertThrows(ScriptParams.UnsafeValueException::class.java) {
+            ScriptParams.fill("echo {{host.name}}", emptyMap(), Shell.Windows, web.copy(name = "50% off"))
+        }
+        assertEquals("host.name", error.param)
+        assertEquals("a group-less host gives an empty word", "echo ''", ScriptParams.fill("echo {{host.group}}", emptyMap(), Shell.Posix, web.copy(group = "")))
+    }
+
+    @Test
+    fun aValueWrittenLikeAHostVariableStaysThatText() {
+        assertEquals(
+            "echo '{{host.name}}' 'web 1'",
+            ScriptParams.fill("echo {{msg}} {{host.name}}", mapOf("msg" to "{{host.name}}"), Shell.Posix, web),
+        )
+    }
+
+    @Test
+    fun withoutAHostOrForAnUnknownNameAHostVariableIsLeftAsWritten() {
+        assertEquals("echo {{host.name}} 1", ScriptParams.fill("echo {{host.name}} {{n}}", mapOf("n" to "1"), Shell.Posix))
+        assertEquals("echo {{host.addr}} {{host.Name}}", ScriptParams.fill("echo {{host.addr}} {{host.Name}}", emptyMap(), Shell.Posix, web))
+        assertFalse(ScriptParams.usesHostVars("echo {{host.addr}}"))
+        // A placeholder called host is still the user's own.
+        assertEquals(listOf(ScriptParams.Param("host", "")), ScriptParams.parse("ping {{host}}"))
+        assertEquals("ping db", ScriptParams.fill("ping {{host}}", mapOf("host" to "db"), Shell.Posix, web))
+    }
+
     /** The quoted value reaches a real sh as exactly the text that was typed. */
     @Test
     fun aRealShellReceivesTheValueUnchanged() {

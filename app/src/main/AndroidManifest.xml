@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Host Offline and phone-side checks record nothing while the phone has no network. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Only for a VPN tunnel the user says is not needed on some Wi-Fi: Android gives a Wi-Fi's
+         name to an app with precise location only. Asked for when the user sets that up; the name
+         stays on the phone, and location itself is never read. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- USB serial consoles and plugged-in security keys work on phones that can host USB devices;
          the app installs on any. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
@@ -29,6 +35,8 @@
          This normal permission represents the app's user-initiated network connection lifecycle. -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Fleet's schedules wait as jobs that Android keeps across a restart, which needs this. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
       No storage permissions: all file access goes through the Storage Access Framework
       (ACTION_OPEN_DOCUMENT / ACTION_CREATE_DOCUMENT pickers), which grants per-file access without
@@ -210,6 +218,16 @@
 
         <service
             android:name=".automation.AutomationJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".automation.FleetScheduleJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".automation.AlertRunbookJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 

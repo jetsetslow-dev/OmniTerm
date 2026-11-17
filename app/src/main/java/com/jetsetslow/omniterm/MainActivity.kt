@@ -111,6 +111,12 @@ class MainActivity : AppCompatActivity() {
     appViewModel?.relockIfNeeded()
   }
 
+  override fun onResume() {
+    super.onResume()
+    // On screen: Android now gives the Wi-Fi's name it withholds from an app in the background.
+    com.jetsetslow.omniterm.data.tunnel.CurrentWifi.refreshIfWithheld()
+  }
+
   override fun onStop() {
     super.onStop()
     // Rotation/theme recreation must not count as leaving the app. Any other stop opens App Lock's
@@ -158,10 +164,16 @@ class MainActivity : AppCompatActivity() {
         intent.data?.pathSegments?.let(com.jetsetslow.omniterm.ui.NotificationLinks::parseRunbook)?.let { (ruleId, serverId) ->
           add(ExternalLaunchRequest.OpenRunbook(ruleId, serverId))
         }
+        // A run another app or an AI assistant started (NotificationLinks.fleetRun).
+        intent.data?.pathSegments?.let(com.jetsetslow.omniterm.ui.NotificationLinks::parseFleetRun)?.let { runKey ->
+          add(ExternalLaunchRequest.OpenFleetRun(runKey))
+        }
         when (intent.data?.lastPathSegment) {
           "transfers" -> add(ExternalLaunchRequest.OpenTransfers)
           "network" -> add(ExternalLaunchRequest.OpenNetworkTools)
           "fleet" -> add(ExternalLaunchRequest.OpenFleet)
+          com.jetsetslow.omniterm.ui.NotificationLinks.FLEET_SCHEDULES -> add(ExternalLaunchRequest.OpenFleetSchedules)
+          com.jetsetslow.omniterm.ui.NotificationLinks.ALERTS -> add(ExternalLaunchRequest.OpenAlerts)
           "infra" -> add(ExternalLaunchRequest.OpenInfra)
           "backup" -> add(ExternalLaunchRequest.OpenBackup)
         }

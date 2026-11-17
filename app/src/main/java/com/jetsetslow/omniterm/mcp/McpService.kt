@@ -22,7 +22,8 @@ import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.Automation
 import com.jetsetslow.omniterm.data.HostCredentials
 import com.jetsetslow.omniterm.data.McpCallEntity
-import com.jetsetslow.omniterm.data.McpCallOutcome
+import com.jetsetslow.omniterm.data.RunNotify
+import com.jetsetslow.omniterm.data.UseOutcome
 import com.jetsetslow.omniterm.data.mcp.McpHandler
 import com.jetsetslow.omniterm.data.mcp.McpHttpServer
 import com.jetsetslow.omniterm.data.mcp.McpSettings
@@ -65,6 +66,8 @@ data class McpConfig(
     val port: Int = McpSettings.DEFAULT_PORT,
     val tunnelHostId: Int? = null,
     val tunnelPort: Int = McpSettings.DEFAULT_PORT,
+    /** Whether a run an assistant starts shows a notification ([RunNotify]). */
+    val notify: String = RunNotify.FAILURES,
 ) {
     companion object {
         fun from(settings: Map<String, String>) = McpConfig(
@@ -75,6 +78,7 @@ data class McpConfig(
             port = McpSettings.port(settings[McpSettings.PORT]) ?: McpSettings.DEFAULT_PORT,
             tunnelHostId = settings[McpSettings.TUNNEL_HOST]?.toIntOrNull()?.takeIf { it > 0 },
             tunnelPort = McpSettings.port(settings[McpSettings.TUNNEL_PORT]) ?: McpSettings.DEFAULT_PORT,
+            notify = RunNotify.of(settings[McpSettings.NOTIFY]),
         )
     }
 }
@@ -122,6 +126,7 @@ class McpService : Service() {
     override fun onCreate() {
         super.onCreate()
         repository = AppRepository(AppDatabase.getDatabase(applicationContext))
+        com.jetsetslow.omniterm.data.tunnel.TunnelManager.follow(applicationContext)
         SshHostKeyTrust.init(applicationContext)
     }
 
@@ -229,8 +234,13 @@ class McpService : Service() {
                         at = System.currentTimeMillis(),
                         client = caller.clientName,
                         tool = tool,
-                        outcome = if (result.isError) McpCallOutcome.FAILED else McpCallOutcome.OK,
-                        detail = result.text.lineSequence().firstOrNull().orEmpty().take(160),
+                        outcome = when {
+                            result.refused -> UseOutcome.REFUSED
+                            result.isError -> UseOutcome.FAILED
+                            else -> UseOutcome.OK
+                        },
+                        detail = (result.detail ?: result.text.lineSequence().firstOrNull().orEmpty()).take(Automation.USE_DETAIL_CHARS),
+                        runKey = result.runKey,
                     ),
                 )
             },
@@ -244,7 +254,7 @@ class McpService : Service() {
         scope.launch {
             repository.recordMcpCall(
                 McpCallEntity(
-                    at = now, client = "", tool = "", outcome = McpCallOutcome.REFUSED,
+                    at = now, client = "", tool = "", outcome = UseOutcome.REFUSED,
                     detail = getString(if (status == 401) R.string.mcp_refused_token else R.string.mcp_refused_origin),
                 ),
             )

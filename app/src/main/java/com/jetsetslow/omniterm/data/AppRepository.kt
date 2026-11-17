@@ -63,7 +63,8 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun keepOnlyServers(keepServerIds: Set<Int>) {
         // Room expands an empty IN-list inconsistently across SQLite versions. A server ID is an
         // auto-generated positive integer, so this impossible sentinel makes the "keep none" case
-        // explicit while still preserving fleet-wide rule/alert/history rows with serverId == 0.
+        // explicit while still preserving fleet-wide rule/alert/history rows with serverId == 0,
+        // and those about a device (below 0, see AlertSubjects), which no host owns.
         val ids = keepServerIds.ifEmpty { setOf(Int.MIN_VALUE) }.toList()
         db.withTransaction {
             db.metricHistoryDao().deleteExceptServers(ids)
@@ -111,10 +112,10 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun getCredentialProfileById(id: Int): CredentialProfileEntity? = db.credentialProfileDao().getProfileById(id)?.let(::decryptProfile)
 
     // Alert Rule functions
-    val rulesFlow: Flow<List<AlertRuleEntity>> = db.alertRuleDao().getAllRulesFlow()
-    suspend fun getAllRules(): List<AlertRuleEntity> = db.alertRuleDao().getAllRules()
-    suspend fun getRulesForServer(serverId: Int): List<AlertRuleEntity> = db.alertRuleDao().getRulesForServer(serverId)
-    suspend fun insertRule(rule: AlertRuleEntity) = db.alertRuleDao().insertRule(rule)
+    val rulesFlow: Flow<List<AlertRuleEntity>> = db.alertRuleDao().getAllRulesFlow().map { list -> list.map(::decryptRule) }
+    suspend fun getAllRules(): List<AlertRuleEntity> = db.alertRuleDao().getAllRules().map(::decryptRule)
+    suspend fun getRulesForServer(serverId: Int): List<AlertRuleEntity> = db.alertRuleDao().getRulesForServer(serverId).map(::decryptRule)
+    suspend fun insertRule(rule: AlertRuleEntity) = db.alertRuleDao().insertRule(encryptRule(rule))
     suspend fun deleteRule(rule: AlertRuleEntity) = db.alertRuleDao().deleteRule(rule)
 
     // Active Alert functions
@@ -127,6 +128,7 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun muteAlert(id: Int, mutedUntil: Long) = db.activeAlertDao().muteAlert(id, mutedUntil)
     suspend fun updateAlertCurrentValue(id: Int, currentValue: Float) =
         db.activeAlertDao().updateCurrentValue(id, currentValue)
+    suspend fun setAlertRunbookRunKey(id: Int, runKey: String) = db.activeAlertDao().setRunbookRunKey(id, runKey)
 
     // Alert History functions
     val alertHistoryFlow: Flow<List<AlertHistoryEntity>> = db.alertHistoryDao().getAlertHistoryFlow()
@@ -150,16 +152,37 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun clearMcpCalls() = db.mcpCallDao().clear()
 
     // Tunnels. Screens get them without their configuration, which holds the private key; only a
-    // connection being dialled ([getTunnel]) and a backup read it.
-    val tunnelsFlow: Flow<List<TunnelEntity>> = db.tunnelDao().tunnelsFlow().map { list -> list.map { it.copy(config = "") } }
+    // connection being dialled ([getTunnel]), the tunnel editor and a backup read it. A Tailscale
+    // tunnel's node state is read by the tunnel alone ([tunnelNodeState]): nothing else gets it.
+    val tunnelsFlow: Flow<List<TunnelEntity>> =
+        db.tunnelDao().tunnelsFlow().map { list -> list.map { it.copy(config = "", nodeState = "") } }
     suspend fun getTunnel(id: Int): TunnelEntity? = db.tunnelDao().get(id)?.let(::decryptTunnel)
     suspend fun getAllTunnels(): List<TunnelEntity> = db.tunnelDao().getAll().map(::decryptTunnel)
-    suspend fun insertTunnel(tunnel: TunnelEntity): Int = db.tunnelDao().insert(encryptTunnel(tunnel)).toInt()
-    /** Renames [id], and replaces its configuration when [config] is given. */
-    suspend fun updateTunnel(id: Int, name: String, config: String?) = db.withTransaction {
+    /** The Wi-Fi networks tunnel [id]'s hosts dial directly on, read on every dial: its key is not decrypted for it. */
+    suspend fun tunnelDirectWifi(id: Int): String? = db.tunnelDao().directWifi(id)
+    /** Adds [tunnel], always as a new node: a node state given with it is not kept. */
+    suspend fun insertTunnel(tunnel: TunnelEntity): Int = db.tunnelDao().insert(encryptTunnel(tunnel.copy(nodeState = ""))).toInt()
+    /**
+     * Renames [id] and sets where it goes direct, and replaces its configuration when [config] is
+     * given. [newNode] forgets its node state, so it signs in again as a new device.
+     */
+    suspend fun updateTunnel(id: Int, name: String, config: String?, directWifi: String, newNode: Boolean = false) = db.withTransaction {
         val stored = db.tunnelDao().get(id) ?: return@withTransaction
-        db.tunnelDao().update(stored.copy(name = name, config = config?.let { encryptTunnel(stored.copy(config = it)).config } ?: stored.config))
+        db.tunnelDao().update(
+            stored.copy(
+                name = name,
+                config = config?.let { encryptTunnel(stored.copy(config = it)).config } ?: stored.config,
+                directWifi = directWifi,
+                nodeState = if (newNode) "" else stored.nodeState,
+            ),
+        )
     }
+    /** Tunnel [id]'s node state (a Tailscale node's keys and sign-in), or "" for none. */
+    suspend fun tunnelNodeState(id: Int): String = db.tunnelDao().nodeState(id)?.let(SecretStore::decrypt).orEmpty()
+    /** Keeps [state] as tunnel [id]'s node state, encrypted; "" forgets it. */
+    suspend fun saveTunnelNodeState(id: Int, state: String) = db.tunnelDao().setNodeState(
+        id, requireNotNull(SecretStore.encrypt(state)) { "The tunnel's state could not be encrypted on this phone." },
+    )
     /**
      * Deletes [id] unless a host still goes through it, and returns those hosts' names. A host whose
      * tunnel is selected never goes direct, so the user picks another tunnel or None for it first.
@@ -172,13 +195,14 @@ class AppRepository(private val db: AppDatabase) {
     private fun encryptTunnel(tunnel: TunnelEntity) = tunnel.copy(
         config = requireNotNull(SecretStore.encrypt(tunnel.config)) { "The tunnel could not be encrypted on this phone." },
     )
-    private fun decryptTunnel(tunnel: TunnelEntity) = tunnel.copy(config = SecretStore.decrypt(tunnel.config).orEmpty())
+    private fun decryptTunnel(tunnel: TunnelEntity) = tunnel.copy(config = SecretStore.decrypt(tunnel.config).orEmpty(), nodeState = "")
     suspend fun insertScript(script: QuickScriptEntity) = db.quickScriptDao().insertScript(script)
     /** Deletes [script] and takes it off every rule that offered it as a runbook. */
     suspend fun deleteScript(script: QuickScriptEntity) = db.withTransaction {
         db.quickScriptDao().deleteScript(script)
         db.alertRuleDao().clearRunbook(script.id)
-        // A grant for a deleted script could never run; it goes with it.
+        // A grant for a deleted script could never run; it goes with it, and so does its history.
+        db.automationUseDao().deleteForScript(script.id)
         db.automationGrantDao().deleteForScript(script.id)
     }
 
@@ -187,21 +211,90 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun automationGrantByTokenHash(tokenHash: String): AutomationGrantEntity? = db.automationGrantDao().byTokenHash(tokenHash)
     suspend fun automationGrantById(id: Int): AutomationGrantEntity? = db.automationGrantDao().byId(id)
     suspend fun insertAutomationGrant(grant: AutomationGrantEntity): Int = db.automationGrantDao().insert(grant).toInt()
-    suspend fun deleteAutomationGrant(id: Int) = db.automationGrantDao().delete(id)
+    /** Revokes grant [id]; its use history goes with it. */
+    suspend fun deleteAutomationGrant(id: Int) = db.withTransaction {
+        db.automationUseDao().deleteForGrant(id)
+        db.automationGrantDao().delete(id)
+    }
     suspend fun markAutomationGrantUsed(id: Int, at: Long) = db.automationGrantDao().markUsed(id, at)
+    suspend fun setAutomationGrantNotify(id: Int, notify: String) = db.automationGrantDao().setNotify(id, RunNotify.of(notify))
     suspend fun getAutomationGrants(): List<AutomationGrantEntity> = db.automationGrantDao().all()
 
-    /** Adds the grants whose token this phone does not know yet; returns how many. */
-    suspend fun restoreAutomationGrants(grants: List<AutomationGrantEntity>): Int = db.withTransaction {
+    fun automationUsesFlow(grantId: Int): Flow<List<AutomationUseEntity>> = db.automationUseDao().usesFlow(grantId)
+
+    // Fleet's saved target sets. A host deleted since a set was saved is dropped when it is used.
+    val fleetTargetSetsFlow: Flow<List<FleetTargetSetEntity>> get() = db.fleetTargetSetDao().setsFlow()
+
+    suspend fun fleetTargetSets(): List<FleetTargetSetEntity> = db.fleetTargetSetDao().all()
+
+    /** Saves [set], replacing a set with the same name (whatever its case), and returns its id. */
+    suspend fun saveFleetTargetSet(set: FleetTargetSetEntity): Int = db.withTransaction {
+        val same = db.fleetTargetSetDao().byName(set.name)
+        db.fleetTargetSetDao().upsert(set.copy(id = same?.id ?: set.id)).toInt()
+    }
+
+    suspend fun deleteFleetTargetSet(id: Int) = db.fleetTargetSetDao().delete(id)
+
+    val fleetSchedulesFlow: Flow<List<FleetScheduleEntity>> get() = db.fleetScheduleDao().schedulesFlow()
+    suspend fun fleetSchedules(): List<FleetScheduleEntity> = db.fleetScheduleDao().all()
+    suspend fun fleetSchedule(id: Int): FleetScheduleEntity? = db.fleetScheduleDao().byId(id)
+
+    /** Saves [schedule], new or edited, and returns its id. */
+    suspend fun saveFleetSchedule(schedule: FleetScheduleEntity): Int = db.fleetScheduleDao().upsert(schedule).toInt()
+    suspend fun setFleetScheduleNextRun(id: Int, nextRunAt: Long?) = db.fleetScheduleDao().setNextRun(id, nextRunAt)
+    suspend fun setFleetScheduleEnabled(id: Int, enabled: Boolean) = db.fleetScheduleDao().setEnabled(id, enabled)
+    suspend fun recordFleetScheduleRun(id: Int, at: Long, outcome: String, detail: String, runKey: String?) =
+        db.fleetScheduleDao().recordRun(id, at, outcome, detail.take(Automation.USE_DETAIL_CHARS), runKey)
+    suspend fun deleteFleetSchedule(id: Int) = db.fleetScheduleDao().delete(id)
+
+    /** Adds [use] to its token's history, keeping the newest [keep]. */
+    suspend fun recordAutomationUse(use: AutomationUseEntity, keep: Int = Automation.KEEP_USES) = db.withTransaction {
+        db.automationUseDao().insert(use.copy(detail = use.detail.take(Automation.USE_DETAIL_CHARS)))
+        db.automationUseDao().prune(use.grantId, keep)
+    }
+
+    /** Every token's uses, by grant id, for a backup. */
+    suspend fun automationUsesForBackup(): Map<Int, List<AutomationUseEntity>> = db.automationUseDao().all().groupBy { it.grantId }
+
+    /**
+     * Adds the grants whose token this phone does not know yet, and each grant's uses this phone
+     * has not logged (a token it knows keeps its own notification choice). Returns how many grants
+     * were added.
+     */
+    suspend fun restoreAutomationGrants(
+        grants: List<Pair<AutomationGrantEntity, List<AutomationUseEntity>>>,
+        keepUses: Int = Automation.KEEP_USES,
+    ): Int = db.withTransaction {
         val dao = db.automationGrantDao()
-        grants.count { grant ->
-            if (dao.byTokenHash(grant.tokenHash) != null) false else { dao.insert(grant.copy(id = 0)); true }
+        val uses = db.automationUseDao()
+        var added = 0
+        for ((grant, used) in grants) {
+            val id = dao.byTokenHash(grant.tokenHash)?.id ?: dao.insert(grant.copy(id = 0)).toInt().also { added++ }
+            val logged = uses.usesOf(id).mapTo(mutableSetOf()) { it.copy(id = 0) }
+            used.map { it.copy(id = 0, grantId = id) }.filter(logged::add).forEach { uses.insert(it) }
+            uses.prune(id, keepUses)
         }
+        added
     }
 
     // Fleet run history
     val fleetRunsFlow: Flow<List<FleetRunSummary>> = db.fleetRunDao().summariesFlow()
     suspend fun fleetRunHosts(runId: Int): List<FleetRunHostEntity> = db.fleetRunDao().hostsFor(runId)
+    fun fleetRunHostsFlow(runId: Int): Flow<List<FleetRunHostEntity>> = db.fleetRunDao().hostsFlow(runId)
+    suspend fun fleetRunByKey(runKey: String): FleetRunEntity? = db.fleetRunDao().byKey(runKey)
+
+    /**
+     * Ends, with [note], the hosts of live runs ([FleetRunHistory.LIVE_SOURCES]) still "running"
+     * [FleetRunHistory.STALE_RUNNING_MS] after their run started: Android ended the process
+     * running them, so nothing else ever will. Returns how many hosts it ended.
+     */
+    suspend fun endStaleLiveRuns(now: Long, note: String): Int =
+        db.fleetRunDao().endStaleHosts(
+            before = now - FleetRunHistory.STALE_RUNNING_MS,
+            sources = FleetRunHistory.LIVE_SOURCES,
+            status = "Failure",
+            note = note,
+        )
 
     /**
      * Saves [run] with [hosts], updating an earlier save of the same run (same runKey): its row,
@@ -315,6 +408,15 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun insertKubeCluster(cluster: KubeClusterEntity): Long = db.kubeClusterDao().insertKubeCluster(encryptKubeCluster(cluster))
     suspend fun deleteKubeCluster(id: Int) = db.kubeClusterDao().deleteKubeCluster(id)
 
+    val snmpDevicesFlow: Flow<List<SnmpDeviceEntity>> =
+        db.snmpDeviceDao().getAllSnmpDevicesFlow().map { list -> list.map(::decryptSnmpDevice) }
+    suspend fun getAllSnmpDevices(): List<SnmpDeviceEntity> = db.snmpDeviceDao().getAllSnmpDevices().map(::decryptSnmpDevice)
+    suspend fun insertSnmpDevice(device: SnmpDeviceEntity): Long = db.snmpDeviceDao().insertSnmpDevice(encryptSnmpDevice(device))
+    suspend fun deleteSnmpDevice(id: Int) = db.withTransaction {
+        deleteAlertRowsOf(AlertSubjects.snmp(id))
+        db.snmpDeviceDao().deleteSnmpDevice(id)
+    }
+
     val wolTargetsFlow: Flow<List<WolTargetEntity>> = db.wolTargetDao().getAllWolTargetsFlow()
     suspend fun getAllWolTargets(): List<WolTargetEntity> = db.wolTargetDao().getAllWolTargets()
     suspend fun insertWolTarget(target: WolTargetEntity) = db.wolTargetDao().insertWolTarget(target)
@@ -375,6 +477,12 @@ class AppRepository(private val db: AppDatabase) {
         proxyPassword = SecretStore.encrypt(server.proxyPassword) ?: "",
     )
 
+    // A rule's password is kept only encrypted: one that cannot be encrypted is not saved.
+    private fun encryptRule(rule: AlertRuleEntity): AlertRuleEntity = rule.copy(
+        secret = requireNotNull(SecretStore.encrypt(rule.secret)) { "The rule's password could not be encrypted on this phone." },
+    )
+    private fun decryptRule(rule: AlertRuleEntity): AlertRuleEntity = rule.copy(secret = SecretStore.decrypt(rule.secret).orEmpty())
+
     private fun decryptKey(key: SshKeyEntity): SshKeyEntity =
         key.copy(privateKey = SecretStore.decrypt(key.privateKey) ?: "")
 
@@ -392,6 +500,37 @@ class AppRepository(private val db: AppDatabase) {
 
     private fun encryptKubeCluster(cluster: KubeClusterEntity): KubeClusterEntity =
         cluster.copy(clientKeyPem = SecretStore.encrypt(cluster.clientKeyPem) ?: "", token = SecretStore.encrypt(cluster.token) ?: "")
+
+    val proxmoxServersFlow: Flow<List<ProxmoxServerEntity>> =
+        db.proxmoxServerDao().getAllFlow().map { list -> list.map(::decryptProxmoxServer) }
+    suspend fun getAllProxmoxServers(): List<ProxmoxServerEntity> = db.proxmoxServerDao().getAll().map(::decryptProxmoxServer)
+    suspend fun insertProxmoxServer(server: ProxmoxServerEntity): Long = db.proxmoxServerDao().insert(
+        server.copy(tokenSecret = requireNotNull(SecretStore.encrypt(server.tokenSecret)) { "The token could not be encrypted on this phone." }),
+    )
+    suspend fun deleteProxmoxServer(id: Int) = db.withTransaction {
+        deleteAlertRowsOf(AlertSubjects.proxmox(id))
+        db.proxmoxServerDao().delete(id)
+    }
+
+    /** A device's alert rules, incidents and history ([AlertSubjects]); callers hold a transaction. */
+    private suspend fun deleteAlertRowsOf(subject: Int) {
+        db.alertRuleDao().deleteForServer(subject)
+        db.activeAlertDao().deleteForServer(subject)
+        db.alertHistoryDao().deleteForServer(subject)
+    }
+    private fun decryptProxmoxServer(server: ProxmoxServerEntity) = server.copy(tokenSecret = SecretStore.decrypt(server.tokenSecret).orEmpty())
+
+    // A device's community and passwords are kept only encrypted: one that cannot be encrypted is not saved.
+    private fun encryptSnmpDevice(device: SnmpDeviceEntity): SnmpDeviceEntity {
+        fun enc(value: String) = requireNotNull(SecretStore.encrypt(value)) { "The device's community or password could not be encrypted on this phone." }
+        return device.copy(community = enc(device.community), authPassword = enc(device.authPassword), privPassword = enc(device.privPassword))
+    }
+
+    private fun decryptSnmpDevice(device: SnmpDeviceEntity): SnmpDeviceEntity = device.copy(
+        community = SecretStore.decrypt(device.community).orEmpty(),
+        authPassword = SecretStore.decrypt(device.authPassword).orEmpty(),
+        privPassword = SecretStore.decrypt(device.privPassword).orEmpty(),
+    )
 
     private fun decryptNetworkShare(share: NetworkShareEntity): NetworkShareEntity =
         share.copy(password = SecretStore.decrypt(share.password) ?: "")

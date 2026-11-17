@@ -25,6 +25,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 LICENCE_FILE = re.compile(r"^(licen[cs]e|copying|patents)([-._].*)?$", re.IGNORECASE)
+# Code that only shares the name, such as tailscale.com's license_test.go, is not a licence file.
+SOURCE_FILE = re.compile(r"\.(go|s|c|h|cc|cpp|m|py|sh|js|ts|rs|java|kt|swift|rb|pl)$", re.IGNORECASE)
 
 # Each licence a file can hold, by phrases its text always carries (compared after lowercasing and
 # turning every run of punctuation and space into one space). A file may hold several.
@@ -32,13 +34,27 @@ SIGNATURES = [
     ("Apache-2.0", ["apache license version 2 0"]),
     ("MIT", ["permission is hereby granted free of charge to any person obtaining a copy"]),
     ("ISC", ["permission to use copy modify and or distribute this software for any purpose"]),
+    # The older ISC wording, without "/or" (coder/websocket's): SPDX's ISC template takes both.
+    ("ISC", ["permission to use copy modify and distribute this software for any purpose",
+             "with or without fee is hereby granted provided that the above"]),
     ("MPL-2.0", ["mozilla public license version 2 0"]),
     ("BSD-3-Clause", ["redistribution and use in source and binary forms",
                       "may be used to endorse or promote products derived from this software"]),
     ("BSD-2-Clause", ["redistribution and use in source and binary forms"]),
+    # The FreeBSD licence: the two clauses and a "views and conclusions" disclaimer, which SPDX and
+    # Dependency review name apart from plain BSD-2-Clause (rcrowley/go-metrics, through Nebula).
+    ("BSD-2-Clause-Views", ["redistribution and use in source and binary forms",
+                            "the views and conclusions contained in the software and documentation are "
+                            "those of the authors and should not be interpreted as representing official policies"]),
     # Google's extra patent grant beside the BSD-3-Clause licence of the Go project's libraries.
     ("LicenseRef-scancode-google-patent-license-golang",
      ["additional ip rights grant patents", "implementation of go"]),
+    # Tailscale's PATENTS is that grant with Tailscale Inc. for Google: it only gives rights.
+    # ScanCode has no entry of its own for it, so its nearest rule, and Dependency review's name
+    # for it, is Go's.
+    ("LicenseRef-scancode-google-patent-license-golang",
+     ["additional ip rights grant patents", "implementation of tailscale",
+      "hereby grants to you a perpetual worldwide non exclusive no charge royalty free irrevocable"]),
     # Never allowed, but named so the failure says what was found.
     ("AGPL", ["gnu affero general public license"]),
     ("LGPL", ["gnu lesser general public license"]),
@@ -47,7 +63,7 @@ SIGNATURES = [
     ("SSPL-1.0", ["server side public license"]),
 ]
 # A licence whose phrases include another's: the wider one is named alone.
-WIDER = {"BSD-3-Clause": "BSD-2-Clause", "AGPL": "GPL", "LGPL": "GPL"}
+WIDER = {"BSD-3-Clause": "BSD-2-Clause", "BSD-2-Clause-Views": "BSD-2-Clause", "AGPL": "GPL", "LGPL": "GPL"}
 
 
 def normalise(text):
@@ -88,7 +104,8 @@ def problems(modules, allowed):
     would reject or this script cannot read."""
     found = []
     for name, directory in modules:
-        files = sorted(p for p in pathlib.Path(directory).iterdir() if p.is_file() and LICENCE_FILE.match(p.name))
+        files = sorted(p for p in pathlib.Path(directory).iterdir()
+                       if p.is_file() and LICENCE_FILE.match(p.name) and not SOURCE_FILE.search(p.name))
         if not files:
             found.append((name, "has no licence file"))
         for f in files:

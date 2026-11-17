@@ -48,11 +48,13 @@ userMessagingPlatform = "3.2.0"
 smbj = "0.15.0"
 smbjrpc = "0.11.1.1"
 commonsNet = "3.13.0"
+snmp4j = "3.13.2"
 jsch = "0.2.26"
 bcprov = "1.87"
 yubikit = "3.3.0"
 guavaAndroid = "33.8.0-android"
 browser = "1.10.0"
+markdown = "0.7.18"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -92,6 +94,7 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinxCoroutinesCore" }
 kotlinx-serialization-bom = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-bom", version.ref = "kotlinxSerialization" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json" }
+markdown = { group = "org.jetbrains", name = "markdown", version.ref = "markdown" }
 accompanist-permissions = { group = "com.google.accompanist", name = "accompanist-permissions", version.ref = "accompanistPermissions" }
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "cameraCamera2" }
@@ -114,6 +117,7 @@ user-messaging-platform = { group = "com.google.android.ump", name = "user-messa
 smbj = { group = "com.hierynomus", name = "smbj", version.ref = "smbj" }
 smbjrpc = { group = "io.github.daveboy", name = "smbj-rpc", version.ref = "smbjrpc" }
 commons-net = { group = "commons-net", name = "commons-net", version.ref = "commonsNet" }
+snmp4j = { group = "org.snmp4j", name = "snmp4j", version.ref = "snmp4j" }
 jsch = { group = "com.github.mwiede", name = "jsch", version.ref = "jsch" }
 bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bcprov" }
 yubikit-android = { group = "com.yubico.yubikit", name = "android", version.ref = "yubikit" }

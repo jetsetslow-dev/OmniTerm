@@ -295,9 +295,14 @@ class TerminalNavigationRobolectricTest {
         viewModel.multiSshFocusedPane = 2
         assertFalse(viewModel.isCtrlPressed)
 
+        // Read-only belongs to one terminal (the Input button locks only its own session): it
+        // leaves another terminal's armed modifier with that terminal, and disarms its own.
         viewModel.updateTerminalReadOnly(true)
         viewModel.multiSshFocusedPane = 1
-        assertFalse("read-only disarms every terminal", viewModel.isCtrlPressed)
+        assertTrue("another terminal keeps its own modifier", viewModel.isCtrlPressed)
+        viewModel.updateTerminalReadOnly(true)
+        assertFalse("read-only disarms the terminal it locks", viewModel.isCtrlPressed)
+        assertTrue(pi.inputLocked)
     }
 
     @Test

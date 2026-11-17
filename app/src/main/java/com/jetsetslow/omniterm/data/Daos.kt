@@ -176,7 +176,7 @@ interface AlertRuleDao {
     @Delete
     suspend fun deleteRule(rule: AlertRuleEntity)
 
-    @Query("DELETE FROM alert_rules WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
+    @Query("DELETE FROM alert_rules WHERE serverId > 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 
     @Query("DELETE FROM alert_rules WHERE serverId = :serverId")
@@ -214,7 +214,10 @@ interface ActiveAlertDao {
     @Query("UPDATE active_alerts SET currentValue = :currentValue WHERE id = :id")
     suspend fun updateCurrentValue(id: Int, currentValue: Float)
 
-    @Query("DELETE FROM active_alerts WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
+    @Query("UPDATE active_alerts SET runbookRunKey = :runKey WHERE id = :id")
+    suspend fun setRunbookRunKey(id: Int, runKey: String)
+
+    @Query("DELETE FROM active_alerts WHERE serverId > 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 
     @Query("DELETE FROM active_alerts WHERE serverId = :serverId")
@@ -266,7 +269,7 @@ interface AlertHistoryDao {
     @Query("DELETE FROM alert_history")
     suspend fun clearHistory()
 
-    @Query("DELETE FROM alert_history WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
+    @Query("DELETE FROM alert_history WHERE serverId > 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 
     @Query("DELETE FROM alert_history WHERE serverId = :serverId")
@@ -371,6 +374,36 @@ interface KubeClusterDao {
 }
 
 @Dao
+interface ProxmoxServerDao {
+    @Query("SELECT * FROM proxmox_servers ORDER BY name COLLATE NOCASE ASC")
+    fun getAllFlow(): Flow<List<ProxmoxServerEntity>>
+
+    @Query("SELECT * FROM proxmox_servers ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAll(): List<ProxmoxServerEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(server: ProxmoxServerEntity): Long
+
+    @Query("DELETE FROM proxmox_servers WHERE id = :id")
+    suspend fun delete(id: Int)
+}
+
+@Dao
+interface SnmpDeviceDao {
+    @Query("SELECT * FROM snmp_devices ORDER BY name COLLATE NOCASE ASC")
+    fun getAllSnmpDevicesFlow(): Flow<List<SnmpDeviceEntity>>
+
+    @Query("SELECT * FROM snmp_devices ORDER BY name COLLATE NOCASE ASC")
+    suspend fun getAllSnmpDevices(): List<SnmpDeviceEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSnmpDevice(device: SnmpDeviceEntity): Long
+
+    @Query("DELETE FROM snmp_devices WHERE id = :id")
+    suspend fun deleteSnmpDevice(id: Int)
+}
+
+@Dao
 interface TelnetHostDao {
     @Query("SELECT * FROM telnet_hosts ORDER BY name COLLATE NOCASE ASC")
     fun getAllTelnetHostsFlow(): Flow<List<TelnetHostEntity>>
@@ -452,13 +485,28 @@ interface PersistentSessionDao {
 @Dao
 interface FleetRunDao {
     @Query(
-        "SELECT r.*, COUNT(h.serverId) AS hosts, COALESCE(SUM(h.status = 'Success'), 0) AS succeeded " +
+        "SELECT r.*, COUNT(h.serverId) AS hosts, COALESCE(SUM(h.status = 'Success'), 0) AS succeeded, " +
+            "COALESCE(SUM(h.status = 'Running'), 0) AS running " +
             "FROM fleet_runs r LEFT JOIN fleet_run_hosts h ON h.runId = r.id GROUP BY r.id ORDER BY r.startedAt DESC, r.id DESC"
     )
     fun summariesFlow(): Flow<List<FleetRunSummary>>
 
     @Query("SELECT * FROM fleet_run_hosts WHERE runId = :runId ORDER BY serverName COLLATE NOCASE")
     suspend fun hostsFor(runId: Int): List<FleetRunHostEntity>
+
+    /** [hostsFor], following the run as its hosts finish. */
+    @Query("SELECT * FROM fleet_run_hosts WHERE runId = :runId ORDER BY serverName COLLATE NOCASE")
+    fun hostsFlow(runId: Int): Flow<List<FleetRunHostEntity>>
+
+    /**
+     * Ends the hosts still "running" in [sources]' runs that started before [before]: their run
+     * was cut off with its process, so it will never save their end itself.
+     */
+    @Query(
+        "UPDATE fleet_run_hosts SET status = :status, note = :note WHERE status = 'Running' AND runId IN " +
+            "(SELECT id FROM fleet_runs WHERE source IN (:sources) AND startedAt < :before)"
+    )
+    suspend fun endStaleHosts(before: Long, sources: List<String>, status: String, note: String): Int
 
     @Query("SELECT * FROM fleet_runs WHERE runKey = :runKey")
     suspend fun byKey(runKey: String): FleetRunEntity?
@@ -517,6 +565,38 @@ interface AutomationGrantDao {
 
     @Query("UPDATE automation_grants SET lastUsedAt = :at WHERE id = :id")
     suspend fun markUsed(id: Int, at: Long)
+
+    @Query("UPDATE automation_grants SET notify = :notify WHERE id = :id")
+    suspend fun setNotify(id: Int, notify: String)
+}
+
+@Dao
+interface AutomationUseDao {
+    @Query("SELECT * FROM automation_uses WHERE grantId = :grantId ORDER BY at DESC, id DESC")
+    fun usesFlow(grantId: Int): Flow<List<AutomationUseEntity>>
+
+    @Query("SELECT * FROM automation_uses WHERE grantId = :grantId ORDER BY at DESC, id DESC")
+    suspend fun usesOf(grantId: Int): List<AutomationUseEntity>
+
+    @Query("SELECT * FROM automation_uses ORDER BY grantId, at DESC, id DESC")
+    suspend fun all(): List<AutomationUseEntity>
+
+    @Insert
+    suspend fun insert(use: AutomationUseEntity): Long
+
+    /** Keeps [grantId]'s newest [keep] uses. */
+    @Query(
+        "DELETE FROM automation_uses WHERE grantId = :grantId AND id NOT IN " +
+            "(SELECT id FROM automation_uses WHERE grantId = :grantId ORDER BY at DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun prune(grantId: Int, keep: Int)
+
+    @Query("DELETE FROM automation_uses WHERE grantId = :grantId")
+    suspend fun deleteForGrant(grantId: Int)
+
+    /** The uses of [scriptId]'s grants, which go with the script. */
+    @Query("DELETE FROM automation_uses WHERE grantId IN (SELECT id FROM automation_grants WHERE scriptId = :scriptId)")
+    suspend fun deleteForScript(scriptId: Int)
 }
 
 @Dao
@@ -548,6 +628,17 @@ interface TunnelDao {
     @Query("SELECT * FROM tunnels WHERE id = :id")
     suspend fun get(id: Int): TunnelEntity?
 
+    /** The Wi-Fi networks tunnel [id]'s hosts dial directly on; null when there is no such tunnel. */
+    @Query("SELECT directWifi FROM tunnels WHERE id = :id")
+    suspend fun directWifi(id: Int): String?
+
+    /** A Tailscale tunnel's node state, as stored (encrypted); null when there is no such tunnel. */
+    @Query("SELECT nodeState FROM tunnels WHERE id = :id")
+    suspend fun nodeState(id: Int): String?
+
+    @Query("UPDATE tunnels SET nodeState = :state WHERE id = :id")
+    suspend fun setNodeState(id: Int, state: String)
+
     @Insert
     suspend fun insert(tunnel: TunnelEntity): Long
 
@@ -557,7 +648,55 @@ interface TunnelDao {
     @Query("DELETE FROM tunnels WHERE id = :id")
     suspend fun delete(id: Int)
 
-    /** The hosts that go through tunnel [id]: while there are any, it cannot be deleted. */
-    @Query("SELECT name FROM servers WHERE tunnelId = :id ORDER BY name COLLATE NOCASE")
+    /** The hosts, SNMP devices and Proxmox servers that go through tunnel [id]: while there are any, it cannot be deleted. */
+    @Query(
+        "SELECT name FROM servers WHERE tunnelId = :id UNION ALL SELECT name FROM snmp_devices WHERE tunnelId = :id " +
+            "UNION ALL SELECT name FROM proxmox_servers WHERE tunnelId = :id ORDER BY name COLLATE NOCASE"
+    )
     suspend fun hostsUsing(id: Int): List<String>
+}
+
+@Dao
+interface FleetScheduleDao {
+    @Query("SELECT * FROM fleet_schedules ORDER BY name COLLATE NOCASE ASC, id ASC")
+    fun schedulesFlow(): Flow<List<FleetScheduleEntity>>
+
+    @Query("SELECT * FROM fleet_schedules ORDER BY name COLLATE NOCASE ASC, id ASC")
+    suspend fun all(): List<FleetScheduleEntity>
+
+    @Query("SELECT * FROM fleet_schedules WHERE id = :id")
+    suspend fun byId(id: Int): FleetScheduleEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(schedule: FleetScheduleEntity): Long
+
+    @Query("UPDATE fleet_schedules SET nextRunAt = :nextRunAt WHERE id = :id")
+    suspend fun setNextRun(id: Int, nextRunAt: Long?)
+
+    @Query("UPDATE fleet_schedules SET lastRunAt = :at, lastOutcome = :outcome, lastDetail = :detail, lastRunKey = :runKey WHERE id = :id")
+    suspend fun recordRun(id: Int, at: Long, outcome: String, detail: String, runKey: String?)
+
+    @Query("UPDATE fleet_schedules SET enabled = :enabled WHERE id = :id")
+    suspend fun setEnabled(id: Int, enabled: Boolean)
+
+    @Query("DELETE FROM fleet_schedules WHERE id = :id")
+    suspend fun delete(id: Int)
+}
+
+@Dao
+interface FleetTargetSetDao {
+    @Query("SELECT * FROM fleet_target_sets ORDER BY name COLLATE NOCASE ASC, id ASC")
+    fun setsFlow(): Flow<List<FleetTargetSetEntity>>
+
+    @Query("SELECT * FROM fleet_target_sets ORDER BY name COLLATE NOCASE ASC, id ASC")
+    suspend fun all(): List<FleetTargetSetEntity>
+
+    @Query("SELECT * FROM fleet_target_sets WHERE name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun byName(name: String): FleetTargetSetEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(set: FleetTargetSetEntity): Long
+
+    @Query("DELETE FROM fleet_target_sets WHERE id = :id")
+    suspend fun delete(id: Int)
 }

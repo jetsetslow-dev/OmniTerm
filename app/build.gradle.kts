@@ -135,6 +135,25 @@ android {
     disable += "GradleDependency"
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+
+  // GitHub releases carry the open-source app as one APK per architecture next to a universal APK
+  // that works on every phone. The release workflow asks for them (-Pomniterm.abiSplits=true); every
+  // other build makes one APK. Each keeps the release's own version code, as the Play bundle does:
+  // Play gets only the bundle and serves each phone its part, so per-architecture codes would buy
+  // nothing, and equal codes let a phone move between the universal APK and its own either way.
+  // scripts/verify-release-apks.py checks the built files.
+  splits {
+    abi {
+      isEnable = providers.gradleProperty("omniterm.abiSplits").map { it.toBoolean() }.getOrElse(false)
+      reset()
+      include("arm64-v8a", "armeabi-v7a", "x86_64")
+      isUniversalApk = true
+    }
+  }
+  // 32-bit x86 is not built. The Go tunnel library has no x86 copy (scripts/build-tunnel.sh), so no
+  // other library's x86 copy ships either: an x86 device refuses the install rather than getting an
+  // app whose tunnels cannot load.
+  packaging { jniLibs { excludes += "lib/x86/**" } }
 }
 
 ksp {
@@ -142,19 +161,29 @@ ksp {
   arg("room.schemaLocation", "$projectDir/schemas")
 }
 
-// The Go tunnel library (tunnel/), built for every Android ABI with the repository's pinned Go
-// toolchain and NDK. It is rebuilt only when its sources or the scripts that build it change.
+// The Go tunnel library (tunnel/), built for the three ABIs the app ships (arm64-v8a, armeabi-v7a,
+// x86_64) with the repository's pinned Go toolchain and NDK. It is rebuilt only when its sources or the scripts that build it change.
 val goTunnelAar = rootProject.layout.projectDirectory.file("tunnel/build/omnitunnel.aar")
 val buildGoTunnel by tasks.registering(Exec::class) {
   description = "Builds tunnel/ into an Android library with gomobile."
   val root = rootProject.layout.projectDirectory
   inputs.dir(root.dir("tunnel/omnitunnel"))
-  inputs.files(root.file("tunnel/go.mod"), root.file("tunnel/go.sum"), root.file("scripts/build-tunnel.sh"), root.file("scripts/go-toolchain.sh"))
+  inputs.files(root.file("tunnel/go.mod"), root.file("tunnel/go.sum"), root.file("tunnel/build-tags.txt"), root.file("scripts/build-tunnel.sh"), root.file("scripts/check-tunnel-seam.py"), root.file("scripts/go-toolchain.sh"))
   inputs.property("targets", providers.environmentVariable("OMNITUNNEL_TARGETS").orElse("all"))
   outputs.file(goTunnelAar)
   val sdk = androidComponents.sdkComponents.sdkDirectory
   doFirst { environment("ANDROID_HOME", sdk.get().asFile.path) }
   commandLine(root.file("scripts/build-tunnel.sh").asFile.path, goTunnelAar.asFile.path)
+}
+// A test build may use another tunnel library instead, given as -Pomniterm.tunnelAar=<file>: the
+// Cloudflare Access device suite's, from scripts/build-tunnel.sh --access-fixture. Gradle never
+// builds that library, no release may use it, and scripts/check-tunnel-seam.py fails any library
+// or app that holds its seam.
+val tunnelAarOverride = providers.gradleProperty("omniterm.tunnelAar").orNull
+if (tunnelAarOverride != null &&
+  gradle.startParameter.taskNames.any { it.substringAfterLast(':').lowercase().let { t -> "release" in t || t == "assemble" || t == "build" || t == "bundle" } }
+) {
+  error("-Pomniterm.tunnelAar is for test builds only: build a release without it.")
 }
 
 val lowResourceBuild = providers.gradleProperty("omniterm.lowResourceBuild")
@@ -226,7 +255,7 @@ dependencies {
   // API, but parses modern keys: OpenSSH containers (-----BEGIN OPENSSH PRIVATE KEY-----, the
   // default from recent ssh-keygen) plus ed25519/ecdsa. Also patches the old JSch CVEs.
   implementation(libs.jsch)
-  implementation(files(goTunnelAar).builtBy(buildGoTunnel))
+  implementation(tunnelAarOverride?.let { files(it) } ?: files(goTunnelAar).builtBy(buildGoTunnel))
   // ed25519/ed448 signing & key parsing. On Android the platform JCA has no EdDSA provider, so
   // JSch selects its `com.jcraft.jsch.bc.*` EdDSA backend, which needs Bouncy Castle's lightweight
   // crypto API on the classpath. Without this, RSA/ECDSA keys authenticate but every modern
@@ -252,6 +281,9 @@ dependencies {
   }
   // FTP client for the Shares browser. WebDAV rides on the existing OkHttp dependency.
   implementation(libs.commons.net)
+  // SNMP v2c/v3 polling for Tools → SNMP devices (Apache-2.0, no runtime dependencies). Read-only:
+  // OmniTerm sends GET and GETBULK only. Its v3 USM uses the JDK's own MD5/SHA and AES/DES.
+  implementation(libs.snmp4j)
   // FIDO2 (CTAP2) over USB and NFC, for SSH keys kept on a security key (sk-ssh-ed25519,
   // sk-ecdsa). Yubico's SDK, which talks to any maker's FIDO2 key, not only YubiKeys.
   implementation(libs.yubikit.android)
@@ -282,6 +314,9 @@ dependencies {
   // The MCP server reads and writes JSON-RPC with its tree API (no compiler plugin), which the
   // shared Kotlin module can use unchanged.
   implementation(libs.kotlinx.serialization.json)
+  // The file editor's Markdown preview parses with JetBrains' Kotlin Multiplatform parser
+  // (Apache-2.0, depends on kotlin-stdlib only) and draws with the app's own renderer.
+  implementation(libs.markdown)
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)

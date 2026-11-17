@@ -1,8 +1,5 @@
 package com.jetsetslow.omniterm
 
-import android.app.Notification
-import android.app.NotificationManager
-import android.os.Build
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -12,12 +9,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.EndpointChecks
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
+import com.jetsetslow.omniterm.ui.alertNotificationId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -43,8 +40,6 @@ class E2ePhoneChecksTest {
     @Test fun phoneChecksReadTheFixtureAndAlertOnAClosedPortAndAMissingName() {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("omniterm_e2e_phone_checks") == "yes")
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val context = instrumentation.targetContext
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.waitUntil(15_000) { vm.servers.value.any { it.name == HOST } }
         val host = vm.servers.value.single { it.name == HOST }
@@ -75,14 +70,7 @@ class E2ePhoneChecksTest {
         }
         val dnsServer = "127.0.0.1:${dns.localPort}"
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                instrumentation.uiAutomation.executeShellCommand(
-                    "pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS",
-                ).close()
-            }
+            TestNotifications.allow()
             composeRule.runOnUiThread { vm.startPing("-f", 1) }
             assertEquals(listOf("Enter a valid hostname or IP address."), vm.pingLines)
 
@@ -148,6 +136,9 @@ class E2ePhoneChecksTest {
             dns.close()
             responder.join(2_000)
             vm.alertRules.value.filter { it.notes == NOTE }.forEach(vm::deleteAlertRule)
+            // Deleting runs on the view model's scope (closing a rule's incidents first): wait, or the
+            // activity closing cancels it and the firing rules stay behind for the next suite.
+            runCatching { composeRule.waitUntil(10_000) { vm.alertRules.value.none { it.notes == NOTE } } }
             vm.saveAlertsEnabled(originalAlertsEnabled)
             composeRule.runOnUiThread {
                 vm.activeAlertsTab = originalTab
@@ -167,12 +158,7 @@ class E2ePhoneChecksTest {
         return labels.joinToString(".")
     }
 
-    private fun notificationText(ruleId: Int, serverId: Int): String? {
-        val manager = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(NotificationManager::class.java)
-        val expectedId = "alert_${ruleId}_$serverId".hashCode()
-        return manager?.activeNotifications?.firstOrNull { it.id == expectedId }
-            ?.notification?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-    }
+    private fun notificationText(ruleId: Int, serverId: Int): String? = TestNotifications.text(alertNotificationId(ruleId, serverId))
 
     private companion object {
         const val HOST = "E2E Foreground Demo"

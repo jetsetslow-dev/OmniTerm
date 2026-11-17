@@ -110,7 +110,8 @@ class E2eTerminalStressTest {
             assertEquals(2, vm.pendingTerminalNavigationSessions.size)
             vm.completeTerminalNavigation(disconnect = false)
 
-            assertEquals(Screen.Infra, vm.currentScreen)
+            // Keeping a tmux session saves its recovery first and only then leaves the screen.
+            await("navigation after the recovery save", 10_000) { vm.currentScreen == Screen.Infra }
             assertFalse(vm.showDisconnectTerminalDialog)
             assertNotNull(vm.activeSessions.find { it.id == direct.id })
             await("tmux parked and restorable", 10_000) {

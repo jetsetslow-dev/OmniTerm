@@ -8,6 +8,8 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.TunnelEntity
+import com.jetsetslow.omniterm.data.TunnelKinds
+import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupSelection
 import com.jetsetslow.omniterm.ui.MISSING_TUNNEL_ID
@@ -56,7 +58,8 @@ class VpnTunnelBackupRobolectricTest {
             withContext(Dispatchers.IO) { db.clearAllTables() }
             val model = withContext(main) { AppViewModel(application) }
             store.put("backup", model)
-            val home = repo.insertTunnel(TunnelEntity(name = "Home", config = HOME))
+            val homeWifi = listOf("Home WiFi", "Café, upstairs")
+            val home = repo.insertTunnel(TunnelEntity(name = "Home", config = HOME, directWifi = TunnelNetworks.stored(homeWifi)))
             repo.insertTunnel(TunnelEntity(name = "Lab", config = LAB))
             repo.insertServer(host("nas", tunnelId = home, tunnelHost = "10.9.0.7"))
             repo.insertServer(host("router", tunnelId = null))
@@ -78,7 +81,7 @@ class VpnTunnelBackupRobolectricTest {
             // Another phone: its own "Home" is a different tunnel; its "Lab" is the same one.
             withContext(Dispatchers.IO) { db.clearAllTables() }
             val otherHome = repo.insertTunnel(TunnelEntity(name = "home", config = "[Interface]\n# another phone's\n"))
-            val sameLab = repo.insertTunnel(TunnelEntity(name = "Lab", config = LAB))
+            val sameLab = repo.insertTunnel(TunnelEntity(name = "Lab", config = LAB, directWifi = "Lab net"))
             // The same machine and login, saved here directly: not the backup's copy through a tunnel.
             repo.insertServer(host("nas", tunnelId = null).copy(name = "nas here"))
             val restored = CompletableDeferred<Pair<Boolean, String>>()
@@ -91,6 +94,8 @@ class VpnTunnelBackupRobolectricTest {
             assertEquals(setOf("home", "Home (2)", "Lab"), tunnels.map { it.name }.toSet())
             val restoredHome = tunnels.single { it.name == "Home (2)" }
             assertEquals(HOME, restoredHome.config)
+            assertEquals("the Wi-Fi networks it is not needed on come with it", homeWifi, TunnelNetworks.names(restoredHome.directWifi))
+            assertEquals("a tunnel the phone has keeps its own", "Lab net", tunnels.single { it.name == "Lab" }.directWifi)
             assertEquals("the same Lab tunnel is not added twice", sameLab, tunnels.single { it.name == "Lab" }.id)
             val servers = repo.getAllServers().associateBy { it.name }
             assertEquals(restoredHome.id, servers.getValue("nas").tunnelId)
@@ -116,6 +121,74 @@ class VpnTunnelBackupRobolectricTest {
         }
     }
 
+    @Test
+    fun aTailscaleTunnelIsRestoredWithItsSettingsButSignsInAgainAsANewDevice() =
+        identityBackup(TunnelKinds.TAILSCALE, TAILNET, NODE)
+
+    @Test
+    fun aNebulaTunnelRestoresTheUsersCertificateAndKey() =
+        identityBackup(TunnelKinds.NEBULA, "pki:\n  cert: certificate-for-test\n  key: private-key-for-test\n")
+
+    @Test
+    fun accessBackupsRestoreTheEncryptedServiceTokenAndKind() =
+        identityBackup(TunnelKinds.CLOUDFLARE_ACCESS, "{\"hostname\":\"ssh.example.com\",\"clientId\":\"fixture-id\",\"clientSecret\":\"fixture-secret\"}")
+
+    private fun identityBackup(kind: String, config: String, node: String = "") = runBlocking {
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val store = ViewModelStore()
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val db = AppDatabase.getDatabase(application)
+        val repo = AppRepository(db)
+        try {
+            withContext(Dispatchers.IO) { db.clearAllTables() }
+            val model = withContext(main) { AppViewModel(application) }
+            store.put("backup", model)
+            val tailnet = repo.insertTunnel(TunnelEntity(name = "Tailnet", kind = kind, config = config))
+            repo.saveTunnelNodeState(tailnet, node)
+            assertEquals("the node state is kept, encrypted", node, repo.tunnelNodeState(tailnet))
+            if (node.isNotEmpty()) assertTrue("and stored encrypted", node !in db.tunnelDao().nodeState(tailnet).orEmpty())
+            assertTrue("identity material is encrypted at rest", config !in db.tunnelDao().get(tailnet)!!.config)
+            assertEquals("nothing but the tunnel reads it", "", repo.getTunnel(tailnet)!!.nodeState)
+            repo.insertServer(host("pi", tunnelId = tailnet))
+
+            val uri = Uri.parse("content://backup-fixture/tailnet.json")
+            val bytes = ByteArrayOutputStream()
+            shadowOf(application.contentResolver).registerOutputStream(uri, bytes)
+            val exported = CompletableDeferred<Pair<Boolean, String>>()
+            withContext(main) { model.exportBackup(uri, PASSPHRASE, application, SELECTION) { ok, message -> exported.complete(ok to message) } }
+            val (exportOk, exportMessage) = withTimeout(10_000) { exported.await() }
+            assertTrue(exportMessage, exportOk)
+            waitWhileOnMain(main) { model.backupExportRunning }
+            val backup = bytes.toString(Charsets.UTF_8)
+            assertTrue("Tunnel credentials require encrypted backup", JSONObject(backup).has("data"))
+            assertTrue("Tunnel configuration cannot appear in the backup envelope", config !in backup)
+
+            withContext(Dispatchers.IO) { db.clearAllTables() }
+            val restored = CompletableDeferred<Pair<Boolean, String>>()
+            withContext(main) { model.restoreEncryptedBackup(backup, PASSPHRASE, SELECTION) { ok, message -> restored.complete(ok to message) } }
+            val (restoreOk, restoreMessage) = withTimeout(10_000) { restored.await() }
+            assertTrue(restoreMessage, restoreOk)
+            waitWhileOnMain(main) { model.backupRestoreRunning }
+
+            val restoredTunnels = repo.getAllTunnels()
+            assertEquals("The tunnel kind must be restored", 1, restoredTunnels.size)
+            val tunnel = restoredTunnels.single()
+            assertEquals(kind, tunnel.kind)
+            assertEquals("its settings, auth key included, come back", config, tunnel.config)
+            assertEquals("its device keys do not: it signs in again as a new device", "", repo.tunnelNodeState(tunnel.id))
+            assertEquals(tunnel.id, repo.getAllServers().single().tunnelId)
+        } finally {
+            try {
+                clearViewModelsAndAwaitTerminalJobs(store, main)
+                withContext(Dispatchers.IO) { db.clearAllTables() }
+            } finally {
+                Dispatchers.resetMain()
+                main.close()
+            }
+        }
+    }
+
     private fun host(name: String, tunnelId: Int?, tunnelHost: String = "") = ServerEntity(
         name = name, host = "$name.lan", port = 22, username = "admin", authType = "password",
         authPassword = "pw-$name", tunnelId = tunnelId, tunnelHost = tunnelHost,
@@ -125,6 +198,8 @@ class VpnTunnelBackupRobolectricTest {
         const val PASSPHRASE = "vpn-tunnel-passphrase"
         const val HOME = "[Interface]\nPrivateKey = home-private-key-for-the-test\n"
         const val LAB = "[Interface]\nPrivateKey = lab-private-key-for-the-test\n"
+        const val TAILNET = "{\"controlUrl\":\"https://headscale.example.com\",\"authKey\":\"tskey-" + "auth-test\",\"hostname\":\"phone\"}"
+        const val NODE = "{\"_machinekey\":\"bWFjaGluZS1rZXktZm9yLXRoZS10ZXN0\"}"
         val SELECTION = BackupSelection.NONE.copy(servers = true)
     }
 }

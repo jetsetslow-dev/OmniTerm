@@ -5,6 +5,8 @@ import com.jetsetslow.omniterm.ui.HiKind
 import com.jetsetslow.omniterm.ui.HiToken
 import com.jetsetslow.omniterm.ui.gutterRows
 import com.jetsetslow.omniterm.ui.highlightAll
+import com.jetsetslow.omniterm.ui.isMarkdownFileName
+import com.jetsetslow.omniterm.ui.languageForFenceInfo
 import com.jetsetslow.omniterm.ui.languageForFileName
 import com.jetsetslow.omniterm.ui.logicalLineStartOffsets
 import org.junit.Assert.assertEquals
@@ -29,6 +31,8 @@ class CodeHighlighterStateTest {
 
     private fun shell(text: String) = text to highlightAll(text, CodeLanguage.SHELL)
     private fun yaml(text: String) = text to highlightAll(text, CodeLanguage.YAML)
+    private fun markdown(text: String) = text to highlightAll(text, CodeLanguage.MARKDOWN)
+    private fun json(text: String) = text to highlightAll(text, CodeLanguage.JSON)
 
     @Test
     fun aShellStringAcrossLinesEndsWhereItCloses() {
@@ -172,5 +176,129 @@ class CodeHighlighterStateTest {
         // From the top, the wrapped line 30 is followed by line 31 three rows lower.
         val top = gutterRows(starts, ::visualLineOf, { rowTop[it] }, { rowTop[it] + 20f }, { rowTop[it] }, 0f, 800f)
         assertEquals(rowTop[firstRow[29]] + 60f, top.single { it.number == 31 }.baseline)
+    }
+
+    @Test
+    fun markdownAndJsonFilesAreRecognised() {
+        for (name in listOf("README.md", "notes.markdown", "a.mdown", "b.mkd", "c.mkdn", "d.mdwn", "README", "readme", "CHANGELOG", "Contributing")) {
+            assertEquals(name, CodeLanguage.MARKDOWN, languageForFileName(name))
+            assertTrue(name, isMarkdownFileName(name))
+        }
+        for (name in listOf("package.json", "tsconfig.jsonc", "app.json5", "map.geojson", "site.webmanifest")) {
+            assertEquals(name, CodeLanguage.JSON, languageForFileName(name))
+        }
+        for (name in listOf("notes.txt", "readme.txt", "md", "compose.yml", "run.sh")) {
+            assertTrue(name, !isMarkdownFileName(name))
+        }
+        assertEquals(CodeLanguage.SHELL, languageForFenceInfo("bash"))
+        assertEquals(CodeLanguage.SHELL, languageForFenceInfo("console title=\"x\""))
+        assertEquals(CodeLanguage.YAML, languageForFenceInfo(" yml "))
+        assertEquals(CodeLanguage.YAML, languageForFenceInfo("{.yaml}"))
+        assertEquals(CodeLanguage.SHELL, languageForFenceInfo("{.bash .numberLines}"))
+        assertEquals(CodeLanguage.JSON, languageForFenceInfo("json"))
+        assertEquals(CodeLanguage.NONE, languageForFenceInfo(""))
+        assertEquals(CodeLanguage.NONE, languageForFenceInfo("kotlin"))
+    }
+
+    @Test
+    fun markdownShowsItsStructureInColour() {
+        val (text, tokens) = markdown(
+            "# Title\n> quoted *text*\n- [x] done with `code`\n1. see [docs](https://a.example) and <https://b.example>\n" +
+                "---\n| a | b |\n|---|:-:|\nsnake_case and 2 * 3 stay plain; https://bare.example too\n",
+        )
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "# Title"))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "> quoted"))
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "*text"))
+        assertNull(kindAt(text, tokens, "text*"))
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "- [x]"))
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "[x]"))
+        assertEquals(HiKind.STRING, kindAt(text, tokens, "`code`"))
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "1."))
+        assertEquals(HiKind.NUMBER, kindAt(text, tokens, "(https://a.example)"))
+        assertEquals(HiKind.NUMBER, kindAt(text, tokens, "<https://b.example>"))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "---\n"))
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "| a"))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "|---|"))
+        assertNull(kindAt(text, tokens, "_case"))
+        assertNull(kindAt(text, tokens, "* 3"))
+        assertEquals(HiKind.NUMBER, kindAt(text, tokens, "https://bare.example"))
+    }
+
+    @Test
+    fun aFencedBlockInMarkdownIsColouredAsItsOwnLanguage() {
+        val (text, tokens) = markdown(
+            "```yaml\nkey: value # yaml comment\nrun: |\n  # inside the block\n```\n# Heading again\n" +
+                "~~~bash\necho \"a\nb\" # sh\n~~~\n```\n# not a heading\n```\n",
+        )
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "```yaml"))
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "key:"))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "# yaml comment"))
+        assertEquals(HiKind.STRING, kindAt(text, tokens, "# inside the block"))
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "# Heading again"))
+        assertEquals(HiKind.STRING, kindAt(text, tokens, "b\""))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "# sh"))
+        assertEquals(HiKind.STRING, kindAt(text, tokens, "# not a heading"))
+    }
+
+    @Test
+    fun anHtmlCommentInMarkdownSpansLines() {
+        val (text, tokens) = markdown("before <!-- one\ntwo # not heading\nthree --> after *x*\n# Heading")
+        assertNull(kindAt(text, tokens, "before"))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "two"))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "three"))
+        assertNull(kindAt(text, tokens, "after"))
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "*x"))
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "# Heading"))
+    }
+
+    @Test
+    fun jsonKeysValuesAndCommentsHaveTheirColours() {
+        val (text, tokens) = json(
+            "{\n  // a comment\n  \"name\": \"omni\", \"n\" : -1.5e+3, \"ok\": true, \"none\": null,\n" +
+                "  unquoted: 'single', /* block\n  still */ \"after\": [1, 2]\n  \"broken: \"x\n  \"next\": 0x1F\n}",
+        )
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "// a comment"))
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "\"name\""))
+        assertEquals(HiKind.STRING, kindAt(text, tokens, "\"omni\""))
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "\"n\""))
+        assertEquals(HiKind.NUMBER, kindAt(text, tokens, "-1.5e+3"))
+        assertEquals("-1.5e+3".length, tokens.first { it.start == text.indexOf("-1.5e+3") }.let { it.end - it.start })
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "true"))
+        assertEquals(HiKind.KEYWORD, kindAt(text, tokens, "null"))
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "unquoted"))
+        assertEquals(HiKind.STRING, kindAt(text, tokens, "'single'"))
+        assertEquals(HiKind.COMMENT, kindAt(text, tokens, "still */"))
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "\"after\""))
+        assertEquals(HiKind.NUMBER, kindAt(text, tokens, "1,"))
+        // A string missing its quote ends with its line; the next line is coloured as usual.
+        assertEquals(HiKind.KEY, kindAt(text, tokens, "\"next\""))
+    }
+
+    @Test
+    fun markdownAndJsonColouringStaysLinearOnHostileLines() {
+        val lines = listOf(
+            "`".repeat(50_000),
+            "](".repeat(30_000),
+            "*_~".repeat(30_000),
+            "<".repeat(50_000),
+            "[".repeat(20_000) + "](" + "(".repeat(20_000),
+            ">".repeat(50_000) + " quote",
+            "\"" + "\\\"".repeat(40_000),
+        )
+        val started = System.nanoTime()
+        for (line in lines) {
+            highlightAll(line, CodeLanguage.MARKDOWN)
+            highlightAll(line, CodeLanguage.JSON)
+        }
+        val seconds = (System.nanoTime() - started) / 1e9
+        assertTrue("took $seconds s", seconds < 5)
+        // Every token stays inside the text and in order, however odd the line.
+        for (line in lines) {
+            for (language in listOf(CodeLanguage.MARKDOWN, CodeLanguage.JSON)) {
+                val tokens = highlightAll(line, language)
+                assertTrue(tokens.all { it.start in 0 until it.end && it.end <= line.length })
+                assertTrue(tokens.zipWithNext().all { (a, b) -> a.end <= b.start })
+            }
+        }
     }
 }

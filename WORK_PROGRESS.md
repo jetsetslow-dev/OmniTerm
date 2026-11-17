@@ -59,6 +59,10 @@ after #136 and #137. Independent review and merge remain the user's.
 The private audit (sources per finding, designs, order) is in the internal docs as
 `COMPETITOR_AUDIT_2026-11-08.md`.
 
+Continuation (user, Nov 11): Claude Code sessions no longer run the 30-minute `continue` loop,
+because Claude Code resumes by itself when a usage limit resets. This is for Claude Code only.
+Codex has no such resume and keeps its schedule, as `AGENTS.md` requires.
+
 ## Checkpoint A — scripts and Fleet defects (82702ea)
 
 - Script values: `{{name}}` and `{{name=default}}` in a saved script ask for a value when it runs
@@ -708,7 +712,743 @@ changed there). The user then asked for it in the same PR: "merge that into the 
     the settings-backup case of `E2eSettingsStateStressTest` pass.
   - Unrelated and already broken: that class's opt-in battery-saver case fails without B1 too. It
     waits for the saver without accepting the prompt that #98 added, and it needs a lab host
-    ("E2E Foreground Demo") that the fixtures do not have. Left for later.
+    ("E2E Foreground Demo") that the fixtures do not have. Brought up to date in the bundle (Nov 16).
+
+## Bundle after #147 — more tunnels, homelab, Fleet (branch `kotlin-homelab-bundle`)
+
+User, Nov 9: "bundle 1,2 and 3with small items and keep rest two as separate prs". After #147, one
+PR carries items 3–5 of "Remaining", plus the small items. The Go engine and iOS stay separate PRs.
+Also Nov 9: "we should start bundling things to reduce the number of times we run the gates". So
+there is one full gate when the bundle is complete, and targeted tests per piece until then.
+
+- Branched from #147's head after main was merged in (e64e1f0). Retarget to main once #147 merges.
+- Contents:
+  - tunnels T2+: Tailscale/Headscale, NetBird, Nebula, Cloudflare Access;
+  - homelab F: Proxmox VE API, SNMP, container image updates, backup freshness presets;
+  - the five Fleet enhancements approved on Nov 9;
+  - small items: the bundling rule in AGENTS.md, and `E2eSettingsStateStressTest`'s opt-in
+    battery-saver case. That case waits for the saver without accepting #98's prompt, and needs
+    a lab host ("E2E Foreground Demo").
+- Seeing runs that other apps start (user, Nov 9: "if tasker triggers a command, where can I see
+  what is happening in omniterm ... same with MCP"). Today they reach Fleet's History only when they
+  finish, and Tasker runs carry no label there, although the README says they do. In the bundle:
+  - the Automation label in History;
+  - a run saved when it starts and updated as each host finishes;
+  - a notification per run, chosen per token (user, Nov 9: "Choose per token"). Each automation
+    token and the AI assistant get off, failures only or always. New ones start at failures only:
+    progress while running, gone when every host succeeds, kept naming the failed hosts when one
+    fails, and a tap opens the run. The setting is backed up with its grant;
+  - Recent calls entries open the run they started;
+  - a History filter by source.
+  Alert-triggered runs use the same notification and History path.
+- Token usage history (user, Nov 9: "also add token usage history for automation and MCP with
+  success and failure status of each run"):
+  - Each automation token, and the AI assistant's token, lists every use: when, script or tool,
+    hosts, and succeeded, failed or refused. Refused covers the switch being off, the danger list,
+    a missing value and an unknown host.
+  - A use that made a Fleet run opens it.
+  - The newest few hundred per token are kept, and backed up with Automation & AI assistants.
+  - "Token" means OmniTerm's access tokens; the app never sees an AI model's token counts.
+- The other Fleet candidates are in too (user, Nov 9: "also bundle this etc the rest"):
+  - identical output grouped;
+  - a failure threshold;
+  - saved target sets;
+  - output filtering;
+  - sudo in Fleet, asking as every sudo action does (App Lock, then device lock, then a plain
+    confirm);
+  - broadcast typing, last.
+- Build order, so nothing is redone:
+  1. Run visibility and token usage history. This is the run-recording and notification path that
+     scheduled and alert-triggered runs reuse.
+  2. Fleet: the five approved enhancements, then the other six.
+  3. Homelab F.
+  4. Tunnels T2+, the largest piece and Go-only.
+  5. The small items.
+  Targeted tests and device runs per piece; one full gate at the end.
+- #147 merged as 7a50379. Main's publish failed twice without a code fault: first a GitHub
+  "Internal server error" before any job ran, then sum.golang.org dropping an HTTP/2 stream inside
+  gomobile's own `go mod tidy`. The third attempt published v0.9.296-main.1, and every other main
+  workflow passed. In this bundle, `scripts/retry-network.sh` (tested by
+  `scripts/test-retry-network.sh`, run by the gate and PR Check) retries those Go downloads twice
+  on network errors only.
+- Piece 1, run visibility and token usage history: done (commit "See what other apps and
+  assistants run").
+  - A run from Tasker, another app or the AI assistant is saved when it starts, with every host
+    running, and each host is saved as it finishes. A host cut off when the run stops is saved as
+    stopped. A run left running when OmniTerm died is ended the next time a run starts or History
+    opens, if it began more than 11 minutes before (the 9-minute run limit plus 2).
+  - History shows the Automation label, a running state that follows the run live, and filter
+    chips by kind when there is more than one.
+  - Notifications per token, on channel `external_runs`: off, running and failures (the default),
+    or always. A tap opens the run (`omniterm://notification/fleet-run/<key>`; MainActivity reads
+    only a key of a run's shape, since anything can send it).
+  - Each token's uses (newest 300; revoking deletes them) and the assistant's Recent calls: when,
+    succeeded, failed or refused, a detail, and a link to the run. A denied assistant run is now
+    refused, not failed, since nothing ran.
+  - Backups carry each token's notification choice and uses, the assistant's notification choice,
+    and each call's run link. A restore adds only uses it lacks, so restoring twice adds nothing.
+    Room schema 30 (migration 29→30).
+  - Validation: unit tests `AutomationRunnerRobolectricTest` 16, `McpToolsTest` 11,
+    `AutomationBackupRobolectricTest` 3, `HistoryBackupRobolectricTest` 7,
+    `NotificationLinksTest` 4, `AppMcpBackendRobolectricTest`, all 0 failed. Guards seen failing:
+    no save at start, stopped hosts not saved, a result never kept, stale cleanup ignoring the
+    source, uses dropped on restore, uses restored twice.
+  - Devices (API 35 emulator, repository fixture on 127.0.0.1:2205):
+    - `E2eAutomationTest` (`-e omniterm_e2e_automation yes -e host 127.0.0.1`): 1 test, 0 failed.
+      It checks that a new token's notification is gone after a success. With "Always" picked on
+      the card, the result stays as "E2E Tasker ran E2E automation / Succeeded on its host.", and
+      tapping it opens the run's details, marked Automation. The card's uses show Succeeded and
+      open their runs.
+    - `E2eMcpTest` (`-e omniterm_e2e_mcp yes -e host 127.0.0.1`): 1 test, 0 failed. The denied
+      run is refused and the approved one links an AI-assistant run. Its kept notification names
+      the client, and Recent calls opens the run.
+    - Guard: with MainActivity ignoring run links, `E2eAutomationTest` failed waiting for the run
+      to open (line 153).
+    - The notification tap goes to the test's own activity. The test therefore uses
+      `keepLaunchIntent()`, or the rule cannot close the activity (seen: "never becomes DESTROYED",
+      last state PAUSED).
+  - `TestNotifications` (androidTest) is now the one copy of the permission grant and the posted
+    notification lookups that three alert suites each had. `alertNotificationId` moved out of
+    AppViewModel so tests use the app's own id. Those three suites (`E2eAlertLifecycleStressTest`,
+    `E2eHostChecksTest`, `E2ePhoneChecksTest`) compile but have not run on a device since. They
+    are in the bundle's device sweep.
+- Piece 2, Fleet (in progress):
+  - Each host's own details: done (commit "Let a script use each host's own details").
+    `{{host.name}}`, `{{host.address}}`, `{{host.user}}`, `{{host.port}}`, `{{host.group}}` and
+    `{{host.os}}` are filled in per host, in one pass with the asked values, everywhere a saved
+    script runs. A command the assistant types is sent as written. Tests: `ScriptParamsTest` 13,
+    `AutomationRunnerRobolectricTest` 17, `FleetBroadcastOutcomeRobolectricTest` 6; guards seen
+    failing.
+  - Host tags, a Tags target mode and saved target sets: done (commit "Pick Fleet hosts by tag,
+    and save the targets").
+    - A host takes up to 20 tags of up to 32 characters (`servers.tags`, "db, prod"), compared
+      without case. The host editor offers existing tags, cards show three, and host search
+      matches `#tag` or `tag`.
+    - Broadcast picks hosts, groups or tags. With several tags, Any or Every.
+    - Saved sets (`fleet_target_sets`) keep only the current mode's picks. Saving a name again
+      replaces that set.
+    - Backups carry tags and sets with the hosts. A set of picked hosts keeps only the hosts in the
+      backup and is re-pointed to the restored hosts; the phone's own set of a name wins.
+    - Room schema 30 again (still unreleased), so the next device install needs `adb uninstall`.
+    - MCP `list_hosts` does not report tags: nothing asked for it, and it would widen what
+      PRIVACY.md says the assistant sees.
+    - Tests: `HostTagsTest` 8, `FleetTargetBackupRobolectricTest` 3, `VpnTunnelBackupRobolectricTest`
+      1, `BackupSafetyTest` 4, all 0 failed. The migration test gains
+      `migrationToThirtyGivesHostsNoTagsAndAddsNoSavedTargets`. Guards seen failing: tags not
+      restored, set hosts not re-pointed, Every read as Any.
+    - Devices (API 35 emulator, fresh install, repository fixture on 127.0.0.1:2205):
+      `AppDatabaseMigrationTest` 13, `E2eScriptParamsFleetTest` 1, and the new `E2eFleetTagsTest`
+      (`-e omniterm_e2e_fleet_tags yes -e host 127.0.0.1`) 1, all 0 failed. The new test tags the
+      host in its editor, runs Broadcast on Every of two tags, saves the targets, clears them,
+      picks them again from Saved, and deletes the set. Guard: with the editor not saving tags, it
+      failed waiting for them.
+    - The saved-sets dialog now scrolls, and each host card's menu button has a test tag.
+  - Push a file to many hosts: done (commit "Push a file to many hosts from Fleet").
+    - Broadcast's **Push a file** picks a file and a destination per run. A path ending in `/`
+      (or `~/`, or nothing) is a folder; a path that is a folder on the host gets the file inside.
+    - The phone copies the file once (cacheDir/fleet-push, 100 MB at most), so every host and a
+      retry read the same bytes. The copy goes when the cards are cleared or the model ends.
+    - A push is a Fleet run: same targets, rolling batches, Stop, Retry, Share, notification and
+      History. Each host gets a hidden staged file whose size is checked before it replaces the
+      destination (the Files screen's commit, reused).
+    - History marks a push (`fleet_runs.pushedFile`, folded into schema 30) and offers no Use
+      again. Backups carry it.
+    - `AppViewModel` takes an optional file-client factory, the seam the tests use and the Go
+      engine can fill later.
+    - Sudo for protected paths comes with "sudo in Fleet"; until then a push there fails, naming
+      the cause.
+    - Tests: `FleetPushTest` 4, `FleetPushRobolectricTest` 1 (in-memory hosts),
+      `HistoryBackupRobolectricTest` 7, `FleetRunHistoryRobolectricTest` 6,
+      `FleetBroadcastOutcomeRobolectricTest` 6, all 0 failed. Guards seen failing: no size check,
+      folder not detected, Use again on a push, retry without the file, backup dropping the push.
+    - Devices: the new `E2eFleetPushTest` (`-e omniterm_e2e_fleet_push yes -e host 127.0.0.1`) 1,
+      `AppDatabaseMigrationTest` 13, `E2eFleetTagsTest` 1, `E2eScriptParamsFleetTest` 1, all 0
+      failed. The push test replaces an older copy on the lab host through the dialog, checks
+      that no part file is left, and sees a missing folder fail. Guard: without the commit step it
+      failed ("old copy").
+  - Scheduled runs: done (commit "Run a saved script on a schedule from Fleet").
+    - Fleet → Schedules: name, script, hosts (Broadcast's picks or a saved set), Every 15 min to
+      12 h, Daily at a time, or Weekly on a day at a time, and the token-style notification
+      choice. Each card shows the next run and the last one (it opens the run in History), a
+      pause switch, Run now and Delete.
+    - Each schedule waits as one persisted JobScheduler job (ids 0x4F4E_xxxx; Run now 0x4F4F_xxxx;
+      automation keeps 0x4F4D_xxxx), with a network. The next run counts from when the last one
+      started, so a phone asleep through several runs makes up one. The app start reconciles the
+      jobs (a force-stop drops them). `RECEIVE_BOOT_COMPLETED` is new in the manifest and
+      PRIVACY.md. WorkManager was not used: it is only transitive here, and the job engine is
+      the one automation already uses.
+    - A run goes through `AutomationRunner.runScript` with source `schedule` ("Scheduled" in
+      History) and refuses what automation refuses (`UnattendedScripts.Runner.SCHEDULE`). Groups
+      and tags resolve when it runs; offline hosts fail. A refusal posts "could not run" and opens
+      the Schedules tab. One schedule never overlaps itself. Notifications use a new "Scheduled
+      Fleet runs" channel.
+    - Backups carry schedules in the Automation & AI assistants section, by script and host, and
+      restore them paused. `fleet_schedules` is folded into schema 30.
+    - iOS has no background scheduler of this kind; the iOS PR shows a notice instead.
+    - Tests: `FleetScheduleTimingTest` 5 (intervals, daily, weekly, London's clock changes, typed
+      times), `FleetScheduleRobolectricTest` 5 (tag targets and History, refusals and their
+      notification link, no overlap, paused timer, persisted job and next run, app-start
+      reconcile), `AutomationBackupRobolectricTest` 3 (schedules round-trip paused, once),
+      `AutomationRunnerRobolectricTest` 17, `FleetTargetBackupRobolectricTest` 3,
+      `HistoryBackupRobolectricTest` 7, `BackupSafetyTest` 4, `FleetRunHistoryRobolectricTest` 6,
+      `FleetPushRobolectricTest` 1, all 0 failed. Nine guards seen failing: overlap, refusal,
+      target matching, orphan jobs, counting from the start, persistence, strictly-after times,
+      restored switched on, a paused timer running.
+    - Devices (API 35, fresh install, repository fixture on 127.0.0.1:2205): the new
+      `E2eFleetScheduleTest` (`-e omniterm_e2e_fleet_schedule yes -e host 127.0.0.1`) 1,
+      `AppDatabaseMigrationTest` 13, `E2eAutomationTest` 1, `E2eMcpTest` 1, `E2eFleetPushTest` 1,
+      `E2eFleetTagsTest` 1, all 0 failed. The new test makes a schedule in the editor from
+      Broadcast's picks, sees its persisted job, runs it now over SSH, finds the run in History as
+      Scheduled, opens it from the card, and pauses it. Guard: a job service that never runs made
+      it time out waiting for the run.
+  - Alert-triggered runs: done (commit "Let an alert run its runbook on its own").
+    - An alert rule with a runbook gains **Run it on its own when an incident opens** (off by
+      default) and the token-style notification choice. The editor shows why a script cannot run
+      unattended and will not save the switch on until it can.
+    - When an incident opens, the runbook starts on that one host as an expedited job (ids
+      0x4F50_xxxx; a deadline-0 job when expedited is refused). Each rule and host starts at most
+      once every 30 minutes, so a service that keeps falling over is not restarted in a loop. The
+      cooldown is in memory: a restarted app may run it once more.
+    - The job runs only while the rule still runs it on its own and the incident is still open. It
+      goes through `AutomationRunner.runScript` with source `alert` ("Runbook, on its own" in
+      History, grouped with runbooks) and refuses what automation refuses
+      (`UnattendedScripts.Runner.ALERT`). A refusal posts "could not run" and opens the alerts. The
+      incident keeps the run's key (`active_alerts.runbookRunKey`) and links to it in Fleet's
+      history. Notifications use a new "Runbooks alerts ran" channel.
+    - `alert_rules.runbookAuto`/`runbookNotify` and `active_alerts.runbookRunKey` are folded into
+      schema 30. Backups carry the notification choice; the switch is always restored off.
+    - The three job services now share one `RunJobService` (scope, running jobs, failures logged,
+      cancellation passed on).
+    - Tests: `AlertRunbookRobolectricTest` 4 (the incident's host only and its link, nothing once
+      the incident closed or the rule only offers it, refusals and their link, the cooldown),
+      `HostCheckAlertsRobolectricTest` 8 (an incident starts the runbook only for a rule set to),
+      `ScriptRefsBackupRobolectricTest` 1, `FleetScheduleRobolectricTest` 5,
+      `AutomationRunnerRobolectricTest` 17, `AutomationRobolectricTest` 11,
+      `AutomationBackupRobolectricTest` 3, all 0 failed. Seven guards seen failing: an incident not
+      starting it, the switch ignored, no cooldown, a closed incident, no refusal, no link,
+      restored switched on.
+    - Devices (API 35, fresh install, repository fixture on 127.0.0.1:2205): `E2eAlertRunbookTest`
+      1, `E2eFleetScheduleTest` 1, `AppDatabaseMigrationTest` 13, `E2eAutomationTest` 1,
+      `E2eMcpTest` 1, `E2eHostChecksTest` 1, `E2eFleetPushTest` 1, `E2eFleetTagsTest` 1, all 0
+      failed. The new `E2eAlertRunbookTest`
+      (`-e omniterm_e2e_alert_runbook yes -e host 127.0.0.1`) makes a script check fail on the lab
+      host, sees the runbook run on its own over SSH and fix it, opens the run from the incident,
+      and waits for the next checks to close it. Guard: a job service that never runs made it time
+      out waiting for the run.
+  - Identical output grouped: done (commit "Show hosts that ended the same way as one card").
+    - Hosts with the same status, output, note and truncation share one card ("12 hosts, same
+      result"), which lists each name in its host colour and takes no host's colour itself. Only
+      hosts whose card has no actions group (Success, Failure, Waiting, Not run); Running,
+      Reconnecting, Detached and Needs tmux keep their own. Groups keep their first host's place.
+    - `FleetOutputGroups.group` is the one rule for Broadcast's cards, History's cards and the
+      shared report ("== nas, pi · complete"). No setting: a group only merges cards that would
+      read the same.
+    - Credit: ClusterShell `clush -b` and pdsh `dshbak -c` (README, NOTICE, audit; the audit's
+      earlier pssh/Ansible credit was wrong).
+    - Tests: `FleetOutputGroupsTest` 3, `FleetRunHistoryRobolectricTest` 7 (live and history
+      reports share a section, and split when one host differs), `FleetRollingRunRobolectricTest`
+      4, `FleetPushRobolectricTest` 1, `FleetBroadcastOutcomeRobolectricTest` 6, all 0 failed. Four
+      guards seen failing: the note ignored, every status grouped, groups reordered, the report
+      not grouped.
+    - Devices (API 35, repository fixture on 127.0.0.1:2205): `E2eRollingFleetTest` 1 (after the
+      retry the two hosts share one "2 hosts, same result" card that names both, in Broadcast and
+      in History, and the shared report has one section for them), `E2eFleetTagsTest` 1,
+      `E2eFleetScheduleTest` 1 (twice), `E2eScriptCheckTest` 1, `E2eAlertRunbookTest` 1,
+      `E2eFleetPushTest` 1, `E2eScriptParamsFleetTest` 1, all 0 failed. Guard: with Broadcast's
+      cards not grouped, the rolling test failed ("2 hosts, same result" not displayed).
+    - That guard first failed with a `NullPointerException` from the test's own cleanup: removing
+      the share monitor before one was added. The cleanup stopped there and left its host copy,
+      which then broke `E2eFleetTagsTest`. The test now removes the monitor only once added, and
+      deletes a copy an earlier run left before it starts.
+  - Fix found by that sweep (commit "Keep a schedule's job when it is saved as the app starts"):
+    `E2eFleetScheduleTest` failed once with "it waits as a job". The app start's `reconcile` read
+    the schedules, the editor then saved one and armed its job, and `reconcile` dropped that job as
+    having no schedule. A schedule switched back on in that window lost its job and its next run
+    the same way. `apply`, `armNext` and `reconcile` now take turns on one lock, and Delete goes
+    through `apply`. `FleetScheduleRobolectricTest` 6 (a schedule saved while the app starts keeps
+    its job, through a seam between the read and the matching); guards seen failing with either
+    `reconcile` or `apply` unlocked. `E2eFleetScheduleTest` also waited for the job only as long
+    as its next run took to appear, though the job is armed just after; it now waits for the job.
+    Devices: `E2eFleetScheduleTest` 1, twice, with the sweep above.
+  - A failure threshold: done (commit "Let a rolling run allow a share of its hosts to fail").
+    - Under **Stop if a host fails**, **Failures allowed**: None (as before), 10%, 25% or 50%.
+      The run stops once more than that share of all its hosts has failed, counted over the whole
+      run rather than per batch as Ansible's `max_fail_percentage` is, so it works one host at a
+      time. The hosts left say so ("Not run: 2 of 4 hosts did not succeed, more than the 25% the
+      run allows."), and the confirmation names the share.
+    - The choice is a setting (`broadcast_failure_percent`), so backups carry it with the others.
+    - Credit: Ansible (README, NOTICE, audit).
+    - Tests: `FleetRollingRunRobolectricTest` 6 (the boundaries, and a run that goes on past the
+      allowed failure and stops at the next), `FleetRunHistoryRobolectricTest` 7, all 0 failed.
+      Three guards seen failing: counted per batch, the share itself counted as over it, the
+      share ignored.
+    - Devices (API 35, repository fixture): `E2eRollingFleetTest` 1 (now also picks 50% in the
+      editor, sees the confirmation name it, and the second host runs after the first fails),
+      `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1, `E2eScriptParamsFleetTest` 1,
+      `E2eFleetScheduleTest` 1, `E2eScriptCheckTest` 1, all 0 failed. Guard: with the share
+      ignored, the second host was left not run and the test failed.
+  - An output filter and search: done (commit "Narrow a Fleet run's cards to a text or the failed
+    hosts").
+    - Above the cards of a run with more than one host: **Find in outputs** (name, output or
+      note, any case) and **Failed only** (failed or not run: what Retry runs again, now one
+      shared test, `didNotSucceed`). A line says how many hosts show. `FleetOutputFilter` runs
+      before the grouping, in Broadcast and in History. It clears when a run starts; the shared
+      report always has every host.
+    - Tests: `FleetOutputFilterTest` 4, `FleetOutputGroupsTest` 3, `FleetRollingRunRobolectricTest`
+      6, `FleetRunHistoryRobolectricTest` 7, all 0 failed. Four guards seen failing: running
+      hosts counted as failed, a text matched by case only, notes not searched, spaces searched.
+    - Devices (API 35, repository fixtures): `E2eRollingFleetTest` 1 (in its last run, where
+      one host fails and one does not, "Failed only" leaves the failed host's card and says
+      "Showing 1 of 2 hosts", a text from the other's output in other capitals leaves that one,
+      and both show again once cleared), `E2eScriptCheckTest` 1, `E2eFleetScheduleTest` 1,
+      `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1, `E2eAlertRunbookTest` 1, all 0 failed. Guard:
+      with the cards ignoring the filter, the rolling test failed at its count of cards.
+  - Sudo in Fleet: done (commit "Run a Fleet command, or write a pushed file, with sudo").
+    - **Run with sudo** in Broadcast, and **Write with sudo** in the push dialog, are one switch
+      (`broadcastSudo`, never saved: off again when the app starts). A run with it on waits in
+      the app's existing sudo question (`pendingSudoAction`: App Lock, else the screen lock, else
+      a plain question), once for the run's hosts; Retry and Use again keep sudo and ask again.
+    - A command runs whole as root (`sudoShWrap`, in `sh`), with each host's own saved sudo
+      password on the command's input (`sudoStdin`), never in the command; a host with none
+      saved uses `sudo -n`. sudo's own refusal is what the card says (`sudoRefusal`: only sudo's
+      words in the first lines, so a command's own "Permission denied" is not taken for one).
+      Windows hosts fail with "Windows hosts have no sudo." Run in tmux is not used with it: a
+      password cannot be handed to a command in tmux without leaving it on the host.
+    - A push with sudo uploads to the login's home under a hidden name, checks the size, and
+      root finishes the file beside its destination and moves it over it in one step, with the
+      owner and permissions of a file it replaces (`sudoInstallFile`); what was uploaded is
+      removed either way. This closes "a push to a protected path fails" from the push entry.
+    - `fleet_runs.sudo` (folded into schema 30) marks the run: History says "with sudo" and
+      shows root's `#`, the shared report too. Backups carry it.
+    - Schedules, automation and MCP never use sudo: nobody is there to answer.
+    - Tests: `FleetSudoRobolectricTest` 6, `FleetPushRobolectricTest` 1 (its in-memory host is
+      now the shared `MemoryHost`), `HistoryBackupRobolectricTest` 7. Eight guards seen failing:
+      no question asked, the password not sent, tmux used, a retry without sudo, the refusal
+      not named, a Windows host run anyway, the upload left behind, the history forgetting sudo.
+    - Devices (API 35, clean install, repository fixtures): `E2eFleetSudoTest` 1 (turned on in
+      Broadcast, the confirmation shows root's `#` and the sudo question follows; `id -u` is 0 with
+      no sudo password saved and with one saved, the login without sudo, and History marks the
+      run; a file pushed into `/etc` belongs to root and nothing is left in the login's home),
+      `E2eRollingFleetTest` 1, `E2eFleetPushTest` 1, `E2eScriptCheckTest` 1,
+      `E2eFleetScheduleTest` 1, `E2eAlertRunbookTest` 1, `E2eAutomationTest` 1, `E2eMcpTest` 1,
+      `E2eFleetTagsTest` 1, `E2eScriptParamsFleetTest` 1, `E2eHostChecksTest` 1,
+      `AppDatabaseMigrationTest` 13, all 0 failed. Guard: with the sudo question skipped,
+      `E2eFleetSudoTest` failed waiting for it.
+    - The new switch pushes Broadcast's rolling controls below the fold, so `E2eRollingFleetTest`
+      now scrolls to the batch chips and "Stop if a host fails" before tapping them, as a user does.
+  - Next: broadcast typing, last of the Fleet items.
+- Piece 4, Tunnels (in progress):
+  - Tunnels follow the network (user, Nov 11): done (commit "Let a tunnel be skipped on the Wi-Fi
+    networks it is not needed on").
+    - A tunnel takes up to 10 Wi-Fi names (`tunnels.directWifi`, one per line, folded into schema
+      30). On one of them its hosts dial their own address; on any other network, on mobile data,
+      behind another app's VPN, or when the name is not known, they go through the tunnel.
+    - `HostRoute.tunnelNow` is the one decision, asked by everything that dials a host:
+      `HostCredentials.build` (SSH, SFTP, Fleet, checks, automation, MCP), the direct reachability
+      probe, the endpoint checks and the editor's Test. No engine knows about it, so Tailscale and
+      the other kinds get it as they land. A tunnel that is gone still fails closed.
+    - `CurrentWifi` follows Android's default network. The name needs `ACCESS_FINE_LOCATION`
+      (with `ACCESS_COARSE_LOCATION` and `ACCESS_WIFI_STATE`, all new in the manifest and
+      PRIVACY.md), asked for in the tunnel editor only. Android gives the name only while the app
+      is on screen, so `WifiMemory` keeps it per connection (Android's network handle, with the
+      boot count) for background checks, schedules and automation. Background location is not
+      requested: on a Wi-Fi joined while the app was closed, background runs use the tunnel.
+    - When the phone joins or leaves a named Wi-Fi, or the list changes, the hosts' kept
+      connections over the old route are dropped, terminals reconnect, SSH forwards stop, and a
+      tunnel no host goes through any more comes down.
+    - Editor: type a name or **Add the Wi-Fi this phone is on**; the card says when its hosts are
+      going direct; the host editor names the exception. Backups carry the list; a tunnel the
+      phone already has keeps its own.
+    - iOS needs Apple's "Access Wi-Fi Information" entitlement, which needs a paid developer
+      account, so the iOS PR shows a notice instead.
+    - Tests: `TunnelNetworksTest` 5, `TunnelNetworkRouteRobolectricTest` 4,
+      `VpnTunnelBackupRobolectricTest` 1, `TunnelRoutingTest` 8, all 0 failed. Seven guards seen
+      failing: an unknown network going direct, names matched without case, a name kept for
+      another connection, credentials ignoring the rule, a deleted tunnel going direct, the
+      network not followed, the backup dropping the list.
+    - Devices (API 35, clean install, repository fixtures with the WireGuard one):
+      `E2eVpnTunnelTest` 1 (`-e omniterm_e2e_vpn yes` and the keys from `scripts/test-hosts/.env`)
+      now also allows location, adds the emulator's own Wi-Fi in the tunnel's editor, sees the
+      card say its hosts connect directly, reaches the host behind a tunnel that cannot connect,
+      then takes the Wi-Fi off the list and sees that host fail closed again.
+      `AppDatabaseMigrationTest` 13 (an upgraded tunnel names no Wi-Fi), `E2eRollingFleetTest` 1,
+      `E2eFleetScheduleTest` 1, `E2eAlertRunbookTest` 1, `E2eAutomationTest` 1, `E2eMcpTest` 1,
+      `E2eHostChecksTest` 1, `E2eFleetTagsTest` 1, `E2eFleetPushTest` 1,
+      `E2eScriptParamsFleetTest` 1, `E2eScriptCheckTest` 1, all 0 failed. Guard: with the rule
+      ignored, the host went into the broken tunnel and the test failed there.
+    - The test leaves the location permission granted to the installed test build: taking a
+      permission away kills the app under test.
+  - Next: Tailscale/Headscale, NetBird, Nebula and Cloudflare Access, with the `check-licenses.py`
+    fixes the feasibility run found.
+- Tailscale feasibility (Nov 9, in a scratch copy of `tunnel/`):
+  - `tailscale.com` v1.104.5 targets Go 1.27.3, the repo's toolchain.
+  - It needs gVisor 2026-09-15; WireGuard's netstack pins 2025-05-03. With the newer gVisor,
+    `omnitunnel` still builds and its tests pass, and an Android arm64 build without cgo works.
+  - tsnet brings 568 packages, against 206 today. Size is still to measure.
+  - Licences (`check-licenses.py --module` on the copy): 41 modules, 3 problems.
+    - Tailscale's `PATENTS` is a patent grant shaped like Google's Go grant: it only gives rights.
+      ScanCode has no Tailscale entry, so Dependency review's name for it is unknown before it runs.
+      It may match `google-patent-license(-golang)`, which is already allowed, or come out unknown.
+    - `coder/websocket` is ISC, worded "modify, and distribute" instead of "and/or". The script's
+      ISC signature needs that wording.
+    - `tailscale.com/license_test.go` was read as a licence file. The script should skip source files.
+  - Still open: Android blocks netlink, so interfaces must come from Kotlin, as tailscale-android
+    does.
+- Tailscale/Headscale tunnels (Nov 12, `kotlin-homelab-bundle`):
+  - A second tunnel kind: the phone joins the tailnet inside the app with tsnet (`tailscale.com`
+    v1.104.5), against Tailscale's control server or a Headscale one. The node's keys live in the
+    app database, encrypted, for that tunnel alone, and are never backed up: a restored tunnel signs
+    in again as a new device. An auth key signs in by itself; without one the card shows **Sign
+    in**, which opens the control server's page. A host on the tunnel never goes direct: addresses
+    the tailnet does not cover are refused ("is not in this tailnet"), and so is everything while
+    the tunnel is not signed in.
+  - Interfaces come from Kotlin (`TailscaleNetwork`), as tailscale-android does: Android blocks
+    netlink. `TS_LOGS_DIR` is set before start; without it Android panicked ("no safe place found
+    to store log state", from `logpolicy.LogsDir` via `ipnlocal`'s sockstatlog). Found on device.
+  - Routes: `RouteAll` is set explicitly, so subnet routes other nodes offer are used on every
+    platform. Names the tailnet's DNS covers (MagicDNS, split DNS) are asked of the tailnet's DNS
+    only, never the phone's; other names use tsdial's dial plan.
+  - Errors: only the control server's refusal fails a start. "rate limited" is a note and the
+    tunnel retries; "IPN bus consumer fell behind" re-watches. A state the app cannot save is
+    reported to the node; a saved state that cannot be read signs in again and says why.
+  - Lifecycle as WireGuard: starts on the first dial or **Connect**, stops after 5 idle minutes.
+    `SetNetwork` before the first start, `NetworkChanged` on every default-network change.
+    Counters are read on demand, cached 2 s; status is polled every second only until running.
+    A key that expires mid-run needs Stop and Connect; an in-run re-login ask was left out
+    untested.
+  - The library leans on tsdial internals: `UserDialPlan`, `UseNetstackForIP`, `NetstackDialTCP`
+    and `DNSManager.Query`. A Tailscale upgrade must keep
+    `TestOnlyTheTailnetIsDialledNeverTheDirectAddress` passing unchanged, and dependency updates
+    must not auto-accept `tailscale.com` bumps.
+  - Plain-HTTP control servers are warned about (not on loopback): the node key is fetched from
+    `/key` on every start, so a path attacker could pose as the control server. The warning is one
+    shared `PlainHttpWarning`, also used by the WebDAV warning.
+  - Fixture (`scripts/test-hosts`): `headscale` (0.27.1, digest-pinned, 127.0.0.1:8085) and, in
+    the `tailnet` profile, `tailnet-router` (tailscale v1.104.4, digest-pinned), a subnet router
+    for the internal network. `./scripts/test-hosts.sh tailnet` writes a relay map naming
+    headscale's own STUN server (`.tailnet/`, ignored); without STUN both ends looped "Rebinding"
+    and no path formed. It mints a reusable router key and an ephemeral phone key into `.env`.
+  - Tests: Go `tailscale_test.go` 16 (`scripts/test-tunnel.sh`, build tags minus
+    `ts_omit_tailnetlock` and `ts_omit_advertiseroutes`). In-process, the subnet router accepted
+    the TCP handshake but passed no data, so the Go test asserts the routing decision; data through
+    a subnet route is proven on device. JVM: `TunnelRoutingTest` 10, `TailscaleSettingsTest` 3,
+    `VpnTunnelBackupRobolectricTest` 2, `TunnelNetworksTest` 5,
+    `TunnelNetworkRouteRobolectricTest` 4, all 0 failed.
+  - Guards seen failing: Go 13 (dials direct, dials while signed out, state not loaded or not
+    saved, no sign-in page, refusal ignored, interface-up ignored, routes refused, "busy" taken as
+    refusal, tailnet DNS skipped, save error swallowed, unreadable state unsaid, no place for logs);
+    Kotlin 4 (signed-out tunnel dials, node state leaks into the entity, node save dropped, loopback
+    warned); device 1 (a signed-out tunnel reported running never showed the sign-in).
+  - Devices (API 35, clean install): `E2eTailscaleTunnelTest` 1 (`-e omniterm_e2e_tailscale yes`
+    with `ts_key`, `ts_behind`, `user`, `pass` from `.env`): editor checks, a host behind the subnet
+    router reached, keys stored encrypted, a direct-only host refused, an unsigned tunnel waiting
+    with **Sign in** and its host refused. `E2eVpnTunnelTest` 1, `AppDatabaseMigrationTest` 13,
+    all 0 failed.
+  - Size: the AAR grew from 10.5 MB to 30.0 MB. `libgojni.so` (stored uncompressed) per ABI:
+    arm64 18.97 MB, armv7 18.17 MB, x86 18.27 MB, x86_64 20.35 MB, from about 6.1-7.0 MB. The
+    universal debug APK is 137.9 MB, about +49.9 MB. Options for the user: ABI splits, dropping
+    x86, compressed native libraries.
+  - Licences: `check-licenses.py` passes, 54 Go modules. Tailscale's `PATENTS` naming in
+    Dependency review is still to be seen on the PR.
+- Homelab F (Nov 12, `kotlin-homelab-bundle`), in the audit's order: backup freshness, image
+  updates, SNMP, Proxmox VE. Each part is its own commit.
+  - Part 1, backup freshness: a **Backup Age** host check (`BackupChecks`) rather than script-check
+    presets, so the repository password can stay encrypted and travel on the command's stdin,
+    and each tool's errors can be told apart. restic (`snapshots --json --no-lock --latest 1`,
+    exit 10/11/12), Borg (`list --json --last 1 --bypass-lock`, `TZ=UTC0` because its JSON times
+    are local without an offset, `BORG_EXIT_CODES=modern`: 13/15/52), PBS
+    (`proxmox-backup-client snapshot list --output-format json`, `PBS_PASSWORD`,
+    `PBS_FINGERPRINT`) and vzdump folders (file-name times converted with the host's own `date`,
+    as Proxmox's `archive_info` reads them). Hours since the newest backup; below 0 for no
+    backups, no tool, no repository, wrong password, other errors, all alerting; a locked
+    repository or a 90 s timeout is unknown. Read every 15 minutes per rule and host.
+  - New column `alert_rules.secret` in the 29→30 step, encrypted at the repository boundary. In
+    backups (always encrypted); a restored Backup Age rule comes back off, so rule cards got an
+    on/off switch.
+  - Fixture: `runtime-docker` now has restic 0.18.0 and Borg 1.4.3 with repositories and a vzdump
+    folder dated 2026-01-01 00:00 UTC, password `OMNITERM_TEST_BACKUP_PASSWORD` in `.env`.
+    `./scripts/test-hosts.sh rebuild <service>` rebuilds one fixture without touching the others.
+    PBS has no fixture (its client is Proxmox-repository only): its parsing is unit-tested from
+    the documented JSON and error lines, and its command against a stand-in client.
+  - Part 2, image updates (`ImageUpdates`): the host lists the images its containers use with
+    their `RepoDigests` (Docker and Podman), then sends one `HEAD` per image to the registry's
+    manifest URL with the index and manifest media types. On a 401 Bearer challenge it gets an
+    anonymous token from the realm (https only) and sends it on curl's stdin (`-H @-`). A CA
+    under `/etc/docker/certs.d` or `/etc/containers/certs.d` is passed as `--cacert`. An image
+    has an update when the registry's digest is none the host recorded. References are read as
+    Docker reads them, so Podman's `docker.io/library/...` names are the same image. Images that
+    are digest-pinned, `localhost/` or without a digest are not checked, and there are at most 40
+    images and 20 s per request. Containers → Images has Check for updates (rests 10 minutes)
+    and a line per image; Stacks shows a banner that opens Images. The **Image Updates** rule
+    reuses a report up to 6 hours old, and comes back off from a restore. Reports are kept in
+    memory only.
+  - Fixture: `./scripts/test-hosts.sh registry` starts `registry:2.8.3` with TLS from a CA made
+    once into `.registry/` (gitignored), trusts it on the Docker engine, `runtime-docker` and
+    `runtime-podman`, and pushes `omniterm/steady:1` (current) and `omniterm/app:latest` (one push
+    behind on both hosts), imported from one file, so nothing comes from the internet. The device
+    suite `E2eImageUpdatesTest` (`omniterm_e2e_image_updates`, `-e user -e pass`) creates its own
+    containers. The Podman case adds and removes its own host for 2206.
+  - The rule and alert lists are `WhileSubscribed`, and the Containers screen does not collect
+    them. A device test that reads them off the Alerts screen must collect them itself, or it
+    sees an empty list and leaks the rules it meant to delete.
+  - Part 3, SNMP (`SnmpDevices`, Network → SNMP tab): SNMP4J 3.13.2 (Apache-2.0, no runtime
+    dependencies, about 600 KB of dex), polled from the phone over UDP, v2c or v3 (MD5/SHA/SHA-2
+    auth, DES/AES privacy, JDK crypto only). Each poll has its own dispatcher, USM and socket: a
+    GET of the system group, then GETBULK walks of IF-MIB (64-bit counters), hrProcessorLoad and
+    hrStorage, 25 rows a request, 512 rows a column, 3 s and one retry a request, 60 s a poll.
+    Only GET and GETBULK can be sent (`Snmp4jEngine.READ_ONLY_PDU_TYPES`, checked in its one
+    `send`). The tab polls every 30 s while open; rates come from two polls, 32-bit wrap
+    handled. API 26+ only (SNMP4J needs `MethodHandles`); D8 rewrites its covariant `ByteBuffer` calls and backports
+    `requireNonNullElse` and `parseInt(CharSequence…)` for older APIs. R8 must keep the whole
+    library: it loads its value types, transports and security protocols by class name from its
+    `.properties` files.
+  - Table `snmp_devices` in the 29→30 step, secrets encrypted at the repository boundary, in
+    backups with hosts (deduplicated by name, address and port; tunnel ids mapped, a missing
+    tunnel stays missing). A tunnel a device uses cannot be deleted. Tunnels carry TCP only, so a
+    device behind a tunnel in use gets "not polled" and nothing is sent, never directly. No SNMP
+    alert rules yet.
+  - net-snmp reports a wrong v3 digest unauthenticated and SNMP4J drops that report (RFC 3412
+    §7.2.11), so a wrong auth password reads as no answer; an unknown user is reported.
+  - Fixture: `./scripts/test-hosts.sh snmp` (net-snmp on pinned Alpine, UDP 127.0.0.1:1161,
+    `OMNITERM_TEST_SNMP_COMMUNITY`, v3 user `omniterm` SHA-256/AES with
+    `OMNITERM_TEST_SNMP_PASSWORD`). Device suite `E2eSnmpDevicesTest` (`omniterm_e2e_snmp`,
+    `-e snmp_community -e snmp_pass`).
+  - A compose test's `LaunchedEffect` runs on the rule's clock: a test that waits with its own
+    `delay` loop never lets the tab's poll start. Wait with `composeRule.waitUntil`.
+  - Part 4, Proxmox VE (`ProxmoxApi`, Tools → Proxmox VE): the phone calls the API itself over
+    HTTPS with OkHttp (already a dependency) and an API token in `Authorization: PVEAPIToken=…`,
+    never in a URL. Reads `version`, `nodes`, `cluster/resources?type=vm` and each online node's
+    `tasks?typefilter=vzdump` (10 newest); acts with `status/{start,shutdown,reboot,stop}` and
+    `snapshot` create, rollback and delete, then polls the task's status (1 s, up to 120 s) and
+    reports its exit status. A 403's reason (Proxmox puts it in the status line) is shown with a
+    note about privilege-separated tokens. No redirects. Connect timeout 10 s, 30 s through a
+    tunnel: a cold Tailscale tunnel took about 15 s to carry its first connection on the
+    Headscale fixture, and the first device run failed on 10 s.
+  - TLS trust on first use, new and shared (`CertificateTrust`): a chain the phone's CAs trust is
+    accepted; otherwise only a leaf whose SHA-256 fingerprint the user trusted. Anything else stops
+    the handshake with the fingerprint (and whether it changed), before any request, so the token
+    is never sent to an unknown server. The host-name check is skipped only for the pinned leaf.
+    `EndpointChecks` now takes its platform trust manager from there.
+  - Through a tunnel: `TunnelHttpSocketFactory` and `TunnelDns` (no lookup on the phone; the
+    tunnel resolves the name, or `tunnelHost` replaces it). Same rules as hosts: never direct,
+    except on a Wi-Fi the tunnel lists. SNMP and Proxmox share their form (`DeviceFormFields.kt`:
+    `DeviceFormDialog`, `NameAddressPortFields` and the tunnel picker `TunnelChoice`).
+  - Table `proxmox_servers` in the 29→30 step, the token encrypted at the repository boundary, in
+    backups with hosts (deduplicated by name, address and port; tunnel ids mapped, a missing
+    tunnel stays missing; the trusted fingerprint is kept). A tunnel a server uses cannot be
+    deleted.
+  - Guest actions run only from the screen (`proxmoxAction`). `ProxmoxActionsStayOnScreenTest`
+    scans the sources so nothing else (schedules, runbooks, Tasker, MCP) can call them. Stop,
+    Shut down, Reboot, Roll back and Delete snapshot confirm, naming the guest (and snapshot).
+    `ConfirmHost` buttons now carry `confirm.ok` and `confirm.cancel` tags.
+  - Fixture: `./scripts/test-hosts.sh proxmox` starts a contract fake of the API
+    (`fixtures/proxmox-api/fake_pve.py`, pinned Alpine, HTTPS 127.0.0.1:8006, a self-signed
+    certificate made on each start). It is not Proxmox: it answers the documented shapes and
+    proves our client only. Tokens `omniterm@pve!e2e` (`OMNITERM_TEST_PVE_TOKEN`) and the
+    read-only `audit@pve!e2e` (`OMNITERM_TEST_PVE_AUDIT_TOKEN`). It is also on the internal
+    network, so the tailnet router reaches it. State lives in memory: `rebuild proxmox-api`
+    starts it afresh. No real Proxmox VE was run (no VM this round).
+  - Device suite `E2eProxmoxTest`: `omniterm_e2e_proxmox` (`-e pve_token -e pve_audit_token
+    -e pve_fingerprint`, the last from `openssl x509 -fingerprint -sha256`), and
+    `omniterm_e2e_proxmox_tailnet` (`-e pve_token -e pve_fingerprint -e ts_key -e pve_behind`,
+    the fake's internal address). The app sets `FLAG_SECURE`, so `screencap` shows black; the
+    suite's on-device Compose assertions are the evidence the screen renders.
+  - Not done: guest consoles and other API calls (migrate, clone, storage). Proxmox alerts and
+    the Backup Age vzdump preset reading the API came later (below, Nov 13 and Nov 15).
+  - Engine adapters, so a later engine (the Go core on iOS) replaces one file per feature: SNMP4J
+    is used only in `Snmp4jEngine.kt`, behind `SnmpEngine` and `SnmpSession` (dotted OIDs as
+    strings, `SnmpValue`, `SnmpAnswer`, `SnmpFailure`). Proxmox's OkHttp, Moshi and TLS are used
+    only in `ProxmoxOkHttp.kt`, behind `ProxmoxTransport` (answers as plain maps and lists;
+    `ProxmoxUntrusted` carries the certificate to trust). `JsonTree.kt` has the readers Kube and
+    Proxmox share. `EngineAdaptersStayThinTest` scans imports and qualified names to keep it so.
+  - SNMP UPS and interface errors (after the main merge, Nov 13): `SnmpDevices.poll` adds one GET
+    of the UPS-MIB (RFC 1628) and APC PowerNet scalars; only when UPS-MIB answers does it walk the
+    per-phase input/output tables. A device that refuses or lacks them is simply not a UPS.
+    Source mapping: UPS-MIB 3/6/7 mains, 5 battery, 4 bypass; APC 2/4/12 mains, 3 battery,
+    6/9/10 bypass; APC runtime is in ticks (/6000 for minutes). IF-MIB error and discard counters
+    (.13 .14 .19 .20) are read with the other columns; `newProblems` gives the per-poll increase,
+    32-bit wrap handled, nothing after a reboot (sysUpTime went back). The SNMP card shows the UPS
+    line (amber on battery, red when low) and an errors/discards line only for interfaces with any.
+    Fixture: snmpd `override` lines answer the UPS-MIB values (on battery, battery low, 18 %,
+    7 min); a veth pair (`omni-up` up with no link, `omni-down` off) needs `cap_add: NET_ADMIN`.
+    Guards seen failing with the fix removed: `aUpsIsReadFromTheUpsMibOrFromApcsPowerNet` (battery
+    mapped to mains), `errorsAndDiscardsAreCountedSinceTheLastPollAndForgottenAfterAReboot` (reboot
+    check removed). Credit: LibreNMS (which UPS and IF-MIB values to read).
+  - SNMP alert rules (Nov 13): `DeviceChecks` adds SNMP Interface Down (picked interfaces, kept one
+    per line in the rule's target; admin up with no link, or gone, is down), SNMP UPS On Battery and
+    SNMP UPS Battery Low (the UPS's own low flag reads -1, else the charge against a limit, 30 %).
+    A device rule's `serverId` is an `AlertSubjects` code below 0 (SNMP -2·id, Proxmox -(2·id+1)),
+    so no host query matches it; `keepOnlyServers` keeps those rows (`serverId > 0` in its three
+    DAO deletes) and deleting a device deletes its rules, incidents (with their notifications) and
+    history in one transaction. `runDeviceChecks` runs each telemetry cycle (also with no hosts),
+    reads each watched device at most once a minute for all its rules (`readSnmpDevice`, one poll
+    per device under a per-device lock, a poll younger than half the pace reused), and feeds the
+    usual `applyAlertSample`, so incidents, notifications, mutes, forwarding and history are the
+    host checks'. Adding or editing a device rule reads it at once; a phone without a network
+    reads nothing. Editor: device chips instead of the host picker, interface chips from the
+    device's last reading, no runbook. Backups export device subjects, remap them to the restored
+    device ids and restore device rules switched off (`restoredRuleEnabled`). The incident, the
+    rule list and the SNMP card name the device and what it saw. Credit: LibreNMS's alert rules.
+    Guards seen failing with the fix removed: `aDeviceSubjectIsNeverAHostIdAndKeepsItsKind`
+    (Proxmox code collided with SNMP's), `onlyThePickedInterfacesAlertAndOneThatIsGoneCountsAsDown`
+    (a vanished interface not counted), `aUpsOnBatteryAndALowBatteryAlert...` (the UPS's own low
+    flag ignored), `aBackedUpDeviceRuleComesBackAboutTheRestoredDeviceSwitchedOff` and
+    `aDeviceIdIsMappedThroughTheRestoredDevices...` (device rules restored on),
+    `deletingADeviceTakesItsAlertRowsAndCuttingHostsDownKeepsThem` (once without `serverId > 0`,
+    once without the delete's alert rows). Device: `E2eSnmpDevicesTest` (29 s) adds Interface Down
+    in the editor and both UPS rules, waits for the three incidents and notifications, and checks
+    the rule list, the incident's device name, the card's alert line and the delete. Host alert
+    suites still pass: HostChecks, AlertRunbook, AlertForwarding, AlertPopupQuickActions,
+    GlobalAlertsPopup, PhoneChecks. `E2ePhoneChecksTest` now waits for its rules to be deleted:
+    the activity closing cancelled the deletes and its two firing rules stayed for the next suite.
+    `E2eAlertLifecycleStressTest` passes through mute, recreate and unmute, then waits for the
+    host to go offline with Wi-Fi off; on the emulator the lab host is reached over adb reverse
+    and cellular stays up, so it never does (a lab assumption, not this change; to fix separately).
+  - SNMP devices on their own screen (Nov 13): Tools → SNMP devices (`Screen.Snmp`, Router icon,
+    before Proxmox VE) instead of Network's tenth tab. Monitor stays per host over SSH, one at a
+    time, so devices read from the phone get a screen like Proxmox VE's. Network has nine tabs again
+    (`subtabCount`), and README, PRIVACY, THIRD_PARTY_NOTICES and code comments name the new path.
+  - Proxmox backup tasks for Backup Age (Nov 13): `ProxmoxApi.overview` reads 50 vzdump tasks per
+    online node (10 still shown) and, for the newest 10 finished whole-job tasks (no guest ID), the
+    task log, paged 500 lines, cached by UPID (a finished task's log does not change). `Proxmox.
+    backupLog` takes each guest's result from vzdump's own lines (Starting/Finished Backup of VM n,
+    ERROR: Backup of VM n failed - why); a guest started and never finished failed with the job's
+    status. A vzdump Backup Age rule with no folder now reads the backup tasks of the Proxmox server
+    whose address (or tunnel address) is the host's (`BackupChecks.fromProxmox`): the newest
+    finished backup of the guest counts, a failure does not; no server for the address, or one that
+    cannot be read, is unknown and says why. The read reuses the screen's when it is younger than
+    half the pace (`proxmoxOverview`) and shows on the screen too. Proxmox screen: a job lists its
+    guests. Fixture: a scheduled job of VMs 100 and 101 two hours before the fake started, with its
+    log; `test-hosts.sh android` reverses 8006 so the lab host and the fake share 127.0.0.1.
+    Guards seen failing with the fix removed: `aVzdumpRuleWithNoFolderCountsTheNewestBackupThe
+    ServerFinished` (a failed backup counted), `aBackupJobsLogSaysHowEachGuestWent...` (a guest the
+    stopped job never finished counted as backed up), `theTrustedCertificateReads...` (the log read
+    again on every overview). Device: `E2eProxmoxTest` 2/2 (the tailnet test is opted out) with the
+    new `aVzdumpRuleWithNoFolderReadsTheServersBackupTasks`: VM 101, only in the job's log, reads the
+    job's age, and CT 200, whose backups only failed, alerts "No Proxmox VE backup: no backup of
+    guest 200 finished". `E2eBackupChecksTest`, `E2eSnmpDevicesTest` (Tools → SNMP devices) and
+    `E2eAppSurfaceStressTest` (every screen, Snmp included) pass; the surface suite's SFTP step
+    needs `-e omniterm_e2e_sftp_home /home/<lab user>` for the runtime host on 2205, whose home is
+    not the `/config` it assumes. Those device runs (Nov 15, about 15:50 to 18:00 UTC) were made
+    while this session did not hold the machine lock, on the emulator another session had
+    prepared; they do not count, and the device evidence for this item and the SNMP screen is the
+    rerun under the lock below.
+  - Proxmox alert rules (Nov 15): `DeviceChecks` adds Proxmox Backup Failed (the guests whose
+    newest finished backup failed, from `Proxmox.failedBackups`, and a node's newest job that
+    failed with no log to name its guests; alerts at once, `0m`) and Proxmox Guest Stopped (the
+    picked guests, kept by VM ID one per line, that are not running, one no longer listed
+    included; two minutes). They ride the device-check path SNMP rules made: `checkDevice` reads
+    the server with `proxmoxOverview(server, interval / 2)`, so a read the screen just made is
+    reused and a server that cannot be read (or whose certificate is not trusted) leaves every
+    incident as it is and says why. Only reads: no power or snapshot call is reachable from it,
+    and `ProxmoxActionsStayOnScreenTest` is unchanged. Editor: the server's chip, then guest chips
+    from its reading (templates left out); the rule list names the watched guests; the Proxmox
+    card shows what is alerting. Deleting a server deletes its rules, incidents and history; a
+    restored rule comes back off (`restoredRuleEnabled` already covers every device subject).
+    Guards seen failing with the fix removed, in `DeviceChecksTest.aGuestsNewestFailedBackup
+    AlertsUntilOneFinishesAndOnlyPickedGuestsMustRun`: a guest no longer listed not counted, Backup
+    Failed waiting two minutes, Guest Stopped reading every guest instead of the picked ones.
+    Device, under the machine lock (Nov 16, on the tree with the runner below):
+    `E2eProxmoxTest` 3 run, 1 skipped by its opt-in (tailnet), with the new
+    `serverRulesAlertOnAFailedBackupAndAGuestThatIsNotRunning`: Guest Stopped made in the editor
+    (VMs 100 and 101 ticked from the server's guests, the template not offered), both rules alert
+    ("Backup failed: CT 200 (dns): ERROR: backup storage 'nas' is not online", "Not running: VM 101
+    (db): stopped"), the rule list, the incident's server name and the Proxmox card show them, VM
+    101 is still stopped, and removing the server takes its rules, incidents and notifications.
+    Items 4 and 5 again under the lock: `E2eSnmpDevicesTest` 1, `E2eBackupChecksTest` 1,
+    `E2eAppSurfaceStressTest` 1 (every screen, SNMP devices included) and `E2eProxmoxTest` as above
+    (its folderless Backup Age test included), all 0 failed.
+  - One way to run device suites (Nov 15): `./scripts/test-hosts.sh suite <Suite>[#test]
+    <opt-in>=yes <name>...` reverses the fixture ports, fills each bare name from the fixtures
+    (host, port, user, pass, network_host, omniterm_e2e_sftp_home, the backup, SNMP, WireGuard,
+    Tailscale and Proxmox values, the Proxmox certificate's fingerprint and internal address),
+    takes `name=@VARIABLE` from the environment for a personal lab, and sends the whole
+    `am instrument` line on adb's standard input (printf is a builtin), so no secret is on a
+    command line where `ps` shows it; secret values are masked in its output, and it exits 0 only
+    on OK, saying how many tests their opt-in skipped. Suites read their arguments through one
+    helper (`E2eArgs`), and the suites that took secrets with `-e` (SNMP, backup checks, Proxmox,
+    image updates, Fleet sudo, VPN, Tailscale, docs screenshots, tmux retention, lab seed, the
+    foreground proof's demo host, the provisioner) now say how to run them with it; AGENTS.md and
+    E2E_STRESS_TEST_PROGRESS.md show the same lines. `E2eLabHosts` is the one copy of "save a
+    password host, connect once approving its key" that the provisioner and the image-updates
+    suite each had.
+  - The two red suites, fixed in the suites with what the shared runner supplies:
+    `E2eAlertLifecycleStressTest` waited for the lab host to go offline with Wi-Fi off, but that
+    host is 127.0.0.1 through adb reverse, which no network loss touches, and the emulator keeps
+    mobile data. The only recorded pass is the physical-device run in E2E_STRESS_TEST_PROGRESS.md,
+    where the lab sat on the Wi-Fi; no emulator run of it is recorded (the #147 notes list it only
+    as compiled). It now saves its own host at `network_host` (10.0.2.2 from the emulator, the
+    emulated network) and `PhoneOffline` turns off Wi-Fi and mobile data, putting back what was
+    on. `E2eAppSurfaceStressTest` assumed `/config`, the edge containers' home, while the lab host
+    is the runtime fixture (`/home/<user>`); the SFTP home is now required and the runner reads it
+    from that fixture (`getent passwd` in the container).
+    Evidence, under the machine lock (Nov 16): while the provisioner ran, a watcher over every
+    process's command line found the lab password in none with the runner, and in one (the adb
+    client) the old way; the shares fixture's own rclone, which takes its password as an
+    argument, is counted apart. Through the runner: `E2eLabHostProvisioner` (both steps),
+    `E2eImageUpdatesTest` 2, `E2eFleetSudoTest` 1, `E2eVpnTunnelTest` 1, `E2eTailscaleTunnelTest`
+    1, `E2eProxmoxTest`'s tailnet test 1, `E2eAlertLifecycleStressTest` 1 and
+    `E2eAppSurfaceStressTest` 1, besides the item 6 suites above, all 0 failed. Guard: with
+    `PhoneOffline` turning off only Wi-Fi, the alert suite failed waiting for its host to go
+    offline (line 132), as the old suite did.
+    The Tailscale suite first failed on the fixture, not the app: its keys last 24 hours, and
+    `./scripts/test-hosts.sh tailnet` made new ones, but then approved the routes of the old
+    router node, which headscale still showed online, so the new router offered nothing ("not in
+    this tailnet"). `tailnet_up` now waits for a router newer than every node there was. The
+    runner also counts a failed assumption (an opt-in not given) as skipped, not passed.
+  - Suite fixes and small items (Nov 16), each its own commit, all on the API 35 emulator through
+    the shared runner with repository fixtures only:
+    - The two network-cut suites save their own hosts and shares at `network_host` with
+      `E2eLabHosts.save` and cut the network with `PhoneOffline`, like the alert suite.
+      `E2eTerminalNetworkRecoveryStressTest` (tmux, HTTP and SOCKS5 proxies, SSH jump to
+      internal-a) passed; it now asserts no session stays connected while offline, and prints its
+      markers from a format, since the shell's echo of `printf 'NET-TMUX-END'` had satisfied the
+      check that tmux output survived. `E2eFileTransferLifecycleStressTest` uses the shares
+      fixture's FTP, SMB and WebDAV and the lab host's SFTP; its network cut moved from FTP to SMB,
+      because the fixture's passive FTP data address is 127.0.0.1, adb's reverse port on the
+      emulator, which no network loss touches. Guard: with mobile data left on, the terminal suite
+      failed "Still connected with the phone offline" (all four hosts) and the transfer suite "the
+      share is still reachable with the phone offline".
+    - The transfer suite found three defects. Fixed, each first seen failing in the suite: a
+      cancelled WebDAV upload left its hidden staging file, because the server still held the
+      aborted PUT and answered the delete 423 Locked (seen with curl against the fixture), so
+      `removeStagedFile` (one copy, used by every staging cleanup) tries again while the file is
+      still listed, under 4 s in all (`RemoveStagedFileTest`, 5 tests, 4 failing with the old single
+      delete); and a cancelled SFTP download to the phone ended as a success with a short file
+      (868014 of 32 MiB bytes), because closing JSch's stream reads as the end of the file, so
+      `downloadToDevice` now ends a cancelled download as cancelled and deletes the document.
+      Open, written down rather than fixed, as neither is small: an SMB upload takes about 15.7 s
+      to cancel, past the suite's 12 s bound (the same with the old cleanup; forcing smbj's
+      connection closed did not help, so the wait is likely its 15 s response timeout,
+      `SmbFsClient` `withTimeout(15 s)`), and an SMB upload cancelled while the phone is offline
+      leaves `.<name>.omniterm-part-<uuid>` on the share, since its cleanup cannot reach the share
+      then and nothing tries later. The user sees the row stay running for 15 s after Cancel, and a
+      hidden partial file in the folder. To reproduce, run the suite: it records both and fails at
+      its end, after every other check has passed (cancel and staging on four protocols, a large
+      upload across activity recreation, retry to the original endpoint, cross-protocol overwrite
+      and move, dual-pane SFTP).
+    - Battery saver (`E2eSettingsStateStressTest`): its Fleet host is saved from the fixtures; after
+      `cmd battery set level 1` it waits for #98's "Battery saver available" prompt, checks the
+      saver is not on by itself and the screen still kept on, taps **Start saving** as a user
+      would, then waits for the saver; `cmd battery reset` runs whether it passes or fails. Passed
+      with the other two tests of the class; guard: without the tap it failed "battery saver engage
+      did not finish within 10000ms", and the battery was back afterwards.
+    - AGENTS.md states the owner's Nov 9 rule once, under the validation gates: one full gate per
+      push, fixes batched into the pull request in flight.
+    - The shares fixture's rclone takes its login from `RCLONE_USER` and `RCLONE_PASS` in the
+      container, not flags: after `rebuild shares` no process shows it (`fixture containers: 0` in
+      the process watcher), WebDAV answers 207 with the login and 401 with a wrong one or none, and
+      `verify` checks the wrong one is refused. `verify` itself still passes the lab password to
+      `sshpass -p`, `curl --user` and `smbclient -U` on the host; its three key and certificate
+      sign-in checks failed against keyauth and certauth containers that are 13 days old.
+    - Kubernetes on a device: `E2eKubernetesClusterTest` opens the real Kubernetes tab with the
+      app's own `KubeApi` and `JsonTree` against `E2eKubeApiServer`, a small HTTPS server inside the
+      test on the phone's loopback, saved as a cluster from its kubeconfig, which is the existing
+      seam (the cluster address). This is the smallest honest way: no new dependency, no fixture,
+      no cluster. Its objects are samples in the shapes the Kubernetes API reference documents, not
+      recordings; one per page, so every list is read with `continue`. It checks pod, deployment,
+      service and node cards, the namespace filter's namespaced paths, and that nothing but lists
+      was asked for. Guard: with whole numbers written as `4.0`, the pod card's "Restarts 4" failed.
 
 ## Decision pivot — 2026-11-08
 
@@ -765,6 +1505,17 @@ On Nov 9 the user added:
    Go library, built with a repo-local, checksum-verified Go toolchain (approved Nov 8). ZeroTier,
    OpenVPN and Pangolin's Olm are left out for their licences; Pangolin raw TCP resources work as a
    plain host and port.
+
+   User, Nov 11: "also make tunnels network specific, i.e. when on home network bypass tunnel
+   (wifi ssid), when outside that network use tunnels", then "what about tailscake" (Tailscale).
+   So, for every tunnel kind, Tailscale included:
+   - A tunnel takes a list of Wi-Fi names. On one of them its hosts dial their direct address; on
+     any other network, or when the network cannot be identified, they use the tunnel.
+   - It is a rule the user sets, not a fallback, so "a host with a tunnel never goes direct" still
+     holds everywhere else.
+   - Android gives a Wi-Fi name only with the location permission, asked for when the user turns
+     this on; background location is not asked for. PRIVACY.md says so.
+   - It is built in the shared routing (not in one engine), first, on WireGuard, in the bundle PR.
 4. Homelab additions (user, Nov 8): Proxmox VE API, SNMP, container image updates, backup freshness
    presets.
 5. Fleet enhancements (user, Nov 9: "investigate other enhancements there as well"), its own PR.
@@ -848,3 +1599,556 @@ Checkpoint B results:
 
 - Tunnels need a userspace WireGuard/TCP stack; every maintained one is Go (wireguard-go, tsnet).
 - ChatGPT's local MCP support could not be verified (its docs returned 404); not claimed.
+
+## Nebula tunnels (Nov 13–14, Codex relay lane)
+
+- Credit: [Nebula](https://github.com/slackhq/nebula) v1.12.0, MIT, for its userspace `service`;
+  [Haven](https://github.com/GlassHaven/Haven) for the per-host Nebula kind idea only (AGPL,
+  reference only, no copied code). Go's checksum database verifies the exact pinned module zip.
+- Hosts can select Nebula without taking Android's VPN slot. The shared tunnel editor accepts a
+  pasted/imported YAML configuration with inline CA/host certificates and key, static host map and
+  lighthouses; Test connects to the supplied overlay address/port and closes its temporary tunnel.
+  Existing encrypted storage, shared editor frame, first-use start, idle stop, host routing and
+  Wi-Fi exceptions are reused. Backups keep the user's original certificate and key. No DB change
+  and no added code in the restore function.
+- Numeric overlay addresses and static IP:port endpoints only; no phone DNS (since the review,
+  endpoints may be host names: see "Codex lane, reviewed and repaired"). Runtime constructs an
+  allowlist of identity/discovery settings and replaces tun/listen/firewall: UserDevice/service,
+  an ephemeral UDP transport socket, outgoing TCP and replies only. Imported debug, DNS, metrics,
+  control and relay-hosting settings cannot enable services or touch system configuration. File
+  paths/PKCS#11 keys are refused; validation errors never echo private input.
+- Unsafe routes are refused: upstream UserDevice.RoutesFor ignores configured gateways. The public
+  service/control API has no per-node handshake timestamp or byte totals; the card explicitly says
+  handshake unavailable and labels the counters as TCP payload. State/address/counters are read on
+  demand, with no added polling timer. Kotlin registers the shared network bridge for Nebula alone;
+  NetworkChanged calls Control.RebindUDPServer only for live Nebula nodes.
+- Fixture `test-hosts.sh nebula`: only omniterm-test-nebula is built/started, from pinned Alpine and
+  the repository-built Go command. A fresh CA and identities are generated into ignored .nebula
+  with private permissions. Userspace lighthouse 10.88.0.1 and SSH node 10.88.0.3:22 lead to the
+  existing internal-a:2222. No TUN/capabilities, only loopback UDP4242 published. `tailnet-phone`
+  refreshes only the disposable phone's expired Headscale key, using shared key helpers, without
+  restarting/recreating Headscale or its router. No shared service was recreated in this run.
+- Validation: scripts/test-tunnel.sh passed (formatting, strict module verification, host+Android
+  arm64 compile, vet, 34 top-level tests: Nebula8, fixture1, WireGuard/config8, Tailscale17).
+  Targeted OSS JVM tests31 passed, none skipped. Four changed JVM classes (23 tests) passed five
+  more times on one CPU in PlayStore debug:115 additional executions, no failures/errors/skips.
+  All four native ABIs, both OSS debug APKs and final lint passed. Duplicates0, pinned images,
+  shell syntax and diff whitespace checks passed. No new Gradle dependency/verification graph.
+- Go guards seen failing at the intended assertions (13), then restored checks passed: certificate
+  network boundary, system dialer even for a permitted loopback address, private-key mismatch,
+  wrong CA, inbound firewall, transport listener, ancillary metrics service, payload totals,
+  closed-node removal, network notification, unsafe routes, private parser diagnostics, expired
+  running certificate. JVM guards seen failing (6), then restored five repeats passed: supported
+  backup kind, encrypted identity, Wi-Fi routing, idle stop, Test closes its tunnel, Test dials it.
+- API 35 device suites: `E2eNebulaTunnelTest` 1 (`omniterm_e2e_nebula=yes`, generated configuration
+  streamed to app-private files/nebula-e2e.json, fixture user/pass on adb stdin); editor validation,
+  Test, encrypted storage, actual SSH, unreachable overlay host never reached at its answering
+  direct address, outside-address refusal, Wi-Fi exception and removal. Guard seen failing on
+  device with only Nebula's network registration removed (1 executed/1 expected failure); restored
+  complete suite passed1 again. E2eVpnTunnelTest1 (`omniterm_e2e_vpn=yes`),
+  E2eTailscaleTunnelTest1 (`omniterm_e2e_tailscale=yes`), and E2eAppSurfaceStressTest1
+  (`omniterm_e2e_surfaces=yes`, `omniterm_e2e_sftp_home=/home/<fixture user>` for runtime-docker2205)
+  passed, none skipped. The device test waits for the manager's status refresh before asserting
+  counters; the first immediate read exposed a test synchronization defect, now fixed.
+- PRIVACY.md/README/NOTICE and the named external audit describe/credit Nebula. PRIVACY.md states
+  encrypted identity storage/backup, user-owned lighthouse/node traffic and disclosed addresses,
+  disabled ancillary services, numeric addressing and the temporary Test connection. No generated
+  phone identity or configuration file is added by the carrier. Full bundle gate/hosted required
+  checks remain for the orchestrator/owner before merge, as instructed; none were claimed here.
+
+Size (bytes, all-ABI AAR and universal OSS debug APK; pristine baseline630d968, same build flags):
+
+| Artifact | Before | After | Increase |
+| --- | ---: | ---: | ---: |
+| Tunnel AAR | 30076296 | 40247749 | 10171453 |
+| OSS debug APK | 112964487 | 141136215 | 28171728 |
+| arm64-v8a libgojni.so | 18979752 | 25977864 | 6998112 |
+| armeabi-v7a libgojni.so | 18182348 | 24951404 | 6769056 |
+| x86_64 libgojni.so | 20354888 | 27893512 | 7538624 |
+| x86 libgojni.so | 18280140 | 25120876 | 6840736 |
+
+Nebula has no service trimming tags. `debug` and `pkcs11` remain unset (no pprof listener/native
+PKCS#11 module); the existing `-s -w` stripping and Tailscale omission tags remain intact.
+All78 required Go modules passed scripts/check-licenses.py against the repository policy; no
+GPL/AGPL/BSL dependency added. Added modules (exact versions/licences):
+
+| Module | Version | Licence(s) |
+| --- | --- | --- |
+| github.com/DefinedNet/dnsconfig | v0.0.0-20261028201825-617c971e7a6a | MIT |
+| github.com/slackhq/nebula | v1.12.0 | MIT |
+| go.yaml.in/yaml/v3 | v3.0.5 | Apache-2.0, MIT |
+| dario.cat/mergo | v1.0.2 | BSD-3-Clause |
+| filippo.io/bigmod | v0.1.0 | BSD-3-Clause |
+| github.com/DefinedNet/netlink | v1.3.2-dn.1 | Apache-2.0 |
+| github.com/Microsoft/go-winio | v0.6.4 | MIT |
+| github.com/anmitsu/go-shlex | v0.0.0-20200514113438-38f4b401e2be | MIT |
+| github.com/beorn7/perks | v1.0.1 | MIT |
+| github.com/cespare/xxhash/v2 | v2.3.0 | MIT |
+| github.com/flynn/noise | v1.1.0 | BSD-3-Clause |
+| github.com/gogo/protobuf | v1.3.2 | BSD-3-Clause |
+| github.com/miekg/dns | v1.1.73 | BSD-3-Clause |
+| github.com/miekg/pkcs11 | v1.1.2 | BSD-3-Clause |
+| github.com/munnerz/goautoneg | v0.0.0-20191010083416-a7dc8b61c822 | BSD-3-Clause |
+| github.com/nbrownus/go-metrics-prometheus | v0.0.0-20210712211119-974a6260965f | Apache-2.0 |
+| github.com/prometheus/client_golang | v1.25.0 | Apache-2.0 |
+| github.com/prometheus/client_model | v0.6.3 | Apache-2.0 |
+| github.com/prometheus/common | v0.72.0 | Apache-2.0 |
+| github.com/prometheus/procfs | v0.22.0 | Apache-2.0 |
+| github.com/rcrowley/go-metrics | v0.0.0-20201227073835-cf1acfcdf475 | BSD-2-Clause-Views |
+| github.com/stefanberger/go-pkcs11uri | v0.0.0-20230803200340-78284954bff6 | Apache-2.0 |
+| github.com/vishvananda/netns | v0.0.5 | Apache-2.0 |
+| google.golang.org/protobuf | v1.36.12 | BSD-3-Clause, LicenseRef-scancode-google-patent-license-golang |
+
+Shared Go pins raised by Nebula’s minimum-version selection (same licence gate passed):
+
+- github.com/gaissmai/bart: v0.29.0 → v0.30.0 (MIT).
+- github.com/klauspost/compress: v1.20.0 → v1.20.1 (Apache-2.0, BSD-3-Clause, MIT).
+- golang.zx2c4.com/wireguard/windows: v1.0.1 → v1.1.1 (MIT).
+- gvisor.dev/gvisor: v0.0.0-20260915211658-a6f909f08a72 → v0.0.0-20261014193016-04d31b385980 (Apache-2.0, BSD-3-Clause, MIT).
+
+The candidate APK was packaged afresh to remove incremental archive slack; every ZIP entry’s SHA-256 matched the validated candidate. The size table uses the fresh archive.
+
+## Cloudflare Access service-token SSH (Nov 14, Codex relay lane)
+
+Protocol research: [cloudflared](https://github.com/cloudflare/cloudflared), Apache-2.0, revision
+`b0297f0b24c60a4cef743b7b878e2da3798cb839`, read as a reference, reimplemented without copying code.
+- [`cmd/cloudflared/access/carrier.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/cmd/cloudflared/access/carrier.go), `ssh` / `StartForwarder`: uses the application's URL, service-token headers `CF-Access-Client-Id` and `CF-Access-Client-Secret`, and its own User-Agent. The optional `--destination` uses `Cf-Access-Jump-Destination` for bastion mode; OmniTerm does not implement that mode or send that header. OmniTerm identifies itself with User-Agent OmniTerm.
+- [`carrier/websocket.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/carrier/websocket.go), `createWebsocketStream`, `websocketHeaders`, `clientConnect`: HTTP GET to the application with HTTPS switched to WSS for Gorilla. The library supplies Connection/Upgrade, Sec-WebSocket-Key and Version; no subprotocol or compression is requested. Successful upgrade is HTTP 101. OmniTerm uses the same wire contract at HTTPS:443 `/`, with coder/websocket.
+- [`carrier/carrier.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/carrier/carrier.go), `IsAccessResponse` identifies HTTP 302 whose Location path begins `/cdn-cgi/access/login`. Cloudflared then obtains app information and an interactive JWT (`Cf-Access-Token`) and may retry; OmniTerm instead explains that Service Auth is required and stops. HTTP 401/403 is presented as a token/policy rejection (it cannot distinguish revoked/expired credentials from policy refusal). Non-upgrading 200/404 or unrelated redirects say the hostname is not accepting Access TCP; 429/5xx and network/TLS failures say Cloudflare is unreachable. Server bodies and redirect queries never reach diagnostics.
+- [`websocket/connection.go`](https://github.com/cloudflare/cloudflared/blob/b0297f0b24c60a4cef743b7b878e2da3798cb839/websocket/connection.go), `GorillaConn.Read/Write`: sends binary messages containing unmodified stream bytes, preserving unread message remainders across small reads. No additional TCP frame header. coder/websocket's NetConn supplies the corresponding binary stream and WebSocket control handling; the dial context does not own the established stream lifetime.
+
+Decision: one saved tunnel holds one published hostname and both encrypted token fields in the existing config, no schema change. The host's Address through the tunnel must equal that hostname; all other targets are refused before dialing. The hostname alone is accepted, no paths, IP literals, ports or custom headers. The host port is deliberately ignored in this carrier (Cloudflare's origin configuration selects the destination) and retained for the direct Wi-Fi route. This is a single service carrier, not a routed network; no UDP, bastion destination or interactive sign-in. Shared host routing, Wi-Fi exception, editor frame, encrypted backup, idle lifecycle and secret storage are reused. No addition to the backup restore method. Saving/start only validates locally; dial/Test makes the opt-in request. TLS uses normal public roots/hostname verification with no skip option. Redirects never followed, neither token is logged or loaded into editor, replacement-only masked fields retain saved values when blank. PRIVACY.md/editor explicitly disclose Cloudflare as a third party.
+
+Contract fixture: `scripts/test-hosts.sh cloudflare-access`, `tunnel/cmd/accesslab`; TLS CA and random service token generated into ignored local files, headers checked, binary WebSocket bridged to existing direct:2222, plus 403/login/non-Access cases. Only the new service starts, no existing fixture is recreated. A separately compiled test AAR uses `omniterm_access_fixture` to inject only fixture CA/endpoint for the four `.access.test` names; TLS chain/hostname checks stay on and the seam is absent from normal builds. This proves our client against our reading of cloudflared, **not interoperability against Cloudflare itself**. No live Cloudflare credentials or service used.
+
+Validation and sizes: recorded below; full bundle gate/hosted gates deferred to orchestrator as instructed. No new module or Gradle dependency: existing coder/websocket v1.8.15 ISC promoted from indirect to direct; module versions and sums unchanged. Shared TCP payload counting extracted from Nebula for reuse.
+
+Cloudflare's current [service-token documentation](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) also confirms Service Auth and both headers: strict service-token authentication returns 401/403 on authentication/authorization failures, while older/non-strict configurations can return the Access login redirect. OmniTerm handles both and never automatically tries interactive authentication.
+
+Cloudflare Access verification complete:
+
+- `scripts/test-tunnel.sh`: 43 top-level tests passed (Access8, Access fixture1, existing34),
+  with strict module verification, host/Android arm64 builds and vet. No tests skipped.
+- Targeted OSS JVM: 33 passed in six classes, none skipped: CloudflareAccessSettingsTest3,
+  CloudflareAccessRobolectricTest2, VpnTunnelBackupRobolectricTest4, TunnelRoutingTest14,
+  TunnelProbeTest4 and TunnelNetworkRouteRobolectricTest6. No native-runtime platform exclusion
+  on this x86_64 host. Normal all-ABI AAR, OSS app/test APKs and lint passed.
+- One-processor repeats: five additional PlayStore debug runs of all six changed classes passed
+  (165 executions), no failures, errors or skips; `repeat-changed-tests.sh --base b726b11 --worktree --cpus 1`.
+- Go guards observed failing (13), followed by the restored full suite passing: saved-hostname
+  boundary; client-ID header; client-secret header; binary framing; established-stream lifetime;
+  redirects never followed; hostname validation; credential/header validation; token-denial
+  message; interactive-login message; private diagnostics; public TLS verification; and failure
+  never falling back to a real answering direct endpoint. Untrusted CA and wrong TLS name are
+  both refused before any token is sent. Test handshake also covers a server offering HTTP/2:
+  the client explicitly uses HTTP/1.1 Upgrade.
+- JVM guards observed failing (10), followed by restored checks passing: editor receives no token
+  fields; diagnostics redact both fields; backup restores the kind; blank edits retain the token;
+  storage encrypts configuration; Test closes its temporary tunnel; Wi-Fi exception follows the
+  shared routing; idle lifecycle stops the carrier; a selected tunnel never becomes direct;
+  and Test actually dials. Each mutation was restored; compile errors in mutation harnesses were
+  corrected and were not counted as guard evidence.
+- API35: `E2eCloudflareAccessTunnelTest`1 passed with `omniterm_e2e_access=yes`, private fixture
+  settings/CA streamed to app files, and repository fixture user/pass. It opens the Access
+  editor, tests good and rejected tokens, login redirects and non-Access responses, verifies
+  encrypted storage and blank reopened fields, chooses Access in the real host form and checks
+  the hostname/port hint, runs SSH through the fake, proves an answering direct host is not used
+  on failure, then proves the Wi-Fi exception and its removal. Separate on-device mutations
+  removing token masking and third-party disclosure each failed at the expected assertion;
+  restored Access passed again. `E2eVpnTunnelTest`1 (`omniterm_e2e_vpn=yes`),
+  `E2eNebulaTunnelTest`1 (`omniterm_e2e_nebula=yes`) and `E2eAppSurfaceStressTest`1
+  (`omniterm_e2e_surfaces=yes`, `omniterm_e2e_sftp_home=/home/<fixture user>`) passed, none skipped.
+- The fake bridges to the existing direct:2222 SSH fixture, so its tunneled and direct Wi-Fi
+  paths have the same host key. An initial internal-a/direct pairing correctly triggered SSH's
+  changed-key refusal; the fixture was corrected and the app reinstalled/reseeded. No trust
+  protection was changed. Only the task's own Access container was recreated, never shared hosts.
+- Test trust/endpoint injection is absent from the normal Java API and all four production native
+  libraries/APK; verified against the separately built fixture AAR where the setter is present.
+  No production certificate bypass or custom-root option exists.
+- No new module or version, no Gradle dependency or verification-metadata change. All 78 Go modules
+  passed the licence gate. Existing coder/websocket1.8.15 ISC became a direct requirement.
+  Duplicate-code gate remains0; pinned-image, shell syntax and whitespace checks passed.
+  Full bundle gate, release graphs and hosted checks remain the orchestrator's later gate, as
+  requested. Actual Cloudflare interoperability remains unverified: this is a contract-fake proof.
+
+Size in bytes, baseline b726b11 and normal all-ABI production build, same flags. APK packaging
+state was regenerated to remove an incremental ZIP hole left by switching the test-only ABI;
+no source or native library was trimmed to reduce the reported size.
+
+| Artifact | Before | After | Increase |
+| --- | ---: | ---: | ---: |
+| Tunnel AAR | 40247749 | 40534414 | 286665 |
+| OSS debug APK | 141136215 | 141750107 | 613892 |
+| arm64-v8a libgojni.so | 25977864 | 26118536 | 140672 |
+| armeabi-v7a libgojni.so | 24951404 | 25098284 | 146880 |
+| x86_64 libgojni.so | 27893512 | 28042504 | 148992 |
+| x86 libgojni.so | 25120876 | 25267020 | 146144 |
+
+## Broadcast typing (Nov 14, Codex bundle lane)
+
+- Terminal options → **Type to several terminals** selects open session IDs, or a snapshot of all
+  open sessions. A later session never joins automatically. A coloured banner above each terminal
+  viewport in single and split view says how many receive; tapping names hosts, shows exclusions,
+  changes the selection or turns it off. The focused terminal may be a transmitter without being
+  selected; its banner explicitly says it is not selected.
+- `TerminalTyping` owns only a runtime selection/revision. The existing `sendBytes` → `sendBytesTo`
+  path is the only fan-out decision. Text, sticky modifiers, control/extra keys, swipe edits and
+  paste keep their order in each existing bounded session queue. Paste framing follows each
+  receiver's bracketed-paste setting and tmux control pane. Protocol replies, mouse/scroll, resize
+  and app-owned password/sudo answers keep their existing isolated paths.
+- INPUT/VIEW now belongs to each `ShellSession` rather than the whole UI. Locked, disconnected,
+  closed and reconnecting sessions never receive broadcast input; the picker names the reason.
+  Unlocking/reconnecting a still-selected session makes it eligible again. A locked or disconnected
+  focused transmitter sends nothing. Read-only scroll-navigation keys retain their single-session
+  behavior.
+- Multiline paste asks once, with the receiver count. Its captured selection, focus, transport,
+  queue, tmux pane and connection state must still match before any receiver is queued. Cancelling
+  sends nothing. Session-owned writer receipts and interrupted/oversized-paste feedback remain.
+  Only the focused pane presents paste feedback, so split panes do not stack progress dialogs.
+- App Lock, a new UI/ViewModel (including a relaunch onto keep-alive shells), and closing/ending the
+  last selected session turn it off. No persistence, settings, backups, schema, Go or dependency
+  changes. Tasker, MCP, schedules and alert runbooks have no interactive terminal entry point;
+  source guards reject adding one or referencing receiver state from storage/unattended code.
+- README warns explicitly that manually typed sudo/login passwords go to every receiver.
+  PRIVACY states the in-memory IDs, existing connections only and no backup or new stored data.
+- Idea credit: [tmux synchronize-panes](https://github.com/tmux/tmux),
+  [ClusterSSH](https://github.com/duncs/clusterssh) and
+  [ServerBox](https://github.com/lollipopkit/flutter_server_box). Independently implemented; no
+  upstream source copied. Credits added to README, NOTICE and the named internal competitor audit.
+- JVM: 43 targeted tests passed, none skipped: `TerminalTypingInputRobolectricTest` 24,
+  `TerminalTypingStateTest` 3, `TerminalTypingBoundaryTest` 3,
+  `TerminalAnswersQueriesRobolectricTest` 1, `TerminalPasteReceiptRobolectricTest` 3,
+  `TerminalPasteOwnershipTest` 8 and `TerminalReadOnlyPolicyTest` 1.
+- Negative JVM evidence: temporary source mutations produced 33 expected test failures, then every
+  source was restored exactly. Selection (3): chosen receivers, snapshot/all-open/new sessions,
+  fixed selection excluding unknown/closed IDs. Eligibility (6): locked receiver, focus-switch lock,
+  reconnecting receiver, closed transport, disconnected receiver and recovery/eligibility labels.
+  Boundaries (18): mouse/resize stays local; App Lock clears; confirmation refuses changed
+  connection, pane, reconnect, lock, selection and focus; app credential answers stay local;
+  multiline paste waits; cancel sends nothing; UI restart resets; ended receiver removes selection;
+  closing the final receiver turns off; cursor/device replies stay local; unattended typing,
+  credential-answer and storage source guards. Removing fan-out (5) failed ordered text/control/
+  extra-key/swipe/paste/password delivery, per-receiver framing/pane, confirmed multiline delivery,
+  chosen-set and fixed all-open checks. Compiler failures during mutation-harness setup are not
+  counted; their logs are kept separately.
+- A further guard caught a busy receiver silently dropping a later confirmed paste. It failed with
+  the later text absent on that receiver, then passed after removing that exclusion: every paste
+  follows the existing ordered queue. An earlier paste receipt cannot replace newer progress.
+- API 35: the new `E2eTerminalTypingTest` passed (1, `omniterm_e2e_terminal_typing=yes`) against
+  distinct repository fixtures on ports 2205 and 2201. It enters a command through the real Compose
+  input field and extra Enter key once and finds its output on both hosts, uses an ordered reply
+  barrier to prove locked exclusion, and opens the picker and banners in single, stacked and
+  side-by-side views. It checks multiline confirmation count/cancel, turning off and App Lock.
+  Removing the banner and removing input-lock exclusion each failed on device at the corresponding
+  visible assertion; both source mutations were restored exactly. An initial ambiguous test selector
+  matched the host header and picker row and was corrected; it is not counted as negative evidence.
+- The restored production build passed `E2eTerminalTypingTest` 1, `E2eTerminalOptionsTest` 1
+  (`omniterm_e2e_terminal_options=yes`, font scales 1/1.5/2 and portrait/landscape),
+  `E2eTerminalPasteOwnershipTest` 1 (`omniterm_e2e_paste_ownership=yes`) and
+  `E2eAppSurfaceStressTest` 1 (`omniterm_e2e_surfaces=yes`, repository runtime fixture home), all
+  on API 35, none skipped. The new suite used `omniterm_e2e_terminal_typing=yes`.
+- Open-source debug lint passed, including instrumentation/unit-source analysis. All 78 existing
+  Go modules passed the licence check; no dependency or checksum metadata changed. Duplicate gate
+  remains 0 known. No schema or migration change. Full bundle gate and hosted exact-head checks
+  belong to the orchestrator, as explicitly requested for this run.
+- Size, same all-ABI open-source debug build and baseline fda23482: tunnel AAR 40,534,414 →
+  40,534,414 bytes (byte-identical); APK 141,750,107 → 141,770,935 bytes (+20,828). Regenerated
+  APK packaging to remove holes from repeated incremental builds; all 1,531 entry payload hashes
+  are identical to the device-validated APK. No code or native library was trimmed.
+- The four changed unit-test classes (31 tests) passed five more runs on one processor through
+  `repeat-changed-tests.sh --cpus 1`, Play Store debug: 155 executions, no failures or skips.
+  Final whitespace and staged-diff checks passed. All task-required local checks are complete;
+  the full bundle gate, release graphs, CodeQL and hosted checks remain deferred to the orchestrator.
+  No physical USB serial or FIDO2 hardware was exercised; the live typing proof uses SSH fixtures.
+
+## Codex lane, reviewed and repaired (Nov 15–16)
+
+The three features above were reviewed on a local review branch, tested again and kept. Round 1
+fixed the secret-scan wording, kept Nebula's `cipher` and `pki.blocklist`, and gave Cloudflare's
+502, 530 and 429 answers their own messages. Round 2 merged the bundle at 73e93ea first (PRIVACY.md
+was the only conflict, both sides kept; the targeted JVM classes of both sides, 82 tests, passed on
+the merge), then again at e294992, which carries main's #151 (no conflicts), and then:
+
+- Cloudflare Access carries only the host's SSH session. Every dial through a tunnel says what it
+  carries (`TunnelUse`), and `TunnelManager.dial` refuses anything but SSH through an Access tunnel
+  for every caller, before dialling (`TunnelCannotCarry`). Before, a TCP port check through Access
+  opened the WebSocket to the published SSH service whatever the port, so every port read as open;
+  a certificate check and Proxmox VE's client were sent into that SSH service. Port and certificate
+  checks now read "Not checked: …" (no value, so no alert), Proxmox VE says why. The callers are
+  named in one test (`everyDialThroughATunnelSaysWhatItCarries`), so a new one must choose.
+- A quiet Access session stays open. Cloudflare closes a WebSocket that carries nothing for a
+  while and asks clients for a ping/pong heartbeat
+  (https://developers.cloudflare.com/network/websockets/), without giving the time. cloudflared
+  at b0297f0b: its client side sends no pings (`carrier/websocket.go`, `createWebsocketStream`);
+  its origin side pings every 54 s (`websocket/connection.go`, `defaultPingPeriod =
+  defaultPongWait * 9 / 10`, `defaultPongWait` 60 s, started by `NewConn` from
+  `ingress/origin_connection.go`). Whether the origin's pings reach the phone through Cloudflare is
+  not known, so the phone pings every 54 s itself while a stream is open. The contract fake
+  (`tunnel/internal/accessfake`, shared by `cmd/accesslab` and the tests) now closes a WebSocket
+  with no data, ping or pong for 100 s: **our assumption, not a Cloudflare figure.**
+- Nebula static endpoints may be host names. They are looked up with the phone's DNS through the
+  same `Resolver` WireGuard's endpoints use, IPv4 first, when the tunnel starts and again after
+  each network change (`ReloadConfigString` when the answers differ); Nebula itself and anything
+  inside the tunnel never resolve a name. A name that cannot be found is left out; no endpoint at
+  all fails the start.
+- `pki.cert` may hold a v1 and a v2 certificate of one host, each checked against the CA, blocklist
+  and the one `pki.key` (so both have that key and curve), and both with the same first address, as
+  Nebula requires; `pki.initiating_version` passes through (0 or 2, or 1 when a v1 certificate is
+  there).
+- Test in a Nebula editor while that tunnel runs goes through the running tunnel when the settings
+  are the same, and leaves it running; with other settings for the same first Nebula address it is
+  refused with a message. Peers keep one tunnel per first address and take the newest handshake
+  (`HandshakeManager.CheckAndComplete`, nebula v1.12.0 `handshake_manager.go`), so a second node
+  would have taken the running one's place and dropped its sessions.
+- By the same rule, two saved Nebula tunnels whose certificates have one Nebula address never run
+  at once. `TunnelManager` takes a tunnel's node (`TunnelEngine.node`) before it starts and gives it
+  back when it stops, goes idle or fails to start; while one holds it, the other is refused, and its
+  card says which tunnel to stop first. Kinds without a node identity (WireGuard) run side by side.
+- Counts read as one or many: the typing banner, the paste confirmation and title, and the sent
+  note ("Typing to 1 terminal", "Paste 1 character?").
+- The Access fixture library is built by `scripts/build-tunnel.sh --access-fixture` to
+  `tunnel/build/fixture/`, never to the app's library, and a test app uses it through
+  `-Pomniterm.tunnelAar`, which Gradle refuses for a release. `scripts/check-tunnel-seam.py`
+  checks every library build-tunnel.sh writes (the fixture one must hold the seam, every other
+  must not) and, in the gate, the library and every app it built; PR Check and the gate run its
+  test.
+- Codex's three device suites run through `./scripts/test-hosts.sh suite` and `E2eArgs`. The runner
+  learned three private fixture files (nebula_config, access_config, access_ca): copied into the
+  app's own files on adb's standard input, passed by file name, removed after the run; the
+  suites read and remove them (`E2eArgs.privateFile`). `second_port` and tcp:8447 were added.
+  `scripts/test-hosts.sh cloudflare-access` now writes phone.json by full path, so it runs from
+  any folder.
+
+Found while proving it, and repaired: a Go test named a certificate version with a `String` method
+`cert.Version` does not have (the package did not compile); the Access idle test asked the test
+server for a name its certificate does not hold, so it never reached the fake; the v1 and v2 key
+and curve comparison could never fail, since each certificate already matched the one `pki.key`,
+so it was removed and the first-address rule, which can fail, got its own case; the Nebula device
+suite had lost its tap on "Add current Wi-Fi" when the Test step was added, so it failed waiting
+for the Wi-Fi chip.
+
+Evidence, under the machine lock, on the merged tree:
+
+- Go: `go vet` clean; the five new tests pass; `scripts/test-tunnel.sh` passes (gofmt, module
+  verify, both builds, vet, every package's tests). Seven guards each failed with their fix removed
+  and passed once restored: no phone pings (`TestAccessPingsKeepAnIdleStreamOpen`), no lookup again
+  after a network change, host names refused, one certificate only, v1 and v2 of other keys, v1 and
+  v2 of other first addresses, node identity by key instead of address (`TestNebulaNodeIdentity`).
+- JVM: 20 targeted classes, 113 tests, none failed or skipped. Eleven guards each failed and were
+  restored exactly: Access carries anything, checks dialled as SSH, Test starts a second node,
+  other settings for the same node, a second saved tunnel with the same address starts, stop keeps
+  the address, a failed start keeps it, Test without the phone's DNS, banner always plural, one
+  terminal read as many. `twoSavedNebulaTunnelsWithOneAddressNeverRunAtOnce` also failed against
+  the code as handed over (the second tunnel started). The four changed classes passed five more
+  runs on one processor (`repeat-changed-tests.sh --cpus 1`, Play Store debug).
+- Lint: `lintOpenSourceDebug` and `lintPlayStoreDebug` passed.
+- API 35 emulator, clean install of the production build, seam check clean on the library and both
+  APKs: the provisioner, then `E2eTerminalTypingTest`, `E2eVpnTunnelTest`,
+  `E2eTailscaleTunnelTest`, `E2eTerminalPasteOwnershipTest` and `E2eNebulaTunnelTest` (after the
+  Wi-Fi fix, again on a clean install) passed, 1 test each, none skipped. The Nebula suite's Test
+  went through the running tunnel and an SSH link opened before it still answered. A Nebula run
+  without its opt-in was skipped (1) and left no private file.
+- Access: the old `test-hosts.sh cloudflare-access` failed from another folder
+  (FileNotFoundError), the new one passed; `build-tunnel.sh --access-fixture` wrote the fixture
+  library (android/amd64) and refused the app's own path; Gradle refused a release with
+  `-Pomniterm.tunnelAar`; the seam check failed with the fixture app in the outputs;
+  `E2eCloudflareAccessTunnelTest` passed on it (1 test, 123 s, with the 110 s idle link); the
+  production build again passed the seam check and both packages were removed.
+- Duplicate gate 0 known; `git diff --check` clean; seam-check test and workflow guards passed.
+- Size, all-ABI production tunnel library, before round 2 → after: AAR 40,512,224 → 40,535,225
+  bytes (+23,001); `libgojni.so` arm64-v8a 26,120,520 → 26,142,632 (+22,112), armeabi-v7a
+  25,100,636 → 25,121,428 (+20,792), x86_64 28,044,680 → 28,068,008 (+23,328), x86 25,269,324 →
+  25,290,476 (+21,152).
+
+Not covered: a real Cloudflare account (the coordinator raises it with the owner), Nebula through a
+real NAT, Cloudflare's actual idle time (100 s is assumed), and a Nebula host-name endpoint on the
+device (JVM and Go only).
+
+## Release packaging: one APK per architecture, no 32-bit x86 (Nov 16)
+
+The tunnel libraries made the app large: the tunnel AAR was 40.5 MB and the universal APK carried
+a 25 to 28 MB native library for each of four architectures. The owner kept every tunnel kind and
+chose to fix it by packaging.
+
+- GitHub releases publish one open-source APK per architecture next to the universal APK, which
+  keeps the name the single APK always had: `OmniTerm-OpenSource-<tag>.apk` and
+  `OmniTerm-OpenSource-<tag>-arm64-v8a.apk`, `-armeabi-v7a.apk`, `-x86_64.apk`. The release build
+  passes `-Pomniterm.abiSplits=true` (`app/build.gradle.kts`, `splits.abi`); every other build still
+  makes one APK. `scripts/collect-release-apks.sh` names them, for the workflow and the gate.
+- 32-bit x86 is dropped everywhere: `scripts/build-tunnel.sh` builds android/arm64, arm and amd64
+  only (the `--access-fixture` library too, it shares the target list), and the app leaves
+  `lib/x86/**` out of every APK and the bundle, so an x86 device refuses the install instead of
+  getting tunnels that cannot load (`libandroidx.graphics.path.so` had an x86 copy too). The Play
+  bundle changes in nothing else.
+- Version codes: every APK of a release has the release's own version code, the same as the
+  bundle's (AGP's default for splits; nothing overrides it). Per-architecture offsets exist for
+  uploading several APKs to Play, which gets only the bundle here; the APKs are another package
+  (`.oss`), so sharing the code with the bundle collides with nothing. Equal codes let a phone move
+  between the universal APK and its own either way (an equal code installs as an update; a
+  release*10+slot scheme, as the first draft had, made per-architecture to universal a downgrade
+  and cut the version space from major 200 to major 20 under Play's 2,100,000,000 ceiling). No
+  in-app update check reads release assets (searched: the only update check is for container
+  images), and the repository has no F-Droid metadata.
+- `scripts/verify-release-apks.py` checks the built files before anything is hashed, attested or
+  uploaded: exactly the four APK names; each per-architecture APK holds native code for its own
+  architecture only, the universal APK and the bundle for all three; package, version name and
+  code of every APK and the bundle; every APK signed, all by one certificate. It runs as a plain
+  step in the release workflow after collecting, and in `local-pr-check.sh --full` on a release build
+  (`bundlePlayStoreRelease` + `assembleOpenSourceRelease`, debug key, dry-run AdMob placeholders,
+  version 0.0.0-dev): 298 s on this machine, both release Kotlin compilations and R8 included.
+  `scripts/test-verify-release-apks.py` (gate, every mode, and PR Check) builds small real APKs and
+  a bundle with aapt2 and apksigner and shows 20 wrong releases refused, each with its own message;
+  four mutants of the checker (no architecture rule, no version rule, no certificate rule, no
+  unexpected-file rule) each failed it. `scripts/test-workflow-guards.sh` now also fails the release
+  job without `-Pomniterm.abiSplits=true`, without the check, with the check after the checksums or
+  before the APKs are collected (each shown on a broken copy).
+- The release workflow's build step runs with `-Xmx4g` (was 2g): the Kotlin daemon takes Gradle's
+  heap, and building both flavors' release code at 2g failed after 28 minutes with "Not enough memory
+  to run compilation" (Kotlin daemon log: OutOfMemoryError). One flavor at 2g compiled (the "before"
+  build below); both at 4g compiled in the dry run. The test step above it already ran at 4g.
+- README, the site's Getting started and home page say which file to pick for which device, that the
+  universal APK works everywhere but is the largest, how to read the processor type in the ABI row,
+  and that 32-bit Intel devices are no longer supported. RELEASE_RUNBOOK.md and AGENTS.md describe
+  the files and the check.
+
+Sizes in bytes, each from an emptied `app/build` (and, for the libraries, a fresh gomobile build).
+Before: HEAD 932e744, all four ABIs, the one universal APK releases had. After: this change, the
+release workflow's own build step.
+
+| File | Before | After |
+|---|---|---|
+| Tunnel AAR | 40,535,332 | 29,904,085 (−10,631,247) |
+| `libgojni.so` arm64-v8a | 26,142,632 | 26,142,632 (same bytes) |
+| `libgojni.so` armeabi-v7a | 25,121,428 | 25,121,428 (same bytes) |
+| `libgojni.so` x86_64 | 28,068,008 | 28,068,008 (same bytes) |
+| `libgojni.so` x86 | 25,290,476 | not built |
+| Universal APK | 115,627,520 | 90,314,097 (−25,313,423) |
+| arm64-v8a APK | — | 37,073,717 (41% of universal, 32% of the old one) |
+| armeabi-v7a APK | — | 36,052,521 (40%, 31%) |
+| x86_64 APK | — | 38,999,087 (43%, 34%) |
+| Play bundle | not built | 78,660,231 |
+
+Native libraries are stored uncompressed in the APKs (AGP's default for minSdk 24), so each
+architecture adds its whole library to an APK.
+
+Evidence:
+
+- Release dry run (`android-release.yml`'s own step text, run in order from an emptied
+  `app/build`; repo debug key copy for the release key, workflow dry-run AdMob placeholders,
+  v1.2.3-rc.2 / 10200302, no CI variable so no build scan): build 360 s; the delete-key step removed
+  the key copy; collect wrote the four APKs; the check passed (and passed bundle-only, as with
+  `build_apk=false`); R8 mapping present; both SBOMs generated and their native baselines matched;
+  SHA256SUMS.txt lists the four APKs and two SBOMs and `sha256sum -c` passes. Upload-artifact,
+  provenance, release assets and both SBOM attestations pick up the expected files by their globs
+  (attest-sbom's `subject-path` takes a glob, per its action.yml at the pinned commit); the Play
+  upload's `playstore-artifacts/*.aab` is the one bundle; all four APKs share one signing
+  certificate; `jarsigner` verifies the bundle.
+- On real files the check refused the arm64 APK under the x86_64 name, HEAD's four-ABI universal
+  APK, and an APK of another version.
+- API 35 x86_64 emulator, after removing the open-source package: the x86_64 APK installed
+  (primaryCpuAbi x86_64, 10200302) and opened on Servers; the universal APK installed over it, and the
+  x86_64 APK over that again, each with the same code, each launch without a crash. Removed after.
+- `test-workflow-guards.sh`, `test-verify-release-apks.py`, the gate's new segment cut from
+  `local-pr-check.sh` (then `check-tunnel-seam.py --built`, 6 files clean), `git diff --check`.
+
+Open: the Actions allowlist check could not ask GitHub (HTTP 403 for the current gh account); no
+`uses:` line changed. The full gate was not run (one gate per push).
+
+## File editor: Markdown preview, Markdown and JSON colours (Nov 16)
+
+The owner asked for a preview of `.md` files in the file editor (investigation of Nov 13, part D).
+Files come from servers, so the preview is built to do only what the app allows.
+
+- Parser: JetBrains Markdown, `org.jetbrains:markdown` 0.7.18 (Apache-2.0, GFM flavour; its one
+  dependency, kotlin-stdlib 2.0.0, is below the app's held 2.4.0). Multiplatform, so the planned iOS
+  build can use it. Checksums added with `refresh-verification-metadata.sh --write` (only the
+  `markdown` and `markdown-jvm` entries changed); the release SBOM baselines still match. Its HTML
+  generator is never used (it is the only part that touches `java.net`, for URI handling).
+- `ui/markdown/MarkdownDocument.kt` turns the parser's tree into flat blocks (headings, paragraphs,
+  code pieces, table rows, rules) with list and quote levels as numbers; every walk keeps its own
+  stack. Plain Kotlin and coroutines only. `MarkdownPreview.kt` draws them in a `LazyColumn` with
+  Compose and Material 3; its only Android-only part is the string resources.
+- Safety rules, each with a test that fails when the rule is taken out (checked by removing each
+  rule in turn): an image is its alt text and "image not loaded", its address never read; raw HTML is
+  text; only http(s) with a host and mailto are links (javascript:, file:, content:, intent:, data:,
+  relative paths, entity- or escape-hidden schemes, white space, control and bidi characters are
+  not); a tap only opens a question with the whole address, and Open is the one call that opens; the
+  parse runs on `Dispatchers.Default`; over 200,000 characters nothing is parsed ("too large"); a
+  parse over 8 s gives up ("too slow"); tables show 30 columns and say how many more. A source
+  guard checks the preview's imports and that it names no image loader, web view, socket, URL
+  handler or intent.
+- Found while testing: the parser's time and memory grow with the square of one line's nesting;
+  20,000 `>` on one line (20 KB) ran it out of heap. Markers past 32 on a line are now escaped
+  before parsing, so the rest of the line reads as text.
+- Editor: the preview button shows for `.md`, `.markdown` and similar names, `README`, `CHANGELOG`
+  and `CONTRIBUTING`. The editor stays composed under the preview, hidden and out of the semantics
+  tree; it lets go of focus and keyboard, ignores the selection collapse that losing focus causes,
+  and gets its focus back on return, so text, cursor, selection and scroll are kept. Turning Edit on
+  or pressing Back leaves the preview; preview on or off is part of the draft. Links open the way
+  the user chose (Custom Tab or browser; mailto always outside).
+- Highlighter: Markdown (headings, list markers and task boxes, quote markers, emphasis markers,
+  code spans, link addresses, rules, table pipes, HTML comments across lines; fenced code coloured
+  as its named language in that language's own state) and JSON (keys, strings, numbers with signed
+  exponents, literals, line and block comments). Hostile lines stay linear.
+
+Proof: `MarkdownDocumentTest` (23), `MarkdownPreviewSourceGuardTest`, `MarkdownPreviewRobolectricTest`
+(link question, javascript: link, image marker, size notice, the editor round trip), new cases in
+`CodeHighlighterStateTest`; with the editor, highlighter and source-scan suites, 87 cases pass.
+Lint passes for both flavours. On the API 35 emulator, `E2eMarkdownPreviewTest` (new, opt-in
+`omniterm_e2e_markdown_preview`) passed three runs on a Markdown file written to the lab host's
+home: unsaved edit shown in the preview, heading, table, YAML code block, `<script>` as text,
+"image not loaded", the link question with the whole address, no question for a javascript: link,
+and back in the editor the same text, selection and scroll position. `E2eCodeEditorGutterTest`
+gained Markdown and JSON pictures (4 tests pass); line numbers sit beside their lines.
+
+Open: the full gate was not run (one gate per push).
+
+## Release pass (Nov 16)
+
+The full gate on 93826ee found two things, each fixed in its own commit before the gate that counts:
+
+- `TerminalNavigationRobolectricTest.armedKeyBarModifiersStayWithTheirOwnTerminal` still expected
+  read-only to cover the whole screen and disarm every terminal's modifiers. Since the typing round,
+  read-only is each terminal's own (the Input button locks only its session), so the test now checks
+  that another terminal keeps its armed Ctrl and that read-only disarms the terminal it locks. With
+  that disarm removed from `updateTerminalReadOnly`, it fails.
+- Dependabot would propose `go.yaml.in/yaml/v3` v3.0.5 → v3.0.6 for `tunnel/go.mod`; taken, with
+  `scripts/test-tunnel.sh` and the licence check passing.
+
+The gate's numbers, the device sweep and CI are in the pull request.
+
+The device sweep on the API 35 emulator, against the repository's own fixtures, then found seven
+device suites that no longer matched the app or the fixtures. Each was a test problem, not an app
+one, and each passed on its rerun after the fix:
+
+- `E2eTerminalNavigationMatrixTest` turned read-only on before any terminal existed, which no longer
+  does anything; its terminals are now made locked.
+- `E2eDocsScreenshotsTest`: Fleet now shows hosts that end the same way as one card, and both
+  runtime fixtures print the same `uname` and `uptime`; the broadcast adds `hostname`.
+- `E2eDirectSshFailureFeedbackTest` (both the error row and the connect box offer Retry) and
+  `E2ePlayStoreScreenshotFixture` (a host card also names its group) now pick the node they mean.
+- `E2eMarkdownPreviewTest` saves its host directly, so it can sit at the provisioned lab host's
+  address; `E2eLabHosts.add` reports a refused host instead of timing out.
+- `E2eTerminalStressTest` waits for the screen change after a kept tmux session saves its recovery.
+
+Set-up notes for the next sweep: the foreground-service proof needs a fresh install's permissions (no
+notification permission, not exempt from battery optimisation); the Podman runtime variant needs the
+app data wiped before provisioning port 2206; the Compose builder stress test takes
+`omniterm_e2e_compose_path=/fixtures/large-stack.yml` on a runtime fixture; the network tools take
+`host=10.0.2.2` on the emulator, after `E2eLabSeedTest` seeded with `port=2201`; and the terminal
+stress suites run after `E2eLabSeedTest` seeded with `port=2205`.
+
+The pull request's first push then raised two more, fixed on top of it:
+
+- Dependency review rejected `github.com/rcrowley/go-metrics` (through Nebula) as
+  `BSD-2-Clause-Views`, which `allow-licenses` did not list. Its LICENSE at that version is the
+  two-clause BSD text plus the "views and conclusions" disclaimer: the FreeBSD licence, permissive.
+  `scripts/check-licenses.py` had read it as plain BSD-2-Clause and passed. It now names it apart,
+  failed on it before the licence was added to `allow-licenses`, and passes with it.
+- GitHub's secret scanner flagged the made-up Tailscale key in `tunnel/omnitunnel/tailscale_test.go`
+  as a Tailscale API key. That key and the other test keys of that shape, in that file and two
+  Kotlin unit tests, are now built from parts, so no line has the shape of a real key. AGENTS.md
+  now says test credentials must never have that shape.
+- PR Check's Build & Test job ran out of its 30 minutes while repeating the 52 changed test classes
+  five times: four repeats had passed (1 min 38 s each) when it was cut off. Its limit is now 60
+  minutes; every test still runs.

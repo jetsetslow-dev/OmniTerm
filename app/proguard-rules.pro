@@ -29,6 +29,12 @@
 -keep class com.rapid7.client.dcerpc.** { *; }
 -dontwarn com.rapid7.client.dcerpc.**
 
+# SNMP4J (Tools -> SNMP devices) creates its SMI value types, addresses, transports, security models and
+# protocols from class names in its own .properties files (Class.forName), so shrinking it breaks
+# decoding replies only at runtime, in release builds.
+-keep class org.snmp4j.** { *; }
+-dontwarn org.snmp4j.**
+
 # OkHttp probes optional desktop/JVM TLS providers that are not shipped on Android.
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**

@@ -3,6 +3,8 @@ package com.jetsetslow.omniterm.ui
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.graphics.toArgb
+import com.jetsetslow.omniterm.ui.markdown.MarkdownPreview
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -21,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -1441,11 +1444,7 @@ private fun NetworkShareDialog(
                         Switch(checked = useHttps, onCheckedChange = null)
                     }
                     if (!useHttps && !anonymous) {
-                        Text(stringResource(R.string.webdav_without_https_sends_password),
-                            fontSize = 12.sp,
-                            color = OmniColors.amber,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        PlainHttpWarning(stringResource(R.string.webdav_without_https_sends_password))
                     }
                 }
                 Row(
@@ -3070,9 +3069,20 @@ fun SftpFileEditor(
     // Held by the ViewModel so the text typed so far survives App Lock locking and unlocking, a
     // rotation, or any other rebuild of this screen (EditorDraft).
     draftSlot: EditorDraftSlot = remember { EditorDraftSlot() },
+    // The user's choice of opening links in the app (a Custom Tab) or in their browser.
+    linkOpenInApp: Boolean = true,
 ) {
     val draft = remember(file) { draftSlot.draftFor(file) }
     var buffer by draft::text
+    // Markdown files (README.md and the like) can be read as formatted text. The preview shows the
+    // text as it is now, saved or not, and leaving it returns to the editor exactly as it was.
+    val markdown = remember(file.name) { isMarkdownFileName(file.name) }
+    var preview by draft::preview
+    val showPreview = markdown && preview
+    val previewList = rememberLazyListState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val linkToolbarColor = MaterialTheme.colorScheme.surface.toArgb()
+    val noLinkApp = stringResource(R.string.no_app_on_this_device_can)
     // Files open read-only so browsing a config can't corrupt it with a stray IME keystroke;
     // the pencil toggle in the top bar enables editing (and with it, Save). An empty file, such as
     // one just made with New file, has nothing to corrupt and opens ready to type.
@@ -3097,7 +3107,7 @@ fun SftpFileEditor(
         onClose = { attemptDismiss() },
         onSave = { onSave(buffer) },
         subtitle = stringResource(R.string.lines_chars_2, lineCount, buffer.length) +
-            (if (!editMode) " · read-only" else "") + (if (sudo) " · sudo" else ""),
+            (if (showPreview) " · preview" else if (!editMode) " · read-only" else "") + (if (sudo) " · sudo" else ""),
         subtitleColor = if (sudo) OmniColors.red else null,
         dirty = dirty,
         saving = saving,
@@ -3107,9 +3117,41 @@ fun SftpFileEditor(
         readOnly = !editMode,
         language = remember(file.name) { languageForFileName(file.name, file.content.lineSequence().firstOrNull()) },
         highlightMaxChars = highlightLimit,
+        preview = if (!showPreview) null else {
+            {
+                MarkdownPreview(
+                    text = buffer,
+                    listState = previewList,
+                    highlightMaxChars = highlightLimit,
+                    onOpenLink = { url ->
+                        val web = url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
+                        if (!openLink(context, url, linkOpenInApp && web, linkToolbarColor)) {
+                            android.widget.Toast.makeText(context, noLinkApp, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                )
+            }
+        },
         topBarAction = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconToggleButton(checked = editMode, onCheckedChange = { editMode = it }) {
+                if (markdown) {
+                    IconToggleButton(
+                        checked = showPreview,
+                        onCheckedChange = { preview = it },
+                        modifier = Modifier.testTag(EDITOR_PREVIEW_TOGGLE_TAG),
+                    ) {
+                        Icon(
+                            Icons.Filled.Preview,
+                            contentDescription = if (showPreview) stringResource(R.string.markdown_preview_on) else stringResource(R.string.markdown_preview_off),
+                            tint = if (showPreview) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                IconToggleButton(checked = editMode, onCheckedChange = {
+                    editMode = it
+                    // Turning editing on is a wish to type: back to the text.
+                    if (it) preview = false
+                }) {
                     Icon(
                         if (editMode) Icons.Filled.Edit else Icons.Filled.EditOff,
                         contentDescription = if (editMode) stringResource(R.string.edit_mode_on) else stringResource(R.string.edit_mode_off_read_only),
@@ -3128,7 +3170,12 @@ fun SftpFileEditor(
             }
         },
     )
+    // Composed after the editor's own Back, so it is asked first: Back leaves the preview, not the file.
+    BackHandler(enabled = showPreview) { preview = false }
 }
+
+/** The editor's Markdown preview toggle, for tests. */
+internal const val EDITOR_PREVIEW_TOGGLE_TAG = "editor-preview-toggle"
 
 /**
  * Add/edit/clone dialog state. [prefill] seeds the endpoint and path fields; [replacing] is

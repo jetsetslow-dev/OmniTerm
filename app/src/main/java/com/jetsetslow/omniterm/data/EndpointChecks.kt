@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm.data
 
+import com.jetsetslow.omniterm.data.tunnel.TunnelCannotCarry
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -9,14 +10,12 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.net.URI
-import java.security.KeyStore
 import java.security.SecureRandom
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -265,6 +264,8 @@ object EndpointChecks {
                     val cert = serverCertificate(host, port, TLS_TIMEOUT_MS, tunnel.takeIf { own(host) }, dialAs(host))
                     val days = daysLeft(cert.notAfter.time, now())
                     Result(days, describe(TLS_EXPIRY, days), shown)
+                } catch (e: TunnelCannotCarry) {
+                    Result(null, "Not checked: ${e.message}", shown)
                 } catch (e: IOException) {
                     // Nothing to measure: no TLS there, or it could not be reached from the phone.
                     Result(null, "Could not read a certificate: ${e.message ?: e.javaClass.simpleName}", shown)
@@ -300,8 +301,13 @@ object EndpointChecks {
             } else {
                 val (host, port) = endpoint
                 val shown = if (':' in host) "[$host]:$port" else "$host:$port"
-                val (value, problem) = connect(dialAs(host), port, QUICK_TIMEOUT_MS, tunnel.takeIf { own(host) })
-                Result(value, problem?.let { "${describe(TCP_PORT, value)}: $it" } ?: describe(TCP_PORT, value), shown)
+                try {
+                    val (value, problem) = connect(dialAs(host), port, QUICK_TIMEOUT_MS, tunnel.takeIf { own(host) })
+                    Result(value, problem?.let { "${describe(TCP_PORT, value)}: $it" } ?: describe(TCP_PORT, value), shown)
+                } catch (e: TunnelCannotCarry) {
+                    // Not measured, so no alert: the tunnel did not try the port at all.
+                    Result(null, "Not checked: ${e.message}", shown)
+                }
             }
         }
         DNS_CHECK -> {
@@ -400,7 +406,10 @@ object EndpointChecks {
         }
     }
 
-    /** Opens a TCP connection to [host]:[port] and closes it: the connect time in ms, or [URL_NO_RESPONSE] with why. */
+    /**
+     * Opens a TCP connection to [host]:[port] and closes it: the connect time in ms, or
+     * [URL_NO_RESPONSE] with why. Throws [TunnelCannotCarry] when [open]'s tunnel cannot try it.
+     */
     fun connect(host: String, port: Int, timeoutMs: Int, open: (() -> Socket)? = null): Pair<Float, String?> {
         val started = System.nanoTime()
         return try {
@@ -410,6 +419,8 @@ object EndpointChecks {
                 Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
             }
             (System.nanoTime() - started) / 1_000_000f to null
+        } catch (e: TunnelCannotCarry) {
+            throw e
         } catch (e: IOException) {
             URL_NO_RESPONSE to (e.message ?: e.javaClass.simpleName)
         } catch (e: IllegalArgumentException) {
@@ -476,7 +487,7 @@ object EndpointChecks {
      * matters here. Nothing is sent after the handshake.
      */
     fun serverCertificate(host: String, port: Int, timeoutMs: Int, open: (() -> Socket)? = null, dialHost: String = host): X509Certificate {
-        val recorder = RecordingTrustManager(platformTrustManager())
+        val recorder = RecordingTrustManager(CertificateTrust.platformTrustManager())
         val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(recorder), null) }
         val plain = open?.invoke() ?: Socket()
         try {
@@ -497,12 +508,6 @@ object EndpointChecks {
             plain.close()
         }
         return recorder.leaf ?: throw IOException("The server sent no certificate")
-    }
-
-    private fun platformTrustManager(): X509TrustManager {
-        val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        factory.init(null as KeyStore?)
-        return factory.trustManagers.filterIsInstance<X509TrustManager>().first()
     }
 
     /** Remembers the server's leaf certificate, then leaves the trust decision to [platform]. */

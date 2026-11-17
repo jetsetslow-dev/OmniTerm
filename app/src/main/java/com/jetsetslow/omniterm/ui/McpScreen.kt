@@ -34,14 +34,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jetsetslow.omniterm.R
-import com.jetsetslow.omniterm.data.McpCallEntity
-import com.jetsetslow.omniterm.data.McpCallOutcome
 import com.jetsetslow.omniterm.data.mcp.McpHttpServer
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
-import java.text.DateFormat
-import java.util.Date
 
 /**
  * Tools → AI assistants: the opt-in MCP server. Off until the user turns it on, which needs a
@@ -126,6 +122,12 @@ fun McpToolView(viewModel: AppViewModel) {
                 }
             }
 
+            OmniCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(4.dp)) {
+                    RunNotifyPicker(config.notify, viewModel::saveMcpNotify, tag = "mcp.notify")
+                }
+            }
+
             SettingsCardHeader(stringResource(R.string.mcp_reach_header), stringResource(R.string.mcp_reach_help), OmniColors.cyan)
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
@@ -163,11 +165,22 @@ fun McpToolView(viewModel: AppViewModel) {
                 }
             }
 
-            SettingsCardHeader(stringResource(R.string.mcp_calls_header), "", OmniColors.cyan)
+            SettingsCardHeader(stringResource(R.string.mcp_calls_header), stringResource(R.string.mcp_calls_help), OmniColors.cyan)
             if (calls.isEmpty()) {
                 Text(stringResource(R.string.mcp_no_calls), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("mcp.calls.empty"))
             } else {
-                calls.take(50).forEach { CallRow(it) }
+                calls.take(50).forEach { call ->
+                    TokenUseRow(
+                        at = call.at,
+                        outcome = call.outcome,
+                        detail = call.detail,
+                        runKey = call.runKey,
+                        onOpenRun = viewModel::openFleetRun,
+                        tag = "mcp.call.${call.id}",
+                        title = call.tool,
+                        by = call.client,
+                    )
+                }
                 TextButton(onClick = viewModel::clearMcpCalls, modifier = Modifier.testTag("mcp.calls.clear")) { Text(stringResource(R.string.mcp_calls_clear)) }
             }
         }
@@ -246,30 +259,6 @@ private fun PortField(label: String, port: Int, tag: String, modifier: Modifier,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = modifier.testTag(tag),
     )
-}
-
-@Composable
-private fun CallRow(call: McpCallEntity) {
-    val time = remember(call.at) { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(call.at)) }
-    val outcome = when (call.outcome) {
-        McpCallOutcome.OK -> stringResource(R.string.mcp_call_ok)
-        McpCallOutcome.REFUSED -> stringResource(R.string.mcp_call_refused)
-        else -> stringResource(R.string.mcp_call_failed)
-    }
-    val color = when (call.outcome) {
-        McpCallOutcome.OK -> OmniColors.green
-        else -> OmniColors.red
-    }
-    OmniCard(modifier = Modifier.fillMaxWidth().testTag("mcp.call.${call.id}")) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row {
-                Text(call.tool.ifEmpty { "—" }, fontFamily = OmniFonts.mono, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text(outcome, fontSize = 11.sp, color = color)
-            }
-            Text(listOf(time, call.client).filter { it.isNotBlank() }.joinToString(" · "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (call.detail.isNotBlank()) Text(call.detail, fontSize = 11.sp, maxLines = 2)
-        }
-    }
 }
 
 /**

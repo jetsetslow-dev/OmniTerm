@@ -11,12 +11,12 @@ import com.jetsetslow.omniterm.data.AutomationGrantEntity
 import com.jetsetslow.omniterm.data.FleetRunEntity
 import com.jetsetslow.omniterm.data.FleetRunHistory
 import com.jetsetslow.omniterm.data.McpCallEntity
-import com.jetsetslow.omniterm.data.McpCallOutcome
 import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.QuickScriptEntity
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.StackRegistryEntity
+import com.jetsetslow.omniterm.data.UseOutcome
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.BackupContents
@@ -69,7 +69,8 @@ class HistoryBackupRobolectricTest {
         val web = repo.insertServer(host("web")).toInt()
         val dbHost = repo.insertServer(host("db")).toInt()
         repo.recordFleetRun(
-            FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute + 5_000, command = "uptime"),
+            // A push, written with sudo: the file by name, where it went as the command.
+            FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute + 5_000, command = "~/conf/", pushedFile = "app.conf", sudo = true),
             listOf(
                 FleetRunHistory.host(web, "web", "Success", null, "up 3 days", false),
                 FleetRunHistory.host(dbHost, "db", "Success", null, "up 9 days", false),
@@ -87,8 +88,8 @@ class HistoryBackupRobolectricTest {
         repo.insertMetric(sample(dbHost, minute, cpu = 1f))
         repo.insertMetric(sample(dbHost, minute + 60_000, cpu = 2f))
         repo.insertMetric(sample(dbHost, minute + 120_000, cpu = 3f))
-        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = McpCallOutcome.OK, detail = "2 hosts"))
-        repo.recordMcpCall(McpCallEntity(at = minute + 1, client = "Claude", tool = "run_command", outcome = McpCallOutcome.REFUSED, detail = "not allowed"))
+        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = UseOutcome.OK, detail = "2 hosts"))
+        repo.recordMcpCall(McpCallEntity(at = minute + 1, client = "Claude", tool = "run_command", outcome = UseOutcome.REFUSED, detail = "not allowed"))
 
         val backup = export(model, main, BackupSelection())
         assertTrue("Fleet output is sensitive, so the backup is encrypted", JSONObject(backup).has("data"))
@@ -112,6 +113,10 @@ class HistoryBackupRobolectricTest {
 
         val runs = repo.fleetRunsForBackup().associate { (run, hosts) -> run.runKey to hosts }
         assertEquals(setOf("run-1", "run-2"), runs.keys)
+        val push = repo.fleetRunsForBackup().single { it.first.runKey == "run-1" }.first
+        assertEquals("a push comes back as a push", "app.conf" to "~/conf/", push.pushedFile to push.command)
+        assertEquals(null, repo.fleetRunsForBackup().single { it.first.runKey == "run-2" }.first.pushedFile)
+        assertEquals("a run with sudo comes back as one, and only that run", true to false, push.sudo to repo.fleetRunsForBackup().single { it.first.runKey == "run-2" }.first.sudo)
         val hosts = runs.getValue("run-1").associateBy { it.serverName }
         assertEquals(webHere, hosts.getValue("web").serverId)
         assertEquals(dbHere, hosts.getValue("db").serverId)
@@ -145,7 +150,7 @@ class HistoryBackupRobolectricTest {
         val web = repo.insertServer(host("web")).toInt()
         repo.recordFleetRun(FleetRunEntity(runKey = "run-1", startedAt = minute, finishedAt = minute, command = "uptime"), emptyList())
         repo.insertMetric(sample(web, minute, cpu = 10f))
-        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = McpCallOutcome.OK, detail = ""))
+        repo.recordMcpCall(McpCallEntity(at = minute, client = "Claude", tool = "list_hosts", outcome = UseOutcome.OK, detail = ""))
 
         val none = BackupSelection(fleetHistory = false, monitoringHistory = false, assistantLog = false)
         val withoutHistory = inspect(model, main, export(model, main, none))

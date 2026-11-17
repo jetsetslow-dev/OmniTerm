@@ -24,9 +24,17 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
+import com.jetsetslow.omniterm.automation.AlertRunbooks
+import com.jetsetslow.omniterm.automation.FleetSchedules
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.mcp.McpSettings
+import com.jetsetslow.omniterm.data.tunnel.CurrentWifi
+import com.jetsetslow.omniterm.data.tunnel.HostRoute
+import com.jetsetslow.omniterm.data.tunnel.TailscaleNetwork
+import com.jetsetslow.omniterm.data.tunnel.CloudflareAccessSettings
+import com.jetsetslow.omniterm.data.tunnel.TailscaleSettings
 import com.jetsetslow.omniterm.data.tunnel.TunnelManager
+import com.jetsetslow.omniterm.data.tunnel.TunnelNetworks
 import com.jetsetslow.omniterm.mcp.McpApprovals
 import com.jetsetslow.omniterm.mcp.McpConfig
 import com.jetsetslow.omniterm.mcp.McpServerState
@@ -41,6 +49,7 @@ import com.jetsetslow.omniterm.data.telnet.TelnetSession
 import com.jetsetslow.omniterm.data.term.ByteStreamTerminalSession
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
+import com.jetsetslow.omniterm.data.shares.removeStagedFile
 import com.jetsetslow.omniterm.data.ssh.INTERACTIVE_AUTH_CANCELLED
 import com.jetsetslow.omniterm.data.ssh.InteractiveAuth
 import com.jetsetslow.omniterm.data.ssh.InteractiveAuthRequest
@@ -157,6 +166,20 @@ internal val BROADCAST_BATCH_SIZES = listOf(0, 1, 2, 5, 10)
 internal fun <T> broadcastBatches(hosts: List<T>, batchSize: Int): List<List<T>> =
     if (batchSize <= 0 || batchSize >= hosts.size) listOf(hosts) else hosts.chunked(batchSize)
 
+/** The share of a rolling run's hosts that may fail before it stops: none, or one of these percentages. */
+internal val BROADCAST_FAILURE_PERCENTS = listOf(0, 10, 25, 50)
+
+/**
+ * Whether [failed] of a run's [total] hosts is more than [percent] allows: any failure at 0,
+ * otherwise more than that share of all the run's hosts. Ansible's max_fail_percentage counts each
+ * batch; this counts the whole run, so it still means something one host at a time.
+ */
+internal fun broadcastFailuresExceed(failed: Int, total: Int, percent: Int): Boolean =
+    if (percent <= 0) failed > 0 else failed * 100L > percent.toLong() * total
+
+/** How many of a sudo run's hosts its confirmation names before "…". */
+private const val SUDO_NAMED_HOSTS = 3
+
 /** Default hard stop for one Fleet Broadcast run. */
 private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
 /** How often a tmux broadcast host whose connection dropped is tried again, and for how long. */
@@ -208,7 +231,8 @@ internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRu
         previous.severity != next.severity ||
         previous.triggerWindow != next.triggerWindow ||
         previous.enabled != next.enabled ||
-        previous.target != next.target
+        previous.target != next.target ||
+        previous.secret != next.secret
 
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
 internal val ANDROID_TRACEROUTE_BINARIES = listOf(
@@ -380,6 +404,9 @@ enum class HostSort(val settingValue: String) {
         fun fromSetting(value: String?): HostSort = entries.firstOrNull { it.settingValue == value } ?: Name
     }
 }
+
+/** The notification of [ruleId]'s alert on [serverId]: posted, updated and cleared under this id. */
+internal fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
 /**
  * [hosts] (loaded by name) in [sort] order. Status puts online hosts first, then those being
@@ -564,6 +591,8 @@ enum class Screen {
     Automation,
     Mcp,
     VpnTunnels,
+    Proxmox,
+    Snmp,
 }
 
 /** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
@@ -577,6 +606,12 @@ sealed interface ExternalLaunchRequest {
     data object OpenTransfers : ExternalLaunchRequest
     data object OpenNetworkTools : ExternalLaunchRequest
     data object OpenFleet : ExternalLaunchRequest
+    /** A schedule that could not run, from its notification. */
+    data object OpenFleetSchedules : ExternalLaunchRequest
+    /** A runbook an alert could not run, from its notification. */
+    data object OpenAlerts : ExternalLaunchRequest
+    /** A run another app or an AI assistant started, from its notification. */
+    data class OpenFleetRun(val runKey: String) : ExternalLaunchRequest
     data object OpenInfra : ExternalLaunchRequest
     data object OpenBackup : ExternalLaunchRequest
     /** An alert's "Run" action: its rule's runbook on that host, after the usual confirmation. */
@@ -857,7 +892,8 @@ enum class BroadcastStatus(@StringRes val label: Int) {
     NotRun(R.string.broadcast_status_not_run),
 }
 
-enum class FleetTargetMode { Servers, Groups }
+/** How Broadcast picks its hosts: one by one, by group, or by tag ([FleetTargets]). */
+enum class FleetTargetMode { Servers, Groups, Tags }
 
 data class BroadcastResultItem(
     val serverId: Int,
@@ -960,9 +996,23 @@ internal fun BackupSelection.withPortForwardsSelected(enabled: Boolean): BackupS
 internal fun BackupSelection.withAlertHistorySelected(enabled: Boolean): BackupSelection =
     copy(alertHistory = enabled).withReferentialClosure()
 
-/** Preserve the global server id while requiring a concrete mapping for server-scoped records. */
-internal fun remapBackupServerId(oldServerId: Int, serverIdMap: Map<Int, Int>): Int? =
-    if (oldServerId == 0) 0 else serverIdMap[oldServerId]
+/**
+ * Preserve the global server id while requiring a concrete mapping for server-scoped records: a
+ * host's through [serverIdMap], a device's ([AlertSubjects], below 0) through [deviceSubjects].
+ */
+internal fun remapBackupServerId(oldServerId: Int, serverIdMap: Map<Int, Int>, deviceSubjects: Map<Int, Int> = emptyMap()): Int? = when {
+    oldServerId == 0 -> 0
+    oldServerId < 0 -> deviceSubjects[oldServerId]
+    else -> serverIdMap[oldServerId]
+}
+
+/**
+ * Whether a restored alert rule comes back on. A backup check runs a command with a password on the
+ * host by itself, an image check has the host ask registries on the internet, and a device check has
+ * this phone read the device every minute, so each comes back switched off until turned on here.
+ */
+internal fun restoredRuleEnabled(enabled: Boolean, metric: String, serverId: Int): Boolean =
+    enabled && metric != HostChecks.BACKUP_AGE && metric != HostChecks.IMAGE_UPDATES && !AlertSubjects.isDevice(serverId)
 
 /** Rule ids that must be serialized for the selected alert rows to remain resolvable on restore. */
 internal fun backupRuleIdsForSelection(
@@ -992,6 +1042,8 @@ data class BackupContents(
     val vpnTunnels: Int = 0,
     val telnetHosts: Int = 0,
     val kubeClusters: Int = 0,
+    val snmpDevices: Int = 0,
+    val proxmoxServers: Int = 0,
     val tmuxSessions: Int = 0,
     val composeStacks: Int = 0,
     val fleetRuns: Int = 0,
@@ -1000,6 +1052,7 @@ data class BackupContents(
     val automationGrants: Int = 0,
     // 1 when the backup has the AI assistant's settings.
     val assistantSettings: Int = 0,
+    val fleetSchedules: Int = 0,
 )
 
 data class BackupHostOption(
@@ -1278,6 +1331,8 @@ internal val builtInFleetPresetCommands: Map<String, String> get() =
 class AppViewModel @JvmOverloads constructor(
     application: Application,
     private val sshTransport: SshTransport = JschSshTransport(),
+    // Fleet's file client for a host: SFTP, unless a test brings its own.
+    private val fleetFiles: (suspend (ServerEntity) -> RemoteFsClient)? = null,
 ) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val repository = AppRepository(db)
@@ -1319,7 +1374,16 @@ class AppViewModel @JvmOverloads constructor(
     private var pinLockedUntilMs by mutableStateOf(0L)
     var isAppLockEnabled by mutableStateOf(false)
     var useBiometrics by mutableStateOf(false); private set
-    var isAppLocked by mutableStateOf(false)
+    private var appLockEngaged by mutableStateOf(false)
+    var isAppLocked: Boolean
+        get() = appLockEngaged
+        set(value) {
+            if (value) {
+                TerminalSessionManager.terminalTyping.stop()
+                pendingTerminalPaste = null
+            }
+            appLockEngaged = value
+        }
     var currentPinInput by mutableStateOf("")
     var lockScreenError by mutableStateOf<String?>(null)
     var securitySettingsLoaded by mutableStateOf(false)
@@ -1661,10 +1725,101 @@ class AppViewModel @JvmOverloads constructor(
     var isLogsLive by mutableStateOf(true)
 
     // FLEET SCREEN MODE
-    var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast
+    var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast, 2: Schedules
     val broadcastTargetServerIds = mutableStateListOf<Int>()
     val broadcastTargetGroups = mutableStateListOf<String>()
+    val broadcastTargetTags = mutableStateListOf<String>()
+    /** In tag mode: hosts with every picked tag, rather than any of them. */
+    var broadcastTagsMatchAll by mutableStateOf(false)
     var broadcastTargetMode by mutableStateOf(FleetTargetMode.Servers)
+
+    /** Broadcast's picks as one value, for matching hosts and for saving as a set. */
+    internal val broadcastTargets: FleetTargets
+        get() = FleetTargets(
+            broadcastTargetMode,
+            broadcastTargetServerIds.toSet(),
+            broadcastTargetGroups.toSet(),
+            broadcastTargetTags.toList(),
+            broadcastTagsMatchAll,
+        )
+
+    /** Fleet's saved target sets, by name. */
+    val fleetTargetSets = repository.fleetTargetSetsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Saves Broadcast's current picks as [name], replacing a set of that name. */
+    fun saveFleetTargetSet(name: String) {
+        val targets = broadcastTargets
+        if (name.isBlank() || targets.isEmpty) return
+        viewModelScope.launch { repository.saveFleetTargetSet(targets.toSet(name)) }
+    }
+
+    /** Picks [set]'s targets in Broadcast, in place of the current ones. */
+    fun loadFleetTargetSet(set: FleetTargetSetEntity) {
+        val targets = FleetTargets.of(set)
+        broadcastTargetMode = targets.mode
+        broadcastTargetServerIds.clear()
+        broadcastTargetServerIds.addAll(targets.serverIds)
+        broadcastTargetGroups.clear()
+        broadcastTargetGroups.addAll(targets.groups)
+        broadcastTargetTags.clear()
+        broadcastTargetTags.addAll(targets.tags)
+        broadcastTagsMatchAll = targets.allTags
+    }
+
+    fun deleteFleetTargetSet(id: Int) {
+        viewModelScope.launch { repository.deleteFleetTargetSet(id) }
+    }
+
+    /** Fleet's schedules, by name. */
+    val fleetSchedules = repository.fleetSchedulesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * Saves [schedule], new or edited, on [targets], and sets its next run. An edit keeps how the
+     * last run went; nothing is saved without a name or a target.
+     */
+    internal fun saveFleetSchedule(schedule: FleetScheduleEntity, targets: FleetTargets) {
+        val name = schedule.name.trim().take(FleetTargets.MAX_NAME)
+        if (name.isEmpty() || targets.isEmpty) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val previous = schedule.id.takeIf { it > 0 }?.let { repository.fleetSchedule(it) }
+            val picks = targets.toSet(name)
+            val id = repository.saveFleetSchedule(
+                schedule.copy(
+                    name = name,
+                    mode = picks.mode, serverIds = picks.serverIds, groups = picks.groups, tags = picks.tags, allTags = picks.allTags,
+                    notify = RunNotify.of(schedule.notify),
+                    createdAt = previous?.createdAt ?: now,
+                    nextRunAt = previous?.nextRunAt,
+                    lastRunAt = previous?.lastRunAt,
+                    lastOutcome = previous?.lastOutcome,
+                    lastDetail = previous?.lastDetail.orEmpty(),
+                    lastRunKey = previous?.lastRunKey,
+                ),
+            )
+            FleetSchedules.apply(getApplication(), repository, id, now)
+        }
+    }
+
+    fun setFleetScheduleEnabled(id: Int, enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setFleetScheduleEnabled(id, enabled)
+            FleetSchedules.apply(getApplication(), repository, id)
+        }
+    }
+
+    /** Deletes schedule [id]; a run of it in progress stops. */
+    fun deleteFleetSchedule(id: Int) {
+        viewModelScope.launch {
+            repository.deleteFleetSchedule(id)
+            // With the schedule gone, its jobs go, in turn with the app start's reconcile.
+            FleetSchedules.apply(getApplication(), repository, id)
+        }
+    }
+
+    /** Runs schedule [id] once now, in the background; its run shows in Fleet's history. False when Android refused. */
+    fun runFleetScheduleNow(id: Int): Boolean = FleetSchedules.runNow(getApplication(), id)
+
     var broadcastCommandText by mutableStateOf("")
     /**
      * The saved script Broadcast's command came from, so a run skips hosts its target OS or system
@@ -2735,13 +2890,26 @@ class AppViewModel @JvmOverloads constructor(
         set(value) { focusedTerminalSession?.shiftArmed = value }
     var isFunctionSetVisible by mutableStateOf(false)
     /** Display-only terminal mode: blocks text/paste keys while retaining scroll navigation. */
-    var terminalReadOnly by mutableStateOf(false)
-        private set
+    val terminalReadOnly: Boolean get() = focusedTerminalSession?.inputLocked == true
+    internal val terminalTyping get() = TerminalSessionManager.terminalTyping
+    internal var showTerminalTypingPicker by mutableStateOf(false)
+    internal var pendingTerminalPaste by mutableStateOf<PendingTerminalPaste?>(null)
+
+    internal fun selectTerminalTyping(ids: Set<String>) {
+        if (isAppLocked) return
+        pendingSwipeFlush?.invoke()
+        terminalTyping.select(ids, activeSessions.toList())
+    }
+
+    internal fun stopTerminalTyping() {
+        terminalTyping.stop()
+        pendingTerminalPaste = null
+    }
 
     fun updateTerminalReadOnly(enabled: Boolean) {
-        terminalReadOnly = enabled
+        focusedTerminalSession?.inputLocked = enabled
         if (enabled) {
-            activeSessions.forEach {
+            listOfNotNull(focusedTerminalSession).forEach {
                 it.ctrlArmed = false
                 it.altArmed = false
                 it.shiftArmed = false
@@ -2824,10 +2992,29 @@ class AppViewModel @JvmOverloads constructor(
         private set
     var broadcastStopOnFailure by mutableStateOf(true)
         private set
+    var broadcastFailurePercent by mutableStateOf(0)
+        private set
+    // Whether the next Fleet run, or push, goes through sudo. Never saved: it is off again when
+    // the app starts, and every run with it on asks first (withSudoAuth's rule).
+    var broadcastSudo by mutableStateOf(false)
+        private set
 
     init {
         resumeMcpServer()
         TunnelManager.attach(repository)
+        TunnelManager.follow(application)
+        // A tunnel may not be needed on some Wi-Fi (TunnelNetworks): as the phone joins or leaves
+        // one, that tunnel's hosts leave the route they were on.
+        viewModelScope.launch {
+            var before = CurrentWifi.state.value.name
+            CurrentWifi.state.map { it.name }.distinctUntilChanged().collect { now ->
+                val was = before
+                before = now
+                if (was != now) followNetwork(was, now)
+            }
+        }
+        // A new Activity/ViewModel must never revive an interactive broadcast from kept-alive shells.
+        TerminalSessionManager.terminalTyping.stop()
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
         SshHostKeyTrust.registerApprovalHandler(hostKeyApprovalOwner) { req ->
@@ -2855,6 +3042,15 @@ class AppViewModel @JvmOverloads constructor(
         // Doing this once in init (at process/viewmodel start) avoids periodic performance hits.
         viewModelScope.launch(Dispatchers.IO) {
             repository.resetAllConnectionStates()
+        }
+        // Force-stopping the app drops its jobs: each schedule that is on gets its job back.
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                FleetSchedules.reconcile(application, repository)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                android.util.Log.w("OmniTermSchedule", "Restoring the schedules' jobs failed", e)
+            }
         }
         // Load settings, security configs, generate examples
         loadSecuritySettings()
@@ -2915,6 +3111,8 @@ class AppViewModel @JvmOverloads constructor(
         com.jetsetslow.omniterm.data.ssh.SshTunnelManager.stopAll()
         // A foreground progress row with no surviving ViewModel/work behind it would be a lie.
         LongOperationNotifications.stopAll(getApplication())
+        // The phone's copies of files picked to push are only for this screen's runs.
+        runCatching { fleetPushDir().deleteRecursively() }
     }
 
     // Ensures the cold-start lock is evaluated once, not on every settings write.
@@ -3090,6 +3288,8 @@ class AppViewModel @JvmOverloads constructor(
                 broadcastBatchSize = list.find { it.key == "broadcast_batch_size" }?.value?.toIntOrNull()
                     ?.takeIf { it in BROADCAST_BATCH_SIZES } ?: 0
                 broadcastStopOnFailure = list.find { it.key == "broadcast_stop_on_failure" }?.value?.toBooleanStrictOrNull() ?: true
+                broadcastFailurePercent = list.find { it.key == "broadcast_failure_percent" }?.value?.toIntOrNull()
+                    ?.takeIf { it in BROADCAST_FAILURE_PERCENTS } ?: 0
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
                     isKeepScreenOnEnabled = keepScreenOn
@@ -3275,11 +3475,13 @@ class AppViewModel @JvmOverloads constructor(
                 // emits a non-empty list), so the timer comes alive on its own without burning a
                 // DB read on a tick. addServer() also explicitly restarts polling as a belt-and-braces.
                 if (servers.value.isEmpty()) {
-                    servers.first { it.isNotEmpty() }
+                    // Device alert rules need no host: with one, the devices are still read.
+                    combine(servers, repository.rulesFlow) { hosts, rules -> hosts.isNotEmpty() || rules.any { AlertSubjects.isDevice(it.serverId) } }
+                        .first { it }
                 }
 
                 val currentServers = repository.getAllServers()
-                if (currentServers.isEmpty()) { delay(telemetryIntervalMs); continue }
+                if (currentServers.isEmpty()) { startDeviceChecks(); delay(deviceCheckIntervalMs()); continue }
 
                 // Mark the cycle start so the UI countdown timers can sync to the real cadence.
                 withContext(Dispatchers.Main) { lastTelemetryStartMs = System.currentTimeMillis() }
@@ -3299,6 +3501,7 @@ class AppViewModel @JvmOverloads constructor(
                 }
 
                 startEndpointChecks()
+                startDeviceChecks()
 
                 val cutoff = System.currentTimeMillis() - (metricsRetentionDays * 24L * 60 * 60 * 1000)
                 repository.pruneMetrics(cutoff)
@@ -3332,7 +3535,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (srv.status == "offline") {
                     repository.updateReachability(srv.id, "connecting", 0)
                 }
-                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType, srv.tunnelId)) {
+                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType, HostRoute.tunnelNow(repository, srv.tunnelId))) {
                     tcpReachable(srv.host, srv.port)
                 } else {
                     -1
@@ -3724,7 +3927,7 @@ class AppViewModel @JvmOverloads constructor(
                 else -> null
             }
             val overThreshold = currentValue != null && currentValue > r.thresholdValue
-            applyAlertSample(r, srv, currentValue, overThreshold, activeAlerts, now, staleGapMs)
+            applyAlertSample(r, srv.alertSubject(), currentValue, overThreshold, activeAlerts, now, staleGapMs)
         }
     }
 
@@ -3734,23 +3937,23 @@ class AppViewModel @JvmOverloads constructor(
      */
     private suspend fun applyAlertSample(
         r: AlertRuleEntity,
-        srv: ServerEntity,
+        subject: AlertSubject,
         currentValue: Float?,
         overThreshold: Boolean,
         activeAlerts: List<ActiveAlertEntity>,
         now: Long,
         staleGapMs: Long,
-        notificationTarget: String = srv.host,
+        notificationTarget: String = subject.host,
         notificationText: String? = null,
     ) {
-        val breachKey = r.id to srv.id
+        val breachKey = r.id to subject.id
         val triggered = alertBreachTracker.onSample(
             breachKey, overThreshold, now,
             windowMs = triggerWindowMs(r.triggerWindow),
             staleGapMs = staleGapMs,
         )
 
-        val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
+        val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == subject.id }
         val currentAlert = existing?.let { alert ->
             if (currentValue != null && alert.currentValue != currentValue) {
                 // Refresh the reading without replacing the incident row. Re-inserting it
@@ -3771,7 +3974,7 @@ class AppViewModel @JvmOverloads constructor(
             if (!currentlyActive && !isMuted) {
                 val alert = ActiveAlertEntity(
                     ruleId = r.id,
-                    serverId = srv.id,
+                    serverId = subject.id,
                     metricName = r.metricName,
                     currentValue = currentValue ?: 0f,
                     thresholdValue = r.thresholdValue,
@@ -3779,12 +3982,14 @@ class AppViewModel @JvmOverloads constructor(
                     triggeredTime = now
                 )
                 repository.insertAlert(alert)
-                postAlertNotification(srv, r, currentValue ?: 0f, notificationTarget, notificationText)
+                postAlertNotification(subject, r, currentValue ?: 0f, notificationTarget, notificationText)
+                // Opt-in per rule: its runbook runs on this host, in the background, once.
+                if (r.runbookAuto && r.runbookScriptId != null && subject.id > 0) AlertRunbooks.start(getApplication(), r.id, subject.id, now)
                 forwardAlert(
                     AlertForwarding.Event(
-                        resolved = false, severity = r.severity, host = srv.name, rule = r.metricName,
-                        title = alertNotificationTitle(r, srv),
-                        text = alertNotificationText(srv, r, currentValue ?: 0f, notificationTarget, notificationText),
+                        resolved = false, severity = r.severity, host = subject.name, rule = r.metricName,
+                        title = alertNotificationTitle(r, subject),
+                        text = alertNotificationText(subject, r, currentValue ?: 0f, notificationTarget, notificationText),
                         value = currentValue ?: 0f, threshold = r.thresholdValue, timeMs = now,
                     ),
                 )
@@ -3793,15 +3998,15 @@ class AppViewModel @JvmOverloads constructor(
             // Recovered — but only after enough consecutive clean samples (hysteresis),
             // so one jittery dip doesn't flap an incident closed and re-open.
             if (currentAlert != null) {
-                recordAlertHistory(currentAlert, "resolved", srv.name)
+                recordAlertHistory(currentAlert, "resolved", subject.name)
                 repository.deleteAlert(currentAlert.id)
-                clearAlertNotification(r.id, srv.id)
+                clearAlertNotification(r.id, subject.id)
                 // A muted incident stays quiet everywhere, its recovery included.
                 if (currentAlert.mutedUntil <= now) {
                     forwardAlert(
                         AlertForwarding.Event(
-                            resolved = true, severity = r.severity, host = srv.name, rule = r.metricName,
-                            title = "Resolved: ${srv.name}", text = "${r.metricName} on ${srv.name} is back to normal",
+                            resolved = true, severity = r.severity, host = subject.name, rule = r.metricName,
+                            title = "Resolved: ${subject.name}", text = "${r.metricName} on ${subject.name} is back to normal",
                             value = currentValue ?: currentAlert.currentValue, threshold = r.thresholdValue, timeMs = now,
                         ),
                     )
@@ -3841,10 +4046,11 @@ class AppViewModel @JvmOverloads constructor(
                     if (System.currentTimeMillis() < (endpointChecksDueAt[key] ?: 0L)) continue
                     launch {
                         limit.withPermit {
+                            val tunnelNow = HostRoute.tunnelNow(repository, srv.tunnelId)
                             val result = EndpointChecks.run(
                                 rule, srv.host,
-                                tunnel = srv.tunnelId?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id) } },
-                                tunnelHost = srv.tunnelHost,
+                                tunnel = tunnelNow?.let { id -> { com.jetsetslow.omniterm.data.tunnel.TunnelSocketFactory.javaSocket(id, com.jetsetslow.omniterm.data.tunnel.TunnelUse.OTHER) } },
+                                tunnelHost = srv.tunnelHost.takeIf { tunnelNow != null }.orEmpty(),
                             )
                             val now = System.currentTimeMillis()
                             val breached = result.value?.let { EndpointChecks.breached(rule, it) } == true
@@ -3879,7 +4085,7 @@ class AppViewModel @JvmOverloads constructor(
             val current = repository.getAllRules().find { it.id == rule.id }
             if (current != rule) return@withLock
             applyAlertSample(
-                rule, srv, value, EndpointChecks.breached(rule, value), repository.getActiveAlerts(),
+                rule, srv.alertSubject(), value, EndpointChecks.breached(rule, value), repository.getActiveAlerts(),
                 now = System.currentTimeMillis(),
                 staleGapMs = endpointCheckIntervalMs(rule, result, breached = true) * 3,
                 notificationTarget = result.target,
@@ -3889,6 +4095,7 @@ class AppViewModel @JvmOverloads constructor(
     /** Forget a rule's check pace and results, so an edited or new rule is checked at once. */
     private fun resetEndpointChecks(ruleId: Int) {
         endpointChecksDueAt.keys.removeIf { it.first == ruleId }
+        backupChecksDueAt.keys.removeIf { it.first == ruleId }
         // Host checks share one probe per host, so any rule change makes every host due again.
         hostChecksDueAt.clear()
         viewModelScope.launch(Dispatchers.Main) {
@@ -3941,9 +4148,170 @@ class AppViewModel @JvmOverloads constructor(
             hostChecksDueAt.remove(srv.id, dueAt)
             return
         }
-        val (probed, scripted) = rules.partition { HostChecks.needsProbe(it.metricName) }
+        val (probed, own) = rules.partition { HostChecks.needsProbe(it.metricName) }
         if (probed.isNotEmpty()) runHostProbe(srv, probed, disks)
-        for (rule in scripted) runScriptCheck(srv, rule)
+        for (rule in own) {
+            when (rule.metricName) {
+                HostChecks.BACKUP_AGE -> runBackupCheck(srv, rule)
+                HostChecks.IMAGE_UPDATES -> runImageUpdateCheck(srv, rule)
+                else -> runScriptCheck(srv, rule)
+            }
+        }
+    }
+
+    /** Each host's last image-update check, for Containers → Images and the Image Updates rule. */
+    val imageUpdateReports = mutableStateMapOf<Int, ImageUpdates.Report>()
+    /** Hosts whose images are being checked now. */
+    val imageUpdatesChecking = mutableStateListOf<Int>()
+    private val imageUpdateLocks = java.util.concurrent.ConcurrentHashMap<Int, Mutex>()
+
+    /**
+     * [srv]'s image-update report, no older than [maxAgeMs]: the last one when it is that fresh,
+     * else a new check, one at a time per host. Null when the host could not be asked.
+     */
+    private suspend fun imageUpdateReport(srv: ServerEntity, maxAgeMs: Long): ImageUpdates.Report? =
+        imageUpdateLocks.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            val last = withContext(Dispatchers.Main) { imageUpdateReports[srv.id] }
+            if (last != null && System.currentTimeMillis() - last.checkedAt < maxAgeMs) return@withLock last
+            withContext(Dispatchers.Main) { imageUpdatesChecking.add(srv.id) }
+            try {
+                val app = getApplication<Application>()
+                val raw = executeSshCommand(srv, ImageUpdates.LIST)
+                if (!ranOnHost(raw)) return@withLock null
+                val listing = ImageUpdates.parseListing(raw)
+                val now = System.currentTimeMillis()
+                val report = when {
+                    listing.runtimes.isEmpty() -> ImageUpdates.Report(now, emptyList(), app.getString(R.string.image_updates_no_runtime))
+                    !listing.curl && listing.images.isNotEmpty() ->
+                        ImageUpdates.Report(now, emptyList(), app.getString(R.string.image_updates_no_curl))
+                    else -> {
+                        val refs = ImageUpdates.refsToCheck(listing)
+                        val remote = if (refs.isEmpty()) {
+                            emptyMap()
+                        } else {
+                            val answer = executeSshCommand(srv, ImageUpdates.checkCommand(refs))
+                            if (!ranOnHost(answer)) return@withLock null
+                            ImageUpdates.parseCheck(answer)
+                        }
+                        ImageUpdates.report(listing, remote, now)
+                    }
+                }
+                withContext(Dispatchers.Main) { imageUpdateReports[srv.id] = report }
+                report
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) { imageUpdatesChecking.remove(srv.id) }
+            }
+        }
+
+    /**
+     * Containers → Images: checks the selected host's images now, unless they were checked in
+     * the last 10 minutes; registries are asked no more often than that.
+     */
+    fun checkImageUpdates() {
+        val srv = selectedServer ?: return
+        if (srv.id in imageUpdatesChecking) return
+        viewModelScope.launch(Dispatchers.IO) { imageUpdateReport(srv, ImageUpdates.MANUAL_INTERVAL_MS) }
+    }
+
+    /**
+     * An [HostChecks.IMAGE_UPDATES] rule on [srv]: the number of images with an update, from a
+     * check at most 6 hours old. A host that cannot be asked, or whose images could not be
+     * compared at all, reads as unknown with the reason.
+     */
+    private suspend fun runImageUpdateCheck(srv: ServerEntity, rule: AlertRuleEntity) {
+        val key = rule.id to srv.id
+        val app = getApplication<Application>()
+        if (hostOs(srv) == "Windows") {
+            withContext(Dispatchers.Main) { hostCheckResults[key] = EndpointChecks.Result(null, app.getString(R.string.host_check_unknown), "") }
+            return
+        }
+        val report = imageUpdateReport(srv, ImageUpdates.RULE_INTERVAL_MS) ?: return
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            if (repository.getAllRules().find { it.id == rule.id } != rule) return@withLock
+            val problem = report.problem
+                ?: report.images.firstOrNull()?.reason?.takeIf { report.images.isNotEmpty() && !report.anyCompared }
+            if (problem != null) {
+                withContext(Dispatchers.Main) { hostCheckResults[key] = EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, problem), "") }
+                return@withLock
+            }
+            val value = ImageUpdates.count(report)
+            val names = ImageUpdates.names(report)
+            withContext(Dispatchers.Main) {
+                hostCheckResults[key] = EndpointChecks.Result(value, HostChecks.summary(HostChecks.IMAGE_UPDATES, value, names), "")
+            }
+            applyAlertSample(
+                rule, srv.alertSubject(), value, value > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
+                staleGapMs = hostCheckIntervalMs() * 3,
+                notificationText = HostChecks.alertText(HostChecks.IMAGE_UPDATES, value, rule.thresholdValue, names),
+            )
+        }
+    }
+
+    /** When each (rule, host) Backup Age check is next due: repositories are read every 15 minutes. */
+    private val backupChecksDueAt = java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Long>()
+
+    /**
+     * Reads a [HostChecks.BACKUP_AGE] rule's repository on [srv] when it is due. The password goes
+     * on the command's standard input, never in the command. A check that never ran (no
+     * connection) leaves any incident as it is; a busy repository reads as unknown.
+     */
+    private suspend fun runBackupCheck(srv: ServerEntity, rule: AlertRuleEntity) {
+        val key = rule.id to srv.id
+        val now = System.currentTimeMillis()
+        if (now < (backupChecksDueAt[key] ?: 0L)) return
+        backupChecksDueAt[key] = now + BackupChecks.INTERVAL_MS
+        val app = getApplication<Application>()
+        suspend fun show(result: EndpointChecks.Result) = withContext(Dispatchers.Main) { hostCheckResults[key] = result }
+        val target = BackupChecks.decode(rule.target)
+        BackupChecks.problem(target)?.let { return show(EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, it), "")) }
+        target!!
+        val outcome = if (BackupChecks.readsProxmoxTasks(target)) {
+            proxmoxBackupOutcome(srv, target)
+        } else {
+            if (hostOs(srv) == "Windows") return show(EndpointChecks.Result(null, app.getString(R.string.host_check_unknown), ""))
+            val raw = executeSshCommand(srv, BackupChecks.command(target), stdin = rule.secret.substringBefore('\n') + "\n")
+            BackupChecks.parse(target, raw, System.currentTimeMillis() / 1000)
+        }
+        if (outcome == null) {
+            // Never ran: try again at the next poll rather than in 15 minutes.
+            backupChecksDueAt.remove(key)
+            return
+        }
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            // The rule may have been edited or deleted while the repository was read.
+            if (repository.getAllRules().find { it.id == rule.id } != rule) return@withLock
+            val value = outcome.value
+            if (value == null) {
+                show(EndpointChecks.Result(null, app.getString(R.string.script_check_unknown, outcome.detail.ifBlank { "the repository is busy" }), ""))
+                return@withLock
+            }
+            show(EndpointChecks.Result(value, BackupChecks.summary(value, outcome.detail), ""))
+            applyAlertSample(
+                rule, srv.alertSubject(), value, BackupChecks.breached(value, rule.thresholdValue), repository.getActiveAlerts(), System.currentTimeMillis(),
+                staleGapMs = BackupChecks.INTERVAL_MS * 3,
+                notificationText = BackupChecks.alertText(target, value, rule.thresholdValue, outcome.detail),
+            )
+        }
+    }
+
+    /**
+     * A vzdump rule with no folder, read from the backup tasks of the Proxmox VE server saved for
+     * [srv]'s address (or its tunnel address): only read, through the server's own tunnel when it
+     * has one. Unknown (a null value, saying why) when no server is saved for it or it cannot be read.
+     */
+    private suspend fun proxmoxBackupOutcome(srv: ServerEntity, target: BackupChecks.Target): BackupChecks.Outcome {
+        val addresses = listOf(srv.host, srv.tunnelHost).filter { it.isNotBlank() }
+        val server = repository.getAllProxmoxServers().firstOrNull { s -> listOf(s.host, s.tunnelHost).any { a -> addresses.any { Proxmox.sameHost(a, it) } } }
+            ?: return BackupChecks.Outcome(null, getApplication<Application>().getString(R.string.backup_no_proxmox_server, srv.host))
+        return try {
+            BackupChecks.fromProxmox(target, proxmoxOverview(server, maxAgeMs = BackupChecks.INTERVAL_MS / 2), System.currentTimeMillis() / 1000)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            BackupChecks.Outcome(null, "${server.name}: ${e.message ?: e.javaClass.simpleName}")
+        }
     }
 
     /** Reads every [HostChecks.PROBE] check in [rules] on [srv] with one command. */
@@ -3972,7 +4340,7 @@ class AppViewModel @JvmOverloads constructor(
                 withContext(Dispatchers.Main) { hostCheckResults[key] = result }
                 if (sample == null) continue
                 applyAlertSample(
-                    rule, srv, sample.first, sample.first > rule.thresholdValue, activeAlerts, now,
+                    rule, srv.alertSubject(), sample.first, sample.first > rule.thresholdValue, activeAlerts, now,
                     staleGapMs = hostCheckIntervalMs() * 3,
                     notificationText = HostChecks.alertText(rule.metricName, sample.first, rule.thresholdValue, sample.second),
                 )
@@ -3999,7 +4367,9 @@ class AppViewModel @JvmOverloads constructor(
         }
         val raw = try {
             withTimeoutOrNull(ScriptChecks.TIMEOUT_MS) {
-                val (creds, command) = savedScriptRun(srv, ScriptParams.fill(script.command, emptyMap(), ScriptParams.shellFor(hostOs(srv))))
+                val os = hostOs(srv)
+                val filled = ScriptParams.fill(script.command, emptyMap(), ScriptParams.shellFor(os), ScriptParams.HostVars.of(srv, os))
+                val (creds, command) = savedScriptRun(srv, filled)
                 sshTransport.exec(creds, command)
             } ?: "SSH Error: command failed (${ScriptChecks.TIMED_OUT.toInt()}): " +
                 app.getString(R.string.script_check_timed_out, ScriptChecks.TIMEOUT_MS / 1000)
@@ -4020,7 +4390,7 @@ class AppViewModel @JvmOverloads constructor(
                 hostCheckResults[key] = EndpointChecks.Result(status, HostChecks.summary(HostChecks.SCRIPT_CHECK, status, names), "")
             }
             applyAlertSample(
-                rule, srv, status, status > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
+                rule, srv.alertSubject(), status, status > rule.thresholdValue, repository.getActiveAlerts(), System.currentTimeMillis(),
                 staleGapMs = hostCheckIntervalMs() * 3,
                 notificationText = HostChecks.alertText(HostChecks.SCRIPT_CHECK, status, rule.thresholdValue, names),
             )
@@ -4061,12 +4431,141 @@ class AppViewModel @JvmOverloads constructor(
                     hostCheckResults[rule.id to srv.id] = EndpointChecks.Result(value, HostChecks.describe(HostChecks.HOST_OFFLINE, value), "")
                 }
                 applyAlertSample(
-                    rule, srv, value, value > rule.thresholdValue, activeAlerts, now,
+                    rule, srv.alertSubject(), value, value > rule.thresholdValue, activeAlerts, now,
                     staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L),
                     notificationText = HostChecks.alertText(HostChecks.HOST_OFFLINE, value, rule.thresholdValue, emptyList()),
                 )
             }
         }
+    }
+
+    /** When each device's rules are next read, by subject ([AlertSubjects]). */
+    private val deviceChecksDueAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    private val deviceCheckRounds = LatestRun(viewModelScope, Dispatchers.IO)
+
+    /** At most once a minute, and never more often than hosts are polled. */
+    private fun deviceCheckIntervalMs() = telemetryIntervalMs.coerceAtLeast(DeviceChecks.MIN_INTERVAL_MS)
+
+    /**
+     * Reads every SNMP device and Proxmox VE server an alert rule watches, when it is due: one poll
+     * per device for all its rules, from this phone. Called each telemetry cycle, so it pauses with
+     * polling (battery saver). Only reads: nothing here changes a device or a guest.
+     */
+    private fun startDeviceChecks() = deviceCheckRounds.request { runDeviceChecks() }
+
+    private suspend fun runDeviceChecks() {
+        if (!alertsEnabled) return
+        // From a phone with no network every device fails to answer, which says nothing about it.
+        if (!phoneHasNetwork()) return
+        val rules = repository.getAllRules().filter { it.enabled && DeviceChecks.isDeviceCheck(it.metricName) && AlertSubjects.isDevice(it.serverId) }
+        if (rules.isEmpty()) return
+        val interval = deviceCheckIntervalMs()
+        coroutineScope {
+            for ((subject, subjectRules) in rules.groupBy { it.serverId }) {
+                val now = System.currentTimeMillis()
+                if (now < (deviceChecksDueAt[subject] ?: 0L)) continue
+                deviceChecksDueAt[subject] = now + interval
+                launch { checkDevice(subject, subjectRules, interval) }
+            }
+        }
+    }
+
+    /**
+     * One read of device [subject] for its [rules]: a poll younger than half the pace (the screen's,
+     * say) is used as it is. A device that cannot be read leaves every incident as it is.
+     */
+    private suspend fun checkDevice(subject: Int, rules: List<AlertRuleEntity>, interval: Long) {
+        val id = AlertSubjects.deviceId(subject)
+        when (AlertSubjects.kind(subject)) {
+            AlertSubjects.Kind.SNMP -> {
+                val device = repository.getAllSnmpDevices().find { it.id == id } ?: return
+                val outcome = readSnmpDevice(device, maxAgeMs = interval / 2).outcome
+                val snapshot = (outcome as? SnmpDevices.Outcome.Answered)?.snapshot
+                val failure = (outcome as? SnmpDevices.Outcome.Failed)?.reason
+                evaluateDeviceRules(AlertSubject(subject, device.name, device.host), rules, failure, interval) { rule ->
+                    snapshot?.let { DeviceChecks.snmpReading(rule.metricName, rule.target, it) }
+                }
+            }
+            AlertSubjects.Kind.PROXMOX -> {
+                val server = repository.getAllProxmoxServers().find { it.id == id } ?: return
+                val (overview, failure) = try {
+                    proxmoxOverview(server, maxAgeMs = interval / 2) to null
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null to (e.message ?: e.javaClass.simpleName)
+                }
+                evaluateDeviceRules(AlertSubject(subject, server.name, server.host), rules, failure, interval) { rule ->
+                    overview?.let { DeviceChecks.proxmoxReading(rule.metricName, rule.target, it) }
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * Feeds each of [rules] what [read] gives it, or shows why it was not checked ([failure], or the
+     * device does not report it), for the rule list.
+     */
+    private suspend fun evaluateDeviceRules(
+        subject: AlertSubject,
+        rules: List<AlertRuleEntity>,
+        failure: String?,
+        interval: Long,
+        read: (AlertRuleEntity) -> DeviceChecks.Reading?,
+    ) {
+        val app = getApplication<Application>()
+        alertStateMutex.withLock {
+            if (!alertsEnabled) return@withLock
+            // A rule may have been edited or deleted while the device was read.
+            val current = repository.getAllRules().associateBy { it.id }
+            val activeAlerts = repository.getActiveAlerts()
+            val now = System.currentTimeMillis()
+            for (rule in rules) {
+                if (current[rule.id] != rule) continue
+                val key = rule.id to subject.id
+                val reading = if (failure == null) read(rule) else null
+                if (reading == null) {
+                    val why = failure?.let { app.getString(R.string.script_check_unknown, it) } ?: app.getString(R.string.device_check_not_reported)
+                    withContext(Dispatchers.Main) { hostCheckResults[key] = EndpointChecks.Result(null, why, "") }
+                    continue
+                }
+                withContext(Dispatchers.Main) {
+                    hostCheckResults[key] = EndpointChecks.Result(reading.value, DeviceChecks.summary(rule.metricName, reading.value, reading.names), "")
+                }
+                applyAlertSample(
+                    rule, subject, reading.value, DeviceChecks.breached(rule.metricName, reading.value, rule.thresholdValue), activeAlerts, now,
+                    staleGapMs = interval * 3,
+                    notificationText = DeviceChecks.alertText(rule.metricName, reading.value, rule.thresholdValue, reading.names),
+                )
+            }
+        }
+    }
+
+    /** Reads device [subject]'s rules now (the incident popup's Refresh). */
+    private fun checkDeviceNow(subject: Int) {
+        deviceChecksDueAt.remove(subject)
+        startDeviceChecks()
+    }
+
+    /** Refresh from an incident: probes its host again, or reads its device again. */
+    fun refreshAlertSubject(serverId: Int) {
+        when {
+            serverId > 0 -> refreshServer(serverId)
+            AlertSubjects.isDevice(serverId) -> checkDeviceNow(serverId)
+        }
+    }
+
+    /**
+     * Deletes device [subject] with [delete], and with it its alert rules, incidents (and their
+     * notifications) and history.
+     */
+    private suspend fun forgetAlertSubject(subject: Int, delete: suspend () -> Unit) = alertStateMutex.withLock {
+        val rules = repository.getAllRules().filter { it.serverId == subject }
+        repository.getActiveAlerts().filter { it.serverId == subject }.forEach { clearAlertNotification(it.ruleId, it.serverId) }
+        withContext(Dispatchers.IO) { delete() }
+        rules.forEach { alertBreachTracker.forgetRule(it.id); resetEndpointChecks(it.id) }
+        deviceChecksDueAt.remove(subject)
     }
 
     /**
@@ -4086,16 +4585,30 @@ class AppViewModel @JvmOverloads constructor(
         return nm
     }
 
-    private fun alertNotificationId(ruleId: Int, serverId: Int) = "alert_${ruleId}_$serverId".hashCode()
 
-    private fun alertNotificationTitle(rule: AlertRuleEntity, srv: ServerEntity) = "${rule.severity}: ${srv.name}"
+    /** Who an alert is about, by name and address: a host, or a device read from this phone ([AlertSubjects]). */
+    data class AlertSubject(val id: Int, val name: String, val host: String)
+
+    private fun ServerEntity.alertSubject() = AlertSubject(id, name, host)
+
+    /** Who incident or rule [serverId] is about now, or null when it is gone (or is "All hosts"). */
+    private suspend fun alertSubject(serverId: Int): AlertSubject? = when (AlertSubjects.kind(serverId)) {
+        AlertSubjects.Kind.HOST -> repository.getServerById(serverId)?.alertSubject()
+        AlertSubjects.Kind.SNMP -> repository.getAllSnmpDevices().find { it.id == AlertSubjects.deviceId(serverId) }
+            ?.let { AlertSubject(serverId, it.name, it.host) }
+        AlertSubjects.Kind.PROXMOX -> repository.getAllProxmoxServers().find { it.id == AlertSubjects.deviceId(serverId) }
+            ?.let { AlertSubject(serverId, it.name, it.host) }
+        AlertSubjects.Kind.ALL_HOSTS -> null
+    }
+
+    private fun alertNotificationTitle(rule: AlertRuleEntity, subject: AlertSubject) = "${rule.severity}: ${subject.name}"
 
     /** An alert's notification line; forwarded alerts carry the same words. */
     private fun alertNotificationText(
-        srv: ServerEntity,
+        subject: AlertSubject,
         rule: AlertRuleEntity,
         value: Float,
-        target: String = srv.host,
+        target: String = subject.host,
         detail: String? = null,
     ): String {
         val mountSuffix = if (rule.metricName == "Disk Usage" && rule.mountPoint.isNotBlank()) " on ${rule.mountPoint}" else ""
@@ -4117,6 +4630,7 @@ class AppViewModel @JvmOverloads constructor(
             EndpointChecks.isEndpointMetric(rule.metricName) -> EndpointChecks.alertText(rule, target, value)
             // Re-posted later (after a mute ends) without the names the probe found.
             HostChecks.isHostCheck(rule.metricName) -> HostChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
+            DeviceChecks.isDeviceCheck(rule.metricName) -> DeviceChecks.alertText(rule.metricName, value, rule.thresholdValue, emptyList())
             else -> "${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)"
         }
     }
@@ -4175,10 +4689,10 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Surfaces a fired alert as a system notification so it's seen without the app open. */
     private suspend fun postAlertNotification(
-        srv: ServerEntity,
+        subject: AlertSubject,
         rule: AlertRuleEntity,
         value: Float,
-        target: String = srv.host,
+        target: String = subject.host,
         detail: String? = null,
     ) {
         val app = getApplication<Application>()
@@ -4186,15 +4700,15 @@ class AppViewModel @JvmOverloads constructor(
         val nm = notificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH) ?: return
         val openAppIntent = Intent(app, MainActivity::class.java)
         openAppIntent.setClass(app, MainActivity::class.java)
-        openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
+        openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${subject.id}")
         openAppIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         val contentIntent = PendingIntent.getActivity(
-            app, alertNotificationId(rule.id, srv.id), openAppIntent,
+            app, alertNotificationId(rule.id, subject.id), openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val builder = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
-            .setContentTitle(alertNotificationTitle(rule, srv))
-            .setContentText(alertNotificationText(srv, rule, value, target, detail))
+            .setContentTitle(alertNotificationTitle(rule, subject))
+            .setContentText(alertNotificationText(subject, rule, value, target, detail))
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)
@@ -4203,19 +4717,19 @@ class AppViewModel @JvmOverloads constructor(
         // The runbook opens Fleet with it ready to run on this host; the user still confirms there.
         if (runbook != null) {
             val runIntent = Intent(app, MainActivity::class.java)
-                .setData(Uri.parse(NotificationLinks.runbook(rule.id, srv.id)))
+                .setData(Uri.parse(NotificationLinks.runbook(rule.id, subject.id)))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             builder.addAction(
                 0,
                 app.getString(R.string.alert_runbook_run, runbook.name),
                 // Same request code as the tap: a different URI makes it a different PendingIntent.
                 PendingIntent.getActivity(
-                    app, alertNotificationId(rule.id, srv.id), runIntent,
+                    app, alertNotificationId(rule.id, subject.id), runIntent,
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 ),
             )
         }
-        nm.notify(alertNotificationId(rule.id, srv.id), builder.build())
+        nm.notify(alertNotificationId(rule.id, subject.id), builder.build())
     }
 
     /**
@@ -4785,6 +5299,12 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 ExternalLaunchRequest.OpenNetworkTools -> navigateTo(Screen.Network)
                 ExternalLaunchRequest.OpenFleet -> navigateTo(Screen.Fleet)
+                ExternalLaunchRequest.OpenFleetSchedules -> {
+                    fleetTabIndex = 2
+                    navigateTo(Screen.Fleet)
+                }
+                ExternalLaunchRequest.OpenAlerts -> openAlertsPopup()
+                is ExternalLaunchRequest.OpenFleetRun -> openFleetRun(request.runKey)
                 ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
                 ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
                 is ExternalLaunchRequest.OpenRunbook -> openRunbook(request.ruleId, request.serverId)
@@ -4986,7 +5506,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     // CRUDS FOR SERVERS
-    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, tunnelId: Int? = null, tunnelHost: String = "", onResult: (String?) -> Unit) {
+    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, agentForwarding: Boolean = false, tunnelId: Int? = null, tunnelHost: String = "", tags: String = "", onResult: (String?) -> Unit) {
         viewModelScope.launch {
             // Username/password live on the credential profile when authType == "profile", so the
             // form leaves the username field greyed out and empty; only require it for the other
@@ -5057,6 +5577,7 @@ class AppViewModel @JvmOverloads constructor(
                 authError = null,
                 tunnelId = tunnelId,
                 tunnelHost = tunnelHost.trim(),
+                tags = HostTags.format(HostTags.parse(tags)),
             )
             val newId = try {
                 repository.saveUniqueServer(server)
@@ -5206,16 +5727,10 @@ class AppViewModel @JvmOverloads constructor(
                 // Nothing may keep using the previous route: a host whose tunnel was just selected
                 // must never stay connected directly, and one whose tunnel was taken away must not
                 // keep using it. Its forwards stop; its terminals reconnect over the new route.
-                val forwards = repository.getAllPortForwards().filter { it.serverId == server.id && isTunnelActive(it.id) }
-                forwards.forEach { stopTunnel(it.id) }
-                val shells = activeSessions.filter { it.serverId == server.id && !it.userClosed }
-                shells.forEach { shell ->
-                    runCatching { shell.session.close() }
-                    reconnectSession(shell)
-                }
-                if (forwards.isNotEmpty() || shells.isNotEmpty()) {
-                    hostEditNotice = "The host's VPN tunnel changed: ${shells.size} terminal(s) reconnect through the new " +
-                        "route, and ${forwards.size} SSH tunnel(s) stopped. Start them again to use it."
+                val (shells, forwards) = leaveOldRoute(server.id)
+                if (forwards > 0 || shells > 0) {
+                    hostEditNotice = "The host's VPN tunnel changed: $shells terminal(s) reconnect through the new " +
+                        "route, and $forwards SSH tunnel(s) stopped. Start them again to use it."
                 }
             } else if (creds != previousCreds) {
                 val running = repository.getAllPortForwards().count { it.serverId == server.id && isTunnelActive(it.id) }
@@ -5748,9 +6263,13 @@ class AppViewModel @JvmOverloads constructor(
         notes: String = "",
         target: String = "",
         runbookScriptId: Int? = null,
+        runbookAuto: Boolean = false,
+        runbookNotify: String = RunNotify.FAILURES,
+        secret: String = "",
     ) {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
+                secret = secret,
                 serverId = serverId,
                 metricName = metricName,
                 mountPoint = mountPoint,
@@ -5760,11 +6279,15 @@ class AppViewModel @JvmOverloads constructor(
                 notes = notes,
                 target = target,
                 runbookScriptId = runbookScriptId,
+                runbookAuto = runbookAuto && runbookScriptId != null,
+                runbookNotify = RunNotify.of(runbookNotify),
             )
             repository.insertRule(rule)
             if (EndpointChecks.isEndpointMetric(metricName)) {
                 // Check it now rather than at the next poll, so the rule list shows a result.
                 startEndpointChecks()
+            } else if (DeviceChecks.isDeviceCheck(metricName)) {
+                checkDeviceNow(serverId)
             } else if (HostChecks.isHostCheck(metricName)) {
                 hostChecksDueAt.clear()
                 evaluateCachedAlertTargets(serverId)
@@ -6020,6 +6543,217 @@ class AppViewModel @JvmOverloads constructor(
     fun deleteWolTarget(target: WolTargetEntity) {
         viewModelScope.launch {
             repository.deleteWolTarget(target)
+        }
+    }
+
+    // ── SNMP devices (Tools → SNMP devices) ──
+
+    val snmpDevices = repository.snmpDevicesFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * What a device last answered, with each interface's bytes per second, and its new errors and
+     * discards, since the poll before.
+     */
+    data class SnmpReading(
+        val outcome: SnmpDevices.Outcome,
+        val rates: Map<Int, Pair<Long, Long>> = emptyMap(),
+        val problems: Map<Int, SnmpDevices.NewProblems> = emptyMap(),
+        val at: Long = System.currentTimeMillis(),
+    )
+
+    /** Each device's last poll, by id, kept in memory only. */
+    val snmpReadings = mutableStateMapOf<Int, SnmpReading>()
+    /** Devices being polled now. */
+    val snmpPolling = mutableStateListOf<Int>()
+
+    /** Saves [device] (new when its id is 0); [onResult] gets null, or why it was not saved. */
+    fun saveSnmpDevice(device: SnmpDeviceEntity, onResult: (String?) -> Unit) {
+        val problem = if (device.name.isBlank()) "Enter a name" else SnmpDevices.problem(device.access())
+        if (problem != null) { onResult(problem); return }
+        viewModelScope.launch {
+            val failed = runCatching {
+                withContext(Dispatchers.IO) { repository.insertSnmpDevice(device.copy(name = device.name.trim(), host = device.host.trim())) }
+            }.exceptionOrNull()
+            if (failed == null) snmpReadings.remove(device.id)
+            onResult(failed?.let { it.message ?: "The device could not be saved." })
+        }
+    }
+
+    /** Deletes [device], with its alert rules, incidents and their history. */
+    fun deleteSnmpDevice(device: SnmpDeviceEntity) {
+        viewModelScope.launch {
+            forgetAlertSubject(AlertSubjects.snmp(device.id)) { repository.deleteSnmpDevice(device.id) }
+            snmpReadings.remove(device.id)
+        }
+    }
+
+    /** Polls [device] now, unless it is being polled already. */
+    fun pollSnmpDevice(device: SnmpDeviceEntity) {
+        if (device.id in snmpPolling) return
+        snmpPolling.add(device.id)
+        viewModelScope.launch {
+            try {
+                readSnmpDevice(device)
+            } finally {
+                snmpPolling.remove(device.id)
+            }
+        }
+    }
+
+    private val snmpPollLocks = java.util.concurrent.ConcurrentHashMap<Int, Mutex>()
+
+    /**
+     * Polls [device], or gives its kept reading when that is younger than [maxAgeMs]; one poll of a
+     * device at a time, so the screen and the alert checks share it. The reading is kept for the
+     * screen, with rates and new errors against the one before.
+     */
+    internal suspend fun readSnmpDevice(device: SnmpDeviceEntity, maxAgeMs: Long = 0L): SnmpReading =
+        snmpPollLocks.computeIfAbsent(device.id) { Mutex() }.withLock {
+            val kept = withContext(Dispatchers.Main) { snmpReadings[device.id] }
+            if (kept != null && System.currentTimeMillis() - kept.at < maxAgeMs) return@withLock kept
+            val outcome = snmpOutcome(device)
+            val previous = (kept?.outcome as? SnmpDevices.Outcome.Answered)?.snapshot
+            val answered = outcome as? SnmpDevices.Outcome.Answered
+            val rates = answered?.let { SnmpDevices.rates(previous, it.snapshot) }.orEmpty()
+            val problems = answered?.let { SnmpDevices.newProblems(previous, it.snapshot) }.orEmpty()
+            SnmpReading(outcome, rates, problems).also { withContext(Dispatchers.Main) { snmpReadings[device.id] = it } }
+        }
+
+    /**
+     * One poll of [device] from this phone. A device with a tunnel in use is not polled at all:
+     * SNMP is UDP, tunnels carry only TCP, and it is never polled directly instead.
+     */
+    internal suspend fun snmpOutcome(device: SnmpDeviceEntity): SnmpDevices.Outcome = withContext(Dispatchers.IO) {
+        when {
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.O -> SnmpDevices.Outcome.Failed(SnmpDevices.NEEDS_ANDROID_8)
+            HostRoute.tunnelNow(repository, device.tunnelId) != null -> SnmpDevices.Outcome.Failed(SnmpDevices.NOT_THROUGH_TUNNEL)
+            // A poll still running after the limit (a device that stops answering partway) is
+            // interrupted, and its socket closed.
+            else -> withTimeoutOrNull(SnmpDevices.POLL_LIMIT_MS) { runInterruptible { SnmpDevices.poll(device.access(), Snmp4jEngine) } }
+                ?: SnmpDevices.Outcome.Failed(SnmpDevices.TOO_SLOW)
+        }
+    }
+
+    // ── Proxmox VE (Tools → Proxmox VE) ──
+
+    val proxmoxServers = repository.proxmoxServersFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * A server's last read: its overview, or why it failed, or the certificate that needs the user's
+     * trust first. Kept in memory only.
+     */
+    data class ProxmoxView(
+        val overview: Proxmox.Overview? = null,
+        val error: String? = null,
+        val untrusted: ProxmoxUntrusted? = null,
+        val loading: Boolean = false,
+    )
+
+    val proxmoxViews = mutableStateMapOf<Int, ProxmoxView>()
+
+    /** The action running now on a guest ("Stopping VM 100 (web)…"), one at a time; null when none. */
+    var proxmoxBusy by mutableStateOf<String?>(null)
+        private set
+
+    /** Saves [server] (new when its id is 0); [onResult] gets its id, or why it was not saved. */
+    fun saveProxmoxServer(server: ProxmoxServerEntity, onResult: (Result<Int>) -> Unit) {
+        val clean = server.copy(name = server.name.trim(), host = server.host.trim(), tokenId = server.tokenId.trim(), tokenSecret = server.tokenSecret.trim(), tunnelHost = server.tunnelHost.trim())
+        Proxmox.problem(clean)?.let { onResult(Result.failure(IllegalArgumentException(it))); return }
+        viewModelScope.launch {
+            val saved = runCatching { withContext(Dispatchers.IO) { repository.insertProxmoxServer(clean).toInt() } }
+            saved.onSuccess { proxmoxViews.remove(it) }
+            onResult(saved)
+        }
+    }
+
+    /** Deletes [server], with its alert rules, incidents and their history. */
+    fun deleteProxmoxServer(server: ProxmoxServerEntity) {
+        viewModelScope.launch {
+            forgetAlertSubject(AlertSubjects.proxmox(server.id)) { repository.deleteProxmoxServer(server.id) }
+            proxmoxViews.remove(server.id)
+        }
+    }
+
+    /** When each Proxmox server's overview was last read, by id. */
+    private val proxmoxReadAt = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+
+    /**
+     * [server]'s overview for the checks: the one read for the screen when it is younger than
+     * [maxAgeMs], else read again (and shown). Throws why it could not be read.
+     */
+    private suspend fun proxmoxOverview(server: ProxmoxServerEntity, maxAgeMs: Long): Proxmox.Overview {
+        val kept = withContext(Dispatchers.Main) { proxmoxViews[server.id]?.takeIf { it.error == null && it.untrusted == null }?.overview }
+        if (kept != null && System.currentTimeMillis() - (proxmoxReadAt[server.id] ?: 0L) < maxAgeMs) return kept
+        val overview = proxmoxApi(server).overview()
+        proxmoxReadAt[server.id] = System.currentTimeMillis()
+        withContext(Dispatchers.Main) {
+            if (proxmoxViews[server.id]?.loading != true) proxmoxViews[server.id] = ProxmoxView(overview = overview)
+        }
+        return overview
+    }
+
+    /** The user compared and trusted [fingerprint] for [server]: kept with it, then read again. */
+    fun trustProxmoxCertificate(server: ProxmoxServerEntity, fingerprint: String) {
+        viewModelScope.launch {
+            val trusted = server.copy(fingerprint = fingerprint)
+            withContext(Dispatchers.IO) { repository.insertProxmoxServer(trusted) }
+            refreshProxmox(trusted)
+        }
+    }
+
+    /** The client for [server] now: through its tunnel when one applies, never directly instead. */
+    internal suspend fun proxmoxApi(server: ProxmoxServerEntity): ProxmoxApi {
+        val tunnelNow = HostRoute.tunnelNow(repository, server.tunnelId)
+        if (tunnelNow != null) TunnelManager.attach(repository)
+        return ProxmoxApi(OkHttpProxmoxTransport(server, tunnelNow))
+    }
+
+    /** Reads [server]'s nodes, guests and backup tasks again. */
+    fun refreshProxmox(server: ProxmoxServerEntity) {
+        if (proxmoxViews[server.id]?.loading == true) return
+        proxmoxViews[server.id] = (proxmoxViews[server.id] ?: ProxmoxView()).copy(loading = true)
+        viewModelScope.launch {
+            proxmoxViews[server.id] = try {
+                ProxmoxView(overview = proxmoxApi(server).overview()).also { proxmoxReadAt[server.id] = System.currentTimeMillis() }
+            } catch (e: ProxmoxUntrusted) {
+                ProxmoxView(untrusted = e)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ProxmoxView(overview = proxmoxViews[server.id]?.overview, error = e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** [guest]'s snapshots, or why they could not be read. */
+    fun proxmoxSnapshots(server: ProxmoxServerEntity, guest: Proxmox.Guest, onResult: (Result<List<Proxmox.Snapshot>>) -> Unit) {
+        viewModelScope.launch {
+            onResult(runCatching { proxmoxApi(server).snapshots(guest) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it })
+        }
+    }
+
+    /**
+     * Runs one action on a guest that the user started and, for the destructive ones, confirmed on
+     * the screen naming it: a power action or a snapshot change. Nothing else in the app calls this:
+     * not schedules, alert runbooks, automation or the AI assistants. [onDone] gets null, or why it
+     * failed; the server is read again after.
+     */
+    fun proxmoxAction(server: ProxmoxServerEntity, busy: String, action: suspend ProxmoxApi.() -> String, onDone: (String?) -> Unit) {
+        if (proxmoxBusy != null) { onDone("Another action is still running"); return }
+        proxmoxBusy = busy
+        viewModelScope.launch {
+            val failed = try {
+                proxmoxApi(server).action()
+                null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                e.message ?: e.javaClass.simpleName
+            } finally {
+                proxmoxBusy = null
+            }
+            onDone(failed)
+            refreshProxmox(server)
         }
     }
 
@@ -6527,6 +7261,8 @@ class AppViewModel @JvmOverloads constructor(
                 }
             }
             val proxyKey = proxyKeyAlias?.let { a -> allKeys.find { it.alias == a } }
+            // As a connection would go right now: directly on a Wi-Fi the tunnel is not needed on.
+            val tunnelNow = HostRoute.tunnelNow(repository, tunnelId)
             val err = sshTransport.testConnection(
                 SshCredentials(
                     host, port, user, pass, key?.privateKey,
@@ -6535,9 +7271,9 @@ class AppViewModel @JvmOverloads constructor(
                     proxyKeyPem = proxyKey?.privateKey,
                     certificate = key?.certificate,
                     proxyCertificate = proxyKey?.certificate,
-                    tunnelId = tunnelId,
-                    tunnelHost = tunnelHost.trim(),
-                ).also { if (tunnelId != null) TunnelManager.attach(repository) },
+                    tunnelId = tunnelNow,
+                    tunnelHost = tunnelHost.trim().takeIf { tunnelNow != null }.orEmpty(),
+                ).also { if (tunnelNow != null) TunnelManager.attach(repository) },
                 interactiveAuthFor(displayName.ifBlank { host }),
             )
             isTestingConnection = false
@@ -8585,7 +9321,37 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun sendBytes(bytes: ByteArray) = sendBytesTo(focusedTerminalSession, bytes)
+    /** The only fan-out point: interactive keys/paste only, never protocol or unattended input. */
+    private fun sendBytes(
+        bytes: ByteArray,
+        paste: Boolean = false,
+        target: TerminalPasteTarget? = null,
+        characters: Int = 0,
+        navigationOnly: Boolean = false,
+    ) {
+        if (isAppLocked) return
+        val focused = focusedTerminalSession ?: return
+        val receivers = if (navigationOnly) listOf(focused)
+            else terminalTyping.receivers(focused, activeSessions.toList())
+        if (target != null) {
+            val captured = target.receivers.orEmpty()
+            val rejection = target.rejection(focused, terminalReadOnly)
+                ?: if (target.typingRevision != terminalTyping.revision || captured.map { it.shell } != receivers)
+                    "Typing receivers changed. Paste skipped; check the terminals and paste again." else null
+                ?: captured.firstNotNullOfOrNull { it.rejection(it.shell, it.shell.inputLocked) }
+            if (rejection != null) {
+                focused.pasteFeedback = TerminalPasteFeedback(rejection)
+                return
+            }
+        }
+        receivers.forEach { receiver ->
+            val payload = if (paste) {
+                val bracketed = synchronized(receiver.emulator) { receiver.emulator.bracketedPasteMode }
+                bracketedPastePayload(bytes.decodeToString(), bracketed).toByteArray()
+            } else bytes
+            sendBytesTo(receiver, payload, target?.receivers?.first { it.shell === receiver }, characters)
+        }
+    }
 
     /**
      * Write to a specific session's bounded input channel. Large payloads are chunked and sent with
@@ -8594,8 +9360,15 @@ class AppViewModel @JvmOverloads constructor(
      * split mode so a gesture on one pane reaches THAT pane's remote, not whichever pane currently
      * has keyboard focus.
      */
-    private fun sendBytesTo(session: ShellSession?, bytes: ByteArray) {
+    private fun sendBytesTo(
+        session: ShellSession?, bytes: ByteArray,
+        pasteTarget: TerminalPasteTarget? = null, characters: Int = 0,
+    ) {
         val s = session ?: return
+        if (pasteTarget != null) {
+            sendConfirmedPasteTo(bytes, pasteTarget, characters)
+            return
+        }
         if (s.controlMode) {
             // Control mode: keystrokes become `send-keys -H` command lines (already chunked by
             // the encoder). Input typed before the active pane is known is queued and flushed by
@@ -8692,12 +9465,20 @@ class AppViewModel @JvmOverloads constructor(
         if (terminalReadOnly) return
         val session = focusedTerminalSession ?: return
         if (text.isEmpty() || !session.isConnected) return
+        if (terminalTyping.enabled && text.any { it == '\n' || it == '\r' }) {
+            pendingTerminalPaste = PendingTerminalPaste(text, captureTerminalPasteTarget(session))
+            return
+        }
         val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
-        val bracketed = synchronized(session.emulator) { session.emulator.bracketedPasteMode }
-        sendBytes(bracketedPastePayload(normalized, bracketed).toByteArray())
+        sendBytes(normalized.toByteArray(), paste = true)
     }
 
-    internal fun captureTerminalPasteTarget(session: ShellSession): TerminalPasteTarget = TerminalPasteTarget(session)
+    internal fun captureTerminalPasteTarget(session: ShellSession): TerminalPasteTarget =
+        TerminalPasteTarget(
+            shell = session,
+            typingRevision = terminalTyping.revision,
+            receivers = terminalTyping.receivers(session, activeSessions.toList()).map { TerminalPasteTarget(it) },
+        )
 
     internal fun cancelTerminalPaste(target: TerminalPasteTarget) {
         if (target.shell.pasteFeedback?.busy != true) {
@@ -8705,19 +9486,22 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    /** Explicit/confirmed paste uses one captured target and awaits the ordered writer receipt. */
-    internal fun pasteText(text: String, target: TerminalPasteTarget) {
-        val owner = target.shell
-        if (owner.pasteFeedback?.busy == true) {
-            owner.pasteFeedback = TerminalPasteFeedback("A paste is still being sent. Wait for it to finish.", busy = true)
+    /** The confirmation owns both the receiver selection and each connection generation. */
+    internal fun pasteText(text: String, target: TerminalPasteTarget, confirmed: Boolean = false) {
+        if (!confirmed && terminalTyping.enabled && text.any { it == '\n' || it == '\r' }) {
+            pendingTerminalPaste = PendingTerminalPaste(text, target)
             return
         }
-        fun reject(message: String) { owner.pasteFeedback = TerminalPasteFeedback(message) }
-        if (text.isEmpty()) { reject("Clipboard has no text to paste."); return }
-        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        if (text.isEmpty()) return
         val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
-        val bracketed = synchronized(owner.emulator) { owner.emulator.bracketedPasteMode }
-        val bytes = bracketedPastePayload(normalized, bracketed).toByteArray()
+        sendBytes(normalized.toByteArray(), paste = true, target = target,
+            characters = text.codePointCount(0, text.length))
+    }
+
+    private fun sendConfirmedPasteTo(bytes: ByteArray, target: TerminalPasteTarget, characters: Int) {
+        val owner = target.shell
+        fun reject(message: String) { owner.pasteFeedback = TerminalPasteFeedback(message) }
+        target.rejection(owner, owner.inputLocked)?.let { reject(it); return }
         if (bytes.size > TERMINAL_INPUT_QUEUE_MAX_BYTES) {
             reject("Paste is too large for the input queue. Paste a smaller section and try again.")
             return
@@ -8741,7 +9525,7 @@ class AppViewModel @JvmOverloads constructor(
             return
         }
         // Rendering/encoding must not turn a saved decision into input for a replacement pane.
-        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        target.rejection(owner, owner.inputLocked)?.let { reject(it); return }
         val receipt = CompletableDeferred<TerminalWriteOutcome>()
         val accepted = if (target.controlMode) {
             enqueueControlCommandBatch(owner, chunks, receipt = receipt) != null
@@ -8750,13 +9534,17 @@ class AppViewModel @JvmOverloads constructor(
             reject("Paste could not be queued. Wait for the connection to catch up, then try again.")
             return
         }
-        owner.pasteFeedback = TerminalPasteFeedback("Sending text to ${owner.serverName}…", busy = true)
+        val progress = TerminalPasteFeedback("Sending text to ${owner.serverName}…", busy = true)
+        owner.pasteFeedback = progress
         // The session manager outlives Activity/ViewModel destruction. Cleanup resolves the
         // receipt; completion never re-resolves focus or writes to a new connection.
         TerminalSessionManager.scope.launch(Dispatchers.Main.immediate) {
-            owner.pasteFeedback = when (receipt.await()) {
+            val outcome = receipt.await()
+            // A later paste owns its own progress; an older receipt must not replace it.
+            if (owner.pasteFeedback !== progress) return@launch
+            owner.pasteFeedback = when (outcome) {
                 TerminalWriteOutcome.ACCEPTED -> TerminalPasteFeedback(
-                    "Sent ${text.codePointCount(0, text.length)} characters to terminal.",
+                    getApplication<Application>().resources.getQuantityString(R.plurals.terminal_paste_sent, characters, characters),
                 )
                 TerminalWriteOutcome.UNCERTAIN -> TerminalPasteFeedback(
                     "Paste was interrupted. Some text may have been sent; check the terminal before retrying.",
@@ -8794,7 +9582,7 @@ class AppViewModel @JvmOverloads constructor(
             alt = isAltPressed,
             ctrl = isCtrlPressed,
         )
-        sendBytes(seq)
+        sendBytes(seq, navigationOnly = terminalReadOnly)
         isCtrlPressed = false
         isAltPressed = false
         isShiftPressed = false
@@ -12059,7 +12847,7 @@ class AppViewModel @JvmOverloads constructor(
             discardStagedFile(client, stagedPath)
             throw e
         } catch (e: Exception) {
-            runCatching { client.delete(stagedPath, false) }
+            discardStagedFile(client, stagedPath)
             throw e
         }
     }
@@ -13535,7 +14323,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Removes an unfinished staged copy, so a failed transfer never leaves a partial file behind. */
     private suspend fun discardStagedFile(client: RemoteFsClient, stagedPath: String) {
-        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+        withContext(NonCancellable + Dispatchers.IO) { client.removeStagedFile(stagedPath) }
     }
 
     /** A picked device file's name for its remote copy; [index] keeps unnamed picks in one batch apart. */
@@ -13579,6 +14367,10 @@ class AppViewModel @JvmOverloads constructor(
         context.contentResolver.openOutputStream(uri).use { output ->
             output ?: throw java.io.IOException("Could not open destination.")
             client.downloadTo(remotePath, output, transferProgress(transferId))
+        }.also {
+            // Cancelling closes the client's stream, which some clients (JSch) then read as the end
+            // of the file: without this, a cancelled download ended as a success with a short file.
+            if (transferId in cancelledTransferIds) throw TransferCancelledException()
         }
     }
 
@@ -13666,9 +14458,20 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.insertSetting("broadcast_stop_on_failure", on.toString()) }
     }
 
+    /** Runs Fleet's next command as root on each host, or writes its next push as root. */
+    fun updateBroadcastSudo(on: Boolean) {
+        broadcastSudo = on
+    }
+
+    /** With [broadcastStopOnFailure], the share of the hosts that may fail first (one of [BROADCAST_FAILURE_PERCENTS]). */
+    fun updateBroadcastFailurePercent(percent: Int) {
+        broadcastFailurePercent = percent.takeIf { it in BROADCAST_FAILURE_PERCENTS } ?: 0
+        viewModelScope.launch { repository.insertSetting("broadcast_failure_percent", broadcastFailurePercent.toString()) }
+    }
+
     /** Hosts on the cards that did not succeed: failed, or not run after a failure or a stop. */
     val broadcastRetryableIds: List<Int>
-        get() = broadcastResults.filter { it.status == BroadcastStatus.Failure || it.status == BroadcastStatus.NotRun }.map { it.serverId }
+        get() = broadcastResults.filter { it.didNotSucceed }.map { it.serverId }
 
     /**
      * Runs the last command again, with the same values, on [ids] (the hosts that did not succeed,
@@ -13676,24 +14479,41 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun retryFailedBroadcastHosts(ids: List<Int> = broadcastRetryableIds) {
         if (ids.isEmpty() || isBroadcastExecuting || lastBroadcastCommand.isBlank()) return
-        runFleetBroadcast(lastBroadcastCommand, ids, lastBroadcastParams, keepOtherResults = true, source = FleetRunHistory.SOURCE_RETRY)
+        runFleetBroadcast(
+            lastBroadcastCommand, ids, lastBroadcastParams,
+            keepOtherResults = true, source = FleetRunHistory.SOURCE_RETRY, push = lastBroadcastPush,
+            sudo = lastBroadcastSudo,
+        )
     }
 
     /** The last run as plain text, one section per host, for Share. */
-    fun broadcastReport(): String =
-        fleetReport(ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams), broadcastResults, BROADCAST_OUTPUT_MAX_CHARS)
+    fun broadcastReport(): String = fleetReport(
+        lastBroadcastPush?.let { fleetPushHeading(it.fileName, it.destination) }
+            ?: fleetPrompt(lastBroadcastSudo) + ScriptParams.preview(lastBroadcastCommand, lastBroadcastParams),
+        broadcastResults,
+        BROADCAST_OUTPUT_MAX_CHARS,
+    )
 
     /** A run from the history as plain text, as [broadcastReport] words the last run. */
     fun fleetRunReport(run: FleetRunEntity, hosts: List<BroadcastResultItem>): String =
-        fleetReport(run.command, hosts, FleetRunHistory.OUTPUT_CHARS)
+        fleetReport(run.pushedFile?.let { fleetPushHeading(it, run.command) } ?: (fleetPrompt(run.sudo) + run.command), hosts, FleetRunHistory.OUTPUT_CHARS)
 
-    private fun fleetReport(command: String, hosts: List<BroadcastResultItem>, keptChars: Int): String {
+    /** What a Fleet command is shown after: a shell's `$`, or root's `#` for one run with sudo. */
+    fun fleetPrompt(sudo: Boolean): String = if (sudo) "# " else "$ "
+
+    /** What a push run did, in a line: "Push app.conf to /etc/app/". */
+    fun fleetPushHeading(fileName: String, destination: String): String =
+        getApplication<Application>().getString(R.string.fleet_push_heading, fileName, destination)
+
+    /** One section per result: hosts that ended the same way share theirs, as on the cards. */
+    private fun fleetReport(heading: String, hosts: List<BroadcastResultItem>, keptChars: Int): String {
         val app = getApplication<Application>()
         return buildString {
-            appendLine("$ $command")
-            hosts.forEach { item ->
+            appendLine(heading)
+            FleetOutputGroups.group(hosts).forEach { same ->
+                val item = same.first()
                 appendLine()
-                appendLine("== ${item.serverName} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
+                appendLine("== ${same.joinToString(", ") { it.serverName }} · ${app.getString(item.status.label)}" + (item.note?.let { " · $it" } ?: ""))
                 if (item.truncated) appendLine(app.getString(R.string.broadcast_output_truncated, keptChars))
                 if (item.output.isNotBlank()) appendLine(item.output.trimEnd())
             }
@@ -13706,20 +14526,49 @@ class AppViewModel @JvmOverloads constructor(
         broadcastResults.clear()
         broadcastCardRun.clear()
         historyRuns.clear()
+        // Without the cards there is nothing to retry, so the pushed file's copy can go.
+        lastBroadcastPush?.let { push -> lastBroadcastPush = null; discardFleetPushFile(push) }
     }
 
     /** One run's hosts from the history, as cards. */
-    suspend fun fleetRunResults(runId: Int): List<BroadcastResultItem> =
-        repository.fleetRunHosts(runId).map { host ->
-            BroadcastResultItem(
-                serverId = host.serverId,
-                serverName = host.serverName,
-                output = host.output,
-                status = BroadcastStatus.entries.firstOrNull { it.name == host.status } ?: BroadcastStatus.Failure,
-                truncated = host.truncated,
-                note = host.note,
-            )
-        }
+    suspend fun fleetRunResults(runId: Int): List<BroadcastResultItem> = repository.fleetRunHosts(runId).map(::fleetRunResult)
+
+    /** [fleetRunResults], following the run as its hosts finish: a run another app started is saved as it runs. */
+    fun fleetRunResultsFlow(runId: Int): Flow<List<BroadcastResultItem>> =
+        repository.fleetRunHostsFlow(runId).map { hosts -> hosts.map(::fleetRunResult) }
+
+    private fun fleetRunResult(host: FleetRunHostEntity) = BroadcastResultItem(
+        serverId = host.serverId,
+        serverName = host.serverName,
+        output = host.output,
+        status = BroadcastStatus.entries.firstOrNull { it.name == host.status } ?: BroadcastStatus.Failure,
+        truncated = host.truncated,
+        note = host.note,
+    )
+
+    /**
+     * Ends the hosts of runs other apps or AI assistants started that Android cut off with the
+     * process running them, so the history stops showing them as running.
+     */
+    fun endStaleLiveRuns() {
+        val note = getApplication<Application>().getString(R.string.external_run_cut_off)
+        viewModelScope.launch { repository.endStaleLiveRuns(System.currentTimeMillis(), note) }
+    }
+
+    /** The run Fleet's history should open, by its key: from a run's notification or a token's use. */
+    var openFleetRunKey by mutableStateOf<String?>(null)
+        private set
+
+    fun openFleetRun(runKey: String) {
+        openFleetRunKey = runKey
+        // The history is on Fleet's Broadcast tab.
+        fleetTabIndex = 1
+        navigateTo(Screen.Fleet)
+    }
+
+    fun consumeOpenFleetRun() {
+        openFleetRunKey = null
+    }
 
     fun deleteFleetRun(runId: Int) {
         viewModelScope.launch { repository.deleteFleetRun(runId) }
@@ -13735,12 +14584,14 @@ class AppViewModel @JvmOverloads constructor(
      * asks first, and for the `{{placeholder}}` values again, which the history does not keep.
      */
     fun loadFleetRunIntoBroadcast(run: FleetRunEntity, serverIds: List<Int>) {
-        if (isBroadcastExecuting) return
+        // A push's file is not kept, so it cannot be used again.
+        if (isBroadcastExecuting || run.pushedFile != null) return
         viewModelScope.launch {
             val known = repository.getAllServers().map { it.id }.toSet()
             val script = run.scriptName?.let { name -> repository.getAllScripts().firstOrNull { it.name == name && it.command.trim() == run.command } }
             broadcastCommandText = run.command
             broadcastPreset = script
+            broadcastSudo = run.sudo
             broadcastTargetMode = FleetTargetMode.Servers
             broadcastTargetServerIds.clear()
             broadcastTargetServerIds.addAll(serverIds.filter { it in known })
@@ -13755,6 +14606,12 @@ class AppViewModel @JvmOverloads constructor(
         private set
     private var lastBroadcastRunId = ""
     private var lastBroadcastScriptName: String? = null
+    /** The file the last run pushed, or null when it ran a command; a retry pushes it again. */
+    internal var lastBroadcastPush: FleetPush? = null
+        private set
+    /** Whether the last run used sudo; a retry does too, and asks again. */
+    var lastBroadcastSudo = false
+        private set
 
     /** A run on the cards, for the history: saved when it ends, and again when a host in it finishes later. */
     private class PendingFleetRun(
@@ -13763,8 +14620,85 @@ class AppViewModel @JvmOverloads constructor(
         val command: String,
         val scriptName: String?,
         val source: String,
+        val pushedFile: String? = null,
+        val sudo: Boolean = false,
         var dirty: Boolean = true,
     )
+
+    // ── Fleet file push ──
+    /** The file picked to push, as the phone's copy of it; [fleetPushDestination] says where it goes. */
+    internal var fleetPushPick by mutableStateOf<FleetPush?>(null)
+        private set
+    var fleetPushReading by mutableStateOf(false)
+        private set
+    var fleetPushError by mutableStateOf<String?>(null)
+        private set
+    /** Where a push puts the file on each host, as typed (see [FleetPush.remotePath]). */
+    var fleetPushDestination by mutableStateOf("~/")
+
+    private fun fleetPushDir() = java.io.File(getApplication<Application>().cacheDir, "fleet-push")
+
+    /**
+     * Copies the file at [uri] onto the phone, so every host, and a retry later, reads the same
+     * bytes. A file over [FleetPush.MAX_BYTES] is refused.
+     */
+    fun pickFleetPushFile(uri: android.net.Uri) {
+        val app = getApplication<Application>()
+        fleetPushError = null
+        fleetPushReading = true
+        viewModelScope.launch {
+            val previous = fleetPushPick
+            try {
+                val name = deviceUploadName(app, uri) ?: UploadName.from(uri.lastPathSegment) ?: "upload_${System.currentTimeMillis()}"
+                val (file, size) = withContext(Dispatchers.IO) {
+                    val dir = fleetPushDir().apply { mkdirs() }
+                    // Copies an earlier process left; the last run's file stays for a retry.
+                    dir.listFiles()?.filter { it != lastBroadcastPush?.local && it != previous?.local }?.forEach { it.delete() }
+                    val file = java.io.File(dir, UUID.randomUUID().toString())
+                    try {
+                        val copied = app.contentResolver.openInputStream(uri)?.use { input ->
+                            file.outputStream().use { output -> FleetPush.copyAtMost(input, output, FleetPush.MAX_BYTES) }
+                        } ?: throw java.io.IOException(app.getString(R.string.fleet_push_unreadable))
+                        if (copied < 0) throw java.io.IOException(app.getString(R.string.fleet_push_too_large, FleetPush.MAX_BYTES / (1024 * 1024)))
+                        file to copied
+                    } catch (e: Exception) {
+                        file.delete()
+                        throw e
+                    }
+                }
+                fleetPushPick = FleetPush(name, size, file, destination = "")
+                discardFleetPushFile(previous)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                fleetPushError = e.message ?: app.getString(R.string.fleet_push_unreadable)
+            } finally {
+                fleetPushReading = false
+            }
+        }
+    }
+
+    /** Forgets the picked file, as when the push dialog is closed. */
+    fun clearFleetPushPick() {
+        val pick = fleetPushPick ?: return
+        fleetPushPick = null
+        fleetPushError = null
+        discardFleetPushFile(pick)
+    }
+
+    /** Deletes [push]'s copy unless the picked file or the last run (for a retry) still needs it. */
+    private fun discardFleetPushFile(push: FleetPush?) {
+        val file = push?.local ?: return
+        if (file == fleetPushPick?.local || file == lastBroadcastPush?.local) return
+        viewModelScope.launch(Dispatchers.IO) { runCatching { file.delete() } }
+    }
+
+    /** Pushes the picked file to [serverIds] (as the confirmation listed them), as a Fleet run. */
+    fun runFleetPush(serverIds: List<Int>) {
+        val pick = fleetPushPick ?: return
+        if (!FleetPush.validDestination(fleetPushDestination)) return
+        val push = pick.copy(destination = fleetPushDestination.trim().ifEmpty { "~/" })
+        runFleetBroadcast(push.destination, serverIds, push = push, sudo = broadcastSudo)
+    }
     /** The runs whose cards are on screen, by run id. */
     private val historyRuns = linkedMapOf<String, PendingFleetRun>()
     /** The run each card belongs to: a retry takes over the cards it runs again. */
@@ -13801,6 +14735,8 @@ class AppViewModel @JvmOverloads constructor(
                 command = run.command,
                 scriptName = run.scriptName,
                 source = run.source,
+                pushedFile = run.pushedFile,
+                sudo = run.sudo,
             ) to hosts
         }
         // A run a retry took every card from is saved already and is done with.
@@ -13832,23 +14768,59 @@ class AppViewModel @JvmOverloads constructor(
         keepOtherResults: Boolean = false,
         // FleetRunHistory.SOURCE_*, for the run history.
         source: String = FleetRunHistory.SOURCE_FLEET,
+        // A file to push instead of a command; [command] is then where it goes.
+        push: FleetPush? = null,
+        // As root on each host, with that host's saved sudo password. Asks first, every time.
+        sudo: Boolean = false,
+    ) {
+        if (command.isBlank()) return
+        if (isBroadcastExecuting) return
+        if (!sudo) {
+            startFleetBroadcast(command, resolvedIds, paramValues, keepOtherResults, source, push, sudo = false)
+            return
+        }
+        // One answer covers this run's hosts; the next run with sudo asks again.
+        val app = getApplication<Application>()
+        val hosts = resolvedIds?.let { ids -> servers.value.filter { it.id in ids } } ?: servers.value.filter { broadcastTargets.matches(it) }
+        val named = hosts.take(SUDO_NAMED_HOSTS).joinToString(", ") { it.name } + if (hosts.size > SUDO_NAMED_HOSTS) ", …" else ""
+        pendingSudoAction = PendingSudoAction(app.resources.getQuantityString(R.plurals.broadcast_sudo_hosts, hosts.size, hosts.size, named)) {
+            startFleetBroadcast(command, resolvedIds, paramValues, keepOtherResults, source, push, sudo = true)
+        }
+    }
+
+    private fun startFleetBroadcast(
+        command: String,
+        resolvedIds: List<Int>?,
+        paramValues: Map<String, String>,
+        keepOtherResults: Boolean,
+        source: String,
+        push: FleetPush?,
+        sudo: Boolean,
     ) {
         if (command.isBlank()) return
         if (isBroadcastExecuting) return
         val cmd = command.trim()
         // A retry runs the last command again, whatever the picker shows now.
-        val scriptName = if (source == FleetRunHistory.SOURCE_RETRY) lastBroadcastScriptName
-        else broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
-        val targetIds = broadcastTargetServerIds.toList()
-        val targetGroups = broadcastTargetGroups.toList()
-        val inTmux = broadcastInTmux
+        val scriptName = when {
+            push != null -> null
+            source == FleetRunHistory.SOURCE_RETRY -> lastBroadcastScriptName
+            else -> broadcastPreset?.takeIf { it.command.trim() == cmd }?.name
+        }
+        val targets = broadcastTargets
+        // A push is one SFTP transfer per host, with nothing to keep running in tmux. A sudo
+        // password cannot be handed to a command inside tmux without leaving it on the host.
+        val inTmux = broadcastInTmux && push == null && !sudo
         val batchSize = broadcastBatchSize
         val stopOnFailure = broadcastStopOnFailure && batchSize > 0
+        val failurePercent = broadcastFailurePercent
         val runId = UUID.randomUUID().toString().replace("-", "").take(10)
         lastBroadcastCommand = cmd
         lastBroadcastParams = paramValues
         lastBroadcastRunId = runId
         lastBroadcastScriptName = scriptName
+        lastBroadcastPush.takeIf { it != push }?.let { previous -> lastBroadcastPush = push; discardFleetPushFile(previous) }
+        lastBroadcastPush = push
+        lastBroadcastSudo = sudo
         broadcastStopRequested = false
         isBroadcastExecuting = true
         if (!keepOtherResults) {
@@ -13866,20 +14838,20 @@ class AppViewModel @JvmOverloads constructor(
                 // the real SSH result for that row.
                 // In the confirmed order, which a rolling run's batches follow.
                 resolvedIds != null -> allServers.associateBy { it.id }.let { byId -> resolvedIds.distinct().mapNotNull(byId::get) }
-                broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.status == "online" && it.id in targetIds }
-                else -> allServers.filter { it.status == "online" && it.groupName.orEmpty() in targetGroups }
+                else -> allServers.filter { it.status == "online" && targets.matches(it) }
             }
             if (selected.isEmpty()) {
                 isBroadcastExecuting = false
                 return@launch
             }
-            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source)
+            historyRuns[runId] = PendingFleetRun(runId, System.currentTimeMillis(), cmd, scriptName, source, pushedFile = push?.fileName, sudo = sudo)
             selected.forEach { broadcastCardRun[it.id] = runId }
             val operationId = "fleet-broadcast-${UUID.randomUUID()}"
             LongOperationNotifications.start(
                 getApplication(),
                 operationId,
-                "Running command on ${selected.size} hosts",
+                push?.let { getApplication<Application>().getString(R.string.fleet_push_running, it.fileName, selected.size) }
+                    ?: "Running command on ${selected.size} hosts",
                 destination = "fleet",
             )
             var succeeded = false
@@ -13903,20 +14875,32 @@ class AppViewModel @JvmOverloads constructor(
                     async {
                         limiter.withPermit {
                             updateBroadcastResult(srv.id) { it.copy(status = BroadcastStatus.Running) }
-                            if (inTmux) broadcastHostInTmux(srv, cmd, runId) else broadcastHostPlain(srv, cmd)
+                            when {
+                                push != null -> pushFileToHost(srv, push, sudo)
+                                inTmux -> broadcastHostInTmux(srv, cmd, runId)
+                                else -> broadcastHostPlain(srv, cmd, sudo)
+                            }
                         }
                     }
                 }.awaitAll()
             }
             try {
+                var failedSoFar = 0
                 for ((index, batch) in batches.withIndex()) {
                     // A tmux run outlives a dropped connection, so it is not cut off at the plain
                     // broadcast's limit; Stop ends it. The limit is per batch, so a long rolling run
                     // is not cut off at the total.
                     if (inTmux) runBatch(batch) else withTimeout(BROADCAST_TIMEOUT_MS) { runBatch(batch) }
-                    val failed = batch.firstOrNull { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status != BroadcastStatus.Success }
-                    if (stopOnFailure && failed != null && index < batches.lastIndex) {
-                        markWaitingBroadcastsNotRun(app.getString(R.string.broadcast_not_run_after_failure, failed.name))
+                    val failed = batch.filter { host -> broadcastResults.firstOrNull { it.serverId == host.id }?.status != BroadcastStatus.Success }
+                    failedSoFar += failed.size
+                    if (stopOnFailure && index < batches.lastIndex && broadcastFailuresExceed(failedSoFar, selected.size, failurePercent)) {
+                        markWaitingBroadcastsNotRun(
+                            if (failurePercent == 0) {
+                                app.getString(R.string.broadcast_not_run_after_failure, failed.first().name)
+                            } else {
+                                app.getString(R.string.broadcast_not_run_over_threshold, failedSoFar, selected.size, failurePercent)
+                            },
+                        )
                         break
                     }
                 }
@@ -13959,22 +14943,114 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * [template] as [srv] runs it: the last run's placeholder values quoted for its shell. Throws
+     * [template] as [srv] runs it: the last run's placeholder values and the host's own details
+     * (`{{host.name}}` and the like) quoted for its shell. Throws
      * [ScriptParams.UnsafeValueException] when a value cannot be passed to that shell safely.
      */
-    private suspend fun broadcastCommandFor(srv: ServerEntity, template: String): String =
-        if (!ScriptParams.hasParams(template)) template
-        else ScriptParams.fill(template, lastBroadcastParams, ScriptParams.shellFor(hostOs(srv)))
+    private suspend fun broadcastCommandFor(srv: ServerEntity, template: String): String {
+        if (!ScriptParams.needsFill(template)) return template
+        val os = hostOs(srv)
+        return ScriptParams.fill(template, lastBroadcastParams, ScriptParams.shellFor(os), ScriptParams.HostVars.of(srv, os))
+    }
 
-    private suspend fun broadcastHostPlain(srv: ServerEntity, template: String) {
+    /**
+     * Runs [template] on [srv] and follows its output. With [sudo] the whole command runs as root
+     * in `sh`, with the host's saved sudo password on the command's input, never in the command.
+     */
+    private suspend fun broadcastHostPlain(srv: ServerEntity, template: String, sudo: Boolean = false) {
         val result = try {
             val (creds, command) = savedScriptRun(srv, broadcastCommandFor(srv, template))
-            sshTransport.execStream(creds, command) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            when {
+                !sudo -> sshTransport.execStream(creds, command) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+                !RemoteCommands.hasSudo(hostOs(srv)) -> "SSH Error: " + getApplication<Application>().getString(R.string.broadcast_sudo_windows)
+                else -> sshTransport.execStream(
+                    creds, RemoteCommands.sudoShWrap(command, srv.sudoPassword), RemoteCommands.sudoStdin(srv.sudoPassword),
+                ) { chunk -> appendBroadcastChunk(srv.id, chunk) }
+            }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             "SSH Error: ${e.message ?: "unknown error"}"
         }
-        finishBroadcastResult(srv.id, result)
+        finishBroadcastResult(srv.id, result, sudo)
+    }
+
+    /**
+     * Pushes [push] to [srv] over SFTP. The file arrives under a hidden name, its size on the host
+     * is checked, and only then does it replace the destination, so a cut-off push never leaves
+     * half a file. A destination that is a folder on the host gets the file inside it, under its
+     * own name.
+     */
+    private suspend fun pushFileToHost(srv: ServerEntity, push: FleetPush, sudo: Boolean = false) {
+        val app = getApplication<Application>()
+        var client: RemoteFsClient? = null
+        var staged: String? = null
+        try {
+            if (!push.local.exists()) throw java.io.IOException(app.getString(R.string.fleet_push_file_gone))
+            if (sudo && !RemoteCommands.hasSudo(hostOs(srv))) throw java.io.IOException(app.getString(R.string.broadcast_sudo_windows))
+            val files = fleetFiles?.invoke(srv) ?: sftpClientFor(srv)
+            client = files
+            val home = files.home()
+            var dest = push.remotePath(home)
+            val stage = if (sudo) {
+                // The login may not write where the file goes, so it arrives in its own home
+                // folder, and root moves it into place (RemoteCommands.sudoInstallFile).
+                joinPath(home, ".omniterm-push-${UUID.randomUUID().toString().take(8)}.part")
+            } else {
+                val parent = dest.substringBeforeLast('/', "").ifEmpty { "/" }
+                val inParent = try {
+                    files.list(parent)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    throw java.io.IOException(app.getString(R.string.fleet_push_no_folder, parent), e)
+                }
+                val folder = inParent.any { it.isDirectory && it.name == dest.substringAfterLast('/') }
+                if (folder) dest = joinPath(dest, push.fileName)
+                transferStagingPath(dest)
+            }
+            staged = stage
+            withContext(Dispatchers.IO) {
+                push.local.inputStream().use { input -> files.uploadStream(stage, input, push.size) }
+            }
+            // Checked before it replaces anything, so a short copy never takes the file's place.
+            val stageParent = stage.substringBeforeLast('/', "").ifEmpty { "/" }
+            val arrived = files.list(stageParent).firstOrNull { !it.isDirectory && it.name == stage.substringAfterLast('/') }?.size
+            if (arrived != null && arrived != push.size) {
+                throw java.io.IOException(app.getString(R.string.fleet_push_short, formatBytes(arrived), formatBytes(push.size)))
+            }
+            if (sudo) {
+                val out = executeSshCommand(
+                    srv,
+                    RemoteCommands.sudoShWrap(RemoteCommands.sudoInstallFile(stage, dest, push.fileName), srv.sudoPassword),
+                    stdin = RemoteCommands.sudoStdin(srv.sudoPassword),
+                )
+                dest = RemoteCommands.sudoPushedPath(out) ?: throw java.io.IOException(
+                    RemoteCommands.sudoRefusal(out)?.let { app.getString(R.string.broadcast_sudo_refused, it) }
+                        ?: RemoteCommands.sudoPushMissingFolder(out)?.let { app.getString(R.string.fleet_push_no_folder, it) }
+                        ?: out.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }?.removePrefix("SSH Error:")?.trim()
+                        ?: app.getString(R.string.fleet_push_failed),
+                )
+            } else {
+                commitStagedRemoteFile(files, stage, dest)
+            }
+            staged = null
+            updateBroadcastResult(srv.id) {
+                it.copy(
+                    status = BroadcastStatus.Success,
+                    output = app.getString(R.string.fleet_push_done, push.fileName, formatBytes(push.size), dest),
+                    note = null,
+                )
+            }
+        } catch (e: CancellationException) {
+            client?.let { files -> staged?.let { discardStagedFile(files, it) } }
+            throw e
+        } catch (e: Exception) {
+            client?.let { files -> staged?.let { discardStagedFile(files, it) } }
+            updateBroadcastResult(srv.id) {
+                it.copy(status = BroadcastStatus.Failure, note = e.message?.takeIf { m -> m.isNotBlank() } ?: app.getString(R.string.fleet_push_failed))
+            }
+        } finally {
+            client?.let { files -> withContext(NonCancellable + Dispatchers.IO) { runCatching { files.close() } } }
+        }
     }
 
     /**
@@ -14194,11 +15270,18 @@ class AppViewModel @JvmOverloads constructor(
      * Ends [serverId]'s card from the transport's [result]: complete, or failed with a note saying
      * why (its exit status, a dropped connection, an SSH error) unless its output already ends so.
      */
-    private fun finishBroadcastResult(serverId: Int, result: String) {
+    private fun finishBroadcastResult(serverId: Int, result: String, sudo: Boolean = false) {
         val app = getApplication<Application>()
         val exit = broadcastExitStatus(result)
+        // sudo's own refusal says more than the status it exits with.
+        val refused = if (sudo && exit != 0) {
+            RemoteCommands.sudoRefusal(broadcastResults.firstOrNull { it.serverId == serverId }?.output.orEmpty())
+        } else {
+            null
+        }
         val note = when {
             exit == 0 -> null
+            refused != null -> app.getString(R.string.broadcast_sudo_refused, refused)
             exit != null -> app.getString(R.string.broadcast_exited_with, exit)
             result == "SSH Error: $SSH_CONNECTION_LOST" -> app.getString(R.string.broadcast_connection_lost)
             else -> result.removePrefix("SSH Error:").trim()
@@ -14673,6 +15756,14 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.deleteAutomationGrant(id) }
     }
 
+    /** Grant [grantId]'s uses, newest first. */
+    fun automationUses(grantId: Int): Flow<List<AutomationUseEntity>> = repository.automationUsesFlow(grantId)
+
+    /** Whether runs with grant [id]'s token show a notification ([RunNotify]). */
+    fun saveAutomationNotify(id: Int, notify: String) {
+        viewModelScope.launch { repository.setAutomationGrantNotify(id, notify) }
+    }
+
     // ── AI ASSISTANTS (MCP) ──
     /** The MCP server's settings, live from the settings table. */
     val mcpConfig: StateFlow<McpConfig> = repository.settingsFlow
@@ -14729,6 +15820,11 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch { repository.clearMcpCalls() }
     }
 
+    /** Whether runs an AI assistant starts show a notification ([RunNotify]). */
+    fun saveMcpNotify(notify: String) {
+        viewModelScope.launch { repository.insertSetting(McpSettings.NOTIFY, RunNotify.of(notify)) }
+    }
+
     /** The user's answer to an assistant's request; the dialog asks for the lock before approving. */
     fun answerMcpApproval(id: Int, approved: Boolean) = McpApprovals.answer(id, approved)
 
@@ -14736,39 +15832,106 @@ class AppViewModel @JvmOverloads constructor(
     /** The tunnels hosts can go through, without their configurations. */
     val tunnels = repository.tunnelsFlow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val tunnelStatuses = TunnelManager.statuses
+    /** Why a tunnel that last failed to start did, by id. */
+    val tunnelProblems = TunnelManager.problems
 
-    /** What is wrong with a pasted configuration, or null when it can be used. */
-    fun checkTunnelConfig(config: String): String? = TunnelManager.check(TunnelKinds.WIREGUARD, config)
+    /** What is wrong with a pasted configuration, or with Tailscale settings, or null when they can be used. */
+    fun checkTunnelConfig(config: String, kind: String = TunnelKinds.WIREGUARD): String? = TunnelManager.check(kind, config)
 
     /**
      * Saves a new tunnel ([id] null) or renames one, replacing its configuration when [config] is
      * given. A tunnel whose configuration changed stops at once, so nothing keeps going through the
-     * old one; its connections reconnect through the new one.
+     * old one; its connections reconnect through the new one. [directWifi] is the Wi-Fi networks
+     * it is not needed on ([TunnelNetworks]); null keeps the ones it has. [kind] is a new tunnel's.
      */
-    fun saveTunnel(id: Int?, name: String, config: String?, onResult: (String?) -> Unit) {
+    fun saveTunnel(
+        id: Int?,
+        name: String,
+        config: String?,
+        directWifi: List<String>? = null,
+        kind: String = TunnelKinds.WIREGUARD,
+        onResult: (String?) -> Unit,
+    ) {
+        viewModelScope.launch { onResult(storeTunnel(id, name, config, directWifi, kind, newNode = false)) }
+    }
+
+    /**
+     * Saves a Tailscale tunnel from its editor. An empty auth key keeps the one it has. Moving it to
+     * another control server makes it a new device there, which signs in again.
+     */
+    fun saveTailscaleTunnel(id: Int?, name: String, settings: TailscaleSettings, directWifi: List<String>, onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            val trimmedName = name.trim()
-            val problem = when {
-                trimmedName.isEmpty() -> "Give the tunnel a name."
-                tunnels.value.any { it.id != id && it.name.equals(trimmedName, ignoreCase = true) } -> "Another tunnel is called \"$trimmedName\"."
-                id == null && config.isNullOrBlank() -> "Paste or import the tunnel's configuration."
-                config != null && config.isNotBlank() -> withContext(Dispatchers.Default) { checkTunnelConfig(config) }
-                else -> null
-            }
-            if (problem != null) {
-                onResult(problem)
-                return@launch
-            }
-            val result = runCatching {
-                if (id == null) {
-                    repository.insertTunnel(TunnelEntity(name = trimmedName, config = config.orEmpty()))
-                } else {
-                    repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() })
-                    if (!config.isNullOrBlank()) withContext(Dispatchers.IO) { TunnelManager.stop(id) }
-                }
-            }
-            onResult(result.exceptionOrNull()?.let { it.message ?: "The tunnel could not be saved." })
+            val before = id?.let { withContext(Dispatchers.IO) { repository.getTunnel(it) } }?.let { TailscaleSettings.parse(it.config) }
+            val merged = if (before != null && settings.authKey.isBlank()) settings.copy(authKey = before.authKey) else settings
+            val config = merged.toConfig()
+            val changed = before == null || before.toConfig() != config
+            val newNode = before != null && !before.sameServerAs(merged)
+            onResult(storeTunnel(id, name, config.takeIf { changed }, directWifi, TunnelKinds.TAILSCALE, newNode))
         }
+    }
+
+    /** A Tailscale tunnel's settings for its editor, without the auth key; [hasKey] says whether it has one. */
+    fun loadTailscaleSettings(id: Int, onResult: (settings: TailscaleSettings?, hasKey: Boolean) -> Unit) {
+        viewModelScope.launch {
+            val settings = withContext(Dispatchers.IO) { repository.getTunnel(id) }?.let { TailscaleSettings.parse(it.config) }
+            onResult(settings?.copy(authKey = ""), !settings?.authKey.isNullOrBlank())
+        }
+    }
+
+    /** The saved hostname only; both service-token fields remain off the screen. */
+    fun loadAccessSettings(id: Int, onResult: (CloudflareAccessSettings?) -> Unit) {
+        viewModelScope.launch {
+            val settings = withContext(Dispatchers.IO) { repository.getTunnel(id) }
+                ?.let { CloudflareAccessSettings.parse(it.config) }
+            onResult(settings?.forEditor())
+        }
+    }
+
+    /** Used by both Save and Test; empty token fields retain the encrypted saved token. */
+    suspend fun accessConfig(id: Int?, settings: CloudflareAccessSettings): String {
+        val before = id?.let { withContext(Dispatchers.IO) { repository.getTunnel(it) } }
+            ?.let { CloudflareAccessSettings.parse(it.config) }
+        return settings.keepingToken(before).toConfig()
+    }
+
+    fun saveAccessTunnel(id: Int?, name: String, settings: CloudflareAccessSettings, directWifi: List<String>, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(storeTunnel(id, name, accessConfig(id, settings), directWifi, TunnelKinds.CLOUDFLARE_ACCESS, newNode = false))
+        }
+    }
+
+    /** Brings tunnel [id] up now, so a Tailscale tunnel shows its sign-in page; a failure shows on its card. */
+    fun connectTunnel(id: Int) {
+        viewModelScope.launch(Dispatchers.IO) { runCatching { TunnelManager.start(id) } }
+    }
+
+    private suspend fun storeTunnel(id: Int?, name: String, config: String?, directWifi: List<String>?, kind: String, newNode: Boolean): String? {
+        val trimmedName = name.trim()
+        val problem = when {
+            trimmedName.isEmpty() -> "Give the tunnel a name."
+            tunnels.value.any { it.id != id && it.name.equals(trimmedName, ignoreCase = true) } -> "Another tunnel is called \"$trimmedName\"."
+            id == null && config.isNullOrBlank() -> "Paste or import the tunnel's configuration."
+            config != null && config.isNotBlank() -> withContext(Dispatchers.Default) { checkTunnelConfig(config, kind) }
+            else -> null
+        }
+        if (problem != null) return problem
+        val result = runCatching {
+            if (id == null) {
+                repository.insertTunnel(
+                    TunnelEntity(name = trimmedName, kind = kind, config = config.orEmpty(), directWifi = TunnelNetworks.stored(directWifi.orEmpty())),
+                )
+            } else {
+                val wifi = CurrentWifi.state.value.name
+                val before = repository.tunnelDirectWifi(id).orEmpty()
+                val direct = directWifi?.let(TunnelNetworks::stored) ?: before
+                repository.updateTunnel(id, trimmedName, config?.takeIf { it.isNotBlank() }, direct, newNode)
+                if (!config.isNullOrBlank()) withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+                if (newNode) TailscaleNetwork.forget(id)
+                // Naming, or no longer naming, the Wi-Fi the phone is on moves its hosts now.
+                if (TunnelNetworks.goesDirect(before, wifi) != TunnelNetworks.goesDirect(direct, wifi)) leaveRouteOf(setOf(id), nowDirect = TunnelNetworks.goesDirect(direct, wifi))
+            }
+        }
+        return result.exceptionOrNull()?.let { it.message ?: "The tunnel could not be saved." }
     }
 
     /** Deletes tunnel [id], unless a host still goes through it; then says which. */
@@ -14780,8 +15943,57 @@ class AppViewModel @JvmOverloads constructor(
                 return@launch
             }
             withContext(Dispatchers.IO) { TunnelManager.stop(id) }
+            TailscaleNetwork.forget(id)
             onResult(null)
         }
+    }
+
+    /**
+     * The phone joined or left a Wi-Fi ([was], [now]; null is none, or not known): the hosts of
+     * each tunnel that is not needed on one of the two leave the route they were on.
+     */
+    private suspend fun followNetwork(was: String?, now: String?) {
+        val moved = repository.tunnelsFlow.first()
+            .filter { TunnelNetworks.goesDirect(it.directWifi, was) != TunnelNetworks.goesDirect(it.directWifi, now) }
+        val (direct, tunnelled) = moved.partition { TunnelNetworks.goesDirect(it.directWifi, now) }
+        if (direct.isNotEmpty()) leaveRouteOf(direct.mapTo(HashSet()) { it.id }, nowDirect = true)
+        if (tunnelled.isNotEmpty()) leaveRouteOf(tunnelled.mapTo(HashSet()) { it.id }, nowDirect = false)
+    }
+
+    /**
+     * Moves the hosts of [tunnelIds] off the route they just left: their kept connections over it
+     * close, their terminals reconnect over the route they have now, their SSH forwards stop, and
+     * a tunnel its hosts no longer go through ([nowDirect]) comes down.
+     */
+    private suspend fun leaveRouteOf(tunnelIds: Set<Int>, nowDirect: Boolean) {
+        for (server in repository.getAllServers().filter { it.tunnelId in tunnelIds }) {
+            runCatching { buildCredentials(server) }.getOrNull()?.let { current ->
+                val left = if (nowDirect) {
+                    current.copy(tunnelId = server.tunnelId, tunnelHost = server.tunnelHost)
+                } else {
+                    current.copy(tunnelId = null, tunnelHost = "")
+                }
+                sshTransport.forgetCredentials(left)
+                JschSftp.forgetCredentials(left)
+            }
+            leaveOldRoute(server.id)
+        }
+        if (nowDirect) withContext(Dispatchers.IO) { tunnelIds.forEach(TunnelManager::stop) }
+    }
+
+    /**
+     * Ends what host [serverId] has open over a route it no longer uses: its SSH forwards stop and
+     * its terminals reconnect over the route it has now. Returns how many terminals and forwards.
+     */
+    private suspend fun leaveOldRoute(serverId: Int): Pair<Int, Int> {
+        val forwards = repository.getAllPortForwards().filter { it.serverId == serverId && isTunnelActive(it.id) }
+        forwards.forEach { stopTunnel(it.id) }
+        val shells = activeSessions.filter { it.serverId == serverId && !it.userClosed }
+        shells.forEach { shell ->
+            runCatching { shell.session.close() }
+            reconnectSession(shell)
+        }
+        return shells.size to forwards.size
     }
 
     /** Takes tunnel [id] down now; it starts again when a host next needs it. */
@@ -14807,11 +16019,10 @@ class AppViewModel @JvmOverloads constructor(
                 } else {
                     val now = System.currentTimeMillis()
                     val rules = repository.getAllRules().associateBy { it.id }
-                    val servers = repository.getAllServers().associateBy { it.id }
                     active.filter { !it.acknowledged && it.mutedUntil < now }.forEach { alert ->
                         val rule = rules[alert.ruleId]
-                        val server = servers[alert.serverId]
-                        if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                        val subject = alertSubject(alert.serverId)
+                        if (rule != null && subject != null) postAlertNotification(subject, rule, alert.currentValue)
                     }
                 }
             }
@@ -15148,15 +16359,15 @@ class AppViewModel @JvmOverloads constructor(
                 recordAlertHistory(alert.copy(mutedUntil = 0L), "unmuted")
                 if (alertsEnabled && !alert.acknowledged) {
                     val rule = repository.getAllRules().find { it.id == alert.ruleId }
-                    val server = repository.getServerById(alert.serverId)
-                    if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                    val subject = alertSubject(alert.serverId)
+                    if (rule != null && subject != null) postAlertNotification(subject, rule, alert.currentValue)
                 }
             }
         }
     }
 
     private suspend fun recordAlertHistory(alert: ActiveAlertEntity, status: String, knownServerName: String? = null) {
-        val serverName = knownServerName ?: repository.getServerById(alert.serverId)?.name ?: "server"
+        val serverName = knownServerName ?: alertSubject(alert.serverId)?.name ?: "server"
         repository.insertAlertHistory(
             AlertHistoryEntity(
                 activeAlertId = alert.id,
@@ -15192,6 +16403,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (evaluationChanged) resetEndpointChecks(rule.id)
             }
             if (EndpointChecks.isEndpointMetric(rule.metricName)) startEndpointChecks()
+            if (DeviceChecks.isDeviceCheck(rule.metricName)) checkDeviceNow(rule.serverId)
         }
     }
 
@@ -15256,8 +16468,11 @@ class AppViewModel @JvmOverloads constructor(
         selection: BackupSelection = BackupSelection(),
         telnetHosts: List<TelnetHostEntity> = emptyList(),
         kubeClusters: List<KubeClusterEntity> = emptyList(),
+        snmpDevices: List<SnmpDeviceEntity> = emptyList(),
+        proxmoxServers: List<ProxmoxServerEntity> = emptyList(),
         tunnels: List<TunnelEntity> = emptyList(),
         history: BackupHistoryRows = BackupHistoryRows(),
+        fleetTargetSets: List<FleetTargetSetEntity> = emptyList(),
     ): String {
         val closedSelection = selection.withReferentialClosure()
         val serverArr = org.json.JSONArray()
@@ -15285,6 +16500,7 @@ class AppViewModel @JvmOverloads constructor(
                 put("proxyKeyAlias", s.proxyKeyAlias ?: "")
                 s.tunnelId?.let { put("tunnelId", it) }
                 put("tunnelHost", s.tunnelHost)
+                put("tags", s.tags)
             })
         }
         val keyArr = org.json.JSONArray()
@@ -15336,15 +16552,19 @@ class AppViewModel @JvmOverloads constructor(
         // include it so the alert's old rule id can be mapped to the seeded/restored rule on import.
         val customRules = customRulesOnly(rules)
         val exportedServerIds = srvs.mapTo(mutableSetOf()) { it.id }
+        // Alert rows are about a host, or a device that goes with the hosts ([AlertSubjects]).
+        val exportedSubjectIds = exportedServerIds + if (closedSelection.servers) {
+            snmpDevices.map { AlertSubjects.snmp(it.id) } + proxmoxServers.map { AlertSubjects.proxmox(it.id) }
+        } else emptyList()
         val ruleIdsForBackup = backupRuleIdsForSelection(
             customRuleIds = customRules.mapTo(mutableSetOf()) { it.id },
             activeAlertRuleIds = activeAlerts
-                .filter { it.serverId == 0 || it.serverId in exportedServerIds }
+                .filter { it.serverId == 0 || it.serverId in exportedSubjectIds }
                 .mapTo(mutableSetOf()) { it.ruleId },
             selection = closedSelection,
         )
         val rulesForBackup = rules.filter {
-            it.id in ruleIdsForBackup && (it.serverId == 0 || it.serverId in exportedServerIds)
+            it.id in ruleIdsForBackup && (it.serverId == 0 || it.serverId in exportedSubjectIds)
         }
         val exportedRuleIds = rulesForBackup.mapTo(mutableSetOf()) { it.id }
         // Script ids differ from device to device, so a rule names its scripts by category and
@@ -15366,11 +16586,15 @@ class AppViewModel @JvmOverloads constructor(
                     put("target", r.target)
                 }
                 scriptRef(r.runbookScriptId)?.let { put("runbookScript", it) }
+                // Whether it runs on its own is not kept: a restored rule only offers its runbook.
+                put("runbookNotify", RunNotify.of(r.runbookNotify))
+                // A backup check's repository password; the backup file itself is encrypted.
+                if (r.secret.isNotEmpty()) put("secret", r.secret)
             })
         }
         val historyArr = org.json.JSONArray()
         val historyForBackup = if (closedSelection.alertHistory) {
-            alertHistories.filter { it.serverId == 0 || it.serverId in exportedServerIds }
+            alertHistories.filter { it.serverId == 0 || it.serverId in exportedSubjectIds }
         } else emptyList()
         for (h in historyForBackup) {
             historyArr.put(org.json.JSONObject().apply {
@@ -15410,12 +16634,35 @@ class AppViewModel @JvmOverloads constructor(
                 put("clientKeyPem", c.clientKeyPem); put("token", c.token); put("namespace", c.namespace)
             })
         }
+        // SNMP devices too: their communities and passwords make the backup one to encrypt.
+        val snmpArr = org.json.JSONArray()
+        for (d in if (closedSelection.servers) snmpDevices else emptyList()) {
+            snmpArr.put(org.json.JSONObject().apply {
+                put("id", d.id); put("name", d.name); put("host", d.host); put("port", d.port); put("version", d.version)
+                put("community", d.community); put("user", d.user); put("authProtocol", d.authProtocol)
+                put("authPassword", d.authPassword); put("privProtocol", d.privProtocol); put("privPassword", d.privPassword)
+                put("tunnelId", d.tunnelId ?: 0); put("notes", d.notes)
+            })
+        }
+        // Proxmox servers too, with their API tokens and the certificate fingerprint the user trusted.
+        val proxmoxArr = org.json.JSONArray()
+        for (p in if (closedSelection.servers) proxmoxServers else emptyList()) {
+            proxmoxArr.put(org.json.JSONObject().apply {
+                put("id", p.id); put("name", p.name); put("host", p.host); put("port", p.port); put("tokenId", p.tokenId)
+                put("tokenSecret", p.tokenSecret); put("fingerprint", p.fingerprint)
+                put("tunnelId", p.tunnelId ?: 0); put("tunnelHost", p.tunnelHost); put("notes", p.notes)
+            })
+        }
         // VPN tunnels travel with the hosts that go through them; their configurations hold private
-        // keys, which is one more reason a backup with hosts is encrypted.
+        // keys and auth keys, which is one more reason a backup with hosts is encrypted. A Tailscale
+        // tunnel's node state is not here (getAllTunnels never returns it): a restored one signs in
+        // again as a new device instead of cloning this phone's.
         val tunnelArr = org.json.JSONArray()
         for (tunnel in if (closedSelection.servers) tunnels else emptyList()) {
             tunnelArr.put(org.json.JSONObject().apply {
                 put("id", tunnel.id); put("name", tunnel.name); put("kind", tunnel.kind); put("config", tunnel.config)
+                // The Wi-Fi networks its hosts dial directly on, each name as it is spelled.
+                put("directWifi", org.json.JSONArray(TunnelNetworks.names(tunnel.directWifi)))
             })
         }
         val networkShareArr = org.json.JSONArray()
@@ -15443,7 +16690,7 @@ class AppViewModel @JvmOverloads constructor(
         val activeAlertArr = org.json.JSONArray()
         val activeAlertsForBackup = if (closedSelection.activeAlerts) {
             activeAlerts.filter { alert ->
-                alert.ruleId in exportedRuleIds && (alert.serverId == 0 || alert.serverId in exportedServerIds)
+                alert.ruleId in exportedRuleIds && (alert.serverId == 0 || alert.serverId in exportedSubjectIds)
             }
         } else emptyList()
         for (a in activeAlertsForBackup) {
@@ -15514,7 +16761,12 @@ class AppViewModel @JvmOverloads constructor(
             if (closedSelection.automation) settings.associate { it.key to it.value } else emptyMap(),
             { id -> scriptRef(id) },
             exportedServerIds,
+            history.automationUses,
         )
+
+        // Saved Fleet targets go with the hosts they name; schedules go with automation, by script and host.
+        val fleetTargetSetArr = BackupFleetTargets.json(if (closedSelection.servers) fleetTargetSets else emptyList(), exportedServerIds)
+        val fleetScheduleArr = BackupFleetSchedules.json(history.fleetSchedules, { id -> scriptRef(id) }, exportedServerIds)
 
         return org.json.JSONObject()
             .put("format", "omniterm-backup")
@@ -15527,6 +16779,8 @@ class AppViewModel @JvmOverloads constructor(
             .put("assistantCalls", assistantArr)
             .put("automation", automationObj)
             .put("servers", serverArr)
+            .put("fleetTargetSets", fleetTargetSetArr)
+            .put("fleetSchedules", fleetScheduleArr)
             .put("sshKeys", keyArr)
             .put("credentialProfiles", profileArr)
             .put("quickScripts", scriptArr)
@@ -15536,6 +16790,8 @@ class AppViewModel @JvmOverloads constructor(
             .put("wolTargets", wolArr)
             .put("telnetHosts", telnetArr)
             .put("kubeClusters", kubeArr)
+            .put("snmpDevices", snmpArr)
+            .put("proxmoxServers", proxmoxArr)
             .put("vpnTunnels", tunnelArr)
             .put("networkShares", networkShareArr)
             .put("portForwards", portForwardArr)
@@ -15555,6 +16811,8 @@ class AppViewModel @JvmOverloads constructor(
             fleetRuns = if (selection.fleetHistory) repository.fleetRunsForBackup() else emptyList(),
             assistantCalls = if (selection.assistantLog) repository.getMcpCalls() else emptyList(),
             automationGrants = if (selection.automation) repository.getAutomationGrants() else emptyList(),
+            automationUses = if (selection.automation) repository.automationUsesForBackup() else emptyMap(),
+            fleetSchedules = if (selection.automation) repository.fleetSchedules() else emptyList(),
         )
     }
 
@@ -15661,8 +16919,9 @@ class AppViewModel @JvmOverloads constructor(
         val arrays = listOf(
             "servers", "sshKeys", "credentialProfiles", "quickScripts", "alertRules",
             "activeAlerts", "alertHistory", "wolTargets", "networkShares", "portForwards",
-            "crashLogs", "telnetHosts", "kubeClusters", "vpnTunnels",
+            "crashLogs", "telnetHosts", "kubeClusters", "snmpDevices", "proxmoxServers", "vpnTunnels",
             "tmuxSessions", "composeStacks", "monitoringHistory", "fleetRuns", "assistantCalls",
+            "fleetTargetSets", "fleetSchedules",
         )
         arrays.forEach { name ->
             require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
@@ -15709,6 +16968,86 @@ class AppViewModel @JvmOverloads constructor(
         false
     }
 
+    /**
+     * Restores a backup's SNMP devices (dedup by name and address). A device whose tunnel was not
+     * restored keeps a missing one, so it is never polled directly. Returns how many were added.
+     */
+    /** How many devices a restore added, and each backed-up device's alert subject → its subject here. */
+    private class RestoredDevices(val snmp: Int = 0, val proxmox: Int = 0, val subjects: Map<Int, Int> = emptyMap())
+
+    /** Restores a backup's SNMP devices and Proxmox servers, before the alert rules about them. */
+    private suspend fun restoreDevices(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>): RestoredDevices {
+        val subjects = mutableMapOf<Int, Int>()
+        val snmp = restoreSnmpDevices(root, tunnelIdMap, subjects)
+        val proxmox = restoreProxmoxServers(root, tunnelIdMap, subjects)
+        return RestoredDevices(snmp, proxmox, subjects)
+    }
+
+    private suspend fun restoreSnmpDevices(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>, subjects: MutableMap<Int, Int>): Int {
+        val existingSnmp = repository.getAllSnmpDevices().associateTo(mutableMapOf()) { "${it.name}|${it.host}|${it.port}" to it.id }
+        val snmpArr = root.optJSONArray("snmpDevices") ?: return 0
+        var importedSnmp = 0
+        for (i in 0 until snmpArr.length()) {
+            val o = snmpArr.getJSONObject(i)
+            val device = SnmpDeviceEntity(
+                name = o.optString("name").trim(),
+                host = o.optString("host").trim(),
+                port = o.optInt("port", SnmpDevices.DEFAULT_PORT),
+                version = o.optInt("version", 2),
+                community = o.optString("community"),
+                user = o.optString("user"),
+                authProtocol = o.optString("authProtocol").takeIf { it in SnmpDevices.AUTH_PROTOCOLS }.orEmpty(),
+                authPassword = o.optString("authPassword"),
+                privProtocol = o.optString("privProtocol").takeIf { it in SnmpDevices.PRIV_PROTOCOLS }.orEmpty(),
+                privPassword = o.optString("privPassword"),
+                tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
+                notes = o.optString("notes"),
+            )
+            if (device.name.isEmpty() || SnmpDevices.problem(device.access()) != null) continue
+            val oldId = o.optInt("id", 0)
+            val key = "${device.name}|${device.host}|${device.port}"
+            val id = existingSnmp[key] ?: repository.insertSnmpDevice(device).toInt().also {
+                existingSnmp[key] = it
+                importedSnmp++
+            }
+            if (oldId > 0) subjects[AlertSubjects.snmp(oldId)] = AlertSubjects.snmp(id)
+        }
+        return importedSnmp
+    }
+
+    /**
+     * Restores a backup's Proxmox servers the same way (dedup by name and address; a tunnel that was
+     * not restored stays missing, so the server is never reached directly). Returns how many were added.
+     */
+    private suspend fun restoreProxmoxServers(root: org.json.JSONObject, tunnelIdMap: Map<Int, Int>, subjects: MutableMap<Int, Int>): Int {
+        val existingProxmox = repository.getAllProxmoxServers().associateTo(mutableMapOf()) { "${it.name}|${it.host}|${it.port}" to it.id }
+        val proxmoxArr = root.optJSONArray("proxmoxServers") ?: return 0
+        var importedProxmox = 0
+        for (i in 0 until proxmoxArr.length()) {
+            val o = proxmoxArr.getJSONObject(i)
+            val server = ProxmoxServerEntity(
+                name = o.optString("name").trim(),
+                host = o.optString("host").trim(),
+                port = o.optInt("port", Proxmox.DEFAULT_PORT),
+                tokenId = o.optString("tokenId").trim(),
+                tokenSecret = o.optString("tokenSecret"),
+                fingerprint = o.optString("fingerprint"),
+                tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
+                tunnelHost = o.optString("tunnelHost").trim(),
+                notes = o.optString("notes"),
+            )
+            if (Proxmox.problem(server) != null) continue
+            val oldId = o.optInt("id", 0)
+            val key = "${server.name}|${server.host}|${server.port}"
+            val id = existingProxmox[key] ?: repository.insertProxmoxServer(server).toInt().also {
+                existingProxmox[key] = it
+                importedProxmox++
+            }
+            if (oldId > 0) subjects[AlertSubjects.proxmox(oldId)] = AlertSubjects.proxmox(id)
+        }
+        return importedProxmox
+    }
+
     private fun backupContents(root: org.json.JSONObject): BackupContents {
         val settingsObj = root.optJSONObject("settings")
         return BackupContents(
@@ -15727,6 +17066,8 @@ class AppViewModel @JvmOverloads constructor(
             vpnTunnels = root.optJSONArray("vpnTunnels")?.length() ?: 0,
             telnetHosts = root.optJSONArray("telnetHosts")?.length() ?: 0,
             kubeClusters = root.optJSONArray("kubeClusters")?.length() ?: 0,
+            snmpDevices = root.optJSONArray("snmpDevices")?.length() ?: 0,
+            proxmoxServers = root.optJSONArray("proxmoxServers")?.length() ?: 0,
             tmuxSessions = root.optJSONArray("tmuxSessions")?.length() ?: 0,
             composeStacks = root.optJSONArray("composeStacks")?.length() ?: 0,
             fleetRuns = root.optJSONArray("fleetRuns")?.length() ?: 0,
@@ -15734,6 +17075,7 @@ class AppViewModel @JvmOverloads constructor(
             assistantCalls = root.optJSONArray("assistantCalls")?.length() ?: 0,
             automationGrants = BackupAccess.grantCount(root.optJSONObject("automation")),
             assistantSettings = if (BackupAccess.hasAssistant(root.optJSONObject("automation"))) 1 else 0,
+            fleetSchedules = root.optJSONArray("fleetSchedules")?.length() ?: 0,
         )
     }
 
@@ -15850,8 +17192,11 @@ class AppViewModel @JvmOverloads constructor(
                             networkShares, portForwards, activeAlerts, settings, closedSelection,
                             telnetHosts = repository.getAllTelnetHosts(),
                             kubeClusters = repository.getAllKubeClusters(),
+                            snmpDevices = repository.getAllSnmpDevices(),
+                            proxmoxServers = repository.getAllProxmoxServers(),
                             tunnels = repository.getAllTunnels(),
                             history = history,
+                            fleetTargetSets = repository.fleetTargetSets(),
                         )
                         val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
                         // A file the restore would refuse is no backup: say so instead of writing it.
@@ -16112,13 +17457,20 @@ class AppViewModel @JvmOverloads constructor(
                                 val tunnelName = o.optString("name").trim()
                                 val tunnelConfig = o.optString("config")
                                 val kind = o.optString("kind", TunnelKinds.WIREGUARD)
-                                if (oldTunnelId == 0 || tunnelName.isEmpty() || tunnelConfig.isBlank() || kind != TunnelKinds.WIREGUARD) continue
+                                // A kind this version cannot run is left out: its hosts stay pointed at a
+                                // missing tunnel, so they fail closed rather than go direct.
+                                if (oldTunnelId == 0 || tunnelName.isEmpty() || tunnelConfig.isBlank() || kind !in TunnelKinds.ALL) continue
                                 tunnelIdMap[oldTunnelId] = localTunnelLike(o)?.id ?: run {
                                     val freeName = generateSequence(1) { it + 1 }
                                         .map { n -> if (n == 1) tunnelName else "$tunnelName ($n)" }
                                         .first { it.lowercase() !in takenNames }
                                     takenNames += freeName.lowercase()
-                                    repository.insertTunnel(TunnelEntity(name = freeName, kind = kind, config = tunnelConfig))
+                                    // A tunnel the phone already has keeps its own Wi-Fi list; a new one takes the backup's.
+                                    val directWifi = o.optJSONArray("directWifi")
+                                        ?.let { names -> (0 until names.length()).map { names.optString(it) } }.orEmpty()
+                                    repository.insertTunnel(
+                                        TunnelEntity(name = freeName, kind = kind, config = tunnelConfig, directWifi = TunnelNetworks.stored(directWifi)),
+                                    )
                                 }
                             }
                         }
@@ -16185,12 +17537,23 @@ class AppViewModel @JvmOverloads constructor(
                                     // it fails until the user picks one (or None).
                                     tunnelId = o.optInt("tunnelId", 0).takeIf { it != 0 }?.let { tunnelIdMap[it] ?: MISSING_TUNNEL_ID },
                                     tunnelHost = o.optString("tunnelHost", ""),
+                                    tags = HostTags.format(HostTags.parse(o.optString("tags", ""))),
                                 )
                             ).toInt()
                             if (oldId != 0) serverIdMap[oldId] = newId
                             restoredHosts.add(o.getString("host") to o.optInt("port", 22))
                             imported++
                             availableHostSlots--
+                        }
+
+                        // Saved Fleet targets, on the hosts restored or already here; the phone's
+                        // own set of a name wins over the backup's.
+                        if (closedSelection.servers) {
+                            BackupFleetTargets.restore(
+                                root.optJSONArray("fleetTargetSets"),
+                                serverIdMap,
+                                repository.fleetTargetSets().map { it.name },
+                            ).forEach { repository.saveFleetTargetSet(it) }
                         }
 
                         // Pinned host keys travel with the servers (schema 3+). Only import keys for
@@ -16237,6 +17600,10 @@ class AppViewModel @JvmOverloads constructor(
                             importedScripts++
                         }
 
+                        // SNMP devices and Proxmox servers, with the hosts, before the alert rules about
+                        // them (in functions of their own: this one is at the JVM's size limit for a method).
+                        val restoredDevices = if (closedSelection.servers) restoreDevices(root, tunnelIdMap) else RestoredDevices()
+
                         // Alert rules (re-point serverId; dedup by server+metric+threshold+window+target).
                         fun sameRule(rule: AlertRuleEntity, serverId: Int, metric: String, threshold: Float, window: String, target: String) =
                             rule.serverId == serverId && rule.metricName == metric && rule.thresholdValue == threshold &&
@@ -16257,7 +17624,7 @@ class AppViewModel @JvmOverloads constructor(
                             val o = ruleArr.getJSONObject(i)
                             val oldRuleId = o.optInt("id", 0)
                             val oldServerId = o.optInt("serverId", 0)
-                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
+                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap, restoredDevices.subjects) ?: continue
                             val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
                             val window = o.optString("triggerWindow", "5m")
                             val metric = o.optString("metricName")
@@ -16279,11 +17646,13 @@ class AppViewModel @JvmOverloads constructor(
                                     serverId = mappedServerId, metricName = metric,
                                     mountPoint = o.optString("mountPoint", "/"), thresholdValue = threshold,
                                     severity = o.optString("severity", "WARNING"), triggerWindow = window,
-                                    enabled = o.optBoolean("enabled", true),
+                                    enabled = restoredRuleEnabled(o.optBoolean("enabled", true), metric, mappedServerId),
+                                    secret = o.optString("secret", "").substringBefore('\n'),
                                     notes = o.optString("notes", ""),
                                     presetKey = o.optString("presetKey", "").ifBlank { null },
                                     target = target,
                                     runbookScriptId = restoredScriptId(o.optJSONObject("runbookScript")),
+                                    runbookNotify = RunNotify.of(o.optString("runbookNotify")),
                                 )
                             )
                             repository.getAllRules().find { sameRule(it, mappedServerId, metric, threshold, window, target) }?.let { restoredRule ->
@@ -16302,7 +17671,7 @@ class AppViewModel @JvmOverloads constructor(
                             val o = activeAlertArr.getJSONObject(i)
                             val oldActiveAlertId = o.optInt("id", 0)
                             val oldServerId = o.optInt("serverId", 0)
-                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
+                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap, restoredDevices.subjects) ?: continue
                             val mappedRuleId = ruleIdMap[o.optInt("ruleId", 0)] ?: continue
                             val metric = o.optString("metricName")
                             val key = "$mappedRuleId|$mappedServerId|$metric"
@@ -16345,7 +17714,7 @@ class AppViewModel @JvmOverloads constructor(
                         var importedHistory = 0
                         for (i in 0 until if (closedSelection.alertHistory) historyArr.length() else 0) {
                             val o = historyArr.getJSONObject(i)
-                            val mappedServerId = remapBackupServerId(o.optInt("serverId", 0), serverIdMap) ?: continue
+                            val mappedServerId = remapBackupServerId(o.optInt("serverId", 0), serverIdMap, restoredDevices.subjects) ?: continue
                             val historyTime = o.optLong("historyTime", System.currentTimeMillis())
                             val triggeredTime = o.optLong("triggeredTime", historyTime)
                             val metricName = o.optString("metricName")
@@ -16430,6 +17799,7 @@ class AppViewModel @JvmOverloads constructor(
                             )
                             importedKube++
                         }
+
 
                         // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
                         // shareIdMap tracks old id → restored/existing id so per-share settings
@@ -16634,6 +18004,16 @@ class AppViewModel @JvmOverloads constructor(
                             }
                         }
 
+                        // Fleet's schedules, paused like automation; the phone's own schedule of a name wins.
+                        if (closedSelection.automation) {
+                            BackupFleetSchedules.restore(
+                                root.optJSONArray("fleetSchedules"),
+                                ::restoredScriptId,
+                                serverIdMap,
+                                repository.fleetSchedules().map { it.name },
+                            ).forEach { repository.saveFleetSchedule(it) }
+                        }
+
                         // Report any partial restore explicitly with its reason, so a backup that
                         // exceeds the free Play Store limit never silently drops servers, credentials,
                         // or pinned host keys without telling the user why.
@@ -16655,6 +18035,8 @@ class AppViewModel @JvmOverloads constructor(
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
                                 (if (importedTelnet > 0) "$importedTelnet Telnet connection(s), " else "") +
                                 (if (importedKube > 0) "$importedKube Kubernetes cluster(s), " else "") +
+                                (if (restoredDevices.snmp > 0) "${restoredDevices.snmp} SNMP device(s), " else "") +
+                                (if (restoredDevices.proxmox > 0) "${restoredDevices.proxmox} Proxmox server(s), " else "") +
                                 (if (importedSessions > 0) "$importedSessions tmux session(s), " else "") +
                                 (if (importedStacks > 0) "$importedStacks Compose stack(s), " else "") +
                                 (if (importedFleetRuns > 0) "$importedFleetRuns Fleet run(s), " else "") +

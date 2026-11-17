@@ -2,14 +2,18 @@ package com.jetsetslow.omniterm.ui
 
 import com.jetsetslow.omniterm.data.Automation
 import com.jetsetslow.omniterm.data.AutomationGrantEntity
+import com.jetsetslow.omniterm.data.AutomationUseEntity
 import com.jetsetslow.omniterm.data.FleetRunEntity
 import com.jetsetslow.omniterm.data.FleetRunHistory
 import com.jetsetslow.omniterm.data.FleetRunHostEntity
+import com.jetsetslow.omniterm.data.FleetScheduleEntity
 import com.jetsetslow.omniterm.data.McpCallEntity
-import com.jetsetslow.omniterm.data.McpCallOutcome
 import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
+import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.StackRegistryEntity
+import com.jetsetslow.omniterm.data.UploadName
+import com.jetsetslow.omniterm.data.UseOutcome
 import com.jetsetslow.omniterm.data.mcp.McpSettings
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +27,9 @@ internal data class BackupHistoryRows(
     val fleetRuns: List<Pair<FleetRunEntity, List<FleetRunHostEntity>>> = emptyList(),
     val assistantCalls: List<McpCallEntity> = emptyList(),
     val automationGrants: List<AutomationGrantEntity> = emptyList(),
+    /** Each automation token's uses, by grant id. */
+    val automationUses: Map<Int, List<AutomationUseEntity>> = emptyMap(),
+    val fleetSchedules: List<FleetScheduleEntity> = emptyList(),
 )
 
 /**
@@ -99,6 +106,8 @@ internal object BackupHistory {
             put(
                 JSONObject().put("runKey", run.runKey).put("startedAt", run.startedAt).put("finishedAt", run.finishedAt)
                     .put("command", run.command).put("scriptName", run.scriptName ?: JSONObject.NULL).put("source", run.source)
+                    .put("pushedFile", run.pushedFile ?: JSONObject.NULL)
+                    .put("sudo", run.sudo)
                     .put(
                         "hosts",
                         JSONArray().apply {
@@ -118,17 +127,15 @@ internal object BackupHistory {
     fun fleetRunsFrom(arr: JSONArray?): List<Pair<FleetRunEntity, List<FleetRunHostEntity>>> = objects(arr).mapNotNull { o ->
         val runKey = o.optString("runKey").trim().takeIf { it.isNotEmpty() && it.length <= 200 } ?: return@mapNotNull null
         val startedAt = o.optLong("startedAt", 0L).takeIf { it > 0 } ?: return@mapNotNull null
-        val sources = setOf(
-            FleetRunHistory.SOURCE_FLEET, FleetRunHistory.SOURCE_RETRY, FleetRunHistory.SOURCE_RUNBOOK,
-            FleetRunHistory.SOURCE_AUTOMATION, FleetRunHistory.SOURCE_MCP,
-        )
         val run = FleetRunEntity(
             runKey = runKey,
             startedAt = startedAt,
             finishedAt = o.optLong("finishedAt", startedAt).coerceAtLeast(startedAt),
             command = o.optString("command"),
             scriptName = nullableString(o, "scriptName"),
-            source = o.optString("source").takeIf { it in sources } ?: FleetRunHistory.SOURCE_FLEET,
+            source = o.optString("source").takeIf { it in FleetRunHistory.SOURCES } ?: FleetRunHistory.SOURCE_FLEET,
+            pushedFile = UploadName.from(nullableString(o, "pushedFile")),
+            sudo = o.optBoolean("sudo", false),
         )
         val statuses = BroadcastStatus.entries.mapTo(mutableSetOf()) { it.name }
         val hosts = objects(o.optJSONArray("hosts")).mapNotNull { h ->
@@ -195,22 +202,44 @@ internal object BackupHistory {
         for (c in calls) {
             put(
                 JSONObject().put("at", c.at).put("client", c.client).put("tool", c.tool)
-                    .put("outcome", c.outcome).put("detail", c.detail),
+                    .put("outcome", c.outcome).put("detail", c.detail).put("runKey", c.runKey ?: JSONObject.NULL),
             )
         }
     }
 
     fun assistantCallsFrom(arr: JSONArray?): List<McpCallEntity> = objects(arr).mapNotNull { o ->
         val at = o.optLong("at", 0L).takeIf { it > 0 } ?: return@mapNotNull null
-        val outcomes = setOf(McpCallOutcome.OK, McpCallOutcome.FAILED, McpCallOutcome.REFUSED)
         McpCallEntity(
             at = at,
             client = o.optString("client"),
             tool = o.optString("tool"),
-            outcome = o.optString("outcome").takeIf { it in outcomes } ?: McpCallOutcome.FAILED,
+            outcome = outcome(o),
             detail = o.optString("detail"),
+            runKey = runKey(o),
         )
     }
+
+    /** One automation token's uses, for its grant in the Automation section. */
+    fun usesJson(uses: List<AutomationUseEntity>): JSONArray = JSONArray().apply {
+        for (u in uses) {
+            put(
+                JSONObject().put("at", u.at).put("outcome", u.outcome).put("detail", u.detail)
+                    .put("runKey", u.runKey ?: JSONObject.NULL),
+            )
+        }
+    }
+
+    /** A grant's uses, not yet pointed at a grant on this phone (grantId 0). */
+    fun usesFrom(arr: JSONArray?): List<AutomationUseEntity> = objects(arr).mapNotNull { o ->
+        val at = o.optLong("at", 0L).takeIf { it > 0 } ?: return@mapNotNull null
+        AutomationUseEntity(grantId = 0, at = at, outcome = outcome(o), detail = o.optString("detail").take(Automation.USE_DETAIL_CHARS), runKey = runKey(o))
+    }
+
+    private fun outcome(o: JSONObject): String = o.optString("outcome").takeIf { it in UseOutcome.ALL } ?: UseOutcome.FAILED
+
+    /** A run link of the shape runs are given, or none: it only ever opens a run in the history. */
+    private fun runKey(o: JSONObject): String? =
+        nullableString(o, "runKey")?.takeIf { NotificationLinks.parseFleetRun(listOf("fleet-run", it)) != null }
 
     private fun objects(arr: JSONArray?): List<JSONObject> =
         if (arr == null) emptyList() else (0 until arr.length()).mapNotNull(arr::optJSONObject)
@@ -241,6 +270,7 @@ internal object BackupAccess {
         settings: Map<String, String>,
         scriptRef: (Int) -> JSONObject?,
         exportedServerIds: Set<Int>,
+        uses: Map<Int, List<AutomationUseEntity>> = emptyMap(),
     ): JSONObject {
         val grantArr = JSONArray()
         for (g in grants) {
@@ -249,7 +279,8 @@ internal object BackupAccess {
             if (hosts.isEmpty()) continue
             grantArr.put(
                 JSONObject().put("script", script).put("serverIds", JSONArray(hosts)).put("tokenHash", g.tokenHash)
-                    .put("label", g.label).put("createdAt", g.createdAt).put("lastUsedAt", g.lastUsedAt ?: JSONObject.NULL),
+                    .put("label", g.label).put("createdAt", g.createdAt).put("lastUsedAt", g.lastUsedAt ?: JSONObject.NULL)
+                    .put("notify", RunNotify.of(g.notify)).put("uses", BackupHistory.usesJson(uses[g.id].orEmpty())),
             )
         }
         val out = JSONObject().put("grants", grantArr)
@@ -263,7 +294,8 @@ internal object BackupAccess {
                     .put("anyCommand", settings[McpSettings.ANY_COMMAND] == "true")
                     .put("port", McpSettings.port(settings[McpSettings.PORT]) ?: JSONObject.NULL)
                     .put("tunnelHost", tunnelHost ?: JSONObject.NULL)
-                    .put("tunnelPort", tunnelHost?.let { McpSettings.port(settings[McpSettings.TUNNEL_PORT]) } ?: JSONObject.NULL),
+                    .put("tunnelPort", tunnelHost?.let { McpSettings.port(settings[McpSettings.TUNNEL_PORT]) } ?: JSONObject.NULL)
+                    .put("notify", RunNotify.of(settings[McpSettings.NOTIFY])),
             )
         }
         return out
@@ -274,10 +306,15 @@ internal object BackupAccess {
     fun hasAssistant(obj: JSONObject?): Boolean = obj?.optJSONObject("assistant") != null
 
     /**
-     * The grants to add, pointed at this phone's scripts and hosts by [scriptId] and [serverId]. A
-     * grant whose script, or every host, is not here is skipped; so is one with a malformed token.
+     * The grants to add, pointed at this phone's scripts and hosts by [scriptId] and [serverId],
+     * each with its uses. A grant whose script, or every host, is not here is skipped; so is one
+     * with a malformed token.
      */
-    fun grantsFrom(obj: JSONObject?, scriptId: (JSONObject?) -> Int?, serverId: (Int) -> Int?): List<AutomationGrantEntity> {
+    fun grantsFrom(
+        obj: JSONObject?,
+        scriptId: (JSONObject?) -> Int?,
+        serverId: (Int) -> Int?,
+    ): List<Pair<AutomationGrantEntity, List<AutomationUseEntity>>> {
         val arr = obj?.optJSONArray("grants") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -293,8 +330,9 @@ internal object BackupAccess {
                 label = o.optString("label").take(200),
                 createdAt = o.optLong("createdAt", 0L).takeIf { it > 0 } ?: System.currentTimeMillis(),
                 lastUsedAt = o.optLong("lastUsedAt", 0L).takeIf { it > 0 },
-            )
-        }.distinctBy { it.tokenHash }
+                notify = RunNotify.of(o.optString("notify")),
+            ) to BackupHistory.usesFrom(o.optJSONArray("uses"))
+        }.distinctBy { it.first.tokenHash }
     }
 
     /**
@@ -311,6 +349,7 @@ internal object BackupAccess {
             McpSettings.HOSTS to Automation.joinServerIds(hosts),
             McpSettings.ANY_COMMAND to o.optBoolean("anyCommand", false).toString(),
             McpSettings.TUNNEL_HOST to tunnelHost?.toString().orEmpty(),
+            McpSettings.NOTIFY to RunNotify.of(o.optString("notify")),
         )
         o.optString("tokenHash").takeIf { SHA256_HEX.matches(it) }?.let { out[McpSettings.TOKEN_HASH] = it }
         McpSettings.port(o.opt("port")?.toString())?.let { out[McpSettings.PORT] = it.toString() }

@@ -37,6 +37,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -68,7 +70,10 @@ private fun alertMetricUnit(metricName: String, system: MeasurementSystem): Stri
     "Latency", EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK -> "ms"
     "Temperature" -> temperatureUnit(system)
     EndpointChecks.TLS_EXPIRY, HostChecks.SCRUB_AGE -> "days"
+    HostChecks.BACKUP_AGE -> "hours"
     in HostChecks.ALL -> "count"
+    DeviceChecks.SNMP_UPS_BATTERY_LOW -> "%"
+    in DeviceChecks.ALL -> "count"
     else -> "%"
 }
 
@@ -103,7 +108,10 @@ internal fun alertThresholdError(
             val celsius = displayTemperatureToCelsius(value, system)
             if (celsius <= -273.15f) "Below absolute zero" else null
         }
+        HostChecks.BACKUP_AGE -> if (value < 1f) "Must be 1 hour or more" else null
         in HostChecks.ALL -> if (value < 0f) "Must be 0 or more" else null
+        DeviceChecks.SNMP_UPS_BATTERY_LOW -> if (value < 1f || value > 100f) "Must be from 1 to 100" else null
+        in DeviceChecks.ALL -> null
         else -> when {
             value < 0f -> "Must be 0 or more"
             value > 100f -> "Must be 100 or less"
@@ -176,6 +184,12 @@ private fun alertMetricDisplay(
     HostChecks.isHostCheck(metricName) -> when {
         !threshold -> HostChecks.describe(metricName, canonicalValue)
         metricName == HostChecks.SCRUB_AGE -> "${canonicalValue.roundToInt()} days"
+        metricName == HostChecks.BACKUP_AGE -> BackupChecks.age(canonicalValue)
+        else -> canonicalValue.roundToInt().toString()
+    }
+    DeviceChecks.isDeviceCheck(metricName) -> when {
+        !threshold -> DeviceChecks.describe(metricName, canonicalValue)
+        metricName == DeviceChecks.SNMP_UPS_BATTERY_LOW -> "${canonicalValue.roundToInt()}%"
         else -> canonicalValue.roundToInt().toString()
     }
     else -> "$canonicalValue${alertMetricUnit(metricName, system)}"
@@ -228,6 +242,8 @@ internal val toolsItems = listOf(
     Triple(Screen.Automation, "Automation", Icons.Filled.SmartToy),
     Triple(Screen.Mcp, "AI assistants", Icons.Filled.Hub),
     Triple(Screen.VpnTunnels, "VPN tunnels", Icons.Filled.VpnLock),
+    Triple(Screen.Snmp, "SNMP devices", Icons.Filled.Router),
+    Triple(Screen.Proxmox, "Proxmox VE", Icons.Filled.ViewInAr),
     Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
     Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
 )
@@ -362,12 +378,13 @@ fun AlertsPopup(
                         active = active,
                         muted = muted,
                         servers = servers,
+                        deviceNames = rememberDeviceNames(viewModel),
                         measurementSystem = viewModel.measurementSystem,
                         modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                         onAcknowledge = viewModel::acknowledgeAlert,
                         onMute = viewModel::muteAlertForOneHour,
                         onUnmute = viewModel::unmuteAlert,
-                        onRefresh = viewModel::refreshServer,
+                        onRefresh = viewModel::refreshAlertSubject,
                     )
                 }
 
@@ -433,6 +450,7 @@ fun AlertPopupIncidentList(
     onUnmute: (Int) -> Unit,
     onRefresh: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    deviceNames: Map<Int, String> = emptyMap(),
 ) {
     OverflowLazyColumn(
         modifier = modifier.testTag("alerts-popup-list"),
@@ -442,11 +460,12 @@ fun AlertPopupIncidentList(
             AlertPopupIncidentCard(
                 alert = alert,
                 server = servers.find { it.id == alert.serverId },
+                subjectName = deviceNames[alert.serverId],
                 measurementSystem = measurementSystem,
                 muted = false,
                 onAcknowledge = { onAcknowledge(alert.id) },
                 onMuteToggle = { onMute(alert.id) },
-                onRefresh = { if (alert.serverId > 0) onRefresh(alert.serverId) },
+                onRefresh = { if (alert.serverId != 0) onRefresh(alert.serverId) },
             )
         }
         if (muted.isNotEmpty()) {
@@ -463,11 +482,12 @@ fun AlertPopupIncidentList(
             AlertPopupIncidentCard(
                 alert = alert,
                 server = servers.find { it.id == alert.serverId },
+                subjectName = deviceNames[alert.serverId],
                 measurementSystem = measurementSystem,
                 muted = true,
                 onAcknowledge = null,
                 onMuteToggle = { onUnmute(alert.id) },
-                onRefresh = { if (alert.serverId > 0) onRefresh(alert.serverId) },
+                onRefresh = { if (alert.serverId != 0) onRefresh(alert.serverId) },
             )
         }
     }
@@ -479,6 +499,7 @@ fun AlertPopupIncidentCard(
     server: ServerEntity?,
     measurementSystem: MeasurementSystem = MeasurementSystem.Metric,
     muted: Boolean,
+    subjectName: String? = null,
     onAcknowledge: (() -> Unit)?,
     onMuteToggle: () -> Unit,
     onRefresh: () -> Unit,
@@ -501,7 +522,7 @@ fun AlertPopupIncidentCard(
                 )
             }
             Text(
-                stringResource(R.string.current_threshold, server?.name ?: "Server", alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem, threshold = true)),
+                stringResource(R.string.current_threshold, server?.name ?: subjectName ?: "Server", alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem), alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem, threshold = true)),
                 fontSize = OmniTextSize.Meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -519,7 +540,7 @@ fun AlertPopupIncidentCard(
                 // refreshServer() writes "connecting" for the host before probing, so the popup can
                 // show the probe is in flight instead of the button appearing to do nothing.
                 val refreshing = server?.status == "connecting"
-                TextButton(onClick = onRefresh, enabled = alert.serverId > 0 && !refreshing) {
+                TextButton(onClick = onRefresh, enabled = alert.serverId != 0 && !refreshing) {
                     if (refreshing) {
                         CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(6.dp))
@@ -537,6 +558,30 @@ fun AlertPopupIncidentCard(
             }
         }
     }
+}
+
+/** The saved SNMP devices and Proxmox servers by their alert subject ([AlertSubjects]), with their names. */
+@Composable
+internal fun rememberDeviceNames(viewModel: AppViewModel): Map<Int, String> {
+    val snmp by viewModel.snmpDevices.collectAsStateWithLifecycle()
+    val proxmox by viewModel.proxmoxServers.collectAsStateWithLifecycle()
+    return remember(snmp, proxmox) {
+        snmp.associate { AlertSubjects.snmp(it.id) to it.name } + proxmox.associate { AlertSubjects.proxmox(it.id) to it.name }
+    }
+}
+
+/** The alerts firing now about device [subject] ([AlertSubjects]), as one line; nothing when none. */
+@Composable
+internal fun DeviceAlertsLine(viewModel: AppViewModel, subject: Int, tag: String) {
+    val alerts by viewModel.activeAlerts.collectAsStateWithLifecycle()
+    val firing = alerts.filter { it.serverId == subject && !it.acknowledged && it.mutedUntil < System.currentTimeMillis() }
+        .map { it.metricName }.distinct()
+    if (firing.isEmpty()) return
+    Text(
+        stringResource(R.string.device_alerts_firing, firing.joinToString(", ")),
+        fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = OmniColors.red,
+        modifier = Modifier.testTag(tag),
+    )
 }
 
 /**
@@ -571,6 +616,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
     val rules by viewModel.alertRules.collectAsStateWithLifecycle()
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
     val scripts by viewModel.quickScripts.collectAsStateWithLifecycle()
+    val snmpDevices by viewModel.snmpDevices.collectAsStateWithLifecycle()
+    val proxmoxServers by viewModel.proxmoxServers.collectAsStateWithLifecycle()
+    val deviceNames = rememberDeviceNames(viewModel)
     val measurementSystem = viewModel.measurementSystem
     var showCreateRuleDialog by remember { mutableStateOf(false) }
     var editRule by remember { mutableStateOf<AlertRuleEntity?>(null) }
@@ -697,11 +745,28 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    Text(stringResource(R.string.server, srv?.name ?: "server"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        deviceNames[alert.serverId]?.let { stringResource(R.string.alert_device_subject, it) } ?: stringResource(R.string.server, srv?.name ?: "server"),
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    val runbook = rules.find { it.id == alert.ruleId }?.runbookScriptId
+                                        ?.let { id -> scripts.find { it.id == id } }
+                                    alert.runbookRunKey?.let { runKey ->
+                                        Text(
+                                            stringResource(R.string.alert_runbook_ran, runbook?.name ?: stringResource(R.string.alert_runbook)),
+                                            fontSize = 12.sp,
+                                            color = OmniColors.cyan,
+                                            modifier = Modifier
+                                                .clickable {
+                                                    viewModel.closeAlertsPopup()
+                                                    viewModel.openFleetRun(runKey)
+                                                }
+                                                .padding(vertical = 4.dp)
+                                                .testTag("alert.runbook.ran"),
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                        val runbook = rules.find { it.id == alert.ruleId }?.runbookScriptId
-                                            ?.let { id -> scripts.find { it.id == id } }
                                         if (runbook != null && alert.serverId > 0) {
                                             TextButton(
                                                 onClick = { viewModel.openRunbook(alert.ruleId, alert.serverId) },
@@ -732,7 +797,10 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                             Text(stringResource(R.string.muted), color = OmniColors.purple, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                         }
-                                        Text(stringResource(R.string.server_2, srv?.name ?: "server"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            deviceNames[alert.serverId]?.let { stringResource(R.string.alert_device_subject, it) } ?: stringResource(R.string.server_2, srv?.name ?: "server"),
+                                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                         Text(stringResource(R.string.until, formatShortDateTime(alert.mutedUntil)), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                             TextButton(onClick = { viewModel.unmuteAlert(alert.id) }) { Text(stringResource(R.string.unmute)) }
@@ -807,7 +875,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(r.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: "host"
+                                    val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: deviceNames[r.serverId] ?: "host"
                                     val shownThreshold = alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem, threshold = true)
                                     Text(
                                         when (r.metricName) {
@@ -816,11 +884,16 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             EndpointChecks.URL_CHECK, EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK ->
                                                 stringResource(R.string.url_rule_summary, targetName, shownThreshold, r.triggerWindow)
                                             HostChecks.SCRUB_AGE -> stringResource(R.string.host_check_rule_summary_scrub, targetName, shownThreshold)
+                                            HostChecks.BACKUP_AGE -> stringResource(R.string.host_check_rule_summary_backup, targetName, shownThreshold)
                                             in HostChecks.ALL -> when {
                                                 !HostChecks.isYesNo(r.metricName) -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
                                                 r.triggerWindow == "0m" -> stringResource(R.string.host_check_rule_summary_now, targetName)
                                                 else -> stringResource(R.string.host_check_rule_summary_after, targetName, r.triggerWindow)
                                             }
+                                            DeviceChecks.SNMP_UPS_BATTERY_LOW -> stringResource(R.string.device_rule_summary_battery, targetName, shownThreshold, r.triggerWindow)
+                                            in DeviceChecks.ALL ->
+                                                if (r.triggerWindow == "0m") stringResource(R.string.host_check_rule_summary_now, targetName)
+                                                else stringResource(R.string.host_check_rule_summary_after, targetName, r.triggerWindow)
                                             else -> stringResource(R.string.threshold_for, targetName, shownThreshold, r.triggerWindow)
                                         },
                                         fontSize = 11.sp,
@@ -835,23 +908,38 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         )
                                     }
                                     r.runbookScriptId?.let { id -> scripts.find { it.id == id } }?.let { book ->
-                                        Text(stringResource(R.string.alert_rule_runbook, book.name), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            stringResource(if (r.runbookAuto) R.string.alert_rule_runbook_auto else R.string.alert_rule_runbook, book.name),
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
-                                    if (EndpointChecks.isEndpointMetric(r.metricName)) {
+                                    if (!r.enabled) {
+                                        Text(stringResource(R.string.alert_rule_off_note), fontSize = 11.sp, color = OmniColors.amber)
+                                    } else if (EndpointChecks.isEndpointMetric(r.metricName)) {
                                         RuleCheckLines(r, serversList, viewModel.endpointCheckResults) { EndpointChecks.breached(r, it) }
                                     } else if (HostChecks.isHostCheck(r.metricName)) {
-                                        RuleCheckLines(r, serversList, viewModel.hostCheckResults) { it > r.thresholdValue }
+                                        RuleCheckLines(r, serversList, viewModel.hostCheckResults) { HostChecks.breached(r.metricName, it, r.thresholdValue) }
+                                    } else if (DeviceChecks.isDeviceCheck(r.metricName)) {
+                                        DeviceRuleCheckLine(r, viewModel.hostCheckResults[r.id to r.serverId])
                                     }
                                     if (r.notes.isNotBlank()) {
                                         Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                                     }
                                 }
-                                Row {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // A rule can be paused, and one restored switched off turned on.
+                                    val onLabel = stringResource(R.string.alert_rule_on)
+                                    Switch(
+                                        checked = r.enabled,
+                                        onCheckedChange = { viewModel.updateAlertRule(r.copy(enabled = it)) },
+                                        modifier = Modifier.testTag("alertRule.enabled.${r.id}").semantics { contentDescription = onLabel },
+                                    )
                                     IconButton(onClick = { editRule = r }) {
                                         Icon(Icons.Filled.Edit, "Edit rule", tint = OmniColors.cyan)
                                     }
                                     IconButton(onClick = {
-                                        confirm.ask(confirm.str(R.string.delete_rule), confirm.str(R.string.delete_the_alert_rule_for, r.metricName, srv?.name ?: "this host"), confirmLabel = confirm.str(R.string.delete)) {
+                                        confirm.ask(confirm.str(R.string.delete_rule), confirm.str(R.string.delete_the_alert_rule_for, r.metricName, srv?.name ?: deviceNames[r.serverId] ?: "this host"), confirmLabel = confirm.str(R.string.delete)) {
                                             viewModel.deleteAlertRule(r)
                                         }
                                     }) {
@@ -918,7 +1006,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
         val existing = editRule
         // Creating supports multiple hosts (one rule per host, or id 0 = "All hosts"); editing an
         // existing rule keeps its single-host identity, so the picker becomes single-select.
-        val selectedSrvIds = remember(existing) { mutableStateListOf(existing?.serverId ?: 0) }
+        val selectedSrvIds = remember(existing) { mutableStateListOf(existing?.serverId?.takeIf { it >= 0 } ?: 0) }
         var metricSelect by remember(existing) { mutableStateOf(existing?.metricName ?: "CPU Usage") }
         var threshInput by remember(existing, measurementSystem) {
             mutableStateOf(
@@ -939,7 +1027,25 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var checkScriptId by remember(existing) {
             mutableStateOf(existing?.takeIf { it.metricName == HostChecks.SCRIPT_CHECK }?.let(ScriptChecks::scriptId))
         }
+        var backupTarget by remember(existing) {
+            mutableStateOf(
+                existing?.takeIf { it.metricName == HostChecks.BACKUP_AGE }?.let { BackupChecks.decode(it.target) }
+                    ?: BackupChecks.Target(BackupChecks.Tool.RESTIC, "")
+            )
+        }
+        var backupSecret by remember(existing) { mutableStateOf(existing?.secret.orEmpty()) }
         var runbookId by remember(existing) { mutableStateOf(existing?.runbookScriptId) }
+        var runbookAuto by remember(existing) { mutableStateOf(existing?.runbookAuto ?: false) }
+        var runbookNotify by remember(existing) { mutableStateOf(RunNotify.of(existing?.runbookNotify)) }
+        // A device check is about one SNMP device or Proxmox server ([AlertSubjects]), not a host.
+        var deviceSubject by remember(existing) { mutableStateOf(existing?.serverId?.takeIf { AlertSubjects.isDevice(it) }) }
+        val pickedItems = remember(existing) { mutableStateListOf<String>().apply { addAll(DeviceChecks.picked(existing?.target.orEmpty())) } }
+        val deviceMetric = DeviceChecks.isDeviceCheck(metricSelect)
+        val deviceError = when {
+            !deviceMetric -> null
+            deviceSubject == null -> stringResource(R.string.alert_rule_pick_device)
+            else -> DeviceChecks.problem(metricSelect, DeviceChecks.encodePicked(pickedItems))
+        }
         var pickingCheckScript by remember { mutableStateOf(false) }
         var pickingRunbook by remember { mutableStateOf(false) }
         val sortedScripts = scripts.sortedWith(compareBy<QuickScriptEntity> { it.name.lowercase() }.thenBy { it.id })
@@ -955,6 +1061,10 @@ fun AlertsToolView(viewModel: AppViewModel) {
         } else {
             null
         }
+        val backupError = if (metricSelect == HostChecks.BACKUP_AGE) BackupChecks.problem(backupTarget) else null
+        // Likewise a runbook the alert runs on its own.
+        val runbookError = runbook?.takeIf { runbookAuto }
+            ?.let { UnattendedScripts.problem(it, commandDangerHits(it.command), UnattendedScripts.Runner.ALERT) }
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
@@ -963,7 +1073,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                 // Fourteen metrics, a hint and the fields outgrow a phone screen: scroll, so the
                 // last fields are never cut off.
                 Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HostPickerField(
+                    if (!deviceMetric) HostPickerField(
                         label = if (existing == null) "Hosts" else "Host",
                         servers = serversList,
                         selectedIds = selectedSrvIds.toSet(),
@@ -986,7 +1096,10 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         "CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature",
                         EndpointChecks.TLS_EXPIRY, EndpointChecks.URL_CHECK,
                         EndpointChecks.PING, EndpointChecks.TCP_PORT, EndpointChecks.DNS_CHECK,
-                    ) + HostChecks.ALL
+                    ) + HostChecks.ALL +
+                        // Device checks once there is a device to check (or the rule is one already).
+                        (if (snmpDevices.isNotEmpty() || DeviceChecks.isSnmp(existing?.metricName.orEmpty())) DeviceChecks.SNMP else emptyList()) +
+                        (if (proxmoxServers.isNotEmpty() || DeviceChecks.isProxmox(existing?.metricName.orEmpty())) DeviceChecks.PROXMOX else emptyList())
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         metricsOptions.forEach { opt ->
@@ -1005,12 +1118,26 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             EndpointChecks.TCP_PORT -> "1000"
                                             EndpointChecks.DNS_CHECK -> "500"
                                             in HostChecks.ALL -> HostChecks.defaultThreshold(opt).roundToInt().toString()
+                                            in DeviceChecks.ALL -> DeviceChecks.defaultThreshold(opt).roundToInt().toString()
                                             else -> "90"
                                         }
+                                        // A device of the other kind, and its items, do not carry over.
+                                        if (DeviceChecks.isSnmp(opt) != (deviceSubject?.let { AlertSubjects.kind(it) } == AlertSubjects.Kind.SNMP)) {
+                                            deviceSubject = null
+                                        }
+                                        if (deviceSubject == null) {
+                                            deviceSubject = when {
+                                                DeviceChecks.isSnmp(opt) -> snmpDevices.singleOrNull()?.let { AlertSubjects.snmp(it.id) }
+                                                DeviceChecks.isDeviceCheck(opt) -> proxmoxServers.singleOrNull()?.let { AlertSubjects.proxmox(it.id) }
+                                                else -> null
+                                            }
+                                        }
+                                        pickedItems.clear()
                                         // A certificate's expiry needs no sustained window; host
                                         // checks have their own; the others start from five minutes.
                                         windowSelect = when {
                                             HostChecks.isHostCheck(opt) -> HostChecks.defaultWindow(opt)
+                                            DeviceChecks.isDeviceCheck(opt) -> DeviceChecks.defaultWindow(opt)
                                             opt == EndpointChecks.TLS_EXPIRY -> "0m"
                                             windowSelect == "0m" -> "5m"
                                             else -> windowSelect
@@ -1031,8 +1158,18 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             color = OmniColors.amber,
                         )
                     }
-                    hostCheckHint(metricSelect)?.let { hint ->
+                    (hostCheckHint(metricSelect) ?: deviceCheckHint(metricSelect))?.let { hint ->
                         Text(stringResource(hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (deviceMetric) {
+                        DeviceRuleFields(
+                            viewModel = viewModel,
+                            metricName = metricSelect,
+                            subject = deviceSubject,
+                            onSubject = { if (it != deviceSubject) { deviceSubject = it; pickedItems.clear() } },
+                            picked = pickedItems,
+                            error = deviceError,
+                        )
                     }
                     if (metricSelect == HostChecks.SCRIPT_CHECK) {
                         ScriptChoiceField(
@@ -1042,6 +1179,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             tag = "alertRule.script",
                             onClick = { pickingCheckScript = true },
                         )
+                    }
+                    if (metricSelect == HostChecks.BACKUP_AGE) {
+                        BackupTargetFields(backupTarget, { backupTarget = it }, backupSecret, { backupSecret = it }, backupError)
                     }
                     if (EndpointChecks.isEndpointMetric(metricSelect)) {
                         val field = endpointTargetField(metricSelect)
@@ -1064,7 +1204,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         )
                     }
                     // A yes-or-no check alerts on "yes"; its threshold is fixed at 0.
-                    if (!HostChecks.isYesNo(metricSelect)) {
+                    if (!HostChecks.isYesNo(metricSelect) && !DeviceChecks.isYesNo(metricSelect)) {
                         OutlinedTextField(
                             value = threshInput,
                             onValueChange = { threshInput = it },
@@ -1076,7 +1216,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         )
                     }
                     // Facts that hold until fixed (an old scrub, a pending reboot) alert at once.
-                    if (metricSelect != EndpointChecks.TLS_EXPIRY && !(HostChecks.isHostCheck(metricSelect) && HostChecks.defaultWindow(metricSelect) == "0m")) {
+                    if (metricSelect != EndpointChecks.TLS_EXPIRY && !(HostChecks.isHostCheck(metricSelect) && HostChecks.defaultWindow(metricSelect) == "0m") &&
+                        !(deviceMetric && DeviceChecks.defaultWindow(metricSelect) == "0m")
+                    ) {
                         Text(stringResource(R.string.trigger_window_label))
                         @OptIn(ExperimentalLayoutApi::class)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1085,13 +1227,31 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             }
                         }
                     }
-                    ScriptChoiceField(
+                    // A runbook runs on a host; a device has none to run it on.
+                    if (!deviceMetric) ScriptChoiceField(
                         label = stringResource(R.string.alert_runbook),
                         choice = runbook?.let { "${it.emoji} ${it.name}" } ?: stringResource(R.string.alert_runbook_none),
                         hint = stringResource(R.string.alert_runbook_hint),
                         tag = "alertRule.runbook",
                         onClick = { pickingRunbook = true },
                     )
+                    if (runbook != null && !deviceMetric) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(R.string.alert_runbook_auto), fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Switch(
+                                checked = runbookAuto,
+                                onCheckedChange = { runbookAuto = it },
+                                modifier = Modifier.testTag("alertRule.runbook.auto"),
+                            )
+                        }
+                        if (runbookAuto) {
+                            Text(stringResource(R.string.alert_runbook_auto_help), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            runbookError?.let {
+                                Text(it, fontSize = 12.sp, color = OmniColors.amber, modifier = Modifier.testTag("alertRule.runbook.problem"))
+                            }
+                            RunNotifyPicker(runbookNotify, { runbookNotify = it }, "alertRule.runbook.notify")
+                        }
+                    }
                     OutlinedTextField(
                         value = notesInput,
                         onValueChange = { notesInput = it },
@@ -1104,7 +1264,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null && targetError == null && scriptError == null,
+                    enabled = (deviceMetric || selectedSrvIds.isNotEmpty()) && thresholdError == null && targetError == null && scriptError == null &&
+                        runbookError == null && backupError == null && deviceError == null,
                     onClick = {
                         val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
@@ -1113,20 +1274,36 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             enteredThreshold
                         }
                         val target = when {
+                            DeviceChecks.picksItems(metricSelect) -> DeviceChecks.encodePicked(pickedItems)
                             EndpointChecks.isEndpointMetric(metricSelect) -> targetInput.trim()
                             metricSelect == HostChecks.SCRIPT_CHECK -> checkScriptId?.toString().orEmpty()
+                            metricSelect == HostChecks.BACKUP_AGE -> BackupChecks.encode(backupTarget)
                             else -> ""
                         }
+                        // Only a backup check keeps a password; vzdump files need none.
+                        val secret = if (metricSelect == HostChecks.BACKUP_AGE && backupTarget.tool != BackupChecks.Tool.VZDUMP) {
+                            backupSecret.substringBefore('\n')
+                        } else {
+                            ""
+                        }
                         // A runbook deleted while the dialog was open is not saved.
-                        val runbookToSave = runbook?.id
-                        if (existing == null) {
+                        val runbookToSave = runbook?.id?.takeIf { !deviceMetric }
+                        val autoToSave = runbookAuto && runbookToSave != null
+                        val device = deviceSubject
+                        if (deviceMetric && device != null) {
+                            if (existing == null) {
+                                viewModel.addAlertRule(device, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target)
+                            } else {
+                                viewModel.updateAlertRule(existing.copy(serverId = device, metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = null, runbookAuto = false, secret = ""))
+                            }
+                        } else if (existing == null) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave)
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim(), target, runbookToSave, autoToSave, runbookNotify, secret)
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim(), target = target, runbookScriptId = runbookToSave, runbookAuto = autoToSave, runbookNotify = runbookNotify, secret = secret))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -1216,7 +1393,187 @@ private fun hostCheckHint(metricName: String): Int? = when (metricName) {
     HostChecks.UPS_ON_BATTERY -> R.string.host_check_hint_ups
     HostChecks.REBOOT_REQUIRED -> R.string.host_check_hint_reboot
     HostChecks.SCRIPT_CHECK -> R.string.host_check_hint_script
+    HostChecks.BACKUP_AGE -> R.string.host_check_hint_backup
+    HostChecks.IMAGE_UPDATES -> R.string.host_check_hint_images
     else -> null
+}
+
+/** The hint under the metric picker for a device check, or null for other metrics. */
+private fun deviceCheckHint(metricName: String): Int? = when (metricName) {
+    DeviceChecks.SNMP_INTERFACE_DOWN -> R.string.device_check_hint_interface
+    DeviceChecks.SNMP_UPS_ON_BATTERY -> R.string.device_check_hint_on_battery
+    DeviceChecks.SNMP_UPS_BATTERY_LOW -> R.string.device_check_hint_battery_low
+    DeviceChecks.PROXMOX_BACKUP_FAILED -> R.string.device_check_hint_backup
+    DeviceChecks.PROXMOX_GUEST_STOPPED -> R.string.device_check_hint_guests
+    else -> null
+}
+
+/**
+ * A device check's fields: the device (SNMP or Proxmox, as [metricName] needs), then for Interface
+ * Down and Guest Stopped the interfaces or guests to watch, from the device's last reading (read now
+ * when there is none). Items picked before and no longer listed stay, to be unpicked.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DeviceRuleFields(
+    viewModel: AppViewModel,
+    metricName: String,
+    subject: Int?,
+    onSubject: (Int) -> Unit,
+    picked: MutableList<String>,
+    error: String?,
+) {
+    val snmpDevices by viewModel.snmpDevices.collectAsStateWithLifecycle()
+    val proxmoxServers by viewModel.proxmoxServers.collectAsStateWithLifecycle()
+    val snmp = DeviceChecks.isSnmp(metricName)
+    val devices = if (snmp) snmpDevices.map { AlertSubjects.snmp(it.id) to it.name } else proxmoxServers.map { AlertSubjects.proxmox(it.id) to it.name }
+    Text(stringResource(R.string.alert_rule_device))
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("alertRule.devices")) {
+        devices.forEach { (id, name) ->
+            FilterChip(selected = subject == id, onClick = { onSubject(id) }, label = { Text(name) }, modifier = Modifier.testTag("alertRule.device.$id"))
+        }
+    }
+    if (subject == null || !DeviceChecks.picksItems(metricName)) {
+        error?.let { Text(it, fontSize = 12.sp, color = OmniColors.amber, modifier = Modifier.testTag("alertRule.device.problem")) }
+        return
+    }
+    val deviceId = AlertSubjects.deviceId(subject)
+    // Items as (what the rule keeps, what the chip says): an interface by name, a guest by VM ID.
+    val (items, reading) = if (snmp) {
+        val r = viewModel.snmpReadings[deviceId]
+        val snap = (r?.outcome as? SnmpDevices.Outcome.Answered)?.snapshot
+        snap?.interfaces?.map { it.name to it.name + if (it.alias.isNotBlank()) " (${it.alias})" else "" } to
+            ((r?.outcome as? SnmpDevices.Outcome.Failed)?.reason ?: if (deviceId in viewModel.snmpPolling) "" else null)
+    } else {
+        val v = viewModel.proxmoxViews[deviceId]
+        v?.overview?.guests?.filter { !it.template }?.map { it.vmid.toString() to it.label } to (v?.error ?: v?.untrusted?.message ?: if (v?.loading == true) "" else null)
+    }
+    LaunchedEffect(subject) {
+        if (items == null) {
+            if (snmp) snmpDevices.find { it.id == deviceId }?.let(viewModel::pollSnmpDevice)
+            else proxmoxServers.find { it.id == deviceId }?.let(viewModel::refreshProxmox)
+        }
+    }
+    Text(stringResource(if (snmp) R.string.alert_rule_items_interfaces else R.string.alert_rule_items_guests))
+    val shown = items.orEmpty() + picked.filter { p -> items.orEmpty().none { it.first == p } }.map { it to it }
+    if (items == null) {
+        Text(
+            if (reading.isNullOrEmpty()) stringResource(R.string.alert_rule_device_reading) else stringResource(R.string.script_check_unknown, reading),
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("alertRule.items")) {
+        shown.forEach { (key, label) ->
+            FilterChip(
+                selected = key in picked,
+                onClick = { if (!picked.remove(key)) picked.add(key) },
+                label = { Text(label) },
+                modifier = Modifier.testTag("alertRule.item.$key"),
+            )
+        }
+    }
+    error?.let { Text(it, fontSize = 12.sp, color = OmniColors.amber, modifier = Modifier.testTag("alertRule.device.problem")) }
+}
+
+/** What a device check last saw, or that it has not been checked yet. A breaching reading shows in amber. */
+@Composable
+private fun DeviceRuleCheckLine(rule: AlertRuleEntity, result: EndpointChecks.Result?) {
+    val picked = DeviceChecks.picked(rule.target)
+    // Guests are kept by VM ID.
+    val watched = picked.joinToString(", ") { if (DeviceChecks.isProxmox(rule.metricName)) "VM $it" else it }.ifEmpty { null }
+    val over = result?.value?.let { DeviceChecks.breached(rule.metricName, it, rule.thresholdValue) } == true
+    Text(
+        listOfNotNull(watched, result?.summary ?: stringResource(R.string.endpoint_not_checked_yet)).joinToString(" · "),
+        fontSize = 11.sp,
+        color = if (over) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.testTag("alertRule.check.${rule.id}"),
+    )
+}
+
+/** What a Backup Age rule reads, as its rule line names it: "restic: /srv/restic". */
+internal fun backupRuleLabel(rule: AlertRuleEntity): String? {
+    if (rule.metricName != HostChecks.BACKUP_AGE) return null
+    val target = BackupChecks.decode(rule.target) ?: return null
+    val where = target.repository.ifBlank { target.settingsFile }
+    return listOf(target.tool.label + if (where.isNotBlank()) ": $where" else "", target.filter).filter { it.isNotBlank() }.joinToString(" · ")
+}
+
+/**
+ * The fields of a Backup Age rule: the tool, then what it reads and the password, each labelled
+ * for that tool. [error] is why the rule cannot be saved yet.
+ */
+@Composable
+private fun BackupTargetFields(
+    target: BackupChecks.Target,
+    onTarget: (BackupChecks.Target) -> Unit,
+    secret: String,
+    onSecret: (String) -> Unit,
+    error: String?,
+) {
+    val tool = target.tool
+    Text(stringResource(R.string.backup_tool))
+    @OptIn(ExperimentalLayoutApi::class)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        BackupChecks.Tool.entries.forEach { t ->
+            FilterChip(selected = tool == t, onClick = { onTarget(target.copy(tool = t)) }, label = { Text(t.label) })
+        }
+    }
+    val (placeholder, filterLabel, filterPlaceholder) = when (tool) {
+        BackupChecks.Tool.RESTIC -> Triple("/srv/restic or sftp:nas:/restic", R.string.backup_filter_restic, "nas")
+        BackupChecks.Tool.BORG -> Triple("/srv/borg or ssh://nas/./borg", R.string.backup_filter_borg, "nas-*")
+        BackupChecks.Tool.PBS -> Triple("backup@pbs@pbs.lan:store", R.string.backup_filter_pbs, "vm/100")
+        BackupChecks.Tool.VZDUMP -> Triple("/var/lib/vz/dump", R.string.backup_filter_vzdump, "100")
+    }
+    OutlinedTextField(
+        value = target.repository,
+        onValueChange = { onTarget(target.copy(repository = it.replace("\n", ""))) },
+        label = { Text(stringResource(if (tool == BackupChecks.Tool.VZDUMP) R.string.backup_dump_folder else R.string.backup_repository)) },
+        placeholder = { Text(placeholder) },
+        singleLine = true,
+        isError = error != null,
+        supportingText = (error ?: if (tool == BackupChecks.Tool.VZDUMP) stringResource(R.string.backup_dump_folder_hint) else null)?.let { { Text(it) } },
+        modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.repository"),
+    )
+    OutlinedTextField(
+        value = target.filter,
+        onValueChange = { onTarget(target.copy(filter = it.replace("\n", ""))) },
+        label = { Text(stringResource(filterLabel)) },
+        placeholder = { Text(filterPlaceholder) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.filter"),
+    )
+    if (tool != BackupChecks.Tool.VZDUMP) {
+        OutlinedTextField(
+            value = target.settingsFile,
+            onValueChange = { onTarget(target.copy(settingsFile = it.replace("\n", ""))) },
+            label = { Text(stringResource(R.string.backup_settings_file)) },
+            placeholder = { Text("/etc/restic/env") },
+            singleLine = true,
+            supportingText = { Text(stringResource(R.string.backup_settings_file_hint)) },
+            modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.settings"),
+        )
+    }
+    if (tool == BackupChecks.Tool.PBS) {
+        OutlinedTextField(
+            value = target.fingerprint,
+            onValueChange = { onTarget(target.copy(fingerprint = it.replace("\n", ""))) },
+            label = { Text(stringResource(R.string.backup_fingerprint)) },
+            singleLine = true,
+            supportingText = { Text(stringResource(R.string.backup_fingerprint_hint)) },
+            modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.fingerprint"),
+        )
+    }
+    if (tool != BackupChecks.Tool.VZDUMP) {
+        OmniPasswordField(
+            value = secret,
+            onValueChange = { onSecret(it.replace("\n", "")) },
+            label = stringResource(if (tool == BackupChecks.Tool.PBS) R.string.backup_password_pbs else R.string.backup_password),
+            modifier = Modifier.fillMaxWidth().testTag("alertRule.backup.password"),
+        )
+        Text(stringResource(R.string.backup_password_hint), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 /**
@@ -1236,7 +1593,10 @@ private fun RuleCheckLines(
     Column(Modifier.testTag("alertRule.check.${rule.id}")) {
         if (seen.isEmpty()) {
             Text(
-                listOfNotNull(rule.target.ifBlank { null }, stringResource(R.string.endpoint_not_checked_yet)).joinToString(" · "),
+                listOfNotNull(
+                    if (rule.metricName == HostChecks.BACKUP_AGE) backupRuleLabel(rule) else rule.target.ifBlank { null },
+                    stringResource(R.string.endpoint_not_checked_yet),
+                ).joinToString(" · "),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -3455,6 +3815,8 @@ internal fun backupServerExtras(contents: BackupContents): String? = listOf(
     contents.vpnTunnels to "VPN tunnel",
     contents.telnetHosts to "Telnet connection",
     contents.kubeClusters to "Kubernetes cluster",
+    contents.snmpDevices to "SNMP device",
+    contents.proxmoxServers to "Proxmox server",
     contents.tmuxSessions to "tmux session",
     contents.composeStacks to "Compose stack",
 ).filter { it.first > 0 }
@@ -3497,7 +3859,7 @@ private fun BackupSelectionList(
         BackupSelectionRow("Fleet history *", contents?.fleetRuns, selection.fleetHistory, { onChange(selection.copy(fleetHistory = it)) }, contents == null || contents.fleetRuns > 0)
         BackupSelectionRow("Monitoring history *", contents?.monitoringPoints, selection.monitoringHistory, { onChange(selection.withMonitoringHistorySelected(it)) }, contents == null || (contents.monitoringPoints > 0 && contents.servers > 0))
         BackupSelectionRow("AI assistant log *", contents?.assistantCalls, selection.assistantLog, { onChange(selection.copy(assistantLog = it)) }, contents == null || contents.assistantCalls > 0)
-        val automationCount = contents?.let { it.automationGrants + it.assistantSettings }
+        val automationCount = contents?.let { it.automationGrants + it.assistantSettings + it.fleetSchedules }
         BackupSelectionRow("Automation & AI assistants *", automationCount, selection.automation, { onChange(selection.withAutomationSelected(it)) }, contents == null || ((automationCount ?: 0) > 0 && contents.servers > 0))
         BackupSelectionRow("Crash logs *", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
         Text(stringResource(R.string.sensitive_selecting_forces_an_encrypted_backup),

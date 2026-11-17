@@ -1,22 +1,34 @@
 package com.jetsetslow.omniterm
 
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationManager
 import androidx.test.core.app.ApplicationProvider
 import com.jetsetslow.omniterm.automation.AutomationGate
 import com.jetsetslow.omniterm.automation.AutomationRunner
+import com.jetsetslow.omniterm.automation.RunNotifications
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
 import com.jetsetslow.omniterm.data.Automation
 import com.jetsetslow.omniterm.data.AutomationGrantEntity
+import com.jetsetslow.omniterm.data.AutomationUseEntity
+import com.jetsetslow.omniterm.data.FleetRunEntity
 import com.jetsetslow.omniterm.data.FleetRunHistory
+import com.jetsetslow.omniterm.data.FleetRunSummary
 import com.jetsetslow.omniterm.data.QuickScriptEntity
 import com.jetsetslow.omniterm.data.RemoteCommands
+import com.jetsetslow.omniterm.data.RunNotify
 import com.jetsetslow.omniterm.data.ServerEntity
+import com.jetsetslow.omniterm.data.UseOutcome
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.SshTransport
 import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.ui.BroadcastStatus
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -28,6 +40,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -35,7 +48,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 /**
  * An automation run, as the job runs it: only with the switch on and the grant still there, only a
  * script Script Check would accept, on each host as Fleet runs a saved script, and kept in Fleet's
- * history.
+ * history from the moment it starts. Each use goes in its token's history, and its notification
+ * follows the token's choice.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -120,6 +134,16 @@ class AutomationRunnerRobolectricTest {
     }
 
     @Test
+    fun eachHostFillsInItsOwnDetails() = withLab { transport ->
+        transport.os[PI] = "Windows"
+        val (grant, hash) = grant(script("echo {{host.name}} {{host.address}} {{host.os}}"), listOf(nasId, piId))
+        assertTrue(runner(transport).run(grant, hash).succeeded)
+        val byHost = transport.commands.filter { it.second != RemoteCommands.OS_PROBE }.associateBy { it.first.host }
+        assertEquals("echo nas $NAS linux", byHost.getValue(NAS).second)
+        assertEquals("echo pi $PI windows", byHost.getValue(PI).second)
+    }
+
+    @Test
     fun aBuiltInPresetRunsInTheAppsOwnFormForTheHost() = withLab { transport ->
         transport.os[PI] = "Windows"
         val kernel = "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\""
@@ -168,6 +192,135 @@ class AutomationRunnerRobolectricTest {
     }
 
     @Test
+    fun aRunIsInTheHistoryWhileItRunsAndItsNotificationShowsHowFarItIs() = withLab { transport ->
+        transport.held[PI] = CompletableDeferred()
+        val (grant, hash) = grant(script("uptime"), listOf(nasId, piId))
+
+        val running = async { runner(transport).run(grant, hash) }
+        val midway = waitFor { it.hosts == 2 && it.running == 1 && it.succeeded == 1 }
+        val kept = repository.fleetRunHosts(midway.run.id).associateBy { it.serverName }
+        assertEquals(BroadcastStatus.Success.name, kept.getValue("nas").status)
+        assertEquals("the host still going shows as running", BroadcastStatus.Running.name, kept.getValue("pi").status)
+        val progress = notification(midway.run.runKey)!!
+        assertEquals("Tasker is running $SCRIPT_NAME", progress.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("1 of 2 hosts done", progress.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertTrue("progress stays while it runs", progress.flags and Notification.FLAG_ONGOING_EVENT != 0)
+
+        transport.held.getValue(PI).complete(Unit)
+        val result = running.await()
+        assertTrue(result.succeeded)
+        assertEquals(midway.run.runKey, result.runKey)
+        val done = repository.fleetRunsFlow.first().single()
+        assertEquals("one run, updated as it went", midway.run.id, done.run.id)
+        assertEquals(0, done.running)
+        assertEquals(2, done.succeeded)
+        assertTrue(done.run.finishedAt >= done.run.startedAt)
+        assertNull("a run that succeeded everywhere leaves no notification by default", notification(done.run.runKey))
+    }
+
+    @Test
+    fun aStoppedRunSaysHowFarItGotInTheHistoryAndTheTokensUses() = withLab { transport ->
+        transport.hangs += PI
+        val (grant, hash) = grant(script("uptime"), listOf(nasId, piId))
+
+        val running = async { runner(transport).run(grant, hash) }
+        val midway = waitFor { it.running == 1 && it.succeeded == 1 }
+        running.cancel()
+        runCatching { running.await() }
+
+        val kept = repository.fleetRunHosts(midway.run.id).associateBy { it.serverName }
+        assertEquals(BroadcastStatus.Success.name, kept.getValue("nas").status)
+        assertEquals("a host cut off counts as failed", BroadcastStatus.Failure.name, kept.getValue("pi").status)
+        assertEquals("Android stopped the run before it finished.", kept.getValue("pi").note)
+        val use = repository.automationUsesFlow(grant).first().single()
+        assertEquals(UseOutcome.FAILED, use.outcome)
+        assertEquals("Android stopped the run before it finished.", use.detail)
+        assertEquals("the use opens the run it got as far as", midway.run.runKey, use.runKey)
+        val result = notification(midway.run.runKey)!!
+        assertEquals("Tasker ran $SCRIPT_NAME", result.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("Android stopped the run before it finished.", result.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    }
+
+    @Test
+    fun everyUseIsKeptWithWhatCameOfIt() = withLab { transport ->
+        val (grant, hash) = grant(script("uptime"), listOf(nasId, piId))
+        val run = runner(transport)
+        run.run(grant, hash)
+        transport.replies[PI] = "SSH Error: command failed (3): disk full\n"
+        run.run(grant, hash)
+        repository.insertSetting(Automation.SETTING_ENABLED, "false")
+        run.run(grant, hash)
+        val (destructive, hash2) = grant(script("rm -rf /srv/data"), listOf(nasId))
+        repository.insertSetting(Automation.SETTING_ENABLED, "true")
+        run.run(destructive, hash2)
+
+        val uses = repository.automationUsesFlow(grant).first()
+        assertEquals(listOf(UseOutcome.REFUSED, UseOutcome.FAILED, UseOutcome.OK), uses.map { it.outcome })
+        assertEquals("Automation is off in OmniTerm. Turn it on in Tools → Automation.", uses[0].detail)
+        assertNull("nothing ran, so there is no run to open", uses[0].runKey)
+        assertEquals("pi: Exited with status 3.", uses[1].detail)
+        assertEquals("nas, pi", uses[2].detail)
+        val runs = repository.fleetRunsFlow.first().map { it.run.runKey }.toSet()
+        assertTrue("each use that ran opens its own run", uses[1].runKey in runs && uses[2].runKey in runs && uses[1].runKey != uses[2].runKey)
+        val refused = repository.automationUsesFlow(destructive).first().single()
+        assertEquals(UseOutcome.REFUSED, refused.outcome)
+        assertTrue(refused.detail.startsWith("Automation runs it without asking"))
+        assertEquals("another token's uses stay its own", 3, uses.size)
+    }
+
+    @Test
+    fun aTokensUsesKeepTheNewestAndGoWithIt() = withLab { _ ->
+        val (grant, _) = grant(script("uptime"), listOf(nasId))
+        (1..5).forEach {
+            repository.recordAutomationUse(AutomationUseEntity(grantId = grant, at = it.toLong(), outcome = UseOutcome.OK, detail = "use $it"), keep = 3)
+        }
+        assertEquals(listOf("use 5", "use 4", "use 3"), repository.automationUsesFlow(grant).first().map { it.detail })
+        repository.deleteAutomationGrant(grant)
+        assertTrue("revoking a token deletes its history", repository.automationUsesFlow(grant).first().isEmpty())
+    }
+
+    @Test
+    fun theNotificationFollowsTheTokensChoice() = withLab { transport ->
+        transport.replies[PI] = "SSH Error: command failed (3): disk full\n"
+        val (failing, hash) = grant(script("uptime"), listOf(nasId, piId))
+        val failed = runner(transport).run(failing, hash)
+        val kept = notification(failed.runKey!!)!!
+        assertEquals("a failure stays, naming the host", "Failed on pi.", kept.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals("a tap opens the run", "omniterm://notification/fleet-run/${failed.runKey}", shadowOf(kept.contentIntent).savedIntent.dataString)
+
+        transport.replies.remove(PI)
+        val (always, hash2) = grant(script("uptime"), listOf(nasId, piId), notify = RunNotify.ALWAYS)
+        val succeeded = runner(transport).run(always, hash2)
+        assertEquals("Succeeded on all 2 hosts.", notification(succeeded.runKey!!)!!.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+
+        transport.replies[PI] = "SSH Error: command failed (3): disk full\n"
+        val (quiet, hash3) = grant(script("uptime"), listOf(nasId, piId), notify = RunNotify.OFF)
+        val silent = runner(transport).run(quiet, hash3)
+        assertFalse(silent.succeeded)
+        assertNull("off means no notification, even for a failure", notification(silent.runKey!!))
+    }
+
+    @Test
+    fun aRunCutOffWithItsProcessIsEndedLater() = withLab { _ ->
+        val now = 10 * FleetRunHistory.STALE_RUNNING_MS
+        suspend fun saved(key: String, source: String, startedAt: Long) = repository.recordFleetRun(
+            FleetRunEntity(runKey = key, startedAt = startedAt, finishedAt = startedAt, command = "uptime", source = source),
+            listOf(FleetRunHistory.host(nasId, "nas", BroadcastStatus.Running.name, null, "", truncated = false)),
+        )
+        saved("automation-old", FleetRunHistory.SOURCE_AUTOMATION, now - FleetRunHistory.STALE_RUNNING_MS - 1)
+        saved("automation-new", FleetRunHistory.SOURCE_AUTOMATION, now - 60_000)
+        saved("fleet-old", FleetRunHistory.SOURCE_FLEET, now - FleetRunHistory.STALE_RUNNING_MS - 1)
+
+        assertEquals(1, repository.endStaleLiveRuns(now, "cut off"))
+        val byKey = repository.fleetRunsFlow.first().associateBy { it.run.runKey }
+        val old = repository.fleetRunHosts(byKey.getValue("automation-old").run.id).single()
+        assertEquals(BroadcastStatus.Failure.name, old.status)
+        assertEquals("cut off", old.note)
+        assertEquals("a run still within its limit keeps running", 1, byKey.getValue("automation-new").running)
+        assertEquals("Broadcast's own runs are never touched", 1, byKey.getValue("fleet-old").running)
+    }
+
+    @Test
     fun theGateKnowsOnlyTokensItMade() = withLab { _ ->
         val (grant, _) = grant(script("uptime"), listOf(nasId))
         val gate = AutomationGate(application, repository)
@@ -195,16 +348,32 @@ class AutomationRunnerRobolectricTest {
     }
 
     /** A grant for [scriptId] on [hosts], and its token's hash. */
-    private suspend fun grant(scriptId: Int, hosts: List<Int>): Pair<Int, String> {
+    private suspend fun grant(scriptId: Int, hosts: List<Int>, notify: String = RunNotify.FAILURES): Pair<Int, String> {
         lastToken = Automation.newToken()
         val hash = Automation.hash(lastToken)
         val id = repository.insertAutomationGrant(
-            AutomationGrantEntity(scriptId = scriptId, serverIds = Automation.joinServerIds(hosts), tokenHash = hash, label = "Tasker", createdAt = 1L),
+            AutomationGrantEntity(
+                scriptId = scriptId, serverIds = Automation.joinServerIds(hosts), tokenHash = hash, label = "Tasker", createdAt = 1L,
+                notify = notify,
+            ),
         )
         return id to hash
     }
 
-    private fun withLab(block: suspend (FakeHosts) -> Unit) = runBlocking {
+    /** The one run in the history, once [ready] says it has got that far. */
+    private suspend fun waitFor(ready: (FleetRunSummary) -> Boolean): FleetRunSummary = withTimeout(20_000) {
+        var found: FleetRunSummary? = null
+        while (found == null) {
+            found = repository.fleetRunsFlow.first().singleOrNull()?.takeIf(ready)
+            if (found == null) delay(20)
+        }
+        checkNotNull(found)
+    }
+
+    private fun notification(runKey: String): Notification? =
+        shadowOf(application.getSystemService(NotificationManager::class.java)).getNotification(RunNotifications.idFor(runKey))
+
+    private fun withLab(block: suspend CoroutineScope.(FakeHosts) -> Unit) = runBlocking {
         repository = AppRepository(AppDatabase.getDatabase(application))
         repository.clearFleetRuns()
         repository.getAllScripts().filter { it.name == SCRIPT_NAME }.forEach { repository.deleteScript(it) }
@@ -226,6 +395,8 @@ class AutomationRunnerRobolectricTest {
         val replies = ConcurrentHashMap<String, String>()
         val unreachable = CopyOnWriteArrayList<String>()
         val hangs = CopyOnWriteArrayList<String>()
+        /** Hosts whose command waits until the test completes theirs. */
+        val held = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
         val commands = CopyOnWriteArrayList<Pair<SshCredentials, String>>()
 
         override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String {
@@ -233,6 +404,7 @@ class AutomationRunnerRobolectricTest {
             if (creds.host in unreachable) return "SSH Error: Connection refused"
             if (command == RemoteCommands.OS_PROBE) return os[creds.host] ?: "Linux\n/bin/bash"
             if (creds.host in hangs) awaitCancellation()
+            held[creds.host]?.await()
             return replies[creds.host] ?: ""
         }
 

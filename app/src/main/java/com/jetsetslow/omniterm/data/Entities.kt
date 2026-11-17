@@ -103,6 +103,62 @@ data class ServerEntity(
     // The host's address through the tunnel when it differs from [host] (a Tailscale 100.x or
     // MagicDNS name), so [host] can stay the address for direct use; blank means the same address.
     val tunnelHost: String = "",
+    // The user's tags, as HostTags.format writes them ("db, prod"): a host has one group and any
+    // number of tags, and Fleet can target hosts by tag.
+    val tags: String = "",
+)
+
+/**
+ * A saved set of Fleet targets, picked again with one tap: hosts by id ([serverIds]), whole
+ * [groups], or hosts by [tags], all of them when [allTags] or any otherwise. [mode] is the
+ * FleetTargetMode's name; the lists are JSON arrays, since a group name may hold a comma.
+ */
+@Entity(tableName = "fleet_target_sets")
+data class FleetTargetSetEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val mode: String,
+    val serverIds: String = "[]",
+    val groups: String = "[]",
+    val tags: String = "[]",
+    val allTags: Boolean = false,
+)
+
+/**
+ * A saved script Fleet runs by itself on a schedule ([FleetScheduleTiming]): every [everyMinutes],
+ * or daily or weekly at [minuteOfDay]. Its targets are kept as a saved target set keeps them
+ * ([FleetTargetSetEntity]). The last run's outcome is kept for the list; the run itself is in
+ * Fleet's history under [lastRunKey].
+ *
+ * Idea credit: Termix Automations' schedules (docs.termix.site/plugins/automations).
+ */
+@Entity(tableName = "fleet_schedules")
+data class FleetScheduleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val scriptId: Int,
+    val mode: String,
+    val serverIds: String = "[]",
+    val groups: String = "[]",
+    val tags: String = "[]",
+    val allTags: Boolean = false,
+    // FleetScheduleTiming.EVERY, DAILY or WEEKLY.
+    val repeat: String = FleetScheduleTiming.DAILY,
+    val everyMinutes: Int = 60,
+    // Minutes after local midnight, for DAILY and WEEKLY.
+    val minuteOfDay: Int = 3 * 60,
+    // ISO day of the week (1 is Monday), for WEEKLY.
+    val dayOfWeek: Int = 1,
+    val enabled: Boolean = true,
+    // RunNotify: what the run's notification shows.
+    val notify: String = RunNotify.FAILURES,
+    val createdAt: Long = 0,
+    val nextRunAt: Long? = null,
+    val lastRunAt: Long? = null,
+    // UseOutcome of the last run.
+    val lastOutcome: String? = null,
+    val lastDetail: String = "",
+    val lastRunKey: String? = null,
 )
 
 // Indexed on (serverId, timestamp) because every read path groups or filters by exactly that pair:
@@ -179,6 +235,13 @@ data class AlertRuleEntity(
     // The saved script this rule's notification and incident offer to run, after the usual
     // confirmation, or null for none. Cleared when that script is deleted.
     val runbookScriptId: Int? = null,
+    // Opt-in: run the runbook on the host, unattended, when an incident of this rule opens.
+    val runbookAuto: Boolean = false,
+    // RunNotify: what that run's notification shows.
+    val runbookNotify: String = RunNotify.FAILURES,
+    // A Backup Age rule's repository password, encrypted here and decrypted by AppRepository;
+    // sent to the host on the check's standard input only. Blank for every other rule.
+    val secret: String = "",
 )
 
 @Entity(
@@ -195,7 +258,9 @@ data class ActiveAlertEntity(
     val severity: String,
     val triggeredTime: Long,
     val acknowledged: Boolean = false,
-    val mutedUntil: Long = 0L // timestamp, 0 if not muted
+    val mutedUntil: Long = 0L, // timestamp, 0 if not muted
+    // The run in Fleet's history the rule's runbook made when this incident opened, if it ran one.
+    val runbookRunKey: String? = null,
 )
 
 @Entity(
@@ -267,6 +332,51 @@ data class KubeClusterEntity(
     val clientKeyPem: String = "",
     val token: String = "",
     val namespace: String = "",
+)
+
+/**
+ * A Proxmox VE server reached over its HTTPS API from the phone (Tools → Proxmox VE), with an API
+ * token: [tokenId] is `user@realm!name`, [tokenSecret] its secret, encrypted at the repository
+ * boundary. [fingerprint] is the SHA-256 of the server certificate the user trusted ("" for none
+ * yet): a certificate the phone's own CAs do not trust is accepted only when it has that
+ * fingerprint. [tunnelId] and [tunnelHost] work as a host's do: through the tunnel only, never
+ * directly, dialled at [tunnelHost] when it is set.
+ */
+@Entity(tableName = "proxmox_servers")
+data class ProxmoxServerEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val host: String,
+    val port: Int = 8006,
+    val tokenId: String = "",
+    val tokenSecret: String = "",
+    val fingerprint: String = "",
+    val tunnelId: Int? = null,
+    val tunnelHost: String = "",
+    val notes: String = "",
+)
+
+/**
+ * A device polled over SNMP from the phone (Tools → SNMP devices): a switch, router, UPS or printer.
+ * [community], [authPassword] and [privPassword] are encrypted at the repository boundary.
+ * [tunnelId] works as a host's does: while the tunnel is in use the device is not polled at all,
+ * since SNMP is UDP and tunnels carry TCP only, and never directly instead.
+ */
+@Entity(tableName = "snmp_devices")
+data class SnmpDeviceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val host: String,
+    val port: Int = 161,
+    val version: Int = 2,
+    val community: String = "",
+    val user: String = "",
+    val authProtocol: String = "",
+    val authPassword: String = "",
+    val privProtocol: String = "",
+    val privPassword: String = "",
+    val tunnelId: Int? = null,
+    val notes: String = "",
 )
 
 @Entity(tableName = "wol_targets")
@@ -348,6 +458,10 @@ data class FleetRunEntity(
     val scriptName: String? = null,
     // FleetRunHistory.SOURCE_*: a run from Broadcast, a retry of failed hosts, or an alert's runbook.
     val source: String = FleetRunHistory.SOURCE_FLEET,
+    // The file a push sent, by name; [command] is then where it went, as typed. Null for a command.
+    val pushedFile: String? = null,
+    // Whether it ran as root, with sudo.
+    val sudo: Boolean = false,
 )
 
 /** One host's result in a [FleetRunEntity]. */
@@ -365,11 +479,16 @@ data class FleetRunHostEntity(
     val truncated: Boolean = false,
 )
 
-/** A [FleetRunEntity] with how many of its hosts succeeded, for the history list. */
+/**
+ * A [FleetRunEntity] with how many of its hosts succeeded, for the history list. [running] counts
+ * the hosts still running: a run another app or an AI assistant started is saved when it starts
+ * and updated as each host finishes, so it can be watched from the history.
+ */
 data class FleetRunSummary(
     @androidx.room.Embedded val run: FleetRunEntity,
     val hosts: Int,
     val succeeded: Int,
+    val running: Int = 0,
 )
 
 object FleetRunHistory {
@@ -380,6 +499,21 @@ object FleetRunHistory {
     const val SOURCE_RUNBOOK = "runbook"
     const val SOURCE_AUTOMATION = "automation"
     const val SOURCE_MCP = "mcp"
+    const val SOURCE_SCHEDULE = "schedule"
+    /** A rule's runbook, run on its own when an incident opened. */
+    const val SOURCE_ALERT = "alert"
+
+    /** The sources whose runs are saved while they run: nobody is watching them on the Broadcast screen. */
+    val LIVE_SOURCES = listOf(SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE, SOURCE_ALERT)
+
+    /** Every source a saved run may have; a backup's run with any other is read as [SOURCE_FLEET]. */
+    val SOURCES = setOf(SOURCE_FLEET, SOURCE_RETRY, SOURCE_RUNBOOK, SOURCE_AUTOMATION, SOURCE_MCP, SOURCE_SCHEDULE, SOURCE_ALERT)
+
+    /**
+     * A live run still "running" this long after it started was cut off with its process (a run
+     * that ends normally, or is stopped, always saves its end): the longest run's limit and a margin.
+     */
+    const val STALE_RUNNING_MS = Automation.RUN_TIMEOUT_MS + 2 * 60_000L
 
     /** [output]'s end, at most [OUTPUT_CHARS], as one host's row; [runId] is set when the run is saved. */
     fun host(serverId: Int, serverName: String, status: String, note: String?, output: String, truncated: Boolean) =
@@ -397,7 +531,8 @@ object FleetRunHistory {
 /**
  * Lets other apps (Tasker and similar) run one saved script on chosen hosts, when they present the
  * matching token. The token is shown once when the grant is made and never stored: only its
- * SHA-256 is. Deleting the grant revokes it. Not in backups.
+ * SHA-256 is. Deleting the grant revokes it. Backups carry it, restored with automation off.
+ * [notify] is the token's [RunNotify] choice; each use is an [AutomationUseEntity].
  */
 @Entity(tableName = "automation_grants", indices = [Index(value = ["tokenHash"], unique = true)])
 data class AutomationGrantEntity(
@@ -411,13 +546,30 @@ data class AutomationGrantEntity(
     val label: String,
     val createdAt: Long,
     val lastUsedAt: Long? = null,
+    val notify: String = RunNotify.FAILURES,
+)
+
+/**
+ * One use of an automation token: when, and what came of it ([UseOutcome]). [detail] names the
+ * hosts it ran on, why it failed, or why it was refused; [runKey] is the Fleet run it started,
+ * when it got that far. The newest [Automation.KEEP_USES] per token are kept, and go with it.
+ */
+@Entity(tableName = "automation_uses", indices = [Index(value = ["grantId", "at"])])
+data class AutomationUseEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val grantId: Int,
+    val at: Long,
+    val outcome: String,
+    val detail: String,
+    val runKey: String? = null,
 )
 
 /**
  * One call an AI assistant made to the MCP server, so the user can see what was asked and what
- * came of it: the newest [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, and
- * backups carry them (the AI assistant log section). [outcome] is one of [McpCallOutcome]'s
- * values; [detail] is the first line of the answer, short.
+ * came of it: the AI assistant token's use history. The newest
+ * [com.jetsetslow.omniterm.data.mcp.McpSettings.KEEP_CALLS] are kept, and backups carry them (the
+ * AI assistant log section). [outcome] is one of [UseOutcome]'s values; [detail] is the first line
+ * of the answer, short; [runKey] is the Fleet run a run tool started.
  */
 @Entity(tableName = "mcp_calls")
 data class McpCallEntity(
@@ -427,18 +579,29 @@ data class McpCallEntity(
     val tool: String,
     val outcome: String,
     val detail: String,
+    val runKey: String? = null,
 )
 
-object McpCallOutcome {
+/** What came of one use of a token: an automation token's ([AutomationUseEntity]) or the AI assistant's ([McpCallEntity]). */
+object UseOutcome {
     const val OK = "ok"
     const val FAILED = "failed"
-    /** A request turned away for its token, host name or origin. */
+    /**
+     * Turned away before anything ran: automation or the assistant off, a script on the danger
+     * list, a value missing, a host not shared, a run not approved, or a bad token or origin.
+     */
     const val REFUSED = "refused"
+
+    val ALL = setOf(OK, FAILED, REFUSED)
 }
 
 /**
  * A tunnel the user set up once and picks per host. [config] is the tunnel's own configuration
- * (for WireGuard, the wg-quick file with its private key), encrypted at the repository boundary.
+ * (for WireGuard, the wg-quick file with its private key; for Tailscale, TailscaleSettings with its
+ * auth key), encrypted at the repository boundary. [directWifi] names the Wi-Fi networks its hosts
+ * dial directly on (TunnelNetworks), one per line. [nodeState] is what makes a Tailscale tunnel this
+ * phone's node in its tailnet (its keys and sign-in), encrypted too; only the tunnel itself reads
+ * it (AppRepository.tunnelNodeState), and it never leaves the phone, in a backup or otherwise.
  */
 @Entity(tableName = "tunnels")
 data class TunnelEntity(
@@ -447,8 +610,17 @@ data class TunnelEntity(
     val kind: String = TunnelKinds.WIREGUARD,
     val config: String,
     val createdAt: Long = System.currentTimeMillis(),
+    val directWifi: String = "",
+    val nodeState: String = "",
 )
 
 object TunnelKinds {
     const val WIREGUARD = "wireguard"
+    /** Tailscale, or a Headscale server: the same kind with its own control server. */
+    const val TAILSCALE = "tailscale"
+    const val NEBULA = "nebula"
+    const val CLOUDFLARE_ACCESS = "cloudflare-access"
+
+    /** The kinds this version can run; a backup's tunnel of any other kind is not restored. */
+    val ALL = setOf(WIREGUARD, TAILSCALE, NEBULA, CLOUDFLARE_ACCESS)
 }

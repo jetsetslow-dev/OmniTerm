@@ -69,6 +69,7 @@ import com.jetsetslow.omniterm.billing.createLicenseController
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import com.jetsetslow.omniterm.data.DeviceCredentialGate
 import com.jetsetslow.omniterm.data.HostDependentCounts
+import com.jetsetslow.omniterm.data.HostTags
 import com.jetsetslow.omniterm.data.PersistentSessionEntity
 import com.jetsetslow.omniterm.data.RemoteCommands
 import com.jetsetslow.omniterm.data.ServerEntity
@@ -520,11 +521,11 @@ fun ConfirmHost(controller: ConfirmController) {
         confirmButton = {
             TextButton(onClick = {
                 controller.confirm()
-            }) {
+            }, modifier = Modifier.testTag("confirm.ok")) {
                 Text(req.confirmLabel, color = if (req.destructive) OmniColors.red else MaterialTheme.colorScheme.primary)
             }
         },
-        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { TextButton(onClick = { controller.dismiss() }, modifier = Modifier.testTag("confirm.cancel")) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -846,6 +847,7 @@ fun MainAppScreen(viewModel: AppViewModel) {
                 confirm = editorConfirm,
                 highlightLimit = viewModel.editorHighlightLimit,
                 draftSlot = viewModel.sftpEditorDraft,
+                linkOpenInApp = viewModel.linkOpenInApp,
             )
             ConfirmHost(editorConfirm)
         }
@@ -875,6 +877,7 @@ fun MainAppScreen(viewModel: AppViewModel) {
                 highlightLimit = viewModel.editorHighlightLimit,
                 showSudo = false,
                 draftSlot = viewModel.shareEditorDraft,
+                linkOpenInApp = viewModel.linkOpenInApp,
             )
             ConfirmHost(shareEditorConfirm)
         }
@@ -1309,6 +1312,8 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         Screen.Automation -> AutomationToolView(viewModel)
                         Screen.Mcp -> McpToolView(viewModel)
                         Screen.VpnTunnels -> VpnTunnelsToolView(viewModel)
+                        Screen.Proxmox -> ProxmoxToolView(viewModel)
+                        Screen.Snmp -> SnmpToolView(viewModel)
                     }
 
                     // In a landscape terminal the IME intentionally hides both global bars to preserve
@@ -1987,7 +1992,7 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
 fun isToolSubScreen(screen: Screen): Boolean {
     return screen in listOf(
         Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.Network,
-        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp, Screen.VpnTunnels,
+        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About, Screen.Automation, Screen.Mcp, Screen.VpnTunnels, Screen.Proxmox, Screen.Snmp,
     )
 }
 
@@ -2228,8 +2233,7 @@ fun ServersMainView(viewModel: AppViewModel) {
             // Srv Cards Layout Feed
             val filteredList = sortHosts(
                 srvList.filter {
-                    val matchesSearch = it.name.contains(viewModel.serverSearchText, ignoreCase = true) ||
-                            it.host.contains(viewModel.serverSearchText, ignoreCase = true)
+                    val matchesSearch = hostMatchesSearch(it, viewModel.serverSearchText)
                     val matchesGroup = viewModel.selectedGroupChip == "All" || it.groupName == viewModel.selectedGroupChip
                     matchesSearch && matchesGroup
                 },
@@ -2378,7 +2382,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             Box(modifier = Modifier.clickable { scoreDialogServer = server }) {
                                                 ScoreRing(score = viewModel.currentHealthScore(server), size = 38.dp)
                                             }
-                                            IconButton(onClick = { selectedForActionSheet = server }) {
+                                            IconButton(onClick = { selectedForActionSheet = server }, modifier = Modifier.testTag("server.actions.${server.id}")) {
                                                 Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.actions))
                                             }
                                         }
@@ -2402,6 +2406,11 @@ fun ServersMainView(viewModel: AppViewModel) {
                                         server.groupName?.takeIf { it.isNotBlank() }?.let { groupName ->
                                             Spacer(modifier = Modifier.width(8.dp))
                                             OmniTag(groupName, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        // The first few tags; search finds a host by any of them.
+                                        HostTags.parse(server.tags).take(HOST_CARD_TAGS).forEach { tag ->
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            OmniTag("#$tag", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
 
@@ -2965,6 +2974,7 @@ fun AddServerSheet(
     var port by remember { mutableStateOf((src?.port ?: prefillAddress?.port ?: 22).toString()) }
     var user by remember { mutableStateOf(src?.username ?: prefillAddress?.username ?: "") }
     var group by remember { mutableStateOf(src?.groupName ?: "Default") }
+    var tags by remember { mutableStateOf(src?.tags.orEmpty()) }
     var serverColor by remember { mutableStateOf(OmniColors.hostColorName(src?.serverColor ?: "Default")) }
 
     // Existing group labels (so a typo can't silently fork a new label).
@@ -2972,6 +2982,7 @@ fun AddServerSheet(
     val existingGroups = remember(allServers) {
         (listOf("Default") + allServers.mapNotNull { it.groupName }).distinct()
     }
+    val existingTags = remember(allServers) { HostTags.all(allServers) }
 
     // Auth vars
     var authType by remember { mutableStateOf(src?.authType ?: "password") } // password, key, profile
@@ -3068,6 +3079,7 @@ fun AddServerSheet(
                     port = port.toIntOrNull() ?: 22,
                     username = user,
                     groupName = group,
+                    tags = HostTags.format(HostTags.parse(tags)),
                     serverColor = serverColor,
                     authType = authType,
                     authPassword = effectivePassword(),
@@ -3126,6 +3138,7 @@ fun AddServerSheet(
                 proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" },
                 tunnelId = tunnelId,
                 tunnelHost = tunnelHost.trim().takeIf { tunnelId != null }.orEmpty(),
+                tags = tags,
             ) { err ->
                 savingServer = false
                 if (err != null) {
@@ -3207,6 +3220,30 @@ fun AddServerSheet(
                             OverflowDropdownMenu(expanded = groupMenuOpen, onDismissRequest = { groupMenuOpen = false }) {
                                 existingGroups.forEach { g ->
                                     DropdownMenuItem(text = { Text(g) }, onClick = { group = g; groupMenuOpen = false })
+                                }
+                            }
+                        }
+
+                        // Tags: any number, typed with commas; the fleet's other tags are a tap away.
+                        OutlinedTextField(
+                            value = tags,
+                            onValueChange = { tags = it },
+                            label = { Text(stringResource(R.string.host_tags)) },
+                            supportingText = { Text(stringResource(R.string.host_tags_help)) },
+                            modifier = Modifier.fillMaxWidth().testTag("server.tags"),
+                            singleLine = true,
+                        )
+                        val typedTags = HostTags.parse(tags)
+                        val offeredTags = existingTags.filter { tag -> typedTags.none { it.equals(tag, ignoreCase = true) } }
+                        if (offeredTags.isNotEmpty()) {
+                            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                offeredTags.forEach { tag ->
+                                    AssistChip(
+                                        onClick = { tags = HostTags.format(typedTags + tag) },
+                                        label = { Text("+ $tag", fontSize = 12.sp) },
+                                        modifier = Modifier.testTag("server.tags.add.$tag"),
+                                    )
                                 }
                             }
                         }

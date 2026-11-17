@@ -17,7 +17,10 @@ import org.junit.runner.RunWith
 
 /**
  * Opt-in physical-device lab seeding. Normal connected-test and CI runs skip this test.
- * Secrets arrive only through instrumentation arguments and are encrypted by [AppRepository].
+ * Secrets arrive only through instrumentation arguments and are encrypted by [AppRepository]. A
+ * personal lab's passwords come from the environment, never a command line:
+ * `./scripts/test-hosts.sh suite E2eLabSeedTest omniterm_e2e_seed=yes host=<address>
+ * username=<name> password=@LAB_SSH_PASSWORD lab_password=@LAB_PASSWORD proxy_password=@LAB_PROXY_PASSWORD`.
  */
 @RunWith(AndroidJUnit4::class)
 class E2eLabSeedTest {
@@ -31,16 +34,16 @@ class E2eLabSeedTest {
             "E2E lab seeding is restricted to debuggable builds"
         }
 
-        val host = requireArg(args.getString("host"), "host")
+        val host = E2eArgs.require("host")
         // The disposable Docker fleet publishes SSH on 2201, not 22 -- and on a developer machine
         // port 22 is usually that machine's own sshd, so defaulting silently would seed a lab that
         // points at the workstation instead of the container. Explicit, with the physical-lab
         // default preserved.
         val port = args.getString("port")?.toIntOrNull() ?: 22
-        val username = requireArg(args.getString("username"), "username")
-        val password = requireArg(args.getString("password"), "password")
-        val labPassword = requireArg(args.getString("lab_password"), "lab_password")
-        val proxyPassword = requireArg(args.getString("proxy_password"), "proxy_password")
+        val username = E2eArgs.require("username")
+        val password = E2eArgs.require("password")
+        val labPassword = E2eArgs.require("lab_password")
+        val proxyPassword = E2eArgs.require("proxy_password")
 
         val repository = AppRepository(AppDatabase.getDatabase(context))
         repository.getAllServers()
@@ -116,9 +119,6 @@ class E2eLabSeedTest {
         assertEquals(6, repository.getAllServers().count { it.name.startsWith(PREFIX) })
         assertEquals(4, repository.getAllNetworkShares().count { it.name.startsWith(PREFIX) })
     }
-
-    private fun requireArg(value: String?, name: String): String =
-        requireNotNull(value?.takeIf { it.isNotBlank() }) { "Missing instrumentation argument: $name" }
 
     private companion object {
         const val PREFIX = "E2E"

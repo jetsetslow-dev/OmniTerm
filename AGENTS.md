@@ -21,6 +21,9 @@ These rules apply to every contributor and automation tool working in this repos
 
 - For any build-affecting change, run `./scripts/local-pr-check.sh --full` before the final commit
   or push. `--quick` is for intermediate iteration only and is not a final validation result.
+- One full gate per push (owner, Nov 9): batch fixes, checkpoints, bot findings and pending
+  Dependabot updates into the pull request in flight, with targeted tests in between. Open a
+  separate pull request only for work the owner has split out.
 - Never report a suite as passing if Gradle excluded or skipped part of it. State the exact
   platform-specific exclusions and the gate that will exercise them.
 - Keep `scripts/local-pr-check.sh` aligned with `.github/workflows/android-pr-check.yml` whenever
@@ -44,7 +47,10 @@ These rules apply to every contributor and automation tool working in this repos
   workflow's CLI version and `security-extended` queries, over the test sources too, which only
   main's run compiles; it prints how to install the Java CLI and
   fetches the Go bundle itself, checked against its digest). Bump the CLI pin and both digests in
-  that script with the `github/codeql-action` pin in `codeql.yml`.
+  that script with the `github/codeql-action` pin in `codeql.yml`. It also makes the release build
+  the release workflow makes (R8 on both flavors, the Play bundle, one open-source APK per
+  architecture plus the universal one) and checks it with `scripts/verify-release-apks.py`, as the
+  workflow does before it uploads; the workflow guards keep that check ahead of every upload.
 - Do not copy a block of code to reuse it: extract the shared code and move every copy onto it.
   `scripts/check-duplicates.py` fails the gate and CI on a new copied block. Its baseline
   (`scripts/duplicate-code-baseline.json`) is empty; only `--update-baseline` adds to it, and that
@@ -73,8 +79,13 @@ state that a screen reads.
   node with a real API server. Their disks, keys and passwords stay outside the repository. See
   `scripts/os-lab/README.md`.
 - `E2eAppSurfaceStressTest` is the required sweep: it walks every route, subtab, theme, and rotation.
-  Run it with `-e omniterm_e2e_surfaces yes`. Add `-e omniterm_e2e_sftp_home <path>` when the fixture
-  home is not `/home/<user>` (the Docker fleet uses `/config`).
+  Run it with `./scripts/test-hosts.sh suite E2eAppSurfaceStressTest omniterm_e2e_surfaces=yes
+  omniterm_e2e_sftp_home` (the lab host's home, read from its fixture; a physical lab passes
+  `omniterm_e2e_sftp_home=<path>`).
+- Run device suites with `./scripts/test-hosts.sh suite <Suite> <opt-in>=yes <name>...`: it fills in
+  the fixtures' addresses and secrets by name and sends the `am instrument` line on adb's standard
+  input, so no password, key or token is on a command line where `ps` shows it. Never pass a
+  secret with `-e` on `adb shell`'s command line. Each suite's doc comment shows its line.
 - Every `E2e*` suite is opt-in behind `assumeTrue(...)` on an instrumentation argument. A plain
   `connectedAndroidTest` **skips them and still reports BUILD SUCCESSFUL**. Never cite a connected
   run as screen coverage without naming the arguments you passed and the test count that executed.
@@ -143,6 +154,10 @@ state that a screen reads.
   JVM replay. Dispatch on the complete control sequence, not only its final byte: modern Kitty
   keyboard-protocol controls such as `CSI < u` and `CSI >1 u` share `u` with ANSI restore-cursor
   but must never move the terminal cursor.
+- Test and example credentials must not have the shape of a real provider key (`tskey-auth-…`,
+  `ghp_…`, `AKIA…`, `xoxb-…`, `sk_live_…` and the like) anywhere in the repository, because
+  GitHub's secret scanner alerts on that shape publicly even when the value is made up. Build such
+  a value from parts (`"tskey-" + "auth-…"`) or drop the prefix where the code does not read it.
 
 ## Required pre-merge evidence
 
